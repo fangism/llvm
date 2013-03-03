@@ -1,3 +1,6 @@
+# patch: this should be built as a bundle/module/plug-in
+set(MODULE TRUE)
+
 if( NOT LLVM_BUILD_TOOLS )
   set(EXCLUDE_FROM_ALL ON)
 endif()
