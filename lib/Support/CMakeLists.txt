@@ -108,4 +108,7 @@ add_llvm_library(LLVMSupport
   Windows/system_error.inc
   Windows/ThreadLocal.inc
   Windows/TimeValue.inc
+
+# fang's debugging tools
+  stacktrace.cc
   )
