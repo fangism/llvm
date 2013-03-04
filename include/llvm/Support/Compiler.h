@@ -184,7 +184,10 @@
 #define LLVM_READNONE
 #endif
 
-#ifdef __GNUC__  // aka 'PURE' but following LLVM Conventions.
+// this attribute may be buggy for older gcc-4.0.1 (apple)
+// removing this fixes bug #14244
+#if defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 2))
+// aka 'PURE' but following LLVM Conventions.
 #define LLVM_READONLY __attribute__((__pure__))
 #else
 #define LLVM_READONLY

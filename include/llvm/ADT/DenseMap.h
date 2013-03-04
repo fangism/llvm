@@ -714,7 +714,7 @@ public:
     init(NumInitBuckets);
   }
 
-  SmallDenseMap(const SmallDenseMap &other) {
+  SmallDenseMap(const SmallDenseMap &other) : BaseT() {
     init(0);
     copyFrom(other);
   }
