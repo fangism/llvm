@@ -45,6 +45,11 @@ MCAsmBackend *createPPCAsmBackend(const Target &T, StringRef TT, StringRef CPU);
 MCObjectWriter *createPPCELFObjectWriter(raw_ostream &OS,
                                          bool Is64Bit,
                                          uint8_t OSABI);
+/// createPPCELFObjectWriter - Construct a PPC Mach-O object writer.
+MCObjectWriter *createPPCMachObjectWriter(raw_ostream &OS,
+                                          bool Is64Bit,
+                                          uint32_t CPUType,
+                                          uint32_t CPUSubtype);
 } // End llvm namespace
 
 // Defines symbolic names for PowerPC registers.  This defines a mapping from

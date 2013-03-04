@@ -20,6 +20,10 @@
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
+
+#define	ENABLE_STACKTRACE		0
+#include "llvm/Support/stacktrace.h"
+
 using namespace llvm;
 
 static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
@@ -54,19 +58,6 @@ static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
 }
 
 namespace {
-class PPCMachObjectWriter : public MCMachObjectTargetWriter {
-public:
-  PPCMachObjectWriter(bool Is64Bit, uint32_t CPUType,
-                      uint32_t CPUSubtype)
-    : MCMachObjectTargetWriter(Is64Bit, CPUType, CPUSubtype) {}
-
-  void RecordRelocation(MachObjectWriter *Writer,
-                        const MCAssembler &Asm, const MCAsmLayout &Layout,
-                        const MCFragment *Fragment, const MCFixup &Fixup,
-                        MCValue Target, uint64_t &FixedValue) {
-    llvm_unreachable("Relocation emission for MachO/PPC unimplemented!");
-  }
-};
 
 class PPCAsmBackend : public MCAsmBackend {
 const Target &TheTarget;
@@ -156,13 +147,13 @@ namespace {
     DarwinPPCAsmBackend(const Target &T) : PPCAsmBackend(T) { }
 
     MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
+      STACKTRACE_VERBOSE;
       bool is64 = getPointerSize() == 8;
-      return createMachObjectWriter(new PPCMachObjectWriter(
+      return createPPCMachObjectWriter(OS, 
                                       /*Is64Bit=*/is64,
                                       (is64 ? object::mach::CTM_PowerPC64 :
                                        object::mach::CTM_PowerPC),
-                                      object::mach::CSPPC_ALL),
-                                    OS, /*IsLittleEndian=*/false);
+                                      object::mach::CSPPC_ALL);
     }
 
     virtual bool doesSectionRequireSymbols(const MCSection &Section) const {
@@ -193,6 +184,7 @@ namespace {
 
 
 MCAsmBackend *llvm::createPPCAsmBackend(const Target &T, StringRef TT, StringRef CPU) {
+  STACKTRACE_VERBOSE;
   if (Triple(TT).isOSDarwin())
     return new DarwinPPCAsmBackend(T);
 

@@ -56,6 +56,10 @@
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+
+#define	ENABLE_STACKTRACE			0
+#include "llvm/Support/stacktrace.h"
+
 using namespace llvm;
 
 namespace {
@@ -334,12 +338,14 @@ MCSymbol *PPCAsmPrinter::lookUpOrCreateTOCEntry(MCSymbol *Sym) {
 /// the current output stream.
 ///
 void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
+  STACKTRACE_VERBOSE;
   MCInst TmpInst;
   
   // Lower multi-instruction pseudo operations.
   switch (MI->getOpcode()) {
   default: break;
   case TargetOpcode::DBG_VALUE: {
+    STACKTRACE_INDENT_PRINT("opcode DBG_VALUE" << std::endl);
     if (!isVerbose() || !OutStreamer.hasRawTextSupport()) return;
       
     SmallString<32> Str;
@@ -704,6 +710,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       .addReg(MI->getOperand(0).getReg()));
     return;
   case PPC::SYNC:
+    STACKTRACE_INDENT_PRINT("opcode PPC::SYNC" << std::endl);
     // In Book E sync is called msync, handle this special case here...
     if (Subtarget.isBookE()) {
       OutStreamer.EmitRawText(StringRef("\tmsync"));
@@ -808,6 +815,7 @@ void PPCLinuxAsmPrinter::EmitFunctionBodyEnd() {
 }
 
 void PPCDarwinAsmPrinter::EmitStartOfAsmFile(Module &M) {
+  STACKTRACE_VERBOSE;
   static const char *const CPUDirectives[] = {
     "",
     "ppc",
@@ -842,6 +850,7 @@ void PPCDarwinAsmPrinter::EmitStartOfAsmFile(Module &M) {
   
   // FIXME: This is a total hack, finish mc'izing the PPC backend.
   if (OutStreamer.hasRawTextSupport()) {
+    STACKTRACE_INDENT_PRINT("OutStreamer.hasRawTextSupport" << std::endl);
     assert(Directive < sizeof(CPUDirectives) / sizeof(*CPUDirectives) &&
            "CPUDirectives[] might not be up-to-date!");
     OutStreamer.EmitRawText("\t.machine " + Twine(CPUDirectives[Directive]));
@@ -881,6 +890,7 @@ static MCSymbol *GetAnonSym(MCSymbol *Sym, MCContext &Ctx) {
 
 void PPCDarwinAsmPrinter::
 EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
+  STACKTRACE_VERBOSE;
   bool isPPC64 = TM.getDataLayout()->getPointerSizeInBits() == 64;
   
   const TargetLoweringObjectFileMachO &TLOFMacho = 
@@ -890,7 +900,9 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
   const MCSection *LSPSection = TLOFMacho.getLazySymbolPointerSection();
   
   // Output stubs for dynamically-linked functions
+  // see http://developer.apple.com/library/mac/#documentation/developertools/reference/assembler/050-PowerPC_Addressing_Modes_and_Assembler_Instructions/ppc_instructions.html
   if (TM.getRelocationModel() == Reloc::PIC_) {
+    STACKTRACE_INDENT_PRINT("Reloc::PIC_" << std::endl);
     const MCSection *StubSection = 
     OutContext.getMachOSection("__TEXT", "__picsymbolstub1",
                                MCSectionMachO::S_SYMBOL_STUBS |
@@ -908,13 +920,38 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
       OutStreamer.EmitLabel(Stub);
       OutStreamer.EmitSymbolAttribute(RawSym, MCSA_IndirectSymbol);
 
-      // mflr r0
+      // mflr r0 ; save the link register (LR)
       OutStreamer.EmitInstruction(MCInstBuilder(PPC::MFLR).addReg(PPC::R0));
+#if 0
       // FIXME: MCize this.
+      STACKTRACE_INDENT_PRINT("FIXME: MCize this." << std::endl);
       OutStreamer.EmitRawText("\tbcl 20, 31, " + Twine(AnonSymbol->getName()));
+#else
+// workaround for EmitRawText on bcl
+// from http://llvm.org/bugs/show_bug.cgi?id=14286
+// and http://llvm.org/bugs/show_bug.cgi?id=14579
+      STACKTRACE_INDENT_PRINT("faking bcl instruction..." << std::endl);
+      // bcl 20, 31, AnonSymbol
+      // "Use the branch-always instruction that does not affect the link
+      // register stack to get the address of Symbol into the LR
+//	Just guessing, this is probably incorrect
+#if 1
+      // what about non-Darwin?
+      OutStreamer.EmitInstruction(MCInstBuilder(PPC::BL_Darwin)
+        .addExpr(MCSymbolRefExpr::Create(AnonSymbol, OutContext)));
+#else
+      // not yet defined in target-description
+      OutStreamer.EmitInstruction(MCInstBuilder(PPC::BCL_Darwin)
+        .addReg(PPC::CR5)
+//        .addReg(PPC::31)	// unconditional (31 is condition code, not register)
+        .addExpr(MCSymbolRefExpr::Create(AnonSymbol, OutContext)));
+#endif
+	// the branch target
+#endif
       OutStreamer.EmitLabel(AnonSymbol);
-      // mflr r11
+      // mflr r11 ; move LR to r11
       OutStreamer.EmitInstruction(MCInstBuilder(PPC::MFLR).addReg(PPC::R11));
+      // load address one half at a time
       // addis r11, r11, ha16(LazyPtr - AnonSymbol)
       const MCExpr *Sub =
         MCBinaryExpr::CreateSub(MCSymbolRefExpr::Create(LazyPtr, OutContext),
@@ -956,6 +993,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
     return;
   }
   
+  STACKTRACE_INDENT_PRINT("not Reloc::PIC_" << std::endl);
   const MCSection *StubSection =
     OutContext.getMachOSection("__TEXT","__symbol_stub1",
                                MCSectionMachO::S_SYMBOL_STUBS |

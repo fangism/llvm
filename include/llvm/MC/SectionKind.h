@@ -133,6 +133,10 @@ class SectionKind {
 
   } K : 8;
 public:
+#if 1
+// for debugging purposes only
+  Kind getKindEnum(void) const { return K; }
+#endif
 
   bool isMetadata() const { return K == Metadata; }
   bool isText() const { return K == Text; }

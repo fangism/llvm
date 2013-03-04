@@ -4,6 +4,7 @@ add_llvm_library(LLVMPowerPCDesc
   PPCMCAsmInfo.cpp
   PPCMCCodeEmitter.cpp
   PPCPredicates.cpp
+  PPCMachObjectWriter.cpp
   PPCELFObjectWriter.cpp
   )
 
