@@ -21,6 +21,16 @@ using namespace llvm;
 #undef MemoryFence
 #endif
 
+#if defined(__APPLE__) && 0
+#include <libkern/OSAtomic.h>
+// __APPLE__ should take precedence over __GNUC__
+// sys::cas_flag is int32_t from Support/Atomic.h, so use '32' variants
+// prototypes lack the 'volatile' qualifier, so we need to cast them away
+template <class T>
+static inline
+T* vcast(volatile T* ptr) { return const_cast<T*>(ptr); }
+#endif
+
 #if defined(__GNUC__) || (defined(__IBMCPP__) && __IBMCPP__ >= 1210)
 #define GNU_ATOMICS
 #endif
@@ -28,14 +38,16 @@ using namespace llvm;
 void sys::MemoryFence() {
 #if LLVM_HAS_ATOMICS == 0
   return;
-#else
-#  if defined(GNU_ATOMICS)
+/**
+#elif defined(__APPLE__)
+  OSMemoryBarrier();
+**/
+#elif defined(GNU_ATOMICS)
   __sync_synchronize();
-#  elif defined(_MSC_VER)
+#elif defined(_MSC_VER)
   MemoryBarrier();
-#  else
+#else
 # error No memory fence implementation for your platform!
-#  endif
 #endif
 }
 
@@ -47,6 +59,10 @@ sys::cas_flag sys::CompareAndSwap(volatile sys::cas_flag* ptr,
   if (result == old_value)
     *ptr = new_value;
   return result;
+/**
+#elif defined(__APPLE__)
+  return OSAtomicCompareAndSwap32(old_value, new_value, vcast(ptr));
+**/
 #elif defined(GNU_ATOMICS)
   return __sync_val_compare_and_swap(ptr, old_value, new_value);
 #elif defined(_MSC_VER)
@@ -60,6 +76,10 @@ sys::cas_flag sys::AtomicIncrement(volatile sys::cas_flag* ptr) {
 #if LLVM_HAS_ATOMICS == 0
   ++(*ptr);
   return *ptr;
+/**
+#elif defined(__APPLE__)
+  return OSAtomicIncrement32(vcast(ptr));
+**/
 #elif defined(GNU_ATOMICS)
   return __sync_add_and_fetch(ptr, 1);
 #elif defined(_MSC_VER)
@@ -73,6 +93,10 @@ sys::cas_flag sys::AtomicDecrement(volatile sys::cas_flag* ptr) {
 #if LLVM_HAS_ATOMICS == 0
   --(*ptr);
   return *ptr;
+/**
+#elif defined(__APPLE__)
+  return OSAtomicDecrement32(vcast(ptr));
+**/
 #elif defined(GNU_ATOMICS)
   return __sync_sub_and_fetch(ptr, 1);
 #elif defined(_MSC_VER)
@@ -86,6 +110,10 @@ sys::cas_flag sys::AtomicAdd(volatile sys::cas_flag* ptr, sys::cas_flag val) {
 #if LLVM_HAS_ATOMICS == 0
   *ptr += val;
   return *ptr;
+/**
+#elif defined(__APPLE__)
+  return OSAtomicAdd32(val, vcast(ptr));
+**/
 #elif defined(GNU_ATOMICS)
   return __sync_add_and_fetch(ptr, val);
 #elif defined(_MSC_VER)

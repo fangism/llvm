@@ -1674,11 +1674,11 @@ AC_LINK_IFELSE(
 ],
 [
   AC_MSG_RESULT([yes])
-  AC_DEFINE([LLVM_HAS_ATOMICS], [1], [Has gcc/MSVC atomic intrinsics])
+  AC_DEFINE([LLVM_HAS_ATOMICS], [1], [Has gcc/MSVC/Apple atomic intrinsics])
 ],
 [
   AC_MSG_RESULT([no])
-  AC_DEFINE([LLVM_HAS_ATOMICS], [0], [Has gcc/MSVC atomic intrinsics])
+  AC_DEFINE([LLVM_HAS_ATOMICS], [0], [Has gcc/MSVC/Apple atomic intrinsics])
   AC_MSG_WARN([LLVM will be built thread-unsafe because atomic builtins are missing])
 ])
 AC_LANG_POP([C++])
