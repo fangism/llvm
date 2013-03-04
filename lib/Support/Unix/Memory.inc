@@ -51,7 +51,7 @@ int getPosixProtectionFlags(unsigned Flags) {
 	 llvm::sys::Memory::MF_EXEC:
     return PROT_READ | PROT_WRITE | PROT_EXEC;
   case llvm::sys::Memory::MF_EXEC:
-    return PROT_EXEC;
+    return PROT_EXEC | PROT_READ;	// patch from Roman Divacky, bug 14278
   default:
     llvm_unreachable("Illegal memory protection flag specified!");
   }

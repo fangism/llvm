@@ -318,7 +318,8 @@ static void PrintStackTraceSignalHandler(void *) {
 void llvm::sys::PrintStackTraceOnErrorSignal() {
   AddSignalHandler(PrintStackTraceSignalHandler, 0);
 
-#if defined(__APPLE__)
+// some of these constants are not defined for darwin8
+#if defined(__APPLE__) && defined(MACH_EXCEPTION_CODES) && defined(EXC_MASK_CRASH)
   // Environment variable to disable any kind of crash dialog.
   if (getenv("LLVM_DISABLE_CRASH_REPORT")) {
     mach_port_t self = mach_task_self();
