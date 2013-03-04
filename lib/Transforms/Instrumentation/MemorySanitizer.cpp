@@ -178,8 +178,15 @@ class MemorySanitizer : public FunctionPass {
  private:
   void initializeCallbacks(Module &M);
 
+// workaround accessibility bug in g++-4.0
+#if defined(__GNUC__) && (__GNUC__ == 4 && __GNUC_MINOR__ < 2) 
+ public:
+#endif
   /// \brief Track origins (allocation points) of uninitialized values.
   bool TrackOrigins;
+#if defined(__GNUC__) && (__GNUC__ == 4 && __GNUC_MINOR__ < 2) 
+ private:
+#endif
 
   DataLayout *TD;
   LLVMContext *C;
