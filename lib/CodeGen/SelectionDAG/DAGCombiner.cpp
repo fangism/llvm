@@ -2634,7 +2634,9 @@ SDValue DAGCombiner::visitAND(SDNode *N) {
       ISD::CondCode Result = ISD::getSetCCAndOperation(Op0, Op1, isInteger);
       if (Result != ISD::SETCC_INVALID &&
           (!LegalOperations ||
-           TLI.isCondCodeLegal(Result, LL.getSimpleValueType())))
+           (TLI.isCondCodeLegal(Result, LL.getSimpleValueType()) &&
+            TLI.isOperationLegal(ISD::SETCC,
+                            TLI.getSetCCResultType(N0.getSimpleValueType())))))
         return DAG.getSetCC(N->getDebugLoc(), N0.getValueType(),
                             LL, LR, Result);
     }
@@ -3144,7 +3146,9 @@ SDValue DAGCombiner::visitOR(SDNode *N) {
       ISD::CondCode Result = ISD::getSetCCOrOperation(Op0, Op1, isInteger);
       if (Result != ISD::SETCC_INVALID &&
           (!LegalOperations ||
-           TLI.isCondCodeLegal(Result, LL.getSimpleValueType())))
+           (TLI.isCondCodeLegal(Result, LL.getSimpleValueType()) &&
+            TLI.isOperationLegal(ISD::SETCC,
+              TLI.getSetCCResultType(N0.getValueType())))))
         return DAG.getSetCC(N->getDebugLoc(), N0.getValueType(),
                             LL, LR, Result);
     }
@@ -5354,6 +5358,38 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
       return DAG.getNode(ISD::EXTRACT_VECTOR_ELT,
                          N->getDebugLoc(), TrTy, V,
                          DAG.getConstant(Index, IndexTy));
+    }
+  }
+
+  // Fold a series of buildvector, bitcast, and truncate if possible.
+  // For example fold
+  //   (2xi32 trunc (bitcast ((4xi32)buildvector x, x, y, y) 2xi64)) to
+  //   (2xi32 (buildvector x, y)).
+  if (Level == AfterLegalizeVectorOps && VT.isVector() &&
+      N0.getOpcode() == ISD::BITCAST && N0.hasOneUse() &&
+      N0.getOperand(0).getOpcode() == ISD::BUILD_VECTOR &&
+      N0.getOperand(0).hasOneUse()) {
+
+    SDValue BuildVect = N0.getOperand(0);
+    EVT BuildVectEltTy = BuildVect.getValueType().getVectorElementType();
+    EVT TruncVecEltTy = VT.getVectorElementType();
+
+    // Check that the element types match.
+    if (BuildVectEltTy == TruncVecEltTy) {
+      // Now we only need to compute the offset of the truncated elements.
+      unsigned BuildVecNumElts =  BuildVect.getNumOperands();
+      unsigned TruncVecNumElts = VT.getVectorNumElements();
+      unsigned TruncEltOffset = BuildVecNumElts / TruncVecNumElts;
+
+      assert((BuildVecNumElts % TruncVecNumElts) == 0 &&
+             "Invalid number of elements");
+
+      SmallVector<SDValue, 8> Opnds;
+      for (unsigned i = 0, e = BuildVecNumElts; i != e; i += TruncEltOffset)
+        Opnds.push_back(BuildVect.getOperand(i));
+
+      return DAG.getNode(ISD::BUILD_VECTOR, N->getDebugLoc(), VT, &Opnds[0],
+                         Opnds.size());
     }
   }
 
@@ -7698,6 +7734,8 @@ struct ConsecutiveMemoryChainSorter {
 bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
   EVT MemVT = St->getMemoryVT();
   int64_t ElementSizeBytes = MemVT.getSizeInBits()/8;
+  bool NoVectors = DAG.getMachineFunction().getFunction()->getAttributes().
+    hasAttribute(AttributeSet::FunctionIndex, Attribute::NoImplicitFloat);
 
   // Don't merge vectors into wider inputs.
   if (MemVT.isVector() || !MemVT.isSimple())
@@ -7873,16 +7911,14 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
 
     // We only use vectors if the constant is known to be zero and the
     // function is not marked with the noimplicitfloat attribute.
-    if (NonZero || (DAG.getMachineFunction().getFunction()->getAttributes().
-                    hasAttribute(AttributeSet::FunctionIndex,
-                                 Attribute::NoImplicitFloat)))
+    if (NonZero || NoVectors)
       LastLegalVectorType = 0;
 
     // Check if we found a legal integer type to store.
     if (LastLegalType == 0 && LastLegalVectorType == 0)
       return false;
 
-    bool UseVector = LastLegalVectorType > LastLegalType;
+    bool UseVector = (LastLegalVectorType > LastLegalType) && !NoVectors;
     unsigned NumElem = UseVector ? LastLegalVectorType : LastLegalType;
 
     // Make sure we have something to merge.
@@ -8035,7 +8071,7 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
     // All loads much share the same chain.
     if (LoadNodes[i].MemNode->getChain() != FirstChain)
       break;
-    
+
     int64_t CurrAddress = LoadNodes[i].OffsetFromBase;
     if (CurrAddress - StartAddress != (ElementSizeBytes * i))
       break;
@@ -8055,7 +8091,7 @@ bool DAGCombiner::MergeConsecutiveStores(StoreSDNode* St) {
 
   // Only use vector types if the vector type is larger than the integer type.
   // If they are the same, use integers.
-  bool UseVectorTy = LastLegalVectorType > LastLegalIntegerType;
+  bool UseVectorTy = LastLegalVectorType > LastLegalIntegerType && !NoVectors;
   unsigned LastLegalType = std::max(LastLegalVectorType, LastLegalIntegerType);
 
   // We add +1 here because the LastXXX variables refer to location while
@@ -9226,11 +9262,6 @@ SDValue DAGCombiner::XformToShuffleWithZero(SDNode *N) {
 
 /// SimplifyVBinOp - Visit a binary vector operation, like ADD.
 SDValue DAGCombiner::SimplifyVBinOp(SDNode *N) {
-  // After legalize, the target may be depending on adds and other
-  // binary ops to provide legal ways to construct constants or other
-  // things. Simplifying them may result in a loss of legality.
-  if (LegalOperations) return SDValue();
-
   assert(N->getValueType(0).isVector() &&
          "SimplifyVBinOp only works on vectors!");
 
@@ -9300,11 +9331,6 @@ SDValue DAGCombiner::SimplifyVBinOp(SDNode *N) {
 
 /// SimplifyVUnaryOp - Visit a binary vector operation, like FABS/FNEG.
 SDValue DAGCombiner::SimplifyVUnaryOp(SDNode *N) {
-  // After legalize, the target may be depending on adds and other
-  // binary ops to provide legal ways to construct constants or other
-  // things. Simplifying them may result in a loss of legality.
-  if (LegalOperations) return SDValue();
-
   assert(N->getValueType(0).isVector() &&
          "SimplifyVUnaryOp only works on vectors!");
 

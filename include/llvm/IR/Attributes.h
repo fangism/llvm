@@ -17,8 +17,9 @@
 #define LLVM_IR_ATTRIBUTES_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/FoldingSet.h"
+#include "llvm/Support/PointerLikeTypeTraits.h"
+#include <bitset>
 #include <cassert>
 #include <map>
 #include <string>
@@ -30,6 +31,7 @@ class AttributeImpl;
 class AttributeSetImpl;
 class AttributeSetNode;
 class Constant;
+template<typename T> struct DenseMapInfo;
 class LLVMContext;
 class Type;
 
@@ -61,7 +63,6 @@ public:
   enum AttrKind {
     // IR-Level Attributes
     None,                  ///< No attributes have been set
-    AddressSafety,         ///< Address safety checking is on.
     Alignment,             ///< Alignment of parameter (5 bits)
                            ///< stored as log2 of alignment with +1 bias
                            ///< 0 means unaligned (different from align(1))
@@ -73,6 +74,7 @@ public:
     Naked,                 ///< Naked function
     Nest,                  ///< Nested function static chain
     NoAlias,               ///< Considered to not alias after call
+    NoBuiltin,             ///< Callee isn't recognized as a builtin
     NoCapture,             ///< Function creates no aliases of pointer
     NoDuplicate,           ///< Call cannot be duplicated
     NoImplicitFloat,       ///< Disable implicit floating point insts
@@ -95,15 +97,13 @@ public:
     StackProtectReq,       ///< Stack protection required.
     StackProtectStrong,    ///< Strong Stack protection.
     StructRet,             ///< Hidden pointer to structure to return
-    ThreadSafety,          ///< Thread safety checking is on.
-    UninitializedChecks,   ///< Checking for uses of uninitialized memory is on.
+    SanitizeAddress,       ///< AddressSanitizer is on.
+    SanitizeThread,        ///< ThreadSanitizer is on.
+    SanitizeMemory,        ///< MemorySanitizer is on.
     UWTable,               ///< Function must be in a unwind table
     ZExt,                  ///< Zero extended before/after call
 
-    EndAttrKinds,          ///< Sentinal value useful for loops
-
-    AttrKindEmptyKey,      ///< Empty key value for DenseMapInfo
-    AttrKindTombstoneKey   ///< Tombstone key value for DenseMapInfo
+    EndAttrKinds           ///< Sentinal value useful for loops
   };
 private:
   AttributeImpl *pImpl;
@@ -182,26 +182,6 @@ public:
 
   void Profile(FoldingSetNodeID &ID) const {
     ID.AddPointer(pImpl);
-  }
-};
-
-//===----------------------------------------------------------------------===//
-/// \class
-/// \brief Provide DenseMapInfo for Attribute::AttrKinds. This is used by
-/// AttrBuilder.
-template<> struct DenseMapInfo<Attribute::AttrKind> {
-  static inline Attribute::AttrKind getEmptyKey() {
-    return Attribute::AttrKindEmptyKey;
-  }
-  static inline Attribute::AttrKind getTombstoneKey() {
-    return Attribute::AttrKindTombstoneKey;
-  }
-  static unsigned getHashValue(const Attribute::AttrKind &Val) {
-    return Val * 37U;
-  }
-  static bool isEqual(const Attribute::AttrKind &LHS,
-                      const Attribute::AttrKind &RHS) {
-    return LHS == RHS;
   }
 };
 
@@ -303,12 +283,21 @@ public:
   /// \brief Return true if the attribute exists at the given index.
   bool hasAttribute(unsigned Index, Attribute::AttrKind Kind) const;
 
+  /// \brief Return true if the attribute exists at the given index.
+  bool hasAttribute(unsigned Index, StringRef Kind) const;
+
   /// \brief Return true if attribute exists at the given index.
   bool hasAttributes(unsigned Index) const;
 
   /// \brief Return true if the specified attribute is set for at least one
   /// parameter or for the return value.
   bool hasAttrSomewhere(Attribute::AttrKind Attr) const;
+
+  /// \brief Return the attribute object that exists at the given index.
+  Attribute getAttribute(unsigned Index, Attribute::AttrKind Kind) const;
+
+  /// \brief Return the attribute object that exists at the given index.
+  Attribute getAttribute(unsigned Index, StringRef Kind) const;
 
   /// \brief Return the alignment for the specified function parameter.
   unsigned getParamAlignment(unsigned Idx) const;
@@ -391,16 +380,17 @@ template<> struct DenseMapInfo<AttributeSet> {
 /// value, however, is not. So this can be used as a quick way to test for
 /// equality, presence of attributes, etc.
 class AttrBuilder {
-  DenseSet<Attribute::AttrKind> Attrs;
+  std::bitset<Attribute::EndAttrKinds> Attrs;
   std::map<std::string, std::string> TargetDepAttrs;
   uint64_t Alignment;
   uint64_t StackAlignment;
 public:
-  AttrBuilder() : Alignment(0), StackAlignment(0) {}
-  explicit AttrBuilder(uint64_t Val) : Alignment(0), StackAlignment(0) {
+  AttrBuilder() : Attrs(0), Alignment(0), StackAlignment(0) {}
+  explicit AttrBuilder(uint64_t Val)
+    : Attrs(0), Alignment(0), StackAlignment(0) {
     addRawValue(Val);
   }
-  AttrBuilder(const Attribute &A) : Alignment(0), StackAlignment(0) {
+  AttrBuilder(const Attribute &A) : Attrs(0), Alignment(0), StackAlignment(0) {
     addAttribute(A);
   }
   AttrBuilder(AttributeSet AS, unsigned Idx);
@@ -433,7 +423,10 @@ public:
   AttrBuilder &merge(const AttrBuilder &B);
 
   /// \brief Return true if the builder has the specified attribute.
-  bool contains(Attribute::AttrKind A) const;
+  bool contains(Attribute::AttrKind A) const {
+    assert((unsigned)A < Attribute::EndAttrKinds && "Attribute out of range!");
+    return Attrs[A];
+  }
 
   /// \brief Return true if the builder has the specified target-dependent
   /// attribute.
@@ -463,17 +456,9 @@ public:
   /// the form used internally in Attribute.
   AttrBuilder &addStackAlignmentAttr(unsigned Align);
 
-  // Iterators for target-independent attributes.
-  typedef DenseSet<Attribute::AttrKind>::iterator       iterator;
-  typedef DenseSet<Attribute::AttrKind>::const_iterator const_iterator;
-
-  iterator begin()             { return Attrs.begin(); }
-  iterator end()               { return Attrs.end(); }
-
-  const_iterator begin() const { return Attrs.begin(); }
-  const_iterator end() const   { return Attrs.end(); }
-
-  bool empty() const           { return Attrs.empty(); }
+  /// \brief Return true if the builder contains no target-independent
+  /// attributes.
+  bool empty() const { return Attrs.none(); }
 
   // Iterators for target-dependent attributes.
   typedef std::pair<std::string, std::string>                td_type;
@@ -489,31 +474,7 @@ public:
   bool td_empty() const              { return TargetDepAttrs.empty(); }
 
   /// \brief Remove attributes that are used on functions only.
-  void removeFunctionOnlyAttrs() {
-    removeAttribute(Attribute::NoReturn)
-      .removeAttribute(Attribute::NoUnwind)
-      .removeAttribute(Attribute::ReadNone)
-      .removeAttribute(Attribute::ReadOnly)
-      .removeAttribute(Attribute::NoInline)
-      .removeAttribute(Attribute::AlwaysInline)
-      .removeAttribute(Attribute::OptimizeForSize)
-      .removeAttribute(Attribute::StackProtect)
-      .removeAttribute(Attribute::StackProtectReq)
-      .removeAttribute(Attribute::StackProtectStrong)
-      .removeAttribute(Attribute::NoRedZone)
-      .removeAttribute(Attribute::NoImplicitFloat)
-      .removeAttribute(Attribute::Naked)
-      .removeAttribute(Attribute::InlineHint)
-      .removeAttribute(Attribute::StackAlignment)
-      .removeAttribute(Attribute::UWTable)
-      .removeAttribute(Attribute::NonLazyBind)
-      .removeAttribute(Attribute::ReturnsTwice)
-      .removeAttribute(Attribute::AddressSafety)
-      .removeAttribute(Attribute::ThreadSafety)
-      .removeAttribute(Attribute::UninitializedChecks)
-      .removeAttribute(Attribute::MinSize)
-      .removeAttribute(Attribute::NoDuplicate);
-  }
+  void removeFunctionOnlyAttrs();
 
   bool operator==(const AttrBuilder &B);
   bool operator!=(const AttrBuilder &B) {

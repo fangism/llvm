@@ -16,6 +16,7 @@
 #include "AMDGPURegisterInfo.h"
 #include "AMDILDevices.h"
 #include "R600InstrInfo.h"
+#include "SIISelLowering.h"
 #include "llvm/ADT/ValueMap.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
@@ -43,6 +44,7 @@ public:
 
   SDNode *Select(SDNode *N);
   virtual const char *getPassName() const;
+  virtual void PostprocessISelDAG();
 
 private:
   inline SDValue getSmallIPtrImm(unsigned Imm);
@@ -160,6 +162,35 @@ SDNode *AMDGPUDAGToDAGISel::Select(SDNode *N) {
   }
   switch (Opc) {
   default: break;
+  case ISD::BUILD_VECTOR: {
+    const AMDGPUSubtarget &ST = TM.getSubtarget<AMDGPUSubtarget>();
+    if (ST.device()->getGeneration() > AMDGPUDeviceInfo::HD6XXX) {
+      break;
+    }
+    // BUILD_VECTOR is usually lowered into an IMPLICIT_DEF + 4 INSERT_SUBREG
+    // that adds a 128 bits reg copy when going through TwoAddressInstructions
+    // pass. We want to avoid 128 bits copies as much as possible because they
+    // can't be bundled by our scheduler.
+    SDValue RegSeqArgs[9] = {
+      CurDAG->getTargetConstant(AMDGPU::R600_Reg128RegClassID, MVT::i32),
+      SDValue(), CurDAG->getTargetConstant(AMDGPU::sub0, MVT::i32),
+      SDValue(), CurDAG->getTargetConstant(AMDGPU::sub1, MVT::i32),
+      SDValue(), CurDAG->getTargetConstant(AMDGPU::sub2, MVT::i32),
+      SDValue(), CurDAG->getTargetConstant(AMDGPU::sub3, MVT::i32)
+    };
+    bool IsRegSeq = true;
+    for (unsigned i = 0; i < N->getNumOperands(); i++) {
+      if (dyn_cast<RegisterSDNode>(N->getOperand(i))) {
+        IsRegSeq = false;
+        break;
+      }
+      RegSeqArgs[2 * i + 1] = N->getOperand(i);
+    }
+    if (!IsRegSeq)
+      break;
+    return CurDAG->SelectNodeTo(N, AMDGPU::REG_SEQUENCE, N->getVTList(),
+        RegSeqArgs, 2 * N->getNumOperands() + 1);
+  }
   case ISD::ConstantFP:
   case ISD::Constant: {
     const AMDGPUSubtarget &ST = TM.getSubtarget<AMDGPUSubtarget>();
@@ -218,7 +249,9 @@ SDNode *AMDGPUDAGToDAGISel::Select(SDNode *N) {
             continue;
           }
       } else {
-        if (!TII->isALUInstr(Use->getMachineOpcode())) {
+        if (!TII->isALUInstr(Use->getMachineOpcode()) ||
+            (TII->get(Use->getMachineOpcode()).TSFlags &
+            R600_InstFlag::VECTOR)) {
           continue;
         }
 
@@ -261,7 +294,8 @@ SDNode *AMDGPUDAGToDAGISel::Select(SDNode *N) {
   if (ST.device()->getGeneration() <= AMDGPUDeviceInfo::HD6XXX) {
     const R600InstrInfo *TII =
         static_cast<const R600InstrInfo*>(TM.getInstrInfo());
-    if (Result && Result->isMachineOpcode()
+    if (Result && Result->isMachineOpcode() &&
+        !(TII->get(Result->getMachineOpcode()).TSFlags & R600_InstFlag::VECTOR)
         && TII->isALUInstr(Result->getMachineOpcode())) {
       // Fold FNEG/FABS/CONST_ADDRESS
       // TODO: Isel can generate multiple MachineInst, we need to recursively
@@ -331,6 +365,8 @@ bool AMDGPUDAGToDAGISel::FoldOperands(unsigned Opcode,
     SDValue Operand = Ops[OperandIdx[i] - 1];
     switch (Operand.getOpcode()) {
     case AMDGPUISD::CONST_ADDRESS: {
+      if (i == 2)
+        break;
       SDValue CstOffset;
       if (!Operand.getValueType().isVector() &&
           SelectGlobalValueConstantOffset(Operand.getOperand(0), CstOffset)) {
@@ -570,3 +606,21 @@ bool AMDGPUDAGToDAGISel::SelectADDRIndirect(SDValue Addr, SDValue &Base,
 
   return true;
 }
+
+void AMDGPUDAGToDAGISel::PostprocessISelDAG() {
+
+  // Go over all selected nodes and try to fold them a bit more
+  const AMDGPUTargetLowering& Lowering = ((const AMDGPUTargetLowering&)TLI);
+  for (SelectionDAG::allnodes_iterator I = CurDAG->allnodes_begin(),
+       E = CurDAG->allnodes_end(); I != E; ++I) {
+
+    MachineSDNode *Node = dyn_cast<MachineSDNode>(I);
+    if (!Node)
+      continue;
+
+    SDNode *ResNode = Lowering.PostISelFolding(Node, *CurDAG);
+    if (ResNode != Node)
+      ReplaceUses(Node, ResNode);
+  }
+}
+

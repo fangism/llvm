@@ -58,13 +58,14 @@
 #include <algorithm>
 using namespace llvm;
 
-STATISTIC(NumFastIselFailures, "Number of instructions fast isel failed on");
-STATISTIC(NumFastIselSuccess, "Number of instructions fast isel selected");
 STATISTIC(NumFastIselBlocks, "Number of blocks selected entirely by fast isel");
 STATISTIC(NumDAGBlocks, "Number of blocks selected using DAG");
-STATISTIC(NumDAGIselRetries,"Number of times dag isel has to try another path");
 
 #ifndef NDEBUG
+STATISTIC(NumDAGIselRetries,"Number of times dag isel has to try another path");
+STATISTIC(NumFastIselFailures, "Number of instructions fast isel failed on");
+STATISTIC(NumFastIselSuccess, "Number of instructions fast isel selected");
+
 static cl::opt<bool>
 EnableFastISelVerbose2("fast-isel-verbose2", cl::Hidden,
           cl::desc("Enable extra verbose messages in the \"fast\" "
@@ -144,7 +145,12 @@ EnableFastISelVerbose("fast-isel-verbose", cl::Hidden,
                    "instruction selector"));
 static cl::opt<bool>
 EnableFastISelAbort("fast-isel-abort", cl::Hidden,
-          cl::desc("Enable abort calls when \"fast\" instruction fails"));
+          cl::desc("Enable abort calls when \"fast\" instruction selection "
+                   "fails to lower an instruction"));
+static cl::opt<bool>
+EnableFastISelAbortArgs("fast-isel-abort-args", cl::Hidden,
+          cl::desc("Enable abort calls when \"fast\" instruction selection "
+                   "fails to lower a formal argument"));
 
 static cl::opt<bool>
 UseMBPI("use-mbpi",
@@ -354,6 +360,10 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
   TTI = getAnalysisIfAvailable<TargetTransformInfo>();
   GFI = Fn.hasGC() ? &getAnalysis<GCModuleInfo>().getFunctionInfo(Fn) : 0;
 
+  TargetSubtargetInfo &ST =
+    const_cast<TargetSubtargetInfo&>(TM.getSubtarget<TargetSubtargetInfo>());
+  ST.resetSubtargetFeatures(MF);
+
   DEBUG(dbgs() << "\n\n\n=== " << Fn.getName() << "\n");
 
   SplitCriticalSideEffectEdges(const_cast<Function&>(Fn), this);
@@ -368,6 +378,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
 
   SDB->init(GFI, *AA, LibInfo);
 
+  MF->setHasMSInlineAsm(false);
   SelectAllBasicBlocks(Fn);
 
   // If the first basic block in the function has live ins that need to be
@@ -438,24 +449,26 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
 
   // Determine if there are any calls in this machine function.
   MachineFrameInfo *MFI = MF->getFrameInfo();
-  if (!MFI->hasCalls()) {
-    for (MachineFunction::const_iterator
-           I = MF->begin(), E = MF->end(); I != E; ++I) {
-      const MachineBasicBlock *MBB = I;
-      for (MachineBasicBlock::const_iterator
-             II = MBB->begin(), IE = MBB->end(); II != IE; ++II) {
-        const MCInstrDesc &MCID = TM.getInstrInfo()->get(II->getOpcode());
+  for (MachineFunction::const_iterator I = MF->begin(), E = MF->end(); I != E;
+       ++I) {
 
-        if ((MCID.isCall() && !MCID.isReturn()) ||
-            II->isStackAligningInlineAsm()) {
-          MFI->setHasCalls(true);
-          goto done;
-        }
+    if (MFI->hasCalls() && MF->hasMSInlineAsm())
+      break;
+
+    const MachineBasicBlock *MBB = I;
+    for (MachineBasicBlock::const_iterator II = MBB->begin(), IE = MBB->end();
+         II != IE; ++II) {
+      const MCInstrDesc &MCID = TM.getInstrInfo()->get(II->getOpcode());
+      if ((MCID.isCall() && !MCID.isReturn()) ||
+          II->isStackAligningInlineAsm()) {
+        MFI->setHasCalls(true);
+      }
+      if (II->isMSInlineAsm()) {
+        MF->setHasMSInlineAsm(true);
       }
     }
   }
 
-  done:
   // Determine if there is a call to setjmp in the machine function.
   MF->setExposesReturnsTwice(Fn.callsFunctionThatReturnsTwice());
 
@@ -1019,13 +1032,11 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       FuncInfo->VisitedBBs.insert(LLVMBB);
     }
 
-    FuncInfo->MBB = FuncInfo->MBBMap[LLVMBB];
-    FuncInfo->InsertPt = FuncInfo->MBB->getFirstNonPHI();
-
     BasicBlock::const_iterator const Begin = LLVMBB->getFirstNonPHI();
     BasicBlock::const_iterator const End = LLVMBB->end();
     BasicBlock::const_iterator BI = End;
 
+    FuncInfo->MBB = FuncInfo->MBBMap[LLVMBB];
     FuncInfo->InsertPt = FuncInfo->MBB->getFirstNonPHI();
 
     // Setup an EH landing-pad block.
@@ -1041,9 +1052,12 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       if (LLVMBB == &Fn.getEntryBlock()) {
         // Lower any arguments needed in this block if this is the entry block.
         if (!FastIS->LowerArguments()) {
-          // Call target indepedent SDISel argument lowering code if the target
-          // specific routine is not successful.
-          LowerArguments(LLVMBB);
+          // Fast isel failed to lower these arguments
+          if (EnableFastISelAbortArgs)
+            llvm_unreachable("FastISel didn't lower all arguments");
+
+          // Use SelectionDAG argument lowering
+          LowerArguments(Fn);
           CurDAG->setRoot(SDB->getControlRoot());
           SDB->clear();
           CodeGenAndEmitDAG();
@@ -1076,7 +1090,7 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
         // Try to select the instruction with FastISel.
         if (FastIS->SelectInstruction(Inst)) {
           --NumFastIselRemaining;
-          ++NumFastIselSuccess;
+          DEBUG(++NumFastIselSuccess);
           // If fast isel succeeded, skip over all the folded instructions, and
           // then see if there is a load right before the selected instructions.
           // Try to fold the load if so.
@@ -1092,7 +1106,7 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
             // If we succeeded, don't re-select the load.
             BI = llvm::next(BasicBlock::const_iterator(BeforeInst));
             --NumFastIselRemaining;
-            ++NumFastIselSuccess;
+            DEBUG(++NumFastIselSuccess);
           }
           continue;
         }
@@ -1131,20 +1145,21 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
           // Recompute NumFastIselRemaining as Selection DAG instruction
           // selection may have handled the call, input args, etc.
           unsigned RemainingNow = std::distance(Begin, BI);
-          NumFastIselFailures += NumFastIselRemaining - RemainingNow;
-          NumFastIselRemaining = RemainingNow;
+          (void) RemainingNow;
+          DEBUG(NumFastIselFailures += NumFastIselRemaining - RemainingNow);
+          DEBUG(NumFastIselRemaining = RemainingNow);
           continue;
         }
 
         if (isa<TerminatorInst>(Inst) && !isa<BranchInst>(Inst)) {
           // Don't abort, and use a different message for terminator misses.
-          NumFastIselFailures += NumFastIselRemaining;
+          DEBUG(NumFastIselFailures += NumFastIselRemaining);
           if (EnableFastISelVerbose || EnableFastISelAbort) {
             dbgs() << "FastISel missed terminator: ";
             Inst->dump();
           }
         } else {
-          NumFastIselFailures += NumFastIselRemaining;
+          DEBUG(NumFastIselFailures += NumFastIselRemaining);
           if (EnableFastISelVerbose || EnableFastISelAbort) {
             dbgs() << "FastISel miss: ";
             Inst->dump();
@@ -1161,7 +1176,7 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
     } else {
       // Lower any arguments needed in this block if this is the entry block.
       if (LLVMBB == &Fn.getEntryBlock())
-        LowerArguments(LLVMBB);
+        LowerArguments(Fn);
     }
 
     if (Begin != BI)
@@ -2344,7 +2359,7 @@ SelectCodeCommon(SDNode *NodeToMatch, const unsigned char *MatcherTable,
         DEBUG(errs() << "  Skipped scope entry (due to false predicate) at "
                      << "index " << MatcherIndexOfPredicate
                      << ", continuing at " << FailIndex << "\n");
-        ++NumDAGIselRetries;
+        DEBUG(++NumDAGIselRetries);
 
         // Otherwise, we know that this case of the Scope is guaranteed to fail,
         // move to the next case.
@@ -2925,7 +2940,7 @@ SelectCodeCommon(SDNode *NodeToMatch, const unsigned char *MatcherTable,
     // another child to try in the current 'Scope', otherwise pop it until we
     // find a case to check.
     DEBUG(errs() << "  Match failed at index " << CurrentOpcodeIndex << "\n");
-    ++NumDAGIselRetries;
+    DEBUG(++NumDAGIselRetries);
     while (1) {
       if (MatchScopes.empty()) {
         CannotYetSelect(NodeToMatch);

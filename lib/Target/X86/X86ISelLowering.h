@@ -234,11 +234,8 @@ namespace llvm {
       // EH_SJLJ_LONGJMP - SjLj exception handling longjmp.
       EH_SJLJ_LONGJMP,
 
-      /// TC_RETURN - Tail call return.
-      ///   operand #0 chain
-      ///   operand #1 callee (register or absolute)
-      ///   operand #2 stack adjustment
-      ///   operand #3 optional in flag
+      /// TC_RETURN - Tail call return. See X86TargetLowering::LowerCall for
+      /// the list of operands.
       TC_RETURN,
 
       // VZEXT_MOVL - Vector move low and zero extend.
@@ -474,7 +471,7 @@ namespace llvm {
 
     virtual unsigned getJumpTableEncoding() const;
 
-    virtual MVT getShiftAmountTy(EVT LHSTy) const { return MVT::i8; }
+    virtual MVT getScalarShiftAmountTy(EVT LHSTy) const { return MVT::i8; }
 
     virtual const MCExpr *
     LowerCustomJumpTableEntry(const MachineJumpTableInfo *MJTI,

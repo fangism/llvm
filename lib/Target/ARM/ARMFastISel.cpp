@@ -2458,7 +2458,6 @@ bool ARMFastISel::ARMTryEmitSmallMemCpy(Address Dest, Address Src,
       if (Len >= 2 && Alignment == 2)
         VT = MVT::i16;
       else {
-        assert (Alignment == 1 && "Expected an alignment of 1!");
         VT = MVT::i8;
       }
     }
@@ -2923,6 +2922,7 @@ bool ARMFastISel::FastLowerArguments() {
       return false;
 
     EVT ArgVT = TLI.getValueType(ArgTy);
+    if (!ArgVT.isSimple()) return false;
     switch (ArgVT.getSimpleVT().SimpleTy) {
     case MVT::i8:
     case MVT::i16:

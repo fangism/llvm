@@ -146,7 +146,7 @@ public:
   }
   static void Profile(FoldingSetNodeID &ID, StringRef Kind, StringRef Values) {
     ID.AddString(Kind);
-    ID.AddString(Values);
+    if (!Values.empty()) ID.AddString(Values);
   }
 
   // FIXME: Remove this!
@@ -170,7 +170,11 @@ public:
   static AttributeSetNode *get(LLVMContext &C, ArrayRef<Attribute> Attrs);
 
   bool hasAttribute(Attribute::AttrKind Kind) const;
+  bool hasAttribute(StringRef Kind) const;
   bool hasAttributes() const { return !AttrList.empty(); }
+
+  Attribute getAttribute(Attribute::AttrKind Kind) const;
+  Attribute getAttribute(StringRef Kind) const;
 
   unsigned getAlignment() const;
   unsigned getStackAlignment() const;

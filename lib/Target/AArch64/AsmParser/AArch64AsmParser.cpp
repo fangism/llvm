@@ -6,6 +6,11 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+//
+// This file contains the (GNU-style) assembly parser for the AArch64
+// architecture.
+//
+//===----------------------------------------------------------------------===//
 
 
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
@@ -1150,7 +1155,7 @@ AArch64AsmParser::ParseImmediate(const MCExpr *&ExprVal) {
       return ResTy;
 
     const MCExpr *SubExprVal;
-    if (getParser().ParseExpression(SubExprVal))
+    if (getParser().parseExpression(SubExprVal))
       return MatchOperand_ParseFail;
 
     ExprVal = AArch64MCExpr::Create(RefKind, SubExprVal, getContext());
@@ -1158,7 +1163,7 @@ AArch64AsmParser::ParseImmediate(const MCExpr *&ExprVal) {
   }
 
   // No weird AArch64MCExpr prefix
-  return getParser().ParseExpression(ExprVal)
+  return getParser().parseExpression(ExprVal)
     ? MatchOperand_ParseFail : MatchOperand_Success;
 }
 
@@ -1818,7 +1823,7 @@ bool AArch64AsmParser::ParseInstruction(ParseInstructionInfo &Info,
 
     if (Code == A64CC::Invalid) {
       Error(S, "invalid condition code");
-      Parser.EatToEndOfStatement();
+      Parser.eatToEndOfStatement();
       return true;
     }
 
@@ -1833,7 +1838,7 @@ bool AArch64AsmParser::ParseInstruction(ParseInstructionInfo &Info,
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
     // Read the first operand.
     if (ParseOperand(Operands, Mnemonic)) {
-      Parser.EatToEndOfStatement();
+      Parser.eatToEndOfStatement();
       return true;
     }
 
@@ -1842,7 +1847,7 @@ bool AArch64AsmParser::ParseInstruction(ParseInstructionInfo &Info,
 
       // Parse and remember the operand.
       if (ParseOperand(Operands, Mnemonic)) {
-        Parser.EatToEndOfStatement();
+        Parser.eatToEndOfStatement();
         return true;
       }
 
@@ -1871,7 +1876,7 @@ bool AArch64AsmParser::ParseInstruction(ParseInstructionInfo &Info,
 
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
     SMLoc Loc = getLexer().getLoc();
-    Parser.EatToEndOfStatement();
+    Parser.eatToEndOfStatement();
     return Error(Loc, "expected comma before next operand");
   }
 
@@ -1901,7 +1906,7 @@ bool AArch64AsmParser::ParseDirectiveWord(unsigned Size, SMLoc L) {
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
     for (;;) {
       const MCExpr *Value;
-      if (getParser().ParseExpression(Value))
+      if (getParser().parseExpression(Value))
         return true;
 
       getParser().getStreamer().EmitValue(Value, Size, 0/*addrspace*/);
@@ -1924,7 +1929,7 @@ bool AArch64AsmParser::ParseDirectiveWord(unsigned Size, SMLoc L) {
 //   ::= .tlsdesccall symbol
 bool AArch64AsmParser::ParseDirectiveTLSDescCall(SMLoc L) {
   StringRef Name;
-  if (getParser().ParseIdentifier(Name))
+  if (getParser().parseIdentifier(Name))
     return Error(L, "expected symbol after directive");
 
   MCSymbol *Sym = getContext().GetOrCreateSymbol(Name);

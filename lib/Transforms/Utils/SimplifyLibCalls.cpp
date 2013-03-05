@@ -23,6 +23,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Allocator.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Transforms/Utils/BuildLibCalls.h"
 
@@ -797,8 +798,7 @@ struct StrToOpt : public LibCallOptimization {
     if (isa<ConstantPointerNull>(EndPtr)) {
       // With a null EndPtr, this function won't capture the main argument.
       // It would be readonly too, except that it still may write to errno.
-      CI->addAttribute(1, Attribute::get(Callee->getContext(),
-                                          Attribute::NoCapture));
+      CI->addAttribute(1, Attribute::NoCapture);
     }
 
     return 0;
@@ -1672,7 +1672,7 @@ class LibCallSimplifierImpl {
   const TargetLibraryInfo *TLI;
   const LibCallSimplifier *LCS;
   bool UnsafeFPShrink;
-  StringMap<LibCallOptimization*> Optimizations;
+  StringMap<LibCallOptimization*, BumpPtrAllocator> Optimizations;
 
   // Fortified library call optimizations.
   MemCpyChkOpt MemCpyChk;
@@ -1889,6 +1889,7 @@ LibCallSimplifier::~LibCallSimplifier() {
 }
 
 Value *LibCallSimplifier::optimizeCall(CallInst *CI) {
+  if (CI->hasFnAttr(Attribute::NoBuiltin)) return 0;
   return Impl->optimizeCall(CI);
 }
 

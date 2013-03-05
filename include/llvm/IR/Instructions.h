@@ -91,7 +91,7 @@ public:
   /// getType - Overload to return most specific pointer type
   ///
   PointerType *getType() const {
-    return reinterpret_cast<PointerType*>(Instruction::getType());
+    return cast<PointerType>(Instruction::getType());
   }
 
   /// getAllocatedType - Return the type that is being allocated by the
@@ -762,9 +762,9 @@ public:
   /// Transparently provide more efficient getOperand methods.
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
 
-  // getType - Overload to return most specific pointer type...
-  PointerType *getType() const {
-    return reinterpret_cast<PointerType*>(Instruction::getType());
+  // getType - Overload to return most specific sequential type.
+  SequentialType *getType() const {
+    return cast<SequentialType>(Instruction::getType());
   }
 
   /// \brief Returns the address space of this instruction's pointer type.
@@ -1272,7 +1272,7 @@ public:
   void setAttributes(const AttributeSet &Attrs) { AttributeList = Attrs; }
 
   /// addAttribute - adds the attribute to the list of attributes.
-  void addAttribute(unsigned i, Attribute attr);
+  void addAttribute(unsigned i, Attribute::AttrKind attr);
 
   /// removeAttribute - removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute attr);
@@ -1291,8 +1291,7 @@ public:
   /// \brief Return true if the call should not be inlined.
   bool isNoInline() const { return hasFnAttr(Attribute::NoInline); }
   void setIsNoInline() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::NoInline));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::NoInline);
   }
 
   /// \brief Return true if the call can return twice
@@ -1300,8 +1299,7 @@ public:
     return hasFnAttr(Attribute::ReturnsTwice);
   }
   void setCanReturnTwice() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::ReturnsTwice));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::ReturnsTwice);
   }
 
   /// \brief Determine if the call does not access memory.
@@ -1309,8 +1307,7 @@ public:
     return hasFnAttr(Attribute::ReadNone);
   }
   void setDoesNotAccessMemory() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::ReadNone));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::ReadNone);
   }
 
   /// \brief Determine if the call does not access or only reads memory.
@@ -1318,29 +1315,25 @@ public:
     return doesNotAccessMemory() || hasFnAttr(Attribute::ReadOnly);
   }
   void setOnlyReadsMemory() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::ReadOnly));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::ReadOnly);
   }
 
   /// \brief Determine if the call cannot return.
   bool doesNotReturn() const { return hasFnAttr(Attribute::NoReturn); }
   void setDoesNotReturn() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::NoReturn));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::NoReturn);
   }
 
   /// \brief Determine if the call cannot unwind.
   bool doesNotThrow() const { return hasFnAttr(Attribute::NoUnwind); }
   void setDoesNotThrow() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::NoUnwind));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::NoUnwind);
   }
 
   /// \brief Determine if the call cannot be duplicated.
   bool cannotDuplicate() const {return hasFnAttr(Attribute::NoDuplicate); }
   void setCannotDuplicate() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::NoDuplicate));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::NoDuplicate);
   }
 
   /// \brief Determine if the call returns a structure through first
@@ -1570,7 +1563,7 @@ public:
   const Value *getIndexOperand() const { return Op<1>(); }
 
   VectorType *getVectorOperandType() const {
-    return reinterpret_cast<VectorType*>(getVectorOperand()->getType());
+    return cast<VectorType>(getVectorOperand()->getType());
   }
 
 
@@ -1629,7 +1622,7 @@ public:
   /// getType - Overload to return most specific vector type.
   ///
   VectorType *getType() const {
-    return reinterpret_cast<VectorType*>(Instruction::getType());
+    return cast<VectorType>(Instruction::getType());
   }
 
   /// Transparently provide more efficient getOperand methods.
@@ -1681,14 +1674,14 @@ public:
   /// getType - Overload to return most specific vector type.
   ///
   VectorType *getType() const {
-    return reinterpret_cast<VectorType*>(Instruction::getType());
+    return cast<VectorType>(Instruction::getType());
   }
 
   /// Transparently provide more efficient getOperand methods.
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
 
   Constant *getMask() const {
-    return reinterpret_cast<Constant*>(getOperand(2));
+    return cast<Constant>(getOperand(2));
   }
   
   /// getMaskValue - Return the index from the shuffle mask for the specified
@@ -3025,7 +3018,7 @@ public:
   void setAttributes(const AttributeSet &Attrs) { AttributeList = Attrs; }
 
   /// addAttribute - adds the attribute to the list of attributes.
-  void addAttribute(unsigned i, Attribute attr);
+  void addAttribute(unsigned i, Attribute::AttrKind attr);
 
   /// removeAttribute - removes the attribute from the list of attributes.
   void removeAttribute(unsigned i, Attribute attr);
@@ -3044,8 +3037,7 @@ public:
   /// \brief Return true if the call should not be inlined.
   bool isNoInline() const { return hasFnAttr(Attribute::NoInline); }
   void setIsNoInline() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::NoInline));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::NoInline);
   }
 
   /// \brief Determine if the call does not access memory.
@@ -3053,8 +3045,7 @@ public:
     return hasFnAttr(Attribute::ReadNone);
   }
   void setDoesNotAccessMemory() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::ReadNone));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::ReadNone);
   }
 
   /// \brief Determine if the call does not access or only reads memory.
@@ -3062,22 +3053,19 @@ public:
     return doesNotAccessMemory() || hasFnAttr(Attribute::ReadOnly);
   }
   void setOnlyReadsMemory() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::ReadOnly));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::ReadOnly);
   }
 
   /// \brief Determine if the call cannot return.
   bool doesNotReturn() const { return hasFnAttr(Attribute::NoReturn); }
   void setDoesNotReturn() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::NoReturn));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::NoReturn);
   }
 
   /// \brief Determine if the call cannot unwind.
   bool doesNotThrow() const { return hasFnAttr(Attribute::NoUnwind); }
   void setDoesNotThrow() {
-    addAttribute(AttributeSet::FunctionIndex,
-                 Attribute::get(getContext(), Attribute::NoUnwind));
+    addAttribute(AttributeSet::FunctionIndex, Attribute::NoUnwind);
   }
 
   /// \brief Determine if the call returns a structure through first

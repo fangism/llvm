@@ -21,6 +21,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
 
@@ -131,7 +132,6 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
 
 bool Mips16InstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
   MachineBasicBlock &MBB = *MI->getParent();
-
   switch(MI->getDesc().getOpcode()) {
   default:
     return false;
@@ -184,7 +184,7 @@ void Mips16InstrInfo::makeFrame(unsigned SP, int64_t FrameSize,
       int64_t Remainder = FrameSize - Base;
       BuildMI(MBB, I, DL, get(Mips::SaveRaF16)). addImm(Base);
       if (isInt<16>(-Remainder))
-        BuildMI(MBB, I, DL, get(Mips::AddiuSpImmX16)). addImm(-Remainder);
+        BuildAddiuSpImm(MBB, I, -Remainder);
       else
         adjustStackPtrBig(SP, -Remainder, MBB, I, Mips::V0, Mips::V1);
     }
@@ -225,7 +225,7 @@ void Mips16InstrInfo::restoreFrame(unsigned SP, int64_t FrameSize,
                        // returns largest possible n bit unsigned integer
       int64_t Remainder = FrameSize - Base;
       if (isInt<16>(Remainder))
-        BuildMI(MBB, I, DL, get(Mips::AddiuSpImmX16)). addImm(Remainder);
+        BuildAddiuSpImm(MBB, I, Remainder);
       else
         adjustStackPtrBig(SP, Remainder, MBB, I, Mips::A0, Mips::A1);
       BuildMI(MBB, I, DL, get(Mips::RestoreRaF16)). addImm(Base);
@@ -297,9 +297,8 @@ void Mips16InstrInfo::adjustStackPtrBigUnrestricted(unsigned SP, int64_t Amount,
 void Mips16InstrInfo::adjustStackPtr(unsigned SP, int64_t Amount,
                                      MachineBasicBlock &MBB,
                                      MachineBasicBlock::iterator I) const {
-  DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
   if (isInt<16>(Amount))  // need to change to addiu sp, ....and isInt<16>
-    BuildMI(MBB, I, DL, get(Mips::AddiuSpImmX16)). addImm(Amount);
+    BuildAddiuSpImm(MBB, I, Amount);
   else
     adjustStackPtrBigUnrestricted(SP, Amount, MBB, I);
 }
@@ -398,6 +397,20 @@ void Mips16InstrInfo::ExpandRetRA16(MachineBasicBlock &MBB,
                                   MachineBasicBlock::iterator I,
                                   unsigned Opc) const {
   BuildMI(MBB, I, I->getDebugLoc(), get(Opc));
+}
+
+
+const MCInstrDesc &Mips16InstrInfo::AddiuSpImm(int64_t Imm) const {
+  if (validSpImm8(Imm))
+    return get(Mips::AddiuSpImm16);
+  else
+    return get(Mips::AddiuSpImmX16);
+}
+
+void Mips16InstrInfo::BuildAddiuSpImm
+  (MachineBasicBlock &MBB, MachineBasicBlock::iterator I, int64_t Imm) const {
+  DebugLoc DL = I != MBB.end() ? I->getDebugLoc() : DebugLoc();
+  BuildMI(MBB, I, DL, AddiuSpImm(Imm)).addImm(Imm);
 }
 
 const MipsInstrInfo *llvm::createMips16InstrInfo(MipsTargetMachine &TM) {

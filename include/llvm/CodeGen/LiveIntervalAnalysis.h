@@ -218,7 +218,7 @@ namespace llvm {
       Indexes->insertMBBInMaps(MBB);
       assert(unsigned(MBB->getNumber()) == RegMaskBlocks.size() &&
              "Blocks must be added in order.");
-      RegMaskBlocks.push_back(std::make_pair(MBB->getNumber(), 0));
+      RegMaskBlocks.push_back(std::make_pair(RegMaskSlots.size(), 0));
     }
 
     SlotIndex InsertMachineInstrInMaps(MachineInstr *MI) {
@@ -280,6 +280,21 @@ namespace llvm {
     /// instruction in the Bundle.
     void handleMoveIntoBundle(MachineInstr* MI, MachineInstr* BundleStart,
                               bool UpdateFlags = false);
+
+    /// repairIntervalsInRange - Update live intervals for instructions in a
+    /// range of iterators. It is intended for use after target hooks that may
+    /// insert or remove instructions, and is only efficient for a small number
+    /// of instructions.
+    ///
+    /// OrigRegs is a vector of registers that were originally used by the
+    /// instructions in the range between the two iterators.
+    ///
+    /// Currently, the only only changes that are supported are simple removal
+    /// and addition of uses.
+    void repairIntervalsInRange(MachineBasicBlock *MBB,
+                                MachineBasicBlock::iterator Begin,
+                                MachineBasicBlock::iterator End,
+                                ArrayRef<unsigned> OrigRegs);
 
     // Register mask functions.
     //
