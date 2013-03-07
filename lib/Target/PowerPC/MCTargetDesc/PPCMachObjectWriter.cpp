@@ -474,6 +474,12 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
     }
 #endif
 
+    uint32_t other_half = 0;
+    switch (Type) {
+    case macho::RIT_PPC_HA16_SECTDIFF: other_half = FixedValue; break;
+    default: break;
+    }
+
     STACKTRACE_INDENT_PRINT("scattered relocation entry, part 1" << endl);
     macho::RelocationEntry MRE;
 #if 0
@@ -487,7 +493,9 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
     STACKTRACE_INDENT_PRINT("MRE.Word1 = 0x" << std::hex << MRE.Word1 << endl);
 #else
     makeScatteredRelocationInfo(MRE,
-	0, macho::RIT_PPC_PAIR, Log2Size, IsPCRel, Value2);
+//	0,
+	other_half,		// guessing by trial and error...
+	macho::RIT_PPC_PAIR, Log2Size, IsPCRel, Value2);
 #endif
     Writer->addRelocation(Fragment->getParent(), MRE);
 #if 1
