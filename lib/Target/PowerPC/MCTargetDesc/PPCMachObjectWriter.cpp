@@ -453,9 +453,7 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
       Type == macho::RIT_PPC_LO16_SECTDIFF ||
       Type == macho::RIT_PPC_HA16_SECTDIFF ||
       Type == macho::RIT_PPC_LO14_SECTDIFF ||
-      Type == macho::RIT_PPC_LOCAL_SECTDIFF
-//      Type == macho::RIT_PPC_LOCAL_SECTDIFF
-	)
+      Type == macho::RIT_PPC_LOCAL_SECTDIFF)
 //  if (Type == macho::RIT_Difference ||
 //      Type == macho::RIT_Generic_LocalDifference)
   {
@@ -595,7 +593,8 @@ if (0) {
   STACKTRACE_INDENT_PRINT("FixupOffset = 0x" << std::hex << FixupOffset << endl);
   unsigned Index = 0;
   unsigned IsExtern = 0;
-  unsigned Type = 0;
+//  unsigned Type = 0;
+  unsigned Type = RelocType;
 
 #if ENABLE_STACKTRACE
   MCSectionData* FragmentParent = Fragment->getParent();
@@ -612,7 +611,7 @@ if (0) {
     report_fatal_error("FIXME: relocations to absolute targets "
                        "not yet implemented");
     // the above line stolen from ARM, not sure
-    Type = macho::RIT_PPC_VANILLA;
+//    Type = macho::RIT_PPC_VANILLA;
   } else {
     STACKTRACE_INDENT_PRINT("target is relative" << endl);
     // Resolve constant variables.
@@ -651,7 +650,7 @@ if (0) {
     STACKTRACE_INDENT_PRINT("Index = " << Index << endl);
     STACKTRACE_INDENT_PRINT("fixed address = 0x" << FixedValue << endl);
 
-    Type = macho::RIT_PPC_VANILLA;
+//    Type = macho::RIT_PPC_VANILLA;
   }
 
   // struct relocation_info (8 bytes)
