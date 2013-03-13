@@ -97,7 +97,7 @@ _e:
 // CHECK:   ('nsyms', 6)
 // CHECK:   ('stroff', 516)
 // CHECK:   ('strsize', 20)
-// CHECK:   ('_string_data', '\x00_d\x00_a\x00_b\x00_c\x00_e\x00_f\x00\x00')
+// CHECK:   ('_string_data', '\x00_a\x00_d\x00_b\x00_c\x00_e\x00_f\x00\x00')
 // CHECK:   ('_symbols', [
 // CHECK:     # Symbol 0
 // CHECK:    (('n_strx', 7)
@@ -132,7 +132,7 @@ _e:
 // CHECK:     ('_string', '_f')
 // CHECK:    ),
 // CHECK:     # Symbol 4
-// CHECK:    (('n_strx', 4)
+// CHECK:    (('n_strx', 1)
 // CHECK:     ('n_type', 0x1)
 // CHECK:     ('n_sect', 0)
 // CHECK:     ('n_desc', 1)
@@ -140,7 +140,7 @@ _e:
 // CHECK:     ('_string', '_a')
 // CHECK:    ),
 // CHECK:     # Symbol 5
-// CHECK:    (('n_strx', 1)
+// CHECK:    (('n_strx', 4)
 // CHECK:     ('n_type', 0x1)
 // CHECK:     ('n_sect', 0)
 // CHECK:     ('n_desc', 0)
