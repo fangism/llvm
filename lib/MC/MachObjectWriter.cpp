@@ -428,6 +428,7 @@ void MachObjectWriter::BindIndirectSymbols(MCAssembler &Asm) {
   //
   // FIXME: Revisit this when the dust settles.
 
+#if !ORDER_INDIRECT_SYMBOLS_BY_SECTION
   // Bind non lazy symbol pointers first.
   unsigned IndirectIndex = 0;
   for (MCAssembler::indirect_symbol_iterator it = Asm.indirect_symbol_begin(),
@@ -466,6 +467,43 @@ void MachObjectWriter::BindIndirectSymbols(MCAssembler &Asm) {
     if (Created)
       Entry.setFlags(Entry.getFlags() | 0x0001);
   }
+#else // ORDER_INDIRECT_SYMBOLS_BY_SECTION
+  unsigned offset = 0;	// running total of indirect symbol index offset
+  const MCAssembler::IndirectSymbolSection_set_type&
+    ISS(Asm.getIndirectSymbolSections());
+  const MCAssembler::IndirectSymbol_map_type&
+    ISyms(Asm.getIndirectSymbols());
+  MCAssembler::IndirectSymbolSection_set_type::const_iterator
+	i(ISS.begin()), e(ISS.end());
+  for ( ; i!=e; ++i) {
+    const MCAssembler::IndirectSymbol_list_type& b(ISyms.find(*i)->second);
+    MCAssembler::IndirectSymbol_list_type::const_iterator
+      bi(b.begin()), be(b.end());
+    const MCSectionMachO& Section(cast<MCSectionMachO>((*i)->getSection()));
+    switch (Section.getType()) {
+    default: break;
+    case MCSectionMachO::S_NON_LAZY_SYMBOL_POINTERS: {
+      for ( ; bi!=be; ++bi)
+        Asm.getOrCreateSymbolData(**bi);
+      break;
+    }
+    case MCSectionMachO::S_LAZY_SYMBOL_POINTERS: // fall-through
+    case MCSectionMachO::S_SYMBOL_STUBS: {
+      for ( ; bi!=be; ++bi) {
+    // Set the symbol type to undefined lazy, but only on construction.
+    // FIXME: Do not hardcode.
+        bool Created;
+        MCSymbolData &Entry(Asm.getOrCreateSymbolData(**bi, &Created));
+        if (Created)
+          Entry.setFlags(Entry.getFlags() | 0x0001);
+      }	// end for
+      break;
+    }
+    }	// end switch(sectionType)
+    IndirectSymBase.insert(std::make_pair(*i, offset));
+    offset += b.size();
+  }
+#endif
 }
 
 /// ComputeSymbolTable - Compute the symbol table data
@@ -895,26 +933,47 @@ void MachObjectWriter::WriteObject(MCAssembler &Asm,
   // Write the symbol table data, if used.
   if (NumSymbols) {
     // Write the indirect symbol entries.
+#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
+    const MCAssembler::IndirectSymbol_map_type&
+      m(Asm.getIndirectSymbols());
+    const MCAssembler::IndirectSymbolSection_set_type&
+      ss(Asm.getIndirectSymbolSections());
+    for (MCAssembler::IndirectSymbolSection_set_type::const_iterator
+           si(ss.begin()), se(ss.end()); si != se; ++si) {
+      const MCAssembler::IndirectSymbol_list_type& l(m.find(*si)->second);
+      for (MCAssembler::IndirectSymbol_list_type::const_iterator
+           it(l.begin()), ie(l.end()); it != ie; ++it)
+#else
     for (MCAssembler::const_indirect_symbol_iterator
            it = Asm.indirect_symbol_begin(),
-           ie = Asm.indirect_symbol_end(); it != ie; ++it) {
+           ie = Asm.indirect_symbol_end(); it != ie; ++it)
+#endif
+    {
       // Indirect symbols in the non lazy symbol pointer section have some
       // special handling.
       const MCSectionMachO &Section =
+#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
+        static_cast<const MCSectionMachO&>((*si)->getSection());
+        const MCSymbol* Sym = *it;
+#else
         static_cast<const MCSectionMachO&>(it->SectionData->getSection());
+        const MCSymbol* Sym = it->Symbol;
+#endif
       if (Section.getType() == MCSectionMachO::S_NON_LAZY_SYMBOL_POINTERS) {
         // If this symbol is defined and internal, mark it as such.
-        if (it->Symbol->isDefined() &&
-            !Asm.getSymbolData(*it->Symbol).isExternal()) {
+        if (Sym->isDefined() &&
+            !Asm.getSymbolData(*Sym).isExternal()) {
           uint32_t Flags = macho::ISF_Local;
-          if (it->Symbol->isAbsolute())
+          if (Sym->isAbsolute())
             Flags |= macho::ISF_Absolute;
           Write32(Flags);
           continue;
         }
       }
-
-      Write32(Asm.getSymbolData(*it->Symbol).getIndex());
+      Write32(Asm.getSymbolData(*Sym).getIndex());
+#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
+      }
+#endif
     }
 
     // FIXME: Check that offsets match computed ones.

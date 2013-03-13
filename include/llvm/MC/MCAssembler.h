@@ -19,6 +19,15 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/DataTypes.h"
+/**
+	Mach-O needs indirect symbols grouped by section.
+	Goal: 1
+ */
+#define	ORDER_INDIRECT_SYMBOLS_BY_SECTION	1
+#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
+#include "llvm/ADT/SetVector.h"
+#endif
+
 #include <vector> // FIXME: Shouldn't be needed.
 
 namespace llvm {
@@ -122,7 +131,7 @@ public:
   virtual void setBundlePadding(uint8_t N) {
   }
 
-  void dump();
+  void dump() const;
 };
 
 /// Interface implemented by fragments that contain encoded instructions and/or
@@ -653,7 +662,7 @@ public:
     BundleGroupBeforeFirstInst = IsFirst;
   }
 
-  void dump();
+  void dump() const;
 
   /// @}
 };
@@ -778,14 +787,16 @@ public:
 
   /// @}
 
-  void dump();
+  void dump() const;
 };
 
+#if !ORDER_INDIRECT_SYMBOLS_BY_SECTION
 // FIXME: This really doesn't belong here. See comments below.
 struct IndirectSymbolData {
   MCSymbol *Symbol;
   MCSectionData *SectionData;
 };
+#endif
 
 // FIXME: Ditto this. Purely so the Streamer and the ObjectWriter can talk
 // to one another.
@@ -810,9 +821,11 @@ public:
   typedef SymbolDataListType::const_iterator const_symbol_iterator;
   typedef SymbolDataListType::iterator symbol_iterator;
 
+#if !ORDER_INDIRECT_SYMBOLS_BY_SECTION
   typedef std::vector<IndirectSymbolData>::const_iterator
     const_indirect_symbol_iterator;
   typedef std::vector<IndirectSymbolData>::iterator indirect_symbol_iterator;
+#endif
 
   typedef std::vector<DataRegionData>::const_iterator
     const_data_region_iterator;
@@ -846,7 +859,19 @@ private:
   // FIXME: Avoid this indirection?
   DenseMap<const MCSymbol*, MCSymbolData*> SymbolMap;
 
+#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
+public:
+  typedef std::vector<const MCSymbol*>	IndirectSymbol_list_type;
+  typedef DenseMap<const MCSectionData*, IndirectSymbol_list_type>
+						IndirectSymbol_map_type;
+  // in order of appearance
+  typedef SetVector<const MCSectionData*>	IndirectSymbolSection_set_type;
+private:
+  IndirectSymbol_map_type		IndirectSymbols;
+  IndirectSymbolSection_set_type	IndirectSymbolSections;
+#else
   std::vector<IndirectSymbolData> IndirectSymbols;
+#endif
 
   std::vector<DataRegionData> DataRegions;
 
@@ -1050,6 +1075,25 @@ public:
   /// @name Indirect Symbol List Access
   /// @{
 
+#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
+  const IndirectSymbol_map_type& getIndirectSymbols(void) const {
+    return IndirectSymbols;
+  }
+
+  const IndirectSymbolSection_set_type& getIndirectSymbolSections(void) const {
+    return IndirectSymbolSections;
+  }
+
+  void
+  push_indirect_symbol(const MCSectionData* s, const MCSymbol* d) {
+    // track indirect symbols by section,
+    // and their sections by order of appearance
+    IndirectSymbolSections.insert(s);
+    IndirectSymbols[s].push_back(d);
+  }
+
+  size_t indirect_symbol_size(void) const;	// accumulate size over buckets
+#else
   // FIXME: This is a total hack, this should not be here. Once things are
   // factored so that the streamer has direct access to the .o writer, it can
   // disappear.
@@ -1072,6 +1116,8 @@ public:
   }
 
   size_t indirect_symbol_size() const { return IndirectSymbols.size(); }
+#endif
+
 
   /// @}
   /// @name Linker Option List Access
@@ -1148,7 +1194,7 @@ public:
 
   /// @}
 
-  void dump();
+  void dump() const;
 };
 
 } // end namespace llvm
