@@ -1,3 +1,10 @@
+THIS IS A CLONE OF THE OFFICIAL LLVM PROJECT REPOSITORY (http://llvm.org/).
+The master branch of this repository tracks the official git mirror's master,
+and new work is done on branches, such as 'powerpc-darwin8'.
+
+powerpc-darwin8 branch status: http://www.csl.cornell.edu/~fang/sw/llvm/
+
+================================
 Low Level Virtual Machine (LLVM)
 ================================
 
