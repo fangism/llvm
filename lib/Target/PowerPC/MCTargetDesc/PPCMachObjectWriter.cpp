@@ -39,6 +39,8 @@ http://opensource.apple.com/source/cctools/cctools-809/as/ppc.c
 using namespace llvm;
 using namespace llvm::object;
 #if ENABLE_STACKTRACE
+using std::dec;
+using std::hex;
 using std::endl;
 #endif
 
@@ -319,29 +321,20 @@ makeRelocationInfo(
 	const unsigned Type) {
   STACKTRACE_BRIEF;
   MRE.Word0 = FixupOffset;
-#if 0
-// original order
-  MRE.Word1 = ((Index     <<  0) |
-               (IsPCRel   << 24) |
-               (Log2Size  << 25) |
-               (IsExtern  << 27) |
-               (Type      << 28));
-#else
-// experimenting with order (endian fishiness?)
-  MRE.Word1 = ((Index     << 8) |
-               (IsPCRel   << 7) |
-               (Log2Size  << 5) |
-               (IsExtern  << 4) |
-               (Type      << 0));
-#endif
-  STACKTRACE_INDENT_PRINT("FixupOffset: 0x" << std::hex << FixupOffset <<
-	", Index: " << std::dec << Index <<
-	", IsPCRel: " << std::dec << IsPCRel <<
+// experimenting with order (endian fishiness on PPC?)
+  MRE.Word1 = ((Index     << 8) |	// was << 0
+               (IsPCRel   << 7) |	// was << 24
+               (Log2Size  << 5) |	// was << 25
+               (IsExtern  << 4) |	// was << 27
+               (Type      << 0));	// was << 28
+  STACKTRACE_INDENT_PRINT("FixupOffset: 0x" << hex << FixupOffset <<
+	", Index: " << dec << Index <<
+	", IsPCRel: " << dec << IsPCRel <<
 	", Log2Size: " << Log2Size <<
 	", IsExtern: " << IsExtern <<
 	", Type: " << Type << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word0 = 0x" << std::hex << MRE.Word0 << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word1 = 0x" << std::hex << MRE.Word1 << endl);
+  STACKTRACE_INDENT_PRINT("MRE.Word0 = 0x" << hex << MRE.Word0 << endl);
+  STACKTRACE_INDENT_PRINT("MRE.Word1 = 0x" << hex << MRE.Word1 << endl);
 }
 
 static
@@ -362,12 +355,12 @@ makeScatteredRelocationInfo(
                (IsPCRel   << 30) |
                macho::RF_Scattered);
   MRE.Word1 = Value2;
-  STACKTRACE_INDENT_PRINT("Addr: 0x" << std::hex << Addr <<
-	", Type: " << std::dec << Type <<
+  STACKTRACE_INDENT_PRINT("Addr: 0x" << hex << Addr <<
+	", Type: " << dec << Type <<
 	", Log2Size: " << Log2Size <<
 	", IsPCRel: " << IsPCRel << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word0 = 0x" << std::hex << MRE.Word0 << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word1 = 0x" << std::hex << MRE.Word1 << endl);
+  STACKTRACE_INDENT_PRINT("MRE.Word0 = 0x" << hex << MRE.Word0 << endl);
+  STACKTRACE_INDENT_PRINT("MRE.Word1 = 0x" << hex << MRE.Word1 << endl);
 }
 
 /**
@@ -414,8 +407,8 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
 
   uint32_t Value = Writer->getSymbolAddress(A_SD, Layout);
   uint64_t SecAddr = Writer->getSectionAddress(A_SD->getFragment()->getParent());
-  STACKTRACE_INDENT_PRINT("A symbol address: 0x" << std::hex << Value << endl);
-  STACKTRACE_INDENT_PRINT("A section address: 0x" << std::hex << SecAddr << endl);
+  STACKTRACE_INDENT_PRINT("A symbol address: 0x" << hex << Value << endl);
+  STACKTRACE_INDENT_PRINT("A section address: 0x" << hex << SecAddr << endl);
   FixedValue += SecAddr;
   uint32_t Value2 = 0;
 
@@ -440,11 +433,11 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
 #endif
     // FIXME: is Type correct? see include/llvm/Object/MachOFormat.h
     Value2 = Writer->getSymbolAddress(B_SD, Layout);
-    STACKTRACE_INDENT_PRINT("B symbol address: 0x" << std::hex << Value2 << endl);
+    STACKTRACE_INDENT_PRINT("B symbol address: 0x" << hex << Value2 << endl);
     FixedValue -= Writer->getSectionAddress(B_SD->getFragment()->getParent());
   }
-  STACKTRACE_INDENT_PRINT("Type = " << std::dec << Type << endl);
-  STACKTRACE_INDENT_PRINT("FixedValue: 0x" << std::hex << FixedValue << endl);
+  STACKTRACE_INDENT_PRINT("Type = " << dec << Type << endl);
+  STACKTRACE_INDENT_PRINT("FixedValue: 0x" << hex << FixedValue << endl);
   // FIXME: does FixedValue get used??
 
   // Relocations are written out in reverse order, so the PAIR comes first.
@@ -474,29 +467,26 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
     }
 #endif
 
+    // Is this supposed to follow MCTarget/PPCAsmBackend.cpp:adjustFixupValue()?
     uint32_t other_half = 0;
     switch (Type) {
-    case macho::RIT_PPC_HA16_SECTDIFF: other_half = FixedValue; break;
-    default: break;
+    case macho::RIT_PPC_LO16_SECTDIFF:
+      other_half = (FixedValue >> 16) & 0xffff;
+      break;
+    case macho::RIT_PPC_HA16_SECTDIFF:
+      other_half = FixedValue & 0xffff;
+      break;
+    default:
+//      llvm_unreachable("Unhandled PPC scattered relocation type.");
+      break;
     }
 
     STACKTRACE_INDENT_PRINT("scattered relocation entry, part 1" << endl);
     macho::RelocationEntry MRE;
-#if 0
-    MRE.Word0 = ((0         <<  0) |
-                 (macho::RIT_PPC_PAIR  << 24) |
-                 (Log2Size  << 28) |
-                 (IsPCRel   << 30) |
-                 macho::RF_Scattered);
-    MRE.Word1 = Value2;
-    STACKTRACE_INDENT_PRINT("MRE.Word0 = 0x" << std::hex << MRE.Word0 << endl);
-    STACKTRACE_INDENT_PRINT("MRE.Word1 = 0x" << std::hex << MRE.Word1 << endl);
-#else
     makeScatteredRelocationInfo(MRE,
 //	0,
 	other_half,		// guessing by trial and error...
 	macho::RIT_PPC_PAIR, Log2Size, IsPCRel, Value2);
-#endif
     Writer->addRelocation(Fragment->getParent(), MRE);
 #if 1
   } else {
@@ -513,19 +503,8 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
   }
   STACKTRACE_INDENT_PRINT("scattered relocation entry" << endl);
   macho::RelocationEntry MRE;
-#if 0
-  MRE.Word0 = ((FixupOffset <<  0) |
-               (Type        << 24) |
-               (Log2Size    << 28) |
-               (IsPCRel     << 30) |
-               macho::RF_Scattered);
-  MRE.Word1 = Value;
-  STACKTRACE_INDENT_PRINT("MRE.Word0 = 0x" << std::hex << MRE.Word0 << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word1 = 0x" << std::hex << MRE.Word1 << endl);
-#else
   makeScatteredRelocationInfo(MRE,
 	FixupOffset, Type, Log2Size, IsPCRel, Value);
-#endif
   Writer->addRelocation(Fragment->getParent(), MRE);
   return true;
 }
@@ -540,7 +519,7 @@ void PPCMachObjectWriter::RecordPPCRelocation(MachObjectWriter *Writer,
                                               uint64_t &FixedValue) {
   STACKTRACE_VERBOSE;
   const MCFixupKind FK = Fixup.getKind();	// unsigned
-  STACKTRACE_INDENT_PRINT("FK = " << std::dec << FK << endl);
+  STACKTRACE_INDENT_PRINT("FK = " << dec << FK << endl);
   const unsigned Log2Size = getFixupKindLog2Size(FK);
   STACKTRACE_INDENT_PRINT("Log2Size = " << Log2Size << endl);
   const bool IsPCRel = Writer->isFixupKindPCRel(Asm, FK);
@@ -583,10 +562,10 @@ if (0) {
   // If this is an internal relocation with an offset, it also needs a scattered
   // relocation entry.
   uint32_t Offset = Target.getConstant();
-  STACKTRACE_INDENT_PRINT("Target.getConstant(): " << std::hex << Offset << endl);
+  STACKTRACE_INDENT_PRINT("Target.getConstant(): " << hex << Offset << endl);
   if (IsPCRel)
     Offset += 1 << Log2Size;
-  STACKTRACE_INDENT_PRINT("Offset: 0x" << std::hex << Offset << endl);
+  STACKTRACE_INDENT_PRINT("Offset: 0x" << hex << Offset << endl);
   // Try to record the scattered relocation if needed. Fall back to non
   // scattered if necessary (see comments in RecordScatteredRelocation()
   // for details).
@@ -598,7 +577,7 @@ if (0) {
 
   // See <reloc.h>.
   const uint32_t FixupOffset = Layout.getFragmentOffset(Fragment)+Fixup.getOffset();
-  STACKTRACE_INDENT_PRINT("FixupOffset = 0x" << std::hex << FixupOffset << endl);
+  STACKTRACE_INDENT_PRINT("FixupOffset = 0x" << hex << FixupOffset << endl);
   unsigned Index = 0;
   unsigned IsExtern = 0;
 //  unsigned Type = 0;
@@ -630,7 +609,7 @@ if (0) {
             Res, Layout, Writer->getSectionAddressMap())) {
         FixedValue = Res;
         STACKTRACE_INDENT_PRINT("evaluated FixedValue = 0x" <<
-		std::hex << FixedValue << endl);
+		hex << FixedValue << endl);
         return;
       }
     }
@@ -663,17 +642,8 @@ if (0) {
 
   // struct relocation_info (8 bytes)
   macho::RelocationEntry MRE;
-#if 0
-  MRE.Word0 = FixupOffset;
-  MRE.Word1 = ((Index     <<  0) |
-               (IsPCRel   << 24) |
-               (Log2Size  << 25) |
-               (IsExtern  << 27) |
-               (Type      << 28));
-#else
   makeRelocationInfo(MRE,
 	FixupOffset, Index, IsPCRel, Log2Size, IsExtern, Type);
-#endif
   Writer->addRelocation(Fragment->getParent(), MRE);
 }
 
