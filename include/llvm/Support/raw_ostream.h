@@ -191,6 +191,11 @@ public:
 
   raw_ostream &operator<<(double N);
 
+  /// basic manipulator, unary function
+  raw_ostream& operator<<(raw_ostream& (*pf)(raw_ostream&)) {
+    return (*pf)(*this);
+  }
+
   /// write_hex - Output \p N in hexadecimal, without any prefix or padding.
   raw_ostream &write_hex(unsigned long long N);
 
@@ -431,6 +436,14 @@ raw_ostream &errs();
 /// nulls() - This returns a reference to a raw_ostream which simply discards
 /// output.
 raw_ostream &nulls();
+
+/// manipulator functions
+inline
+raw_ostream& endl(raw_ostream& o) {
+  o << '\n';
+  o.flush();
+  return o;
+}
 
 //===----------------------------------------------------------------------===//
 // Output Stream Adaptors

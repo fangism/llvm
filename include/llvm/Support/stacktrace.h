@@ -18,7 +18,16 @@
 #endif
 
 #include <cassert>
+
+/**
+	LLVM+friends only:
+	Define to 1 to use llvm::raw_ostream instead of std::ostream.
+	Rationale: be independent from system's libstdc++ iostream
+ */
+#define	ST_USE_RAW_OSTREAM		1
+#if !ST_USE_RAW_OSTREAM
 #include <iosfwd>		// needed for std::ostream forward declaration
+#endif
 
 //=============================================================================
 // This is the macro interface intended for the programmer.  
@@ -142,10 +151,21 @@
 #include <list>
 #include <stack>	// needed
 
+#if ST_USE_RAW_OSTREAM
+namespace llvm {
+class raw_ostream;	// from "Support/raw_ostream.h"
+}
+#endif
+
 namespace util {
 using std::list;
 using std::string;
 using std::stack;
+#if ST_USE_RAW_OSTREAM
+typedef	llvm::raw_ostream	st_ostream_type;
+#else
+typedef	std::ostream		st_ostream_type;
+#endif
 
 //=============================================================================
 /**
@@ -163,7 +183,7 @@ public:
 	/// the type of stack used to track on/off mode
 	typedef stack<int>			stack_echo_type;
 	/// the type of stack used to track stream redirections
-	typedef stack<std::ostream*>		stack_streams_type;
+	typedef stack<st_ostream_type*>		stack_streams_type;
 
 public:
 	class manager;
@@ -177,7 +197,7 @@ public:
 	~stacktrace();
 public:
 	static
-	std::ostream&
+	st_ostream_type&
 	stream(void);
 
 	/**
@@ -213,8 +233,8 @@ private:
 //-----------------------------------------------------------------------------
 extern const stacktrace::indent	stacktrace_auto_indent;
 
-std::ostream&
-operator << (std::ostream&, const stacktrace::indent&);
+st_ostream_type&
+operator << (st_ostream_type&, const stacktrace::indent&);
 
 //-----------------------------------------------------------------------------
 /**
@@ -233,7 +253,7 @@ struct stacktrace::echo {
 	Lasts for the duration of the scope where this is called.  
  */
 struct stacktrace::redirect {
-	redirect(std::ostream&);
+	redirect(st_ostream_type&);
 	~redirect();
 } __ATTRIBUTE_UNUSED__ ;	// end struct redirect
 
