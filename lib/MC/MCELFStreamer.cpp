@@ -133,15 +133,10 @@ void MCELFStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
   if (Attribute == MCSA_IndirectSymbol) {
     // Note that we intentionally cannot use the symbol data here; this is
     // important for matching the string table that 'as' generates.
-#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
-    // symbols grouped by section
-    getAssembler().push_indirect_symbol(getCurrentSectionData(), Symbol);
-#else
     IndirectSymbolData ISD;
     ISD.Symbol = Symbol;
     ISD.SectionData = getCurrentSectionData();
     getAssembler().getIndirectSymbols().push_back(ISD);
-#endif
     return;
   }
 

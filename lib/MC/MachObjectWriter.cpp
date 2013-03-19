@@ -468,17 +468,20 @@ void MachObjectWriter::BindIndirectSymbols(MCAssembler &Asm) {
       Entry.setFlags(Entry.getFlags() | 0x0001);
   }
 #else // ORDER_INDIRECT_SYMBOLS_BY_SECTION
+  // sort indirect symbols by section
+  for (MCAssembler::indirect_symbol_iterator it = Asm.indirect_symbol_begin(),
+         ie = Asm.indirect_symbol_end(); it != ie; ++it) {
+    // track their sections by order of appearance
+    IndirectSymbolSections.insert(it->SectionData);
+    IndirectSymbolMap[it->SectionData].push_back(it->Symbol);
+  }
+  // process indirect symbols by section
   unsigned offset = 0;	// running total of indirect symbol index offset
-  const MCAssembler::IndirectSymbolSection_set_type&
-    ISS(Asm.getIndirectSymbolSections());
-  const MCAssembler::IndirectSymbol_map_type&
-    ISyms(Asm.getIndirectSymbols());
-  MCAssembler::IndirectSymbolSection_set_type::const_iterator
-	i(ISS.begin()), e(ISS.end());
+  IndirectSymbolSection_set_type::const_iterator
+	i(IndirectSymbolSections.begin()), e(IndirectSymbolSections.end());
   for ( ; i!=e; ++i) {
-    const MCAssembler::IndirectSymbol_list_type& b(ISyms.find(*i)->second);
-    MCAssembler::IndirectSymbol_list_type::const_iterator
-      bi(b.begin()), be(b.end());
+    const IndirectSymbol_list_type& b(IndirectSymbolMap.find(*i)->second);
+    IndirectSymbol_list_type::const_iterator bi(b.begin()), be(b.end());
     const MCSectionMachO& Section(cast<MCSectionMachO>((*i)->getSection()));
     switch (Section.getType()) {
     default: break;
@@ -503,7 +506,7 @@ void MachObjectWriter::BindIndirectSymbols(MCAssembler &Asm) {
     IndirectSymBase.insert(std::make_pair(*i, offset));
     offset += b.size();
   }
-#endif
+#endif	// ORDER_INDIRECT_SYMBOLS_BY_SECTION
 }
 
 /// ComputeSymbolTable - Compute the symbol table data
@@ -934,14 +937,11 @@ void MachObjectWriter::WriteObject(MCAssembler &Asm,
   if (NumSymbols) {
     // Write the indirect symbol entries.
 #if ORDER_INDIRECT_SYMBOLS_BY_SECTION
-    const MCAssembler::IndirectSymbol_map_type&
-      m(Asm.getIndirectSymbols());
-    const MCAssembler::IndirectSymbolSection_set_type&
-      ss(Asm.getIndirectSymbolSections());
-    for (MCAssembler::IndirectSymbolSection_set_type::const_iterator
-           si(ss.begin()), se(ss.end()); si != se; ++si) {
-      const MCAssembler::IndirectSymbol_list_type& l(m.find(*si)->second);
-      for (MCAssembler::IndirectSymbol_list_type::const_iterator
+    for (IndirectSymbolSection_set_type::const_iterator
+           si(IndirectSymbolSections.begin()), se(IndirectSymbolSections.end());
+           si != se; ++si) {
+      const IndirectSymbol_list_type& l(IndirectSymbolMap.find(*si)->second);
+      for (IndirectSymbol_list_type::const_iterator
            it(l.begin()), ie(l.end()); it != ie; ++it)
 #else
     for (MCAssembler::const_indirect_symbol_iterator

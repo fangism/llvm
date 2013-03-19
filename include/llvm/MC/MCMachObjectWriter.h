@@ -17,6 +17,16 @@
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/Object/MachOFormat.h"
 #include "llvm/Support/DataTypes.h"
+
+/**
+	Mach-O needs indirect symbols grouped by section.
+	Goal: 1
+ */
+#define ORDER_INDIRECT_SYMBOLS_BY_SECTION       1
+#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
+#include "llvm/ADT/SetVector.h"
+#endif
+
 #include <vector>
 
 namespace llvm {
@@ -111,6 +121,22 @@ class MachObjectWriter : public MCObjectWriter {
   std::vector<MachSymbolData> UndefinedSymbolData;
 
   /// @}
+
+#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
+  /// @name Indirect Symbol Table Data
+  /// @{
+
+  typedef std::vector<const MCSymbol*>  IndirectSymbol_list_type;
+  typedef DenseMap<const MCSectionData*, IndirectSymbol_list_type>
+						IndirectSymbol_map_type;
+  // keep sections in order of appearance
+  typedef SetVector<const MCSectionData*>	IndirectSymbolSection_set_type;
+
+  IndirectSymbol_map_type			IndirectSymbolMap;
+  IndirectSymbolSection_set_type		IndirectSymbolSections;
+
+  /// @}
+#endif
 
 public:
   MachObjectWriter(MCMachObjectTargetWriter *MOTW, raw_ostream &_OS,

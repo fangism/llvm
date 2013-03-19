@@ -29,10 +29,6 @@
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
 
-#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
-#include <numeric>		// for std::accumulate
-#endif
-
 using namespace llvm;
 
 namespace {
@@ -281,9 +277,6 @@ void MCAssembler::reset() {
   SectionMap.clear();
   SymbolMap.clear();
   IndirectSymbols.clear();
-#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
-  IndirectSymbolSections.clear();
-#endif
   DataRegions.clear();
   ThumbFuncs.clear();
   RelaxAll = false;
@@ -296,19 +289,6 @@ void MCAssembler::reset() {
   getEmitter().reset();
   getWriter().reset();
 }
-
-#if ORDER_INDIRECT_SYMBOLS_BY_SECTION
-static size_t size_adder(const size_t a,
-	const MCAssembler::IndirectSymbol_map_type::value_type& b) {
-	return a +b.second.size();
-}
-
-size_t
-MCAssembler::indirect_symbol_size(void) const {
-  return std::accumulate(IndirectSymbols.begin(), IndirectSymbols.end(), 0,
-	&size_adder);
-}
-#endif
 
 bool MCAssembler::isSymbolLinkerVisible(const MCSymbol &Symbol) const {
   // Non-temporary labels should always be visible to the linker.
