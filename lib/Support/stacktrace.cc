@@ -8,17 +8,27 @@
 #define	ENABLE_STACKTRACE	1
 
 #include "llvm/Support/stacktrace.h"
+#if ST_USE_RAW_OSTREAM
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/raw_ostream_iterator.h"
+#else
 #include <iostream>
 #include <iterator>
+#endif
 
 namespace util {
 using std::list;
-using std::ostream;
 using std::stack;
+#if ST_USE_RAW_OSTREAM
+using llvm::ostream_iterator;
+using llvm::endl;
+static llvm::raw_ostream& cerr(llvm::errs());	// alias
+#else
 using std::ostream_iterator;
 using std::cout;
 using std::cerr;
 using std::endl;
+#endif
 
 /**
 	Guarantee that ios is initialized.  
@@ -57,8 +67,8 @@ private:
 
 public:
 	static
-	ostream&
-	print_auto_indent(ostream& o) {
+	st_ostream_type&
+	print_auto_indent(st_ostream_type& o) {
 		// guarantee iostream initialized before first used.  
 		static const std::ios_base::Init ios_init;
 		static const stack_text_type& si(manager::stack_indent);
@@ -102,8 +112,8 @@ stacktrace_auto_indent = stacktrace::indent();
 /**
 	Uses the stacktrace's position to automatically indent.  
  */
-ostream&
-operator << (ostream& o, const stacktrace::indent&) {
+st_ostream_type&
+operator << (st_ostream_type& o, const stacktrace::indent&) {
 	// need static initializers?
 	return stacktrace::manager::print_auto_indent(o) << ":  ";
 }
@@ -119,7 +129,7 @@ stacktrace::stacktrace(const string& s) {
 	// must be static or else, new ref_counts will be locally released
 	manager::stack_text.push_back(s);
 	if (manager::stack_echo.top()) {
-		ostream& os(*manager::stack_streams.top());
+		st_ostream_type& os(*manager::stack_streams.top());
 			manager::print_auto_indent(os) << "\\-{ " <<
 				manager::stack_text.back() << endl;
 	}
@@ -130,7 +140,7 @@ stacktrace::stacktrace(const string& s) {
 stacktrace::~stacktrace() {
 	manager::stack_indent.pop_back();
 	if (manager::stack_echo.top()) {
-		ostream& os(*manager::stack_streams.top());
+		st_ostream_type& os(*manager::stack_streams.top());
 			manager::print_auto_indent(os) << "/-} " <<
 				manager::stack_text.back() << endl;
 	}
@@ -141,7 +151,7 @@ stacktrace::~stacktrace() {
 /**
 	Returns reference to the current stacktrace output stream.
  */
-ostream&
+st_ostream_type&
 stacktrace::stream(void) {
 	return *manager::stack_streams.top();
 }
@@ -149,7 +159,7 @@ stacktrace::stream(void) {
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 void
 stacktrace::full_dump(void) {
-	ostream& current_stream(stream());
+	st_ostream_type& current_stream(stream());
 	ostream_iterator<string> osi(current_stream, "\n");
 	copy(manager::stack_text.begin(), manager::stack_text.end(), osi);
 	current_stream << endl;
@@ -169,7 +179,7 @@ stacktrace::echo::~echo() {
 //=============================================================================
 // struct redirect_stacktrace method definitions
 
-stacktrace::redirect::redirect(ostream& o) {
+stacktrace::redirect::redirect(st_ostream_type& o) {
 	manager::stack_streams.push(&o);
 }
 
