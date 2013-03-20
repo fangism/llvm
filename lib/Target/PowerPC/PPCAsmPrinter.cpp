@@ -345,7 +345,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   switch (MI->getOpcode()) {
   default: break;
   case TargetOpcode::DBG_VALUE: {
-    STACKTRACE_INDENT_PRINT("opcode DBG_VALUE" << std::endl);
+    STACKTRACE_INDENT_PRINT("opcode DBG_VALUE" << endl);
     if (!isVerbose() || !OutStreamer.hasRawTextSupport()) return;
       
     SmallString<32> Str;
@@ -713,7 +713,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       .addReg(MI->getOperand(0).getReg()));
     return;
   case PPC::SYNC:
-    STACKTRACE_INDENT_PRINT("opcode PPC::SYNC" << std::endl);
+    STACKTRACE_INDENT_PRINT("opcode PPC::SYNC" << endl);
     // In Book E sync is called msync, handle this special case here...
     if (Subtarget.isBookE()) {
       OutStreamer.EmitRawText(StringRef("\tmsync"));
@@ -853,7 +853,7 @@ void PPCDarwinAsmPrinter::EmitStartOfAsmFile(Module &M) {
   
   // FIXME: This is a total hack, finish mc'izing the PPC backend.
   if (OutStreamer.hasRawTextSupport()) {
-    STACKTRACE_INDENT_PRINT("OutStreamer.hasRawTextSupport" << std::endl);
+    STACKTRACE_INDENT_PRINT("OutStreamer.hasRawTextSupport" << endl);
     assert(Directive < sizeof(CPUDirectives) / sizeof(*CPUDirectives) &&
            "CPUDirectives[] might not be up-to-date!");
     OutStreamer.EmitRawText("\t.machine " + Twine(CPUDirectives[Directive]));
@@ -905,7 +905,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
   // Output stubs for dynamically-linked functions
   // see http://developer.apple.com/library/mac/#documentation/developertools/reference/assembler/050-PowerPC_Addressing_Modes_and_Assembler_Instructions/ppc_instructions.html
   if (TM.getRelocationModel() == Reloc::PIC_) {
-    STACKTRACE_INDENT_PRINT("Reloc::PIC_" << std::endl);
+    STACKTRACE_INDENT_PRINT("Reloc::PIC_" << endl);
     const MCSection *StubSection = 
     OutContext.getMachOSection("__TEXT", "__picsymbolstub1",
                                MCSectionMachO::S_SYMBOL_STUBS |
@@ -927,13 +927,13 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
       OutStreamer.EmitInstruction(MCInstBuilder(PPC::MFLR).addReg(PPC::R0));
 #if 0
       // FIXME: MCize this.
-      STACKTRACE_INDENT_PRINT("FIXME: MCize this." << std::endl);
+      STACKTRACE_INDENT_PRINT("FIXME: MCize this." << endl);
       OutStreamer.EmitRawText("\tbcl 20, 31, " + Twine(AnonSymbol->getName()));
 #else
 // workaround for EmitRawText on bcl
 // from http://llvm.org/bugs/show_bug.cgi?id=14286
 // and http://llvm.org/bugs/show_bug.cgi?id=14579
-      STACKTRACE_INDENT_PRINT("faking bcl instruction..." << std::endl);
+      STACKTRACE_INDENT_PRINT("faking bcl instruction..." << endl);
       // bcl 20, 31, AnonSymbol
       // "Use the branch-always instruction that does not affect the link
       // register stack to get the address of Symbol into the LR
@@ -996,7 +996,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
     return;
   }
   
-  STACKTRACE_INDENT_PRINT("not Reloc::PIC_" << std::endl);
+  STACKTRACE_INDENT_PRINT("not Reloc::PIC_" << endl);
   const MCSection *StubSection =
     OutContext.getMachOSection("__TEXT","__symbol_stub1",
                                MCSectionMachO::S_SYMBOL_STUBS |

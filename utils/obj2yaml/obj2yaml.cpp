@@ -16,7 +16,8 @@
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
 
-const char endl = '\n';
+using llvm::endl;
+// const char endl = '\n';
 
 namespace yaml {  // generic yaml-writing specific routines
 

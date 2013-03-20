@@ -41,7 +41,7 @@ using namespace llvm::object;
 #if ENABLE_STACKTRACE
 using std::dec;
 using std::hex;
-using std::endl;
+using llvm::endl;
 #endif
 
 namespace {
