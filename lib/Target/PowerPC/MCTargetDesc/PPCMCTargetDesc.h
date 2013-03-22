@@ -52,6 +52,10 @@ MCObjectWriter *createPPCMachObjectWriter(raw_ostream &OS,
                                           uint32_t CPUSubtype);
 } // End llvm namespace
 
+// Generated files will use "namespace PPC". To avoid symbol clash,
+// undefine PPC here. PPC may be predefined on some hosts.
+#undef PPC
+
 // Defines symbolic names for PowerPC registers.  This defines a mapping from
 // register name to register number.
 //
