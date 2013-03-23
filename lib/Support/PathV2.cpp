@@ -497,6 +497,8 @@ void system_temp_directory(bool erasedOnReboot, SmallVectorImpl<char> &result) {
   result.clear();
 
 #ifdef __APPLE__
+// macros expected in <unistd.h>
+#if defined(_CS_DARWIN_USER_TEMP_DIR) && defined(_CS_DARWIN_USER_CACHE_DIR)
   // On Darwin, use DARWIN_USER_TEMP_DIR or DARWIN_USER_CACHE_DIR.
   int ConfName = erasedOnReboot? _CS_DARWIN_USER_TEMP_DIR
                                : _CS_DARWIN_USER_CACHE_DIR;
@@ -515,6 +517,7 @@ void system_temp_directory(bool erasedOnReboot, SmallVectorImpl<char> &result) {
 
     result.clear();
   }
+#endif
 #endif
 
   // Check whether the temporary directory is specified by an environment
