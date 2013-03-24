@@ -211,6 +211,9 @@ static bool DoesRetainableObjPtrEscape(const User *Ptr) {
         // These special functions make copies of their pointer arguments.
         return true;
       }
+      case IC_IntrinsicUser:
+        // Use by the use intrinsic is not an escape.
+        continue;
       case IC_User:
       case IC_None:
         // Use by an instruction which copies the value is an escape if the
@@ -451,11 +454,11 @@ namespace {
       KnownPositiveRefCount = true;
     }
 
-    void ClearRefCount() {
+    void ClearKnownPositiveRefCount() {
       KnownPositiveRefCount = false;
     }
 
-    bool IsKnownIncremented() const {
+    bool HasKnownPositiveRefCount() const {
       return KnownPositiveRefCount;
     }
 
@@ -1504,7 +1507,7 @@ ObjCARCOpt::VisitInstructionBottomUp(Instruction *Inst,
     MDNode *ReleaseMetadata = Inst->getMetadata(ImpreciseReleaseMDKind);
     S.ResetSequenceProgress(ReleaseMetadata ? S_MovableRelease : S_Release);
     S.RRI.ReleaseMetadata = ReleaseMetadata;
-    S.RRI.KnownSafe = S.IsKnownIncremented();
+    S.RRI.KnownSafe = S.HasKnownPositiveRefCount();
     S.RRI.IsTailCallRelease = cast<CallInst>(Inst)->isTailCall();
     S.RRI.Calls.insert(Inst);
 
@@ -1571,7 +1574,7 @@ ObjCARCOpt::VisitInstructionBottomUp(Instruction *Inst,
 
     // Check for possible releases.
     if (CanAlterRefCount(Inst, Ptr, PA, Class)) {
-      S.ClearRefCount();
+      S.ClearKnownPositiveRefCount();
       switch (Seq) {
       case S_Use:
         S.SetSeq(S_CanRelease);
@@ -1601,8 +1604,7 @@ ObjCARCOpt::VisitInstructionBottomUp(Instruction *Inst,
         else
           S.RRI.ReverseInsertPts.insert(llvm::next(BasicBlock::iterator(Inst)));
         S.SetSeq(S_Use);
-      } else if (Seq == S_Release &&
-                 (Class == IC_User || Class == IC_CallOrUser)) {
+      } else if (Seq == S_Release && IsUser(Class)) {
         // Non-movable releases depend on any possible objc pointer use.
         S.SetSeq(S_Stop);
         assert(S.RRI.ReverseInsertPts.empty());
@@ -1716,7 +1718,7 @@ ObjCARCOpt::VisitInstructionTopDown(Instruction *Inst,
 
       S.ResetSequenceProgress(S_Retain);
       S.RRI.IsRetainBlock = Class == IC_RetainBlock;
-      S.RRI.KnownSafe = S.IsKnownIncremented();
+      S.RRI.KnownSafe = S.HasKnownPositiveRefCount();
       S.RRI.Calls.insert(Inst);
     }
 
@@ -1730,7 +1732,7 @@ ObjCARCOpt::VisitInstructionTopDown(Instruction *Inst,
     Arg = GetObjCArg(Inst);
 
     PtrState &S = MyStates.getPtrTopDownState(Arg);
-    S.ClearRefCount();
+    S.ClearKnownPositiveRefCount();
 
     switch (S.GetSeq()) {
     case S_Retain:
@@ -1776,7 +1778,7 @@ ObjCARCOpt::VisitInstructionTopDown(Instruction *Inst,
 
     // Check for possible releases.
     if (CanAlterRefCount(Inst, Ptr, PA, Class)) {
-      S.ClearRefCount();
+      S.ClearKnownPositiveRefCount();
       switch (Seq) {
       case S_Retain:
         S.SetSeq(S_CanRelease);
@@ -2392,6 +2394,7 @@ void ObjCARCOpt::OptimizeWeakCalls(Function &F) {
         goto clobbered;
       case IC_AutoreleasepoolPush:
       case IC_None:
+      case IC_IntrinsicUser:
       case IC_User:
         // Weak pointers are only modified through the weak entry points
         // (and arbitrary calls, which could call the weak entry points).

@@ -590,15 +590,9 @@ namespace llvm {
   class DILexicalBlock : public DIScope {
   public:
     explicit DILexicalBlock(const MDNode *N = 0) : DIScope(N) {}
-    DIScope getContext() const       { return getFieldAs<DIScope>(1);      }
-    unsigned getLineNumber() const   { return getUnsignedField(2);         }
-    unsigned getColumnNumber() const { return getUnsignedField(3);         }
-    StringRef getDirectory() const {
-      return getFieldAs<DIFile>(4).getDirectory();
-    }
-    StringRef getFilename() const {
-      return getFieldAs<DIFile>(4).getFilename();
-    }
+    DIScope getContext() const       { return getFieldAs<DIScope>(2);      }
+    unsigned getLineNumber() const   { return getUnsignedField(3);         }
+    unsigned getColumnNumber() const { return getUnsignedField(4);         }
     bool Verify() const;
   };
 
@@ -610,13 +604,7 @@ namespace llvm {
     DIScope getContext() const { if (getScope().isSubprogram()) return getScope(); return getScope().getContext(); }
     unsigned getLineNumber() const { return getScope().getLineNumber(); }
     unsigned getColumnNumber() const { return getScope().getColumnNumber(); }
-    StringRef getDirectory() const {
-      return getFieldAs<DIFile>(2).getDirectory();
-    }
-    StringRef getFilename() const {
-      return getFieldAs<DIFile>(2).getFilename();
-    }
-    DILexicalBlock getScope() const { return getFieldAs<DILexicalBlock>(1); }
+    DILexicalBlock getScope() const { return getFieldAs<DILexicalBlock>(2); }
     bool Verify() const;
   };
 
