@@ -87,7 +87,7 @@ foreach Index = 0-31 in {
 }
 
 // The reprsentation of r0 when treated as the constant 0.
-def ZERO  : GPR<0, "r0">;
+def ZERO  : GPR<0, "0">;
 def ZERO8 : GP8<ZERO, "r0">;
 
 // Representations of the frame pointer used by ISD::FRAMEADDR.
