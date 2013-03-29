@@ -39,8 +39,6 @@ http://opensource.apple.com/source/cctools/cctools-809/as/ppc.c
 using namespace llvm;
 using namespace llvm::object;
 #if ENABLE_STACKTRACE
-using std::dec;
-using std::hex;
 using llvm::endl;
 #endif
 
@@ -90,8 +88,10 @@ public:
 		getFixupKindInfo() for sizes.
  */
 static unsigned getFixupKindLog2Size(unsigned Kind) {
+  STACKTRACE_VERBOSE;
   switch (Kind) {
   default:
+    STACKTRACE_INDENT_PRINT("Kind = " << Kind << endl);
     llvm_unreachable("invalid fixup kind!");
   case FK_PCRel_1:
   case FK_Data_1: return 0;
@@ -104,19 +104,17 @@ static unsigned getFixupKindLog2Size(unsigned Kind) {
   case PPC::reloc_riprel_4byte_movq_load:
   case PPC::reloc_signed_4byte:
 #endif
-#if 1
   case PPC::fixup_ppc_brcond14:
   case PPC::fixup_ppc_lo16:
   case PPC::fixup_ppc_ha16:
+#if 0
   case PPC::fixup_ppc_lo14:
   case PPC::fixup_ppc_toc16:
   case PPC::fixup_ppc_toc16_ds:
 #endif
-#if 1
   case PPC::fixup_ppc_br24:
-#endif
   case FK_Data_4: return 2;
-#if 1
+#if 0
   case PPC::fixup_ppc_toc:		// 64 bits
 #endif
   case FK_PCRel_8:
@@ -159,9 +157,11 @@ getRelocType(
     case PPC::fixup_ppc_ha16:
       Type = macho::RIT_PPC_HA16;
       break;
+#if 0
     case PPC::fixup_ppc_lo14:
       Type = macho::RIT_PPC_LO14;
       break;
+#endif
 #if 0
     case FK_Data_4:
     case FK_PCRel_4:
@@ -246,10 +246,10 @@ getRelocType(
 	Type = macho::RIT_PPC_LO16_SECTDIFF;
 #endif
       break;
+#if 0
     case PPC::fixup_ppc_lo14:
       Type = macho::RIT_PPC_LO14_SECTDIFF;
       break;
-#if 0
     case PPC::fixup_ppc_toc:
       Type = macho::RIT_PPC64_TOC;
       break;
@@ -327,14 +327,14 @@ makeRelocationInfo(
                (Log2Size  << 5) |	// was << 25
                (IsExtern  << 4) |	// was << 27
                (Type      << 0));	// was << 28
-  STACKTRACE_INDENT_PRINT("FixupOffset: 0x" << hex << FixupOffset <<
-	", Index: " << dec << Index <<
-	", IsPCRel: " << dec << IsPCRel <<
+  STACKTRACE_INDENT_PRINT("FixupOffset: " << hex(FixupOffset) <<
+	", Index: " << Index <<
+	", IsPCRel: " << IsPCRel <<
 	", Log2Size: " << Log2Size <<
 	", IsExtern: " << IsExtern <<
 	", Type: " << Type << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word0 = 0x" << hex << MRE.Word0 << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word1 = 0x" << hex << MRE.Word1 << endl);
+  STACKTRACE_INDENT_PRINT("MRE.Word0 = " << hex(MRE.Word0) << endl);
+  STACKTRACE_INDENT_PRINT("MRE.Word1 = " << hex(MRE.Word1) << endl);
 }
 
 static
@@ -355,12 +355,12 @@ makeScatteredRelocationInfo(
                (IsPCRel   << 30) |
                macho::RF_Scattered);
   MRE.Word1 = Value2;
-  STACKTRACE_INDENT_PRINT("Addr: 0x" << hex << Addr <<
-	", Type: " << dec << Type <<
+  STACKTRACE_INDENT_PRINT("Addr: " << hex(Addr) <<
+	", Type: " << Type <<
 	", Log2Size: " << Log2Size <<
 	", IsPCRel: " << IsPCRel << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word0 = 0x" << hex << MRE.Word0 << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word1 = 0x" << hex << MRE.Word1 << endl);
+  STACKTRACE_INDENT_PRINT("MRE.Word0 = " << hex(MRE.Word0) << endl);
+  STACKTRACE_INDENT_PRINT("MRE.Word1 = " << hex(MRE.Word1) << endl);
 }
 
 /**
@@ -407,8 +407,8 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
 
   uint32_t Value = Writer->getSymbolAddress(A_SD, Layout);
   uint64_t SecAddr = Writer->getSectionAddress(A_SD->getFragment()->getParent());
-  STACKTRACE_INDENT_PRINT("A symbol address: 0x" << hex << Value << endl);
-  STACKTRACE_INDENT_PRINT("A section address: 0x" << hex << SecAddr << endl);
+  STACKTRACE_INDENT_PRINT("A symbol address: " << hex(Value) << endl);
+  STACKTRACE_INDENT_PRINT("A section address: " << hex(SecAddr) << endl);
   FixedValue += SecAddr;
   uint32_t Value2 = 0;
 
@@ -433,11 +433,11 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
 #endif
     // FIXME: is Type correct? see include/llvm/Object/MachOFormat.h
     Value2 = Writer->getSymbolAddress(B_SD, Layout);
-    STACKTRACE_INDENT_PRINT("B symbol address: 0x" << hex << Value2 << endl);
+    STACKTRACE_INDENT_PRINT("B symbol address: " << hex(Value2) << endl);
     FixedValue -= Writer->getSectionAddress(B_SD->getFragment()->getParent());
   }
-  STACKTRACE_INDENT_PRINT("Type = " << dec << Type << endl);
-  STACKTRACE_INDENT_PRINT("FixedValue: 0x" << hex << FixedValue << endl);
+  STACKTRACE_INDENT_PRINT("Type = " << Type << endl);
+  STACKTRACE_INDENT_PRINT("FixedValue: " << hex(FixedValue) << endl);
   // FIXME: does FixedValue get used??
 
   // Relocations are written out in reverse order, so the PAIR comes first.
@@ -519,7 +519,7 @@ void PPCMachObjectWriter::RecordPPCRelocation(MachObjectWriter *Writer,
                                               uint64_t &FixedValue) {
   STACKTRACE_VERBOSE;
   const MCFixupKind FK = Fixup.getKind();	// unsigned
-  STACKTRACE_INDENT_PRINT("FK = " << dec << FK << endl);
+  STACKTRACE_INDENT_PRINT("FK = " << FK << endl);
   const unsigned Log2Size = getFixupKindLog2Size(FK);
   STACKTRACE_INDENT_PRINT("Log2Size = " << Log2Size << endl);
   const bool IsPCRel = Writer->isFixupKindPCRel(Asm, FK);
@@ -562,10 +562,10 @@ if (0) {
   // If this is an internal relocation with an offset, it also needs a scattered
   // relocation entry.
   uint32_t Offset = Target.getConstant();
-  STACKTRACE_INDENT_PRINT("Target.getConstant(): " << hex << Offset << endl);
+  STACKTRACE_INDENT_PRINT("Target.getConstant(): " << hex(Offset) << endl);
   if (IsPCRel)
     Offset += 1 << Log2Size;
-  STACKTRACE_INDENT_PRINT("Offset: 0x" << hex << Offset << endl);
+  STACKTRACE_INDENT_PRINT("Offset: " << hex(Offset) << endl);
   // Try to record the scattered relocation if needed. Fall back to non
   // scattered if necessary (see comments in RecordScatteredRelocation()
   // for details).
@@ -577,7 +577,7 @@ if (0) {
 
   // See <reloc.h>.
   const uint32_t FixupOffset = Layout.getFragmentOffset(Fragment)+Fixup.getOffset();
-  STACKTRACE_INDENT_PRINT("FixupOffset = 0x" << hex << FixupOffset << endl);
+  STACKTRACE_INDENT_PRINT("FixupOffset = " << hex(FixupOffset) << endl);
   unsigned Index = 0;
   unsigned IsExtern = 0;
 //  unsigned Type = 0;
@@ -608,8 +608,8 @@ if (0) {
       if (SD->getSymbol().getVariableValue()->EvaluateAsAbsolute(
             Res, Layout, Writer->getSectionAddressMap())) {
         FixedValue = Res;
-        STACKTRACE_INDENT_PRINT("evaluated FixedValue = 0x" <<
-		hex << FixedValue << endl);
+        STACKTRACE_INDENT_PRINT("evaluated FixedValue = " <<
+		hex(FixedValue) << endl);
         return;
       }
     }
@@ -635,7 +635,7 @@ if (0) {
     if (IsPCRel)
       FixedValue -= Writer->getSectionAddress(Fragment->getParent());
     STACKTRACE_INDENT_PRINT("Index = " << Index << endl);
-    STACKTRACE_INDENT_PRINT("fixed address = 0x" << FixedValue << endl);
+    STACKTRACE_INDENT_PRINT("fixed address = " << FixedValue << endl);
 
 //    Type = macho::RIT_PPC_VANILLA;
   }
