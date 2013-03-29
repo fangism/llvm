@@ -103,6 +103,7 @@ static void RemoveVRSaveCode(MachineInstr *MI) {
 // transform this into the appropriate ORI instruction.
 static void HandleVRSaveUpdate(MachineInstr *MI, const TargetInstrInfo &TII) {
   MachineFunction *MF = MI->getParent()->getParent();
+  const TargetRegisterInfo *TRI = MF->getTarget().getRegisterInfo();
   DebugLoc dl = MI->getDebugLoc();
 
   unsigned UsedRegMask = 0;
@@ -115,7 +116,7 @@ static void HandleVRSaveUpdate(MachineInstr *MI, const TargetInstrInfo &TII) {
   for (MachineRegisterInfo::livein_iterator
        I = MF->getRegInfo().livein_begin(),
        E = MF->getRegInfo().livein_end(); I != E; ++I) {
-    unsigned RegNo = getPPCRegisterNumbering(I->first);
+    unsigned RegNo = TRI->getEncodingValue(I->first);
     if (VRRegNo[RegNo] == I->first)        // If this really is a vector reg.
       UsedRegMask &= ~(1 << (31-RegNo));   // Doesn't need to be marked.
   }
@@ -131,7 +132,7 @@ static void HandleVRSaveUpdate(MachineInstr *MI, const TargetInstrInfo &TII) {
       const MachineOperand &MO = Ret.getOperand(I);
       if (!MO.isReg() || !PPC::VRRCRegClass.contains(MO.getReg()))
         continue;
-      unsigned RegNo = getPPCRegisterNumbering(MO.getReg());
+      unsigned RegNo = TRI->getEncodingValue(MO.getReg());
       UsedRegMask &= ~(1 << (31-RegNo));
     }
   }
@@ -950,6 +951,7 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
   }
 
   PPCFunctionInfo *PFI = MF.getInfo<PPCFunctionInfo>();
+  const TargetRegisterInfo *TRI = MF.getTarget().getRegisterInfo();
 
   int64_t LowerBound = 0;
 
@@ -969,7 +971,7 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
       FFI->setObjectOffset(FI, LowerBound + FFI->getObjectOffset(FI));
     }
 
-    LowerBound -= (31 - getPPCRegisterNumbering(MinFPR) + 1) * 8;
+    LowerBound -= (31 - TRI->getEncodingValue(MinFPR) + 1) * 8;
   }
 
   // Check whether the frame pointer register is allocated. If so, make sure it
@@ -1003,8 +1005,8 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
     }
 
     unsigned MinReg =
-      std::min<unsigned>(getPPCRegisterNumbering(MinGPR),
-                         getPPCRegisterNumbering(MinG8R));
+      std::min<unsigned>(TRI->getEncodingValue(MinGPR),
+                         TRI->getEncodingValue(MinG8R));
 
     if (Subtarget.isPPC64()) {
       LowerBound -= (31 - MinReg + 1) * 8;
@@ -1094,6 +1096,13 @@ PPCFrameLowering::addScavengingSpillSlot(MachineFunction &MF,
     RS->addScavengingFrameIndex(MFI->CreateStackObject(RC->getSize(),
                                                        RC->getAlignment(),
                                                        false));
+
+    // These kinds of spills might need two registers.
+    if (spillsCR(MF) || spillsVRSAVE(MF))
+      RS->addScavengingFrameIndex(MFI->CreateStackObject(RC->getSize(),
+                                                         RC->getAlignment(),
+                                                         false));
+
   }
 }
 
@@ -1132,8 +1141,8 @@ PPCFrameLowering::spillCalleeSavedRegisters(MachineBasicBlock &MBB,
       // save slot via GPR12 (available in the prolog for 32- and 64-bit).
       if (Subtarget.isPPC64()) {
 	// 64-bit:  SP+8
-	MBB.insert(MI, BuildMI(*MF, DL, TII.get(PPC::MFCR), PPC::X12));
-	MBB.insert(MI, BuildMI(*MF, DL, TII.get(PPC::STW))
+	MBB.insert(MI, BuildMI(*MF, DL, TII.get(PPC::MFCR8), PPC::X12));
+	MBB.insert(MI, BuildMI(*MF, DL, TII.get(PPC::STW8))
 			       .addReg(PPC::X12,
 				       getKillRegState(true))
 			       .addImm(8)
@@ -1173,7 +1182,7 @@ restoreCRs(bool isPPC64, bool CR2Spilled, bool CR3Spilled, bool CR4Spilled,
 
   if (isPPC64) {
     // 64-bit:  SP+8
-    MBB.insert(MI, BuildMI(*MF, DL, TII.get(PPC::LWZ), PPC::X12)
+    MBB.insert(MI, BuildMI(*MF, DL, TII.get(PPC::LWZ8), PPC::X12)
 	       .addImm(8)
 	       .addReg(PPC::X1));
     RestoreOp = PPC::MTCRF8;
@@ -1189,15 +1198,15 @@ restoreCRs(bool isPPC64, bool CR2Spilled, bool CR3Spilled, bool CR4Spilled,
   
   if (CR2Spilled)
     MBB.insert(MI, BuildMI(*MF, DL, TII.get(RestoreOp), PPC::CR2)
-	       .addReg(MoveReg));
+               .addReg(MoveReg, getKillRegState(!CR3Spilled && !CR4Spilled)));
 
   if (CR3Spilled)
     MBB.insert(MI, BuildMI(*MF, DL, TII.get(RestoreOp), PPC::CR3)
-	       .addReg(MoveReg));
+               .addReg(MoveReg, getKillRegState(!CR4Spilled)));
 
   if (CR4Spilled)
     MBB.insert(MI, BuildMI(*MF, DL, TII.get(RestoreOp), PPC::CR4)
-	       .addReg(MoveReg));
+               .addReg(MoveReg, getKillRegState(true)));
 }
 
 void PPCFrameLowering::

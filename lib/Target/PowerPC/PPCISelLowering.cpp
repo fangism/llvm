@@ -160,15 +160,21 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
 
   // PowerPC does not have BSWAP, CTPOP or CTTZ
   setOperationAction(ISD::BSWAP, MVT::i32  , Expand);
-  setOperationAction(ISD::CTPOP, MVT::i32  , Expand);
   setOperationAction(ISD::CTTZ , MVT::i32  , Expand);
   setOperationAction(ISD::CTTZ_ZERO_UNDEF, MVT::i32, Expand);
   setOperationAction(ISD::CTLZ_ZERO_UNDEF, MVT::i32, Expand);
   setOperationAction(ISD::BSWAP, MVT::i64  , Expand);
-  setOperationAction(ISD::CTPOP, MVT::i64  , Expand);
   setOperationAction(ISD::CTTZ , MVT::i64  , Expand);
   setOperationAction(ISD::CTTZ_ZERO_UNDEF, MVT::i64, Expand);
   setOperationAction(ISD::CTLZ_ZERO_UNDEF, MVT::i64, Expand);
+
+  if (Subtarget->hasPOPCNTD()) {
+    setOperationAction(ISD::CTPOP, MVT::i32  , Promote);
+    setOperationAction(ISD::CTPOP, MVT::i64  , Legal);
+  } else {
+    setOperationAction(ISD::CTPOP, MVT::i32  , Expand);
+    setOperationAction(ISD::CTPOP, MVT::i64  , Expand);
+  }
 
   // PowerPC does not have ROTR
   setOperationAction(ISD::ROTR, MVT::i32   , Expand);
@@ -212,7 +218,7 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
   setOperationAction(ISD::EXCEPTIONADDR, MVT::i32, Expand);
   setOperationAction(ISD::EHSELECTION,   MVT::i32, Expand);
 
-  // NOTE: EH_SJLJ_SETJMP/_LONGJMP supported here is NOT intened to support
+  // NOTE: EH_SJLJ_SETJMP/_LONGJMP supported here is NOT intended to support
   // SjLj exception handling but a light-weight setjmp/longjmp replacement to
   // support continuation, user-level threading, and etc.. As a result, no
   // other SjLj exception interfaces are implemented and please don't build
@@ -584,10 +590,7 @@ const char *PPCTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case PPCISD::STCX:            return "PPCISD::STCX";
   case PPCISD::COND_BRANCH:     return "PPCISD::COND_BRANCH";
   case PPCISD::MFFS:            return "PPCISD::MFFS";
-  case PPCISD::MTFSB0:          return "PPCISD::MTFSB0";
-  case PPCISD::MTFSB1:          return "PPCISD::MTFSB1";
   case PPCISD::FADDRTZ:         return "PPCISD::FADDRTZ";
-  case PPCISD::MTFSF:           return "PPCISD::MTFSF";
   case PPCISD::TC_RETURN:       return "PPCISD::TC_RETURN";
   case PPCISD::CR6SET:          return "PPCISD::CR6SET";
   case PPCISD::CR6UNSET:        return "PPCISD::CR6UNSET";
@@ -5667,50 +5670,8 @@ void PPCTargetLowering::ReplaceNodeResults(SDNode *N,
                              MVT::f64, N->getOperand(0),
                              DAG.getIntPtrConstant(1));
 
-    // This sequence changes FPSCR to do round-to-zero, adds the two halves
-    // of the long double, and puts FPSCR back the way it was.  We do not
-    // actually model FPSCR.
-    std::vector<EVT> NodeTys;
-    SDValue Ops[4], Result, MFFSreg, InFlag, FPreg;
-
-    NodeTys.push_back(MVT::f64);   // Return register
-    NodeTys.push_back(MVT::Glue);    // Returns a flag for later insns
-    Result = DAG.getNode(PPCISD::MFFS, dl, NodeTys, &InFlag, 0);
-    MFFSreg = Result.getValue(0);
-    InFlag = Result.getValue(1);
-
-    NodeTys.clear();
-    NodeTys.push_back(MVT::Glue);   // Returns a flag
-    Ops[0] = DAG.getConstant(31, MVT::i32);
-    Ops[1] = InFlag;
-    Result = DAG.getNode(PPCISD::MTFSB1, dl, NodeTys, Ops, 2);
-    InFlag = Result.getValue(0);
-
-    NodeTys.clear();
-    NodeTys.push_back(MVT::Glue);   // Returns a flag
-    Ops[0] = DAG.getConstant(30, MVT::i32);
-    Ops[1] = InFlag;
-    Result = DAG.getNode(PPCISD::MTFSB0, dl, NodeTys, Ops, 2);
-    InFlag = Result.getValue(0);
-
-    NodeTys.clear();
-    NodeTys.push_back(MVT::f64);    // result of add
-    NodeTys.push_back(MVT::Glue);   // Returns a flag
-    Ops[0] = Lo;
-    Ops[1] = Hi;
-    Ops[2] = InFlag;
-    Result = DAG.getNode(PPCISD::FADDRTZ, dl, NodeTys, Ops, 3);
-    FPreg = Result.getValue(0);
-    InFlag = Result.getValue(1);
-
-    NodeTys.clear();
-    NodeTys.push_back(MVT::f64);
-    Ops[0] = DAG.getConstant(1, MVT::i32);
-    Ops[1] = MFFSreg;
-    Ops[2] = FPreg;
-    Ops[3] = InFlag;
-    Result = DAG.getNode(PPCISD::MTFSF, dl, NodeTys, Ops, 4);
-    FPreg = Result.getValue(0);
+    // Add the two halves of the long double in round-to-zero mode.
+    SDValue FPreg = DAG.getNode(PPCISD::FADDRTZ, dl, MVT::f64, Lo, Hi);
 
     // We know the low half is about to be thrown away, so just use something
     // convenient.
@@ -6170,24 +6131,24 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     unsigned SelectPred = MI->getOperand(4).getImm();
     DebugLoc dl = MI->getDebugLoc();
 
-    // The SelectPred is ((BI << 5) | BO) for a BCC
-    unsigned BO = SelectPred & 0xF;
-    assert((BO == 12 || BO == 4) && "invalid predicate BO field for isel");
-
-    unsigned TrueOpNo, FalseOpNo;
-    if (BO == 12) {
-      TrueOpNo = 2;
-      FalseOpNo = 3;
-    } else {
-      TrueOpNo = 3;
-      FalseOpNo = 2;
-      SelectPred = PPC::InvertPredicate((PPC::Predicate)SelectPred);
+    unsigned SubIdx;
+    bool SwapOps;
+    switch (SelectPred) {
+    default: llvm_unreachable("invalid predicate for isel");
+    case PPC::PRED_EQ: SubIdx = PPC::sub_eq; SwapOps = false; break;
+    case PPC::PRED_NE: SubIdx = PPC::sub_eq; SwapOps = true; break;
+    case PPC::PRED_LT: SubIdx = PPC::sub_lt; SwapOps = false; break;
+    case PPC::PRED_GE: SubIdx = PPC::sub_lt; SwapOps = true; break;
+    case PPC::PRED_GT: SubIdx = PPC::sub_gt; SwapOps = false; break;
+    case PPC::PRED_LE: SubIdx = PPC::sub_gt; SwapOps = true; break;
+    case PPC::PRED_UN: SubIdx = PPC::sub_un; SwapOps = false; break;
+    case PPC::PRED_NU: SubIdx = PPC::sub_un; SwapOps = true; break;
     }
 
     BuildMI(*BB, MI, dl, TII->get(OpCode), MI->getOperand(0).getReg())
-      .addReg(MI->getOperand(TrueOpNo).getReg())
-      .addReg(MI->getOperand(FalseOpNo).getReg())
-      .addImm(SelectPred).addReg(MI->getOperand(1).getReg());
+      .addReg(MI->getOperand(SwapOps? 3 : 2).getReg())
+      .addReg(MI->getOperand(SwapOps? 2 : 3).getReg())
+      .addReg(MI->getOperand(1).getReg(), 0, SubIdx);
   } else if (MI->getOpcode() == PPC::SELECT_CC_I4 ||
              MI->getOpcode() == PPC::SELECT_CC_I8 ||
              MI->getOpcode() == PPC::SELECT_CC_F4 ||
@@ -6523,6 +6484,30 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     BB = exitMBB;
     BuildMI(*BB, BB->begin(), dl, TII->get(PPC::SRW),dest).addReg(TmpReg)
       .addReg(ShiftReg);
+  } else if (MI->getOpcode() == PPC::FADDrtz) {
+    // This pseudo performs an FADD with rounding mode temporarily forced
+    // to round-to-zero.  We emit this via custom inserter since the FPSCR
+    // is not modeled at the SelectionDAG level.
+    unsigned Dest = MI->getOperand(0).getReg();
+    unsigned Src1 = MI->getOperand(1).getReg();
+    unsigned Src2 = MI->getOperand(2).getReg();
+    DebugLoc dl   = MI->getDebugLoc();
+
+    MachineRegisterInfo &RegInfo = F->getRegInfo();
+    unsigned MFFSReg = RegInfo.createVirtualRegister(&PPC::F8RCRegClass);
+
+    // Save FPSCR value.
+    BuildMI(*BB, MI, dl, TII->get(PPC::MFFS), MFFSReg);
+
+    // Set rounding mode to round-to-zero.
+    BuildMI(*BB, MI, dl, TII->get(PPC::MTFSB1)).addImm(31);
+    BuildMI(*BB, MI, dl, TII->get(PPC::MTFSB0)).addImm(30);
+
+    // Perform addition.
+    BuildMI(*BB, MI, dl, TII->get(PPC::FADD), Dest).addReg(Src1).addReg(Src2);
+
+    // Restore FPSCR value.
+    BuildMI(*BB, MI, dl, TII->get(PPC::MTFSF)).addImm(1).addReg(MFFSReg);
   } else {
     llvm_unreachable("Unexpected instr type to insert");
   }
@@ -6619,7 +6604,10 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
         N->getOperand(1).getOpcode() == ISD::BSWAP &&
         N->getOperand(1).getNode()->hasOneUse() &&
         (N->getOperand(1).getValueType() == MVT::i32 ||
-         N->getOperand(1).getValueType() == MVT::i16)) {
+         N->getOperand(1).getValueType() == MVT::i16 ||
+         (TM.getSubtarget<PPCSubtarget>().hasLDBRX() &&
+          TM.getSubtarget<PPCSubtarget>().isPPC64() &&
+          N->getOperand(1).getValueType() == MVT::i64))) {
       SDValue BSwapOp = N->getOperand(1).getOperand(0);
       // Do an any-extend to 32-bits if this is a half-word input.
       if (BSwapOp.getValueType() == MVT::i16)
@@ -6640,7 +6628,10 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     // Turn BSWAP (LOAD) -> lhbrx/lwbrx.
     if (ISD::isNON_EXTLoad(N->getOperand(0).getNode()) &&
         N->getOperand(0).hasOneUse() &&
-        (N->getValueType(0) == MVT::i32 || N->getValueType(0) == MVT::i16)) {
+        (N->getValueType(0) == MVT::i32 || N->getValueType(0) == MVT::i16 ||
+         (TM.getSubtarget<PPCSubtarget>().hasLDBRX() &&
+          TM.getSubtarget<PPCSubtarget>().isPPC64() &&
+          N->getValueType(0) == MVT::i64))) {
       SDValue Load = N->getOperand(0);
       LoadSDNode *LD = cast<LoadSDNode>(Load);
       // Create the byte-swapping load.
@@ -6651,8 +6642,9 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       };
       SDValue BSLoad =
         DAG.getMemIntrinsicNode(PPCISD::LBRX, dl,
-                                DAG.getVTList(MVT::i32, MVT::Other), Ops, 3,
-                                LD->getMemoryVT(), LD->getMemOperand());
+                                DAG.getVTList(N->getValueType(0) == MVT::i64 ?
+                                              MVT::i64 : MVT::i32, MVT::Other),
+                                Ops, 3, LD->getMemoryVT(), LD->getMemOperand());
 
       // If this is an i16 load, insert the truncate.
       SDValue ResVal = BSLoad;

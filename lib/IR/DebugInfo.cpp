@@ -25,6 +25,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Dwarf.h"
+#include "llvm/Support/ValueHandle.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 using namespace llvm::dwarf;
@@ -331,7 +332,7 @@ bool DIDescriptor::isEnumerator() const {
   return DbgNode && getTag() == dwarf::DW_TAG_enumerator;
 }
 
-/// isObjCProperty - Return true if the specified tag is DW_TAG
+/// isObjCProperty - Return true if the specified tag is DW_TAG_APPLE_property.
 bool DIDescriptor::isObjCProperty() const {
   return DbgNode && getTag() == dwarf::DW_TAG_APPLE_property;
 }
@@ -613,6 +614,25 @@ MDNode *DIDerivedType::getObjCProperty() const {
   if (DbgNode->getNumOperands() <= 10)
     return NULL;
   return dyn_cast_or_null<MDNode>(DbgNode->getOperand(10));
+}
+
+/// \brief Set the array of member DITypes.
+void DICompositeType::setTypeArray(DIArray Elements, DIArray TParams) {
+  assert((!TParams || DbgNode->getNumOperands() == 14) &&
+         "If you're setting the template parameters this should include a slot "
+         "for that!");
+  TrackingVH<MDNode> N(*this);
+  N->replaceOperandWith(10, Elements);
+  if (TParams)
+    N->replaceOperandWith(13, TParams);
+  DbgNode = N;
+}
+
+/// \brief Set the containing type.
+void DICompositeType::setContainingType(DICompositeType ContainingType) {
+  TrackingVH<MDNode> N(*this);
+  N->replaceOperandWith(12, ContainingType);
+  DbgNode = N;
 }
 
 /// isInlinedFnArgument - Return true if this variable provides debugging

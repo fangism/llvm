@@ -150,7 +150,7 @@ void RegScavenger::forward() {
     if (!MO.isReg())
       continue;
     unsigned Reg = MO.getReg();
-    if (!Reg || isReserved(Reg))
+    if (!Reg || TargetRegisterInfo::isVirtualRegister(Reg) || isReserved(Reg))
       continue;
 
     if (MO.isUse()) {
@@ -175,7 +175,7 @@ void RegScavenger::forward() {
     if (!MO.isReg())
       continue;
     unsigned Reg = MO.getReg();
-    if (!Reg || isReserved(Reg))
+    if (!Reg || TargetRegisterInfo::isVirtualRegister(Reg) || isReserved(Reg))
       continue;
     if (MO.isUse()) {
       if (MO.isUndef())
@@ -371,8 +371,11 @@ unsigned RegScavenger::scavengeRegister(const TargetRegisterClass *RC,
     if (Scavenged[SI].Reg == 0)
       break;
 
-  assert(SI < Scavenged.size() &&
-         "Scavenger slots are live, unable to scavenge another register!");
+  if (SI == Scavenged.size()) {
+    // We need to scavenge a register but have no spill slot, the target
+    // must know how to do it (if not, we'll assert below).
+    Scavenged.push_back(ScavengedInfo());
+  }
 
   // Avoid infinite regress
   Scavenged[SI].Reg = SReg;

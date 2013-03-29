@@ -1001,6 +1001,9 @@ def : InstAlias<"and $rs, $rt, $imm",
 def : InstAlias<"j $rs", (JR CPURegs:$rs), 0>,
       Requires<[NotMips64]>;
 def : InstAlias<"jalr $rs", (JALR RA, CPURegs:$rs)>, Requires<[NotMips64]>;
+def : InstAlias<"jal $rs", (JALR RA, CPURegs:$rs), 0>, Requires<[NotMips64]>;
+def : InstAlias<"jal $rd,$rs", (JALR CPURegs:$rd, CPURegs:$rs), 0>,
+                 Requires<[NotMips64]>;
 def : InstAlias<"not $rt, $rs",
                 (NOR CPURegsOpnd:$rt, CPURegsOpnd:$rs, ZERO), 1>;
 def : InstAlias<"neg $rt, $rs",
@@ -1012,6 +1015,9 @@ def : InstAlias<"slt $rs, $rt, $imm",
 def : InstAlias<"xor $rs, $rt, $imm",
                 (XORi CPURegsOpnd:$rs, CPURegsOpnd:$rt, simm16:$imm), 0>,
       Requires<[NotMips64]>;
+def : InstAlias<"or $rs, $rt, $imm",
+                (ORi CPURegsOpnd:$rs, CPURegsOpnd:$rt, simm16:$imm), 0>,
+                 Requires<[NotMips64]>;
 def : InstAlias<"nop", (SLL ZERO, ZERO, 0), 1>;
 def : InstAlias<"mfc0 $rt, $rd",
                 (MFC0_3OP CPURegsOpnd:$rt, CPURegsOpnd:$rd, 0), 0>;
