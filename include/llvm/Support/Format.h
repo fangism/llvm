@@ -231,6 +231,43 @@ inline format_object5<T1, T2, T3, T4, T5> format(const char *Fmt,const T1 &Val1,
   return format_object5<T1, T2, T3, T4, T5>(Fmt, Val1, Val2, Val3, Val4, Val5);
 }
 
+// provide some default format strings
+template <typename T1>
+struct default_format_string;
+
+// definitions in Support/Format.cpp
+#define	SPECIALIZE_DEFAULT_FORMAT_STRING(T)				\
+template <>								\
+struct default_format_string<T> {					\
+	static const char hex[];		/* e.g. "%d" */		\
+	static const char dec[];		/* e.g. "%x" */		\
+};
+
+SPECIALIZE_DEFAULT_FORMAT_STRING(int)
+SPECIALIZE_DEFAULT_FORMAT_STRING(long)
+SPECIALIZE_DEFAULT_FORMAT_STRING(long long)
+SPECIALIZE_DEFAULT_FORMAT_STRING(unsigned int)
+SPECIALIZE_DEFAULT_FORMAT_STRING(unsigned long)
+SPECIALIZE_DEFAULT_FORMAT_STRING(unsigned long long)
+
+#undef	SPECIALIZE_DEFAULT_FORMAT_STRING
+
+// format manipulators
+template <typename T>
+inline
+format_object1<T>
+hex(const T& v1) {
+  return format(default_format_string<T>::hex, v1);
+}
+
+// decimal is the default, so this isn't really needed
+template <typename T>
+inline
+format_object1<T>
+dec(const T& v1) {
+  return format(default_format_string<T>::dec, v1);
+}
+
 } // end namespace llvm
 
 #endif

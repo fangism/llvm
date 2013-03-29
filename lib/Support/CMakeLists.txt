@@ -21,6 +21,7 @@ add_llvm_library(LLVMSupport
   FileUtilities.cpp
   FileOutputBuffer.cpp
   FoldingSet.cpp
+  Format.cpp
   FormattedStream.cpp
   GraphWriter.cpp
   Hashing.cpp
