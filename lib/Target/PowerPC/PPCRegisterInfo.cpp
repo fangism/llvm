@@ -68,7 +68,7 @@ PPCRegisterInfo::PPCRegisterInfo(const PPCSubtarget &ST,
   ImmToIdxMap[PPC::LHZ8] = PPC::LHZX8; ImmToIdxMap[PPC::LWZ8] = PPC::LWZX8;
   ImmToIdxMap[PPC::STB8] = PPC::STBX8; ImmToIdxMap[PPC::STH8] = PPC::STHX8;
   ImmToIdxMap[PPC::STW8] = PPC::STWX8; ImmToIdxMap[PPC::STDU] = PPC::STDUX;
-  ImmToIdxMap[PPC::ADDI8] = PPC::ADD8; ImmToIdxMap[PPC::STD_32] = PPC::STDX_32;
+  ImmToIdxMap[PPC::ADDI8] = PPC::ADD8;
 }
 
 /// getPointerRegClass - Return the register class to use to hold pointers.
@@ -522,28 +522,13 @@ PPCRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   case PPC::LWA:
   case PPC::LD:
   case PPC::STD:
-  case PPC::STD_32:
     isIXAddr = true;
     break;
   }
 
-  bool noImmForm = false;
-  switch (OpC) {
-  case PPC::LVEBX:
-  case PPC::LVEHX:
-  case PPC::LVEWX:
-  case PPC::LVX:
-  case PPC::LVXL:
-  case PPC::LVSL:
-  case PPC::LVSR:
-  case PPC::STVEBX:
-  case PPC::STVEHX:
-  case PPC::STVEWX:
-  case PPC::STVX:
-  case PPC::STVXL:
-    noImmForm = true;
-    break;
-  }
+  // If the instruction is not present in ImmToIdxMap, then it has no immediate
+  // form (and must be r+r).
+  bool noImmForm = !MI.isInlineAsm() && !ImmToIdxMap.count(OpC);
 
   // Now add the frame object offset to the offset from r1.
   int Offset = MFI->getObjectOffset(FrameIndex);

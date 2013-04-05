@@ -144,8 +144,8 @@ protected:
   const void *const *Bucket;
   const void *const *End;
 public:
-    explicit SmallPtrSetIteratorImpl(const void *const *BP, const void*const *E)
-        : Bucket(BP), End(E) {
+  explicit SmallPtrSetIteratorImpl(const void *const *BP, const void*const *E)
+    : Bucket(BP), End(E) {
       AdvanceIfNotValid();
   }
 

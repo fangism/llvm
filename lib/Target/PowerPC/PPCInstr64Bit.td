@@ -452,10 +452,6 @@ def EXTSH8 : XForm_11<31, 922, (outs G8RC:$rA), (ins G8RC:$rS),
 def EXTSW  : XForm_11<31, 986, (outs G8RC:$rA), (ins G8RC:$rS),
                       "extsw $rA, $rS", IntSimple,
                       [(set i64:$rA, (sext_inreg i64:$rS, i32))]>, isPPC64;
-/// EXTSW_32 - Just like EXTSW, but works on '32-bit' registers.
-def EXTSW_32 : XForm_11<31, 986, (outs GPRC:$rA), (ins GPRC:$rS),
-                      "extsw $rA, $rS", IntSimple,
-                      [(set i32:$rA, (PPCextsw_32 i32:$rS))]>, isPPC64;
 def EXTSW_32_64 : XForm_11<31, 986, (outs G8RC:$rA), (ins GPRC:$rS),
                       "extsw $rA, $rS", IntSimple,
                       [(set i64:$rA, (sext i32:$rS))]>, isPPC64;
@@ -471,6 +467,13 @@ def CNTLZD : XForm_11<31, 58, (outs G8RC:$rA), (ins G8RC:$rS),
 def POPCNTD : XForm_11<31, 506, (outs G8RC:$rA), (ins G8RC:$rS),
                       "popcntd $rA, $rS", IntGeneral,
                       [(set i64:$rA, (ctpop i64:$rS))]>;
+
+// popcntw also does a population count on the high 32 bits (storing the
+// results in the high 32-bits of the output). We'll ignore that here (which is
+// safe because we never separately use the high part of the 64-bit registers).
+def POPCNTW : XForm_11<31, 378, (outs GPRC:$rA), (ins GPRC:$rS),
+                      "popcntw $rA, $rS", IntGeneral,
+                      [(set i32:$rA, (ctpop i32:$rS))]>;
 
 def DIVD  : XOForm_1<31, 489, 0, (outs G8RC:$rT), (ins G8RC:$rA, G8RC:$rB),
                      "divd $rT, $rA, $rB", IntDivD,
@@ -786,15 +789,6 @@ def STDBRX: XForm_8<31, 660, (outs), (ins G8RC:$rS, memrr:$dst),
                    "stdbrx $rS, $dst", LdStStore,
                    [(PPCstbrx i64:$rS, xoaddr:$dst, i64)]>, isPPC64,
                    PPC970_DGroup_Cracked;
-
-// STD_32/STDX_32 - Just like STD/STDX, but uses a '32-bit' input register.
-def STD_32  : DSForm_1<62, 0, (outs), (ins GPRC:$rT, memrix:$dst),
-                       "std $rT, $dst", LdStSTD,
-                       [(PPCstd_32  i32:$rT, ixaddr:$dst)]>, isPPC64;
-def STDX_32  : XForm_8<31, 149, (outs), (ins GPRC:$rT, memrr:$dst),
-                       "stdx $rT, $dst", LdStSTD,
-                       [(PPCstd_32  i32:$rT, xaddr:$dst)]>, isPPC64,
-                       PPC970_DGroup_Cracked;
 }
 
 // Stores with Update (pre-inc).
@@ -865,6 +859,22 @@ def FCFID  : XForm_26<63, 846, (outs F8RC:$frD), (ins F8RC:$frB),
 def FCTIDZ : XForm_26<63, 815, (outs F8RC:$frD), (ins F8RC:$frB),
                       "fctidz $frD, $frB", FPGeneral,
                       [(set f64:$frD, (PPCfctidz f64:$frB))]>, isPPC64;
+
+def FCFIDU  : XForm_26<63, 974, (outs F8RC:$frD), (ins F8RC:$frB),
+                      "fcfidu $frD, $frB", FPGeneral,
+                      [(set f64:$frD, (PPCfcfidu f64:$frB))]>, isPPC64;
+def FCFIDS  : XForm_26<59, 846, (outs F4RC:$frD), (ins F8RC:$frB),
+                      "fcfids $frD, $frB", FPGeneral,
+                      [(set f32:$frD, (PPCfcfids f64:$frB))]>, isPPC64;
+def FCFIDUS : XForm_26<59, 974, (outs F4RC:$frD), (ins F8RC:$frB),
+                      "fcfidus $frD, $frB", FPGeneral,
+                      [(set f32:$frD, (PPCfcfidus f64:$frB))]>, isPPC64;
+def FCTIDUZ : XForm_26<63, 943, (outs F8RC:$frD), (ins F8RC:$frB),
+                      "fctiduz $frD, $frB", FPGeneral,
+                      [(set f64:$frD, (PPCfctiduz f64:$frB))]>, isPPC64;
+def FCTIWUZ : XForm_26<63, 143, (outs F8RC:$frD), (ins F8RC:$frB),
+                      "fctiwuz $frD, $frB", FPGeneral,
+                      [(set f64:$frD, (PPCfctiwuz f64:$frB))]>, isPPC64;
 }
 
 

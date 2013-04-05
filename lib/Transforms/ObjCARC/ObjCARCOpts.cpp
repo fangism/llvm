@@ -907,10 +907,39 @@ static void GenerateARCAnnotation(unsigned InstMDId,
                         ARCAnnotationProvenanceSourceMDKind, (inst),    \
                         const_cast<Value*>(ptr), (old), (new))
 
+#define ANNOTATE_BB(_states, _bb, _name, _type, _direction)                   \
+  do {                                                                        \
+  if (EnableARCAnnotations) {                                                 \
+    for(BBState::ptr_const_iterator I = (_states)._direction##_ptr_begin(),   \
+          E = (_states)._direction##_ptr_end(); I != E; ++I) {                \
+      Value *Ptr = const_cast<Value*>(I->first);                              \
+      Sequence Seq = I->second.GetSeq();                                      \
+      GenerateARCBB ## _type ## Annotation(_name, (_bb), Ptr, Seq);           \
+    }                                                                         \
+  }                                                                           \
+} while (0)
+
+#define ANNOTATE_BOTTOMUP_BBSTART(_states, _basicblock) \
+    ANNOTATE_BB(_states, _basicblock, "llvm.arc.annotation.bottomup.bbstart", \
+                Entrance, bottom_up)
+#define ANNOTATE_BOTTOMUP_BBEND(_states, _basicblock) \
+    ANNOTATE_BB(_states, _basicblock, "llvm.arc.annotation.bottomup.bbend", \
+                Terminator, bottom_up)
+#define ANNOTATE_TOPDOWN_BBSTART(_states, _basicblock) \
+    ANNOTATE_BB(_states, _basicblock, "llvm.arc.annotation.topdown.bbstart", \
+                Entrance, top_down)
+#define ANNOTATE_TOPDOWN_BBEND(_states, _basicblock) \
+    ANNOTATE_BB(_states, _basicblock, "llvm.arc.annotation.topdown.bbend", \
+                Terminator, top_down)
+
 #else // !ARC_ANNOTATION
 // If annotations are off, noop.
 #define ANNOTATE_BOTTOMUP(inst, ptr, old, new)
 #define ANNOTATE_TOPDOWN(inst, ptr, old, new)
+#define ANNOTATE_BOTTOMUP_BBSTART(states, basicblock)
+#define ANNOTATE_BOTTOMUP_BBEND(states, basicblock)
+#define ANNOTATE_TOPDOWN_BBSTART(states, basicblock)
+#define ANNOTATE_TOPDOWN_BBEND(states, basicblock)
 #endif // !ARC_ANNOTATION
 
 namespace {
@@ -1919,20 +1948,9 @@ ObjCARCOpt::VisitBottomUp(BasicBlock *BB,
     }
   }
 
-#ifdef ARC_ANNOTATIONS
-  if (EnableARCAnnotations) {
-    // If ARC Annotations are enabled, output the current state of pointers at the
-    // bottom of the basic block.
-    for(BBState::ptr_const_iterator I = MyStates.bottom_up_ptr_begin(),
-          E = MyStates.bottom_up_ptr_end(); I != E; ++I) {
-      Value *Ptr = const_cast<Value*>(I->first);
-      Sequence Seq = I->second.GetSeq();
-      GenerateARCBBTerminatorAnnotation("llvm.arc.annotation.bottomup.bbend",
-                                        BB, Ptr, Seq);
-    }
-  }
-#endif
-
+  // If ARC Annotations are enabled, output the current state of pointers at the
+  // bottom of the basic block.
+  ANNOTATE_BOTTOMUP_BBEND(MyStates, BB);
 
   // Visit all the instructions, bottom-up.
   for (BasicBlock::iterator I = BB->end(), E = BB->begin(); I != E; --I) {
@@ -1957,19 +1975,9 @@ ObjCARCOpt::VisitBottomUp(BasicBlock *BB,
       NestingDetected |= VisitInstructionBottomUp(II, BB, Retains, MyStates);
   }
 
-#ifdef ARC_ANNOTATIONS
-  if (EnableARCAnnotations) {
-    // If ARC Annotations are enabled, output the current state of pointers at the
-    // top of the basic block.
-    for(BBState::ptr_const_iterator I = MyStates.bottom_up_ptr_begin(),
-          E = MyStates.bottom_up_ptr_end(); I != E; ++I) {
-      Value *Ptr = const_cast<Value*>(I->first);
-      Sequence Seq = I->second.GetSeq();
-      GenerateARCBBEntranceAnnotation("llvm.arc.annotation.bottomup.bbstart",
-                                      BB, Ptr, Seq);
-    }
-  }
-#endif
+  // If ARC Annotations are enabled, output the current state of pointers at the
+  // top of the basic block.
+  ANNOTATE_BOTTOMUP_BBSTART(MyStates, BB);
 
   return NestingDetected;
 }
@@ -2140,19 +2148,9 @@ ObjCARCOpt::VisitTopDown(BasicBlock *BB,
     }
   }
 
-#ifdef ARC_ANNOTATIONS
-  if (EnableARCAnnotations) {
-    // If ARC Annotations are enabled, output the current state of pointers at the
-    // top of the basic block.
-    for(BBState::ptr_const_iterator I = MyStates.top_down_ptr_begin(),
-          E = MyStates.top_down_ptr_end(); I != E; ++I) {
-      Value *Ptr = const_cast<Value*>(I->first);
-      Sequence Seq = I->second.GetSeq();
-      GenerateARCBBEntranceAnnotation("llvm.arc.annotation.topdown.bbstart",
-                                      BB, Ptr, Seq);
-    }
-  }
-#endif
+  // If ARC Annotations are enabled, output the current state of pointers at the
+  // top of the basic block.
+  ANNOTATE_TOPDOWN_BBSTART(MyStates, BB);
 
   // Visit all the instructions, top-down.
   for (BasicBlock::iterator I = BB->begin(), E = BB->end(); I != E; ++I) {
@@ -2163,19 +2161,9 @@ ObjCARCOpt::VisitTopDown(BasicBlock *BB,
     NestingDetected |= VisitInstructionTopDown(Inst, Releases, MyStates);
   }
 
-#ifdef ARC_ANNOTATIONS
-  if (EnableARCAnnotations) {
-    // If ARC Annotations are enabled, output the current state of pointers at the
-    // bottom of the basic block.
-    for(BBState::ptr_const_iterator I = MyStates.top_down_ptr_begin(),
-          E = MyStates.top_down_ptr_end(); I != E; ++I) {
-      Value *Ptr = const_cast<Value*>(I->first);
-      Sequence Seq = I->second.GetSeq();
-      GenerateARCBBTerminatorAnnotation("llvm.arc.annotation.topdown.bbend",
-                                        BB, Ptr, Seq);
-    }
-  }
-#endif
+  // If ARC Annotations are enabled, output the current state of pointers at the
+  // bottom of the basic block.
+  ANNOTATE_TOPDOWN_BBEND(MyStates, BB);
 
   CheckForCFGHazards(BB, BBStates, MyStates);
   return NestingDetected;
@@ -2791,6 +2779,88 @@ bool ObjCARCOpt::OptimizeSequences(Function &F) {
          NestingDetected;
 }
 
+/// Check if there is a dependent call earlier that does not have anything in
+/// between the Retain and the call that can affect the reference count of their
+/// shared pointer argument. Note that Retain need not be in BB.
+static bool
+HasSafePathToPredecessorCall(const Value *Arg, Instruction *Retain,
+                             SmallPtrSet<Instruction *, 4> &DepInsts,
+                             SmallPtrSet<const BasicBlock *, 4> &Visited,
+                             ProvenanceAnalysis &PA) {
+  FindDependencies(CanChangeRetainCount, Arg, Retain->getParent(), Retain,
+                   DepInsts, Visited, PA);
+  if (DepInsts.size() != 1)
+    return false;
+
+  CallInst *Call =
+    dyn_cast_or_null<CallInst>(*DepInsts.begin());
+
+  // Check that the pointer is the return value of the call.
+  if (!Call || Arg != Call)
+    return false;
+
+  // Check that the call is a regular call.
+  InstructionClass Class = GetBasicInstructionClass(Call);
+  if (Class != IC_CallOrUser && Class != IC_Call)
+    return false;
+
+  return true;
+}
+
+/// Find a dependent retain that precedes the given autorelease for which there
+/// is nothing in between the two instructions that can affect the ref count of
+/// Arg.
+static CallInst *
+FindPredecessorRetainWithSafePath(const Value *Arg, BasicBlock *BB,
+                                  Instruction *Autorelease,
+                                  SmallPtrSet<Instruction *, 4> &DepInsts,
+                                  SmallPtrSet<const BasicBlock *, 4> &Visited,
+                                  ProvenanceAnalysis &PA) {
+  FindDependencies(CanChangeRetainCount, Arg,
+                   BB, Autorelease, DepInsts, Visited, PA);
+  if (DepInsts.size() != 1)
+    return 0;
+  
+  CallInst *Retain =
+    dyn_cast_or_null<CallInst>(*DepInsts.begin());
+  
+  // Check that we found a retain with the same argument.
+  if (!Retain ||
+      !IsRetain(GetBasicInstructionClass(Retain)) ||
+      GetObjCArg(Retain) != Arg) {
+    return 0;
+  }
+  
+  return Retain;
+}
+
+/// Look for an ``autorelease'' instruction dependent on Arg such that there are
+/// no instructions dependent on Arg that need a positive ref count in between
+/// the autorelease and the ret.
+static CallInst *
+FindPredecessorAutoreleaseWithSafePath(const Value *Arg, BasicBlock *BB,
+                                       ReturnInst *Ret,
+                                       SmallPtrSet<Instruction *, 4> &DepInsts,
+                                       SmallPtrSet<const BasicBlock *, 4> &V,
+                                       ProvenanceAnalysis &PA) {
+  FindDependencies(NeedsPositiveRetainCount, Arg,
+                   BB, Ret, DepInsts, V, PA);
+  if (DepInsts.size() != 1)
+    return 0;
+  
+  CallInst *Autorelease =
+    dyn_cast_or_null<CallInst>(*DepInsts.begin());
+  if (!Autorelease)
+    return 0;
+  InstructionClass AutoreleaseClass = GetBasicInstructionClass(Autorelease);
+  if (!IsAutorelease(AutoreleaseClass))
+    return 0;
+  if (GetObjCArg(Autorelease) != Arg)
+    return 0;
+  
+  return Autorelease;
+}
+
 /// Look for this pattern:
 /// \code
 ///    %call = call i8* @something(...)
@@ -2799,13 +2869,6 @@ bool ObjCARCOpt::OptimizeSequences(Function &F) {
 ///    ret i8* %3
 /// \endcode
 /// And delete the retain and autorelease.
-///
-/// Otherwise if it's just this:
-/// \code
-///    %3 = call i8* @objc_autorelease(i8* %2)
-///    ret i8* %3
-/// \endcode
-/// convert the autorelease to autoreleaseRV.
 void ObjCARCOpt::OptimizeReturns(Function &F) {
   if (!F.getReturnType()->isPointerTy())
     return;
@@ -2818,83 +2881,33 @@ void ObjCARCOpt::OptimizeReturns(Function &F) {
 
     DEBUG(dbgs() << "ObjCARCOpt::OptimizeReturns: Visiting: " << *Ret << "\n");
 
-    if (!Ret) continue;
-
+    if (!Ret)
+      continue;
+    
     const Value *Arg = StripPointerCastsAndObjCCalls(Ret->getOperand(0));
-    FindDependencies(NeedsPositiveRetainCount, Arg,
-                     BB, Ret, DependingInstructions, Visited, PA);
-    if (DependingInstructions.size() != 1)
-      goto next_block;
-
-    {
-      CallInst *Autorelease =
-        dyn_cast_or_null<CallInst>(*DependingInstructions.begin());
-      if (!Autorelease)
-        goto next_block;
-      InstructionClass AutoreleaseClass = GetBasicInstructionClass(Autorelease);
-      if (!IsAutorelease(AutoreleaseClass))
-        goto next_block;
-      if (GetObjCArg(Autorelease) != Arg)
-        goto next_block;
-
+    
+    // Look for an ``autorelease'' instruction that is a predecssor of Ret and
+    // dependent on Arg such that there are no instructions dependent on Arg
+    // that need a positive ref count in between the autorelease and Ret.
+    CallInst *Autorelease =
+      FindPredecessorAutoreleaseWithSafePath(Arg, BB, Ret,
+                                             DependingInstructions, Visited,
+                                             PA);
+    if (Autorelease) {
       DependingInstructions.clear();
       Visited.clear();
-
-      // Check that there is nothing that can affect the reference
-      // count between the autorelease and the retain.
-      FindDependencies(CanChangeRetainCount, Arg,
-                       BB, Autorelease, DependingInstructions, Visited, PA);
-      if (DependingInstructions.size() != 1)
-        goto next_block;
-
-      {
-        CallInst *Retain =
-          dyn_cast_or_null<CallInst>(*DependingInstructions.begin());
-
-        // Check that we found a retain with the same argument.
-        if (!Retain ||
-            !IsRetain(GetBasicInstructionClass(Retain)) ||
-            GetObjCArg(Retain) != Arg)
-          goto next_block;
-
+      
+      CallInst *Retain =
+        FindPredecessorRetainWithSafePath(Arg, BB, Autorelease,
+                                          DependingInstructions, Visited, PA);
+      if (Retain) {
         DependingInstructions.clear();
         Visited.clear();
-
-        // Convert the autorelease to an autoreleaseRV, since it's
-        // returning the value.
-        if (AutoreleaseClass == IC_Autorelease) {
-          DEBUG(dbgs() << "ObjCARCOpt::OptimizeReturns: Converting autorelease "
-                          "=> autoreleaseRV since it's returning a value.\n"
-                          "                             In: " << *Autorelease
-                       << "\n");
-          Autorelease->setCalledFunction(getAutoreleaseRVCallee(F.getParent()));
-          DEBUG(dbgs() << "                             Out: " << *Autorelease
-                       << "\n");
-          Autorelease->setTailCall(); // Always tail call autoreleaseRV.
-          AutoreleaseClass = IC_AutoreleaseRV;
-        }
-
-        // Check that there is nothing that can affect the reference
-        // count between the retain and the call.
-        // Note that Retain need not be in BB.
-        FindDependencies(CanChangeRetainCount, Arg, Retain->getParent(), Retain,
-                         DependingInstructions, Visited, PA);
-        if (DependingInstructions.size() != 1)
-          goto next_block;
-
-        {
-          CallInst *Call =
-            dyn_cast_or_null<CallInst>(*DependingInstructions.begin());
-
-          // Check that the pointer is the return value of the call.
-          if (!Call || Arg != Call)
-            goto next_block;
-
-          // Check that the call is a regular call.
-          InstructionClass Class = GetBasicInstructionClass(Call);
-          if (Class != IC_CallOrUser && Class != IC_Call)
-            goto next_block;
-
+        
+        // Check that there is nothing that can affect the reference count
+        // between the retain and the call.  Note that Retain need not be in BB.
+        if (HasSafePathToPredecessorCall(Arg, Retain, DependingInstructions,
+                                         Visited, PA)) {
           // If so, we can zap the retain and autorelease.
           Changed = true;
           ++NumRets;
@@ -2906,8 +2919,7 @@ void ObjCARCOpt::OptimizeReturns(Function &F) {
         }
       }
     }
-
-  next_block:
+    
     DependingInstructions.clear();
     Visited.clear();
   }

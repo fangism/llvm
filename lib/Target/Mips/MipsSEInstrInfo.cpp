@@ -136,6 +136,12 @@ void MipsSEInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     else if (Mips::FGR64RegClass.contains(DestReg))
       Opc = Mips::DMTC1;
   }
+  else if (Mips::ACRegsRegClass.contains(DestReg, SrcReg))
+    Opc = Mips::COPY_AC64;
+  else if (Mips::ACRegsDSPRegClass.contains(DestReg, SrcReg))
+    Opc = Mips::COPY_AC_DSP;
+  else if (Mips::ACRegs128RegClass.contains(DestReg, SrcReg))
+    Opc = Mips::COPY_AC128;
 
   assert(Opc && "Cannot copy registers");
 
@@ -166,6 +172,12 @@ storeRegToStack(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     Opc = IsN64 ? Mips::SW_P8 : Mips::SW;
   else if (Mips::CPU64RegsRegClass.hasSubClassEq(RC))
     Opc = IsN64 ? Mips::SD_P8 : Mips::SD;
+  else if (Mips::ACRegsRegClass.hasSubClassEq(RC))
+    Opc = IsN64 ? Mips::STORE_AC64_P8 : Mips::STORE_AC64;
+  else if (Mips::ACRegsDSPRegClass.hasSubClassEq(RC))
+    Opc = IsN64 ? Mips::STORE_AC_DSP_P8 : Mips::STORE_AC_DSP;
+  else if (Mips::ACRegs128RegClass.hasSubClassEq(RC))
+    Opc = IsN64 ? Mips::STORE_AC128_P8 : Mips::STORE_AC128;
   else if (Mips::FGR32RegClass.hasSubClassEq(RC))
     Opc = IsN64 ? Mips::SWC1_P8 : Mips::SWC1;
   else if (Mips::AFGR64RegClass.hasSubClassEq(RC))
@@ -191,6 +203,12 @@ loadRegFromStack(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     Opc = IsN64 ? Mips::LW_P8 : Mips::LW;
   else if (Mips::CPU64RegsRegClass.hasSubClassEq(RC))
     Opc = IsN64 ? Mips::LD_P8 : Mips::LD;
+  else if (Mips::ACRegsRegClass.hasSubClassEq(RC))
+    Opc = IsN64 ? Mips::LOAD_AC64_P8 : Mips::LOAD_AC64;
+  else if (Mips::ACRegsDSPRegClass.hasSubClassEq(RC))
+    Opc = IsN64 ? Mips::LOAD_AC_DSP_P8 : Mips::LOAD_AC_DSP;
+  else if (Mips::ACRegs128RegClass.hasSubClassEq(RC))
+    Opc = IsN64 ? Mips::LOAD_AC128_P8 : Mips::LOAD_AC128;
   else if (Mips::FGR32RegClass.hasSubClassEq(RC))
     Opc = IsN64 ? Mips::LWC1_P8 : Mips::LWC1;
   else if (Mips::AFGR64RegClass.hasSubClassEq(RC))
@@ -369,6 +387,7 @@ void MipsSEInstrInfo::ExpandEhReturn(MachineBasicBlock &MBB,
   unsigned JR = STI.isABI_N64() ? Mips::JR64 : Mips::JR;
   unsigned SP = STI.isABI_N64() ? Mips::SP_64 : Mips::SP;
   unsigned RA = STI.isABI_N64() ? Mips::RA_64 : Mips::RA;
+  unsigned T9 = STI.isABI_N64() ? Mips::T9_64 : Mips::T9;
   unsigned ZERO = STI.isABI_N64() ? Mips::ZERO_64 : Mips::ZERO;
   unsigned OffsetReg = I->getOperand(0).getReg();
   unsigned TargetReg = I->getOperand(1).getReg();
@@ -376,6 +395,9 @@ void MipsSEInstrInfo::ExpandEhReturn(MachineBasicBlock &MBB,
   // or   $ra, $v0, $zero
   // addu $sp, $sp, $v1
   // jr   $ra
+  if (TM.getRelocationModel() == Reloc::PIC_)
+    BuildMI(MBB, I, I->getDebugLoc(), TM.getInstrInfo()->get(OR), T9)
+        .addReg(TargetReg).addReg(ZERO);
   BuildMI(MBB, I, I->getDebugLoc(), TM.getInstrInfo()->get(OR), RA)
       .addReg(TargetReg).addReg(ZERO);
   BuildMI(MBB, I, I->getDebugLoc(), TM.getInstrInfo()->get(ADDU), SP)

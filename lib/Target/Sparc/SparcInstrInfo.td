@@ -21,6 +21,12 @@ include "SparcInstrFormats.td"
 // Feature predicates.
 //===----------------------------------------------------------------------===//
 
+// True when generating 32-bit code.
+def Is32Bit : Predicate<"!Subtarget.is64Bit()">;
+
+// True when generating 64-bit code. This also implies HasV9.
+def Is64Bit : Predicate<"Subtarget.is64Bit()">;
+
 // HasV9 - This predicate is true when the target processor supports V9
 // instructions.  Note that the machine may be running in 32-bit mode.
 def HasV9   : Predicate<"Subtarget.isV9()">;
@@ -63,17 +69,17 @@ def SETHIimm : PatLeaf<(imm), [{
 }], HI22>;
 
 // Addressing modes.
-def ADDRrr : ComplexPattern<i32, 2, "SelectADDRrr", [], []>;
-def ADDRri : ComplexPattern<i32, 2, "SelectADDRri", [frameindex], []>;
+def ADDRrr : ComplexPattern<iPTR, 2, "SelectADDRrr", [], []>;
+def ADDRri : ComplexPattern<iPTR, 2, "SelectADDRri", [frameindex], []>;
 
 // Address operands
-def MEMrr : Operand<i32> {
+def MEMrr : Operand<iPTR> {
   let PrintMethod = "printMemOperand";
-  let MIOperandInfo = (ops IntRegs, IntRegs);
+  let MIOperandInfo = (ops ptr_rc, ptr_rc);
 }
-def MEMri : Operand<i32> {
+def MEMri : Operand<iPTR> {
   let PrintMethod = "printMemOperand";
-  let MIOperandInfo = (ops IntRegs, i32imm);
+  let MIOperandInfo = (ops ptr_rc, i32imm);
 }
 
 // Branch targets have OtherVT type.
@@ -98,6 +104,7 @@ SDTypeProfile<1, 1, [SDTCisFP<0>, SDTCisVT<1, f32>]>;
 def SPcmpicc : SDNode<"SPISD::CMPICC", SDTIntBinOp, [SDNPOutGlue]>;
 def SPcmpfcc : SDNode<"SPISD::CMPFCC", SDTSPcmpfcc, [SDNPOutGlue]>;
 def SPbricc : SDNode<"SPISD::BRICC", SDTSPbrcc, [SDNPHasChain, SDNPInGlue]>;
+def SPbrxcc : SDNode<"SPISD::BRXCC", SDTSPbrcc, [SDNPHasChain, SDNPInGlue]>;
 def SPbrfcc : SDNode<"SPISD::BRFCC", SDTSPbrcc, [SDNPHasChain, SDNPInGlue]>;
 
 def SPhi    : SDNode<"SPISD::Hi", SDTIntUnaryOp>;
@@ -107,6 +114,7 @@ def SPftoi  : SDNode<"SPISD::FTOI", SDTSPFTOI>;
 def SPitof  : SDNode<"SPISD::ITOF", SDTSPITOF>;
 
 def SPselecticc : SDNode<"SPISD::SELECT_ICC", SDTSPselectcc, [SDNPInGlue]>;
+def SPselectxcc : SDNode<"SPISD::SELECT_XCC", SDTSPselectcc, [SDNPInGlue]>;
 def SPselectfcc : SDNode<"SPISD::SELECT_FCC", SDTSPselectcc, [SDNPInGlue]>;
 
 //  These are target-independent nodes, but have target-specific formats.
@@ -186,7 +194,7 @@ multiclass F3_12<string OpcStr, bits<6> Op3Val, SDNode OpNode> {
   def ri  : F3_2<2, Op3Val,
                  (outs IntRegs:$dst), (ins IntRegs:$b, i32imm:$c),
                  !strconcat(OpcStr, " $b, $c, $dst"),
-                 [(set i32:$dst, (OpNode i32:$b, simm13:$c))]>;
+                 [(set i32:$dst, (OpNode i32:$b, (i32 simm13:$c)))]>;
 }
 
 /// F3_12np multiclass - Define a normal F3_1/F3_2 pattern in one shot, with no
@@ -770,7 +778,7 @@ def : Pat<(ctpop i32:$src),
 
 // Small immediates.
 def : Pat<(i32 simm13:$val),
-          (ORri G0, imm:$val)>;
+          (ORri (i32 G0), imm:$val)>;
 // Arbitrary immediates.
 def : Pat<(i32 imm:$val),
           (ORri (SETHIi (HI22 imm:$val)), (LO10 imm:$val))>;
@@ -783,9 +791,9 @@ def : Pat<(subc i32:$b, simm13:$val),
 
 // Global addresses, constant pool entries
 def : Pat<(SPhi tglobaladdr:$in), (SETHIi tglobaladdr:$in)>;
-def : Pat<(SPlo tglobaladdr:$in), (ORri G0, tglobaladdr:$in)>;
+def : Pat<(SPlo tglobaladdr:$in), (ORri (i32 G0), tglobaladdr:$in)>;
 def : Pat<(SPhi tconstpool:$in), (SETHIi tconstpool:$in)>;
-def : Pat<(SPlo tconstpool:$in), (ORri G0, tconstpool:$in)>;
+def : Pat<(SPlo tconstpool:$in), (ORri (i32 G0), tconstpool:$in)>;
 
 // Add reg, lo.  This is used when taking the addr of a global/constpool entry.
 def : Pat<(add i32:$r, (SPlo tglobaladdr:$in)),
@@ -810,3 +818,5 @@ def : Pat<(i32 (extloadi16 ADDRri:$src)), (LDUHri ADDRri:$src)>;
 // zextload bool -> zextload byte
 def : Pat<(i32 (zextloadi1 ADDRrr:$src)), (LDUBrr ADDRrr:$src)>;
 def : Pat<(i32 (zextloadi1 ADDRri:$src)), (LDUBri ADDRri:$src)>;
+
+include "SparcInstr64Bit.td"

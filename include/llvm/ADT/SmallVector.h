@@ -268,8 +268,8 @@ template <typename T, bool isPodLike>
 void SmallVectorTemplateBase<T, isPodLike>::grow(size_t MinSize) {
   size_t CurCapacity = this->capacity();
   size_t CurSize = this->size();
- // Always grow, even from zero.  
-  size_t NewCapacity = NextPowerOf2(2*CurCapacity+(CurCapacity==0));
+  // Always grow, even from zero.  
+  size_t NewCapacity = size_t(NextPowerOf2(CurCapacity+2));
   if (NewCapacity < MinSize)
     NewCapacity = MinSize;
   T *NewElts = static_cast<T*>(malloc(NewCapacity*sizeof(T)));

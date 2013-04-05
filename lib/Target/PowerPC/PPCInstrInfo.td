@@ -20,6 +20,10 @@ include "PPCInstrFormats.td"
 def SDT_PPCstfiwx : SDTypeProfile<0, 2, [ // stfiwx
   SDTCisVT<0, f64>, SDTCisPtrTy<1>
 ]>;
+def SDT_PPClfiwx : SDTypeProfile<1, 1, [ // lfiw[az]x
+  SDTCisVT<0, f64>, SDTCisPtrTy<1>
+]>;
+
 def SDT_PPCCallSeqStart : SDCallSeqStart<[ SDTCisVT<0, i32> ]>;
 def SDT_PPCCallSeqEnd   : SDCallSeqEnd<[ SDTCisVT<0, i32>,
                                          SDTCisVT<1, i32> ]>;
@@ -58,11 +62,23 @@ def SDT_PPCTC_ret : SDTypeProfile<0, 2, [
 // PowerPC specific DAG Nodes.
 //
 
-def PPCfcfid  : SDNode<"PPCISD::FCFID" , SDTFPUnaryOp, []>;
+def PPCfre    : SDNode<"PPCISD::FRE",     SDTFPUnaryOp, []>;
+def PPCfrsqrte: SDNode<"PPCISD::FRSQRTE", SDTFPUnaryOp, []>;
+
+def PPCfcfid  : SDNode<"PPCISD::FCFID",   SDTFPUnaryOp, []>;
+def PPCfcfidu : SDNode<"PPCISD::FCFIDU",  SDTFPUnaryOp, []>;
+def PPCfcfids : SDNode<"PPCISD::FCFIDS",  SDTFPRoundOp, []>;
+def PPCfcfidus: SDNode<"PPCISD::FCFIDUS", SDTFPRoundOp, []>;
 def PPCfctidz : SDNode<"PPCISD::FCTIDZ", SDTFPUnaryOp, []>;
 def PPCfctiwz : SDNode<"PPCISD::FCTIWZ", SDTFPUnaryOp, []>;
+def PPCfctiduz: SDNode<"PPCISD::FCTIDUZ",SDTFPUnaryOp, []>;
+def PPCfctiwuz: SDNode<"PPCISD::FCTIWUZ",SDTFPUnaryOp, []>;
 def PPCstfiwx : SDNode<"PPCISD::STFIWX", SDT_PPCstfiwx,
                        [SDNPHasChain, SDNPMayStore]>;
+def PPClfiwax : SDNode<"PPCISD::LFIWAX", SDT_PPClfiwx,
+                       [SDNPHasChain, SDNPMayLoad]>;
+def PPClfiwzx : SDNode<"PPCISD::LFIWZX", SDT_PPClfiwx,
+                       [SDNPHasChain, SDNPMayLoad]>;
 
 // Extract FPSCR (not modeled at the DAG level).
 def PPCmffs   : SDNode<"PPCISD::MFFS",
@@ -104,10 +120,6 @@ def PPCvperm    : SDNode<"PPCISD::VPERM", SDT_PPCvperm, []>;
 def PPCsrl        : SDNode<"PPCISD::SRL"       , SDTIntShiftOp>;
 def PPCsra        : SDNode<"PPCISD::SRA"       , SDTIntShiftOp>;
 def PPCshl        : SDNode<"PPCISD::SHL"       , SDTIntShiftOp>;
-
-def PPCextsw_32   : SDNode<"PPCISD::EXTSW_32"  , SDTIntUnaryOp>;
-def PPCstd_32     : SDNode<"PPCISD::STD_32"    , SDTStore,
-                           [SDNPHasChain, SDNPMayStore]>;
 
 // These are target-independent nodes, but have target-specific formats.
 def callseq_start : SDNode<"ISD::CALLSEQ_START", SDT_PPCCallSeqStart,
@@ -512,11 +524,11 @@ let isBranch = 1, isTerminator = 1, hasCtrlDep = 1, PPC970_Unit = 7 in {
   }
 }
 
-// The direct BCL used by the SjLj setjmp code.
+// The unconditional BCL used by the SjLj setjmp code.
 let isCall = 1, hasCtrlDep = 1, isCodeGenOnly = 1, PPC970_Unit = 7 in {
   let Defs = [LR], Uses = [RM] in {
-    def BCL  : BForm_2<16, 20, 31, 0, 1, (outs), (ins condbrtarget:$dst),
-                       "bcl 20, 31, $dst">;
+    def BCLalways  : BForm_2<16, 20, 31, 0, 1, (outs), (ins condbrtarget:$dst),
+                            "bcl 20, 31, $dst">;
   }
 }
 
@@ -847,6 +859,13 @@ def LFSX   : XForm_25<31, 535, (outs F4RC:$frD), (ins memrr:$src),
 def LFDX   : XForm_25<31, 599, (outs F8RC:$frD), (ins memrr:$src),
                       "lfdx $frD, $src", LdStLFD,
                       [(set f64:$frD, (load xaddr:$src))]>;
+
+def LFIWAX : XForm_25<31, 855, (outs F8RC:$frD), (ins memrr:$src),
+                      "lfiwax $frD, $src", LdStLFD,
+                      [(set f64:$frD, (PPClfiwax xoaddr:$src))]>;
+def LFIWZX : XForm_25<31, 887, (outs F8RC:$frD), (ins memrr:$src),
+                      "lfiwzx $frD, $src", LdStLFD,
+                      [(set f64:$frD, (PPClfiwzx xoaddr:$src))]>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1128,9 +1147,47 @@ let Uses = [RM] in {
   def FCTIWZ : XForm_26<63, 15, (outs F8RC:$frD), (ins F8RC:$frB),
                         "fctiwz $frD, $frB", FPGeneral,
                         [(set f64:$frD, (PPCfctiwz f64:$frB))]>;
+
   def FRSP   : XForm_26<63, 12, (outs F4RC:$frD), (ins F8RC:$frB),
                         "frsp $frD, $frB", FPGeneral,
                         [(set f32:$frD, (fround f64:$frB))]>;
+
+  // The frin -> nearbyint mapping is valid only in fast-math mode.
+  def FRIND  : XForm_26<63, 392, (outs F8RC:$frD), (ins F8RC:$frB),
+                        "frin $frD, $frB", FPGeneral,
+                        [(set f64:$frD, (fnearbyint f64:$frB))]>;
+  def FRINS  : XForm_26<63, 392, (outs F4RC:$frD), (ins F4RC:$frB),
+                        "frin $frD, $frB", FPGeneral,
+                        [(set f32:$frD, (fnearbyint f32:$frB))]>;
+
+  // These pseudos expand to rint but also set FE_INEXACT when the result does
+  // not equal the argument.
+  let usesCustomInserter = 1, Defs = [RM] in { // FIXME: Model FPSCR!
+    def FRINDrint : Pseudo<(outs F8RC:$frD), (ins F8RC:$frB),
+                            "#FRINDrint", [(set f64:$frD, (frint f64:$frB))]>;
+    def FRINSrint : Pseudo<(outs F4RC:$frD), (ins F4RC:$frB),
+                            "#FRINSrint", [(set f32:$frD, (frint f32:$frB))]>;
+  }
+
+  def FRIPD  : XForm_26<63, 456, (outs F8RC:$frD), (ins F8RC:$frB),
+                        "frip $frD, $frB", FPGeneral,
+                        [(set f64:$frD, (fceil f64:$frB))]>;
+  def FRIPS  : XForm_26<63, 456, (outs F4RC:$frD), (ins F4RC:$frB),
+                        "frip $frD, $frB", FPGeneral,
+                        [(set f32:$frD, (fceil f32:$frB))]>;
+  def FRIZD  : XForm_26<63, 424, (outs F8RC:$frD), (ins F8RC:$frB),
+                        "friz $frD, $frB", FPGeneral,
+                        [(set f64:$frD, (ftrunc f64:$frB))]>;
+  def FRIZS  : XForm_26<63, 424, (outs F4RC:$frD), (ins F4RC:$frB),
+                        "friz $frD, $frB", FPGeneral,
+                        [(set f32:$frD, (ftrunc f32:$frB))]>;
+  def FRIMD  : XForm_26<63, 488, (outs F8RC:$frD), (ins F8RC:$frB),
+                        "frim $frD, $frB", FPGeneral,
+                        [(set f64:$frD, (ffloor f64:$frB))]>;
+  def FRIMS  : XForm_26<63, 488, (outs F4RC:$frD), (ins F4RC:$frB),
+                        "frim $frD, $frB", FPGeneral,
+                        [(set f32:$frD, (ffloor f32:$frB))]>;
+
   def FSQRT  : XForm_26<63, 22, (outs F8RC:$frD), (ins F8RC:$frB),
                         "fsqrt $frD, $frB", FPSqrt,
                         [(set f64:$frD, (fsqrt f64:$frB))]>;
@@ -1169,8 +1226,21 @@ def FNEGS  : XForm_26<63, 40, (outs F4RC:$frD), (ins F4RC:$frB),
 def FNEGD  : XForm_26<63, 40, (outs F8RC:$frD), (ins F8RC:$frB),
                       "fneg $frD, $frB", FPGeneral,
                       [(set f64:$frD, (fneg f64:$frB))]>;
+
+// Reciprocal estimates.
+def FRE      : XForm_26<63, 24, (outs F8RC:$frD), (ins F8RC:$frB),
+                        "fre $frD, $frB", FPGeneral,
+                        [(set f64:$frD, (PPCfre f64:$frB))]>;
+def FRES     : XForm_26<59, 24, (outs F4RC:$frD), (ins F4RC:$frB),
+                        "fres $frD, $frB", FPGeneral,
+                        [(set f32:$frD, (PPCfre f32:$frB))]>;
+def FRSQRTE  : XForm_26<63, 26, (outs F8RC:$frD), (ins F8RC:$frB),
+                        "frsqrte $frD, $frB", FPGeneral,
+                        [(set f64:$frD, (PPCfrsqrte f64:$frB))]>;
+def FRSQRTES : XForm_26<59, 26, (outs F4RC:$frD), (ins F4RC:$frB),
+                        "frsqrtes $frD, $frB", FPGeneral,
+                        [(set f32:$frD, (PPCfrsqrte f32:$frB))]>;
 }
-                      
 
 // XL-Form instructions.  condition register logical ops.
 //
@@ -1632,6 +1702,16 @@ def : Pat<(membarrier (i32 imm /*ll*/),
            (SYNC)>;
 
 def : Pat<(atomic_fence (imm), (imm)), (SYNC)>;
+
+// Additional FNMSUB patterns: -a*c + b == -(a*c - b)
+def : Pat<(fma (fneg f64:$A), f64:$C, f64:$B),
+          (FNMSUB $A, $C, $B)>;
+def : Pat<(fma f64:$A, (fneg f64:$C), f64:$B),
+          (FNMSUB $A, $C, $B)>;
+def : Pat<(fma (fneg f32:$A), f32:$C, f32:$B),
+          (FNMSUBS $A, $C, $B)>;
+def : Pat<(fma f32:$A, (fneg f32:$C), f32:$B),
+          (FNMSUBS $A, $C, $B)>;
 
 include "PPCInstrAltivec.td"
 include "PPCInstr64Bit.td"
