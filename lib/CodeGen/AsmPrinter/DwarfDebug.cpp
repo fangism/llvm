@@ -170,6 +170,7 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
   DwarfInfoSectionSym = DwarfAbbrevSectionSym = 0;
   DwarfStrSectionSym = TextSectionSym = 0;
   DwarfDebugRangeSectionSym = DwarfDebugLocSectionSym = DwarfLineSectionSym = 0;
+  DwarfAddrSectionSym = 0;
   DwarfAbbrevDWOSectionSym = DwarfStrDWOSectionSym = 0;
   FunctionBeginSym = FunctionEndSym = 0;
 
@@ -643,7 +644,7 @@ unsigned DwarfDebug::getOrCreateSourceID(StringRef FileName,
 
   // We look up the CUID/file/dir by concatenating them with a zero byte.
   SmallString<128> NamePair;
-  NamePair += CUID;
+  NamePair += utostr(CUID);
   NamePair += '\0';
   NamePair += DirName;
   NamePair += '\0'; // Zero bytes are not allowed in paths.
@@ -681,9 +682,12 @@ CompileUnit *DwarfDebug::constructCompileUnit(const MDNode *N) {
   NewCU->addUInt(Die, dwarf::DW_AT_language, dwarf::DW_FORM_data2,
                  DIUnit.getLanguage());
   NewCU->addString(Die, dwarf::DW_AT_name, FN);
+
   // 2.17.1 requires that we use DW_AT_low_pc for a single entry point
-  // into an entity. We're using 0 (or a NULL label) for this.
-  NewCU->addLabelAddress(Die, dwarf::DW_AT_low_pc, NULL);
+  // into an entity. We're using 0 (or a NULL label) for this. For
+  // split dwarf it's in the skeleton CU so omit it here.
+  if (!useSplitDwarf())
+    NewCU->addLabelAddress(Die, dwarf::DW_AT_low_pc, NULL);
 
   // Define start line table label for each Compile Unit.
   MCSymbol *LineTableStartSym = Asm->GetTempSymbol("line_table_start",
@@ -692,20 +696,25 @@ CompileUnit *DwarfDebug::constructCompileUnit(const MDNode *N) {
                                                      NewCU->getUniqueID());
 
   // DW_AT_stmt_list is a offset of line number information for this
-  // compile unit in debug_line section.
+  // compile unit in debug_line section. For split dwarf this is
+  // left in the skeleton CU and so not included.
   // The line table entries are not always emitted in assembly, so it
   // is not okay to use line_table_start here.
-  if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-    NewCU->addLabel(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4,
-                    NewCU->getUniqueID() == 0 ?
-                    Asm->GetTempSymbol("section_line") : LineTableStartSym);
-  else if (NewCU->getUniqueID() == 0)
-    NewCU->addUInt(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4, 0);
-  else
-    NewCU->addDelta(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4,
-                    LineTableStartSym, DwarfLineSectionSym);
+  if (!useSplitDwarf()) {
+    if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
+      NewCU->addLabel(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4,
+                      NewCU->getUniqueID() == 0 ?
+                      Asm->GetTempSymbol("section_line") : LineTableStartSym);
+    else if (NewCU->getUniqueID() == 0)
+      NewCU->addUInt(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4, 0);
+    else
+      NewCU->addDelta(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4,
+                      LineTableStartSym, DwarfLineSectionSym);
+  }
 
-  if (!CompilationDir.empty())
+  // If we're using split dwarf the compilation dir is going to be in the
+  // skeleton CU and so we don't need to duplicate it here.
+  if (!useSplitDwarf() && !CompilationDir.empty())
     NewCU->addString(Die, dwarf::DW_AT_comp_dir, CompilationDir);
   if (DIUnit.isOptimized())
     NewCU->addFlag(Die, dwarf::DW_AT_APPLE_optimized);
@@ -1740,9 +1749,12 @@ void DwarfDebug::emitSectionLabels() {
   emitSectionSym(Asm, TLOF.getDwarfPubTypesSection());
   DwarfStrSectionSym =
     emitSectionSym(Asm, TLOF.getDwarfStrSection(), "info_string");
-  if (useSplitDwarf())
+  if (useSplitDwarf()) {
     DwarfStrDWOSectionSym =
       emitSectionSym(Asm, TLOF.getDwarfStrDWOSection(), "skel_string");
+    DwarfAddrSectionSym =
+      emitSectionSym(Asm, TLOF.getDwarfAddrSection(), "addr_sec");
+  }
   DwarfDebugRangeSectionSym = emitSectionSym(Asm, TLOF.getDwarfRangesSection(),
                                              "debug_range");
 
@@ -2510,9 +2522,13 @@ CompileUnit *DwarfDebug::constructSkeletonCU(const MDNode *N) {
   // This should be a unique identifier when we want to build .dwp files.
   NewCU->addUInt(Die, dwarf::DW_AT_GNU_dwo_id, dwarf::DW_FORM_data8, 0);
 
-  // FIXME: The addr base should be relative for each compile unit, however,
-  // this one is going to be 0 anyhow.
-  NewCU->addUInt(Die, dwarf::DW_AT_GNU_addr_base, dwarf::DW_FORM_sec_offset, 0);
+  // Relocate to the beginning of the addr_base section, else 0 for the beginning
+  // of the one for this compile unit.
+  if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
+    NewCU->addLabel(Die, dwarf::DW_AT_GNU_addr_base, dwarf::DW_FORM_sec_offset,
+                    DwarfAddrSectionSym);
+  else
+    NewCU->addUInt(Die, dwarf::DW_AT_GNU_addr_base, dwarf::DW_FORM_sec_offset, 0);
 
   // 2.17.1 requires that we use DW_AT_low_pc for a single entry point
   // into an entity. We're using 0, or a NULL label for this.
@@ -2520,6 +2536,7 @@ CompileUnit *DwarfDebug::constructSkeletonCU(const MDNode *N) {
 
   // DW_AT_stmt_list is a offset of line number information for this
   // compile unit in debug_line section.
+  // FIXME: Should handle multiple compile units.
   if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
     NewCU->addLabel(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_sec_offset,
                     DwarfLineSectionSym);

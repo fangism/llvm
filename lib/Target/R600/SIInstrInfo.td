@@ -26,6 +26,10 @@ def HI32 : SDNodeXForm<imm, [{
   return CurDAG->getTargetConstant(N->getZExtValue() >> 32, MVT::i32);
 }]>;
 
+def SIbuffer_store : SDNode<"AMDGPUISD::BUFFER_STORE",
+                           SDTypeProfile<0, 3, [SDTCisPtrTy<1>, SDTCisInt<2>]>,
+                           [SDNPHasChain, SDNPMayStore]>;
+
 def IMM8bitDWORD : ImmLeaf <
   i32, [{
     return (Imm & ~0x3FC) == 0;
@@ -285,15 +289,37 @@ class MTBUF_Store_Helper <bits<3> op, string asm, RegisterClass regClass> : MTBU
 
 class MUBUF_Load_Helper <bits<7> op, string asm, RegisterClass regClass> : MUBUF <
   op,
-  (outs regClass:$dst),
+  (outs regClass:$vdata),
   (ins i16imm:$offset, i1imm:$offen, i1imm:$idxen, i1imm:$glc, i1imm:$addr64,
        i1imm:$lds, VReg_32:$vaddr, SReg_128:$srsrc, i1imm:$slc,
        i1imm:$tfe, SSrc_32:$soffset),
-  asm#" $dst, $offset, $offen, $idxen, $glc, $addr64, "
+  asm#" $vdata, $offset, $offen, $idxen, $glc, $addr64, "
      #"$lds, $vaddr, $srsrc, $slc, $tfe, $soffset",
   []> {
   let mayLoad = 1;
   let mayStore = 0;
+}
+
+class MUBUF_Store_Helper <bits<7> op, string name, RegisterClass vdataClass,
+                         ValueType VT> :
+    MUBUF <op, (outs), (ins vdataClass:$vdata, SReg_128:$srsrc, VReg_64:$vaddr),
+          name#" $vdata, $srsrc + $vaddr",
+          [(SIbuffer_store (VT vdataClass:$vdata), (i128 SReg_128:$srsrc),
+                                                    (i64 VReg_64:$vaddr))]> {
+
+  let mayLoad = 0;
+  let mayStore = 1;
+
+  // Encoding
+  let offset = 0;
+  let offen = 0;
+  let idxen = 0;
+  let glc = 0;
+  let addr64 = 1;
+  let lds = 0;
+  let slc = 0;
+  let tfe = 0;
+  let soffset = 128; // ZERO
 }
 
 class MTBUF_Load_Helper <bits<3> op, string asm, RegisterClass regClass> : MTBUF <
@@ -320,6 +346,7 @@ class MIMG_Load_Helper <bits<7> op, string asm> : MIMG <
   []> {
   let mayLoad = 1;
   let mayStore = 0;
+  let hasPostISelHook = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -351,6 +378,15 @@ def getCommuteOrig : InstrMapping {
   let ColFields = ["IsOrig"];
   let KeyCol = ["0"];
   let ValueCols = [["1"]];
+}
+
+// Test if the supplied opcode is an MIMG instruction
+def isMIMG : InstrMapping {
+  let FilterClass = "MIMG_Load_Helper";
+  let RowFields = ["Inst"];
+  let ColFields = ["Size"];
+  let KeyCol = ["8"];
+  let ValueCols = [["8"]];
 }
 
 include "SIInstructions.td"

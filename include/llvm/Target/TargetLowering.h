@@ -135,6 +135,11 @@ public:
                               const TargetLoweringObjectFile *TLOF);
   virtual ~TargetLoweringBase();
 
+protected:
+  /// \brief Initialize all of the actions to default values.
+  void initActions();
+
+public:
   const TargetMachine &getTargetMachine() const { return TM; }
   const DataLayout *getDataLayout() const { return TD; }
   const TargetLoweringObjectFile &getObjFileLowering() const { return TLOF; }
@@ -851,6 +856,9 @@ public:
   // the derived class constructor to configure this object for the target.
   //
 
+  /// \brief Reset the operation actions based on target options.
+  virtual void resetOperationActions() {}
+
 protected:
   /// setBooleanContents - Specify how the target extends the result of a
   /// boolean value from i1 to a wider type.  See getBooleanContents.
@@ -951,11 +959,15 @@ protected:
     RegClassForVT[VT.SimpleTy] = RC;
   }
 
-  /// clearRegisterClasses - remove all register classes
+  /// clearRegisterClasses - Remove all register classes.
   void clearRegisterClasses() {
-    for (unsigned i = 0 ; i<array_lengthof(RegClassForVT); i++)
-      RegClassForVT[i] = 0;
+    memset(RegClassForVT, 0,MVT::LAST_VALUETYPE * sizeof(TargetRegisterClass*));
+
     AvailableRegClasses.clear();
+  }
+
+  /// \brief Remove all operation actions.
+  void clearOperationActions() {
   }
 
   /// findRepresentativeClass - Return the largest legal super-reg register class
@@ -1511,6 +1523,7 @@ public:
       // or until the element integer type is too big. If a legal type was not
       // found, fallback to the usual mechanism of widening/splitting the
       // vector.
+      EVT OldEltVT = EltVT;
       while (1) {
         // Increase the bitwidth of the element to the next pow-of-two
         // (which is greater than 8 bits).
@@ -1529,6 +1542,10 @@ public:
           return LegalizeKind(TypePromoteInteger,
                               EVT::getVectorVT(Context, EltVT, NumElts));
       }
+
+      // Reset the type to the unexpanded type if we did not find a legal vector
+      // type with a promoted vector element type.
+      EltVT = OldEltVT;
     }
 
     // Try to widen the vector until a legal type is found.

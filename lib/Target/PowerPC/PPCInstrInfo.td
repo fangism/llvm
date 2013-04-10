@@ -493,8 +493,12 @@ let isTerminator = 1, isBarrier = 1, PPC970_Unit = 7 in {
   let isReturn = 1, Uses = [LR, RM] in
     def BLR : XLForm_2_ext<19, 16, 20, 0, 0, (outs), (ins), "blr", BrB,
                            [(retflag)]>;
-  let isBranch = 1, isIndirectBranch = 1, Uses = [CTR] in
+  let isBranch = 1, isIndirectBranch = 1, Uses = [CTR] in {
     def BCTR : XLForm_2_ext<19, 528, 20, 0, 0, (outs), (ins), "bctr", BrB, []>;
+
+    def BCCTR : XLForm_2_br<19, 528, 0, (outs), (ins pred:$cond),
+                            "b${cond:cc}ctr ${cond:reg}", BrB, []>;
+  }
 }
 
 let Defs = [LR] in
@@ -511,10 +515,21 @@ let isBranch = 1, isTerminator = 1, hasCtrlDep = 1, PPC970_Unit = 7 in {
   // BCC represents an arbitrary conditional branch on a predicate.
   // FIXME: should be able to write a pattern for PPCcondbranch, but can't use
   // a two-value operand where a dag node expects two operands. :(
-  let isCodeGenOnly = 1 in
+  let isCodeGenOnly = 1 in {
     def BCC : BForm<16, 0, 0, (outs), (ins pred:$cond, condbrtarget:$dst),
                     "b${cond:cc} ${cond:reg}, $dst"
                     /*[(PPCcondbranch CRRC:$crS, imm:$opc, bb:$dst)]*/>;
+    let isReturn = 1, Uses = [LR, RM] in
+    def BCLR : XLForm_2_br<19, 16, 0, (outs), (ins pred:$cond),
+                           "b${cond:cc}lr ${cond:reg}", BrB, []>;
+
+    let isReturn = 1, Defs = [CTR], Uses = [CTR, LR, RM] in {
+      def BDZLR  : XLForm_2_ext<19, 16, 18, 0, 0, (outs), (ins),
+                             "bdzlr", BrB, []>;
+      def BDNZLR : XLForm_2_ext<19, 16, 16, 0, 0, (outs), (ins),
+                             "bdnzlr", BrB, []>;
+    }
+  }
 
   let Defs = [CTR], Uses = [CTR] in {
     def BDZ  : BForm_1<16, 18, 0, 0, (outs), (ins condbrtarget:$dst),
@@ -544,6 +559,8 @@ let isCall = 1, PPC970_Unit = 7, Defs = [LR] in {
     def BCTRL : XLForm_2_ext<19, 528, 20, 0, 1, (outs), (ins),
                              "bctrl", BrB, [(PPCbctrl)]>,
                 Requires<[In32BitMode]>;
+    def BCCTRL : XLForm_2_br<19, 528, 1, (outs), (ins pred:$cond),
+                             "b${cond:cc}ctrl ${cond:reg}", BrB, []>;
   }
 }
 
@@ -757,7 +774,7 @@ def LFD : DForm_1<50, (outs F8RC:$rD), (ins memri:$src),
 
 
 // Unindexed (r+i) Loads with Update (preinc).
-let mayLoad = 1 in {
+let mayLoad = 1, neverHasSideEffects = 1 in {
 def LBZU : DForm_1<35, (outs GPRC:$rD, ptr_rc_nor0:$ea_result), (ins memri:$addr),
                    "lbzu $rD, $addr", LdStLoadUpd,
                    []>, RegConstraint<"$addr.reg = $ea_result">,
@@ -1201,6 +1218,7 @@ let Uses = [RM] in {
 /// often coalesced away and we don't want the dispatch group builder to think
 /// that they will fill slots (which could cause the load of a LSU reject to
 /// sneak into a d-group with a store).
+let neverHasSideEffects = 1 in
 def FMR   : XForm_26<63, 72, (outs F4RC:$frD), (ins F4RC:$frB),
                      "fmr $frD, $frB", FPGeneral,
                      []>,  // (set f32:$frD, f32:$frB)
@@ -1244,6 +1262,7 @@ def FRSQRTES : XForm_26<59, 26, (outs F4RC:$frD), (ins F4RC:$frB),
 
 // XL-Form instructions.  condition register logical ops.
 //
+let neverHasSideEffects = 1 in
 def MCRF   : XLForm_3<19, 0, (outs CRRC:$BF), (ins CRRC:$BFA),
                       "mcrf $BF, $BFA", BrMCR>,
              PPC970_DGroup_First, PPC970_Unit_CRU;
@@ -1335,6 +1354,7 @@ let mayLoad = 1 in
 def RESTORE_VRSAVE : Pseudo<(outs VRSAVERC:$vrsave), (ins memri:$F),
                      "#RESTORE_VRSAVE", []>;
 
+let neverHasSideEffects = 1 in {
 def MTCRF : XFXForm_5<31, 144, (outs crbitm:$FXM), (ins GPRC:$rS),
                       "mtcrf $FXM, $rS", BrMCRX>,
             PPC970_MicroCode, PPC970_Unit_CRU;
@@ -1353,14 +1373,20 @@ let isCodeGenOnly = 1 in
 def MFCRpseud: XFXForm_3<31, 19, (outs GPRC:$rT), (ins crbitm:$FXM),
                        "#MFCRpseud", SprMFCR>,
             PPC970_MicroCode, PPC970_Unit_CRU;
-            
-def MFCR : XFXForm_3<31, 19, (outs GPRC:$rT), (ins),
-                     "mfcr $rT", SprMFCR>,
-                     PPC970_MicroCode, PPC970_Unit_CRU;
 
 def MFOCRF: XFXForm_5a<31, 19, (outs GPRC:$rT), (ins crbitm:$FXM),
                        "mfocrf $rT, $FXM", SprMFCR>,
             PPC970_DGroup_First, PPC970_Unit_CRU;
+} // neverHasSideEffects = 1
+
+// MFCR uses all CR registers, but marking that explicitly causes 
+// problems because some of them appear to be undefined. Because
+// this form is used only in prologue code, just mark it as having
+// side effects.
+let /* Uses = [CR0, CR1, CR2, CR3, CR4, CR5, CR6] */ hasSideEffects = 1 in
+def MFCR : XFXForm_3<31, 19, (outs GPRC:$rT), (ins),
+                     "mfcr $rT", SprMFCR>,
+                     PPC970_MicroCode, PPC970_Unit_CRU;
 
 // Pseudo instruction to perform FADD in round-to-zero mode.
 let usesCustomInserter = 1, Uses = [RM] in {
@@ -1545,7 +1571,9 @@ let Uses = [RM] in {
   }
 }
 
+let neverHasSideEffects = 1 in {
 let PPC970_Unit = 1 in {  // FXU Operations.
+  let isSelect = 1 in
   def ISEL  : AForm_4<31, 15,
                      (outs GPRC:$rT), (ins GPRC_NOR0:$rA, GPRC:$rB, CRBITRC:$cond),
                      "isel $rT, $rA, $rB, $cond", IntGeneral,
@@ -1576,7 +1604,7 @@ def RLWNM  : MForm_2<23,
                      "rlwnm $rA, $rS, $rB, $MB, $ME", IntGeneral,
                      []>;
 }
-
+} // neverHasSideEffects = 1
 
 //===----------------------------------------------------------------------===//
 // PowerPC Instruction Patterns

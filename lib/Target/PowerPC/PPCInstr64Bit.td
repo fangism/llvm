@@ -67,9 +67,14 @@ def HI48_64 : SDNodeXForm<imm, [{
 //
 
 let isTerminator = 1, isBarrier = 1, PPC970_Unit = 7 in {
-  let isBranch = 1, isIndirectBranch = 1, Uses = [CTR8] in
+  let isBranch = 1, isIndirectBranch = 1, Uses = [CTR8] in {
     def BCTR8 : XLForm_2_ext<19, 528, 20, 0, 0, (outs), (ins), "bctr", BrB, []>,
         Requires<[In64BitMode]>;
+
+    def BCCTR8 : XLForm_2_br<19, 528, 0, (outs), (ins pred:$cond),
+                             "b${cond:cc}ctr ${cond:reg}", BrB, []>,
+        Requires<[In64BitMode]>;
+  }
 }
 
 let Defs = [LR8] in
@@ -83,7 +88,16 @@ let isBranch = 1, isTerminator = 1, hasCtrlDep = 1, PPC970_Unit = 7 in {
     def BDNZ8 : BForm_1<16, 16, 0, 0, (outs), (ins condbrtarget:$dst),
                         "bdnz $dst">;
   }
+
+  let isReturn = 1, Defs = [CTR8], Uses = [CTR8, LR8, RM] in {
+    def BDZLR8  : XLForm_2_ext<19, 16, 18, 0, 0, (outs), (ins),
+                              "bdzlr", BrB, []>;
+    def BDNZLR8 : XLForm_2_ext<19, 16, 16, 0, 0, (outs), (ins),
+                              "bdnzlr", BrB, []>;
+  }
 }
+
+
 
 let isCall = 1, PPC970_Unit = 7, Defs = [LR8] in {
   // Convenient aliases for call instructions
@@ -116,6 +130,9 @@ let isCall = 1, PPC970_Unit = 7, Defs = [LR8] in {
     def BCTRL8 : XLForm_2_ext<19, 528, 20, 0, 1, (outs), (ins),
                               "bctrl", BrB, [(PPCbctrl)]>,
                  Requires<[In64BitMode]>;
+    def BCCTRL8 : XLForm_2_br<19, 528, 1, (outs), (ins pred:$cond),
+                              "b${cond:cc}ctrl ${cond:reg}", BrB, []>,
+        Requires<[In64BitMode]>;
   }
 }
 
@@ -224,6 +241,7 @@ def : Pat<(PPCtc_return CTRRC8:$dst, imm:$imm),
 
 
 // 64-bit CR instructions
+let neverHasSideEffects = 1 in {
 def MTCRF8 : XFXForm_5<31, 144, (outs crbitm:$FXM), (ins G8RC:$rS),
                       "mtcrf $FXM, $rS", BrMCRX>,
             PPC970_MicroCode, PPC970_Unit_CRU;
@@ -232,7 +250,13 @@ let isCodeGenOnly = 1 in
 def MFCR8pseud: XFXForm_3<31, 19, (outs G8RC:$rT), (ins crbitm:$FXM),
                        "#MFCR8pseud", SprMFCR>,
             PPC970_MicroCode, PPC970_Unit_CRU;
-            
+} // neverHasSideEffects = 1
+
+// MFCR uses all CR registers, but marking that explicitly causes
+// problems because some of them appear to be undefined. Because
+// this form is used only in prologue code, just mark it as having
+// side effects.
+let /* Uses = [CR0, CR1, CR2, CR3, CR4, CR5, CR6] */ hasSideEffects = 1 in
 def MFCR8 : XFXForm_3<31, 19, (outs G8RC:$rT), (ins),
                      "mfcr $rT", SprMFCR>,
                      PPC970_MicroCode, PPC970_Unit_CRU;
@@ -488,6 +512,7 @@ def MULLD : XOForm_1<31, 233, 0, (outs G8RC:$rT), (ins G8RC:$rA, G8RC:$rB),
                      [(set i64:$rT, (mul i64:$rA, i64:$rB))]>, isPPC64;
 
 
+let neverHasSideEffects = 1 in {
 let isCommutable = 1 in {
 def RLDIMI : MDForm_1<30, 3,
                       (outs G8RC:$rA), (ins G8RC:$rSi, G8RC:$rS, u6imm:$SH, u6imm:$MB),
@@ -515,10 +540,12 @@ def RLWINM8 : MForm_2<21,
                      "rlwinm $rA, $rS, $SH, $MB, $ME", IntGeneral,
                      []>;
 
+let isSelect = 1 in
 def ISEL8   : AForm_4<31, 15,
                      (outs G8RC:$rT), (ins G8RC_NOX0:$rA, G8RC:$rB, CRBITRC:$cond),
                      "isel $rT, $rA, $rB, $cond", IntGeneral,
                      []>;
+}  // neverHasSideEffects = 1
 }  // End FXU Operations.
 
 
@@ -548,7 +575,7 @@ def LWAX : XForm_1<31, 341, (outs G8RC:$rD), (ins memrr:$src),
                    PPC970_DGroup_Cracked;
 
 // Update forms.
-let mayLoad = 1 in {
+let mayLoad = 1, neverHasSideEffects = 1 in {
 def LHAU8 : DForm_1<43, (outs G8RC:$rD, ptr_rc_nor0:$ea_result),
                     (ins memri:$addr),
                     "lhau $rD, $addr", LdStLHAU,
@@ -593,7 +620,7 @@ def LWZX8 : XForm_1<31,  23, (outs G8RC:$rD), (ins memrr:$src),
                    
                    
 // Update forms.
-let mayLoad = 1 in {
+let mayLoad = 1, neverHasSideEffects = 1 in {
 def LBZU8 : DForm_1<35, (outs G8RC:$rD, ptr_rc_nor0:$ea_result), (ins memri:$addr),
                     "lbzu $rD, $addr", LdStLoadUpd,
                     []>, RegConstraint<"$addr.reg = $ea_result">,
@@ -665,7 +692,7 @@ def LDBRX : XForm_1<31,  532, (outs G8RC:$rD), (ins memrr:$src),
                    "ldbrx $rD, $src", LdStLoad,
                    [(set i64:$rD, (PPClbrx xoaddr:$src, i64))]>, isPPC64;
 
-let mayLoad = 1 in
+let mayLoad = 1, neverHasSideEffects = 1 in {
 def LDU  : DSForm_1<58, 1, (outs G8RC:$rD, ptr_rc_nor0:$ea_result), (ins memrix:$addr),
                     "ldu $rD, $addr", LdStLDU,
                     []>, RegConstraint<"$addr.reg = $ea_result">, isPPC64,
@@ -676,6 +703,7 @@ def LDUX : XForm_1<31, 53, (outs G8RC:$rD, ptr_rc_nor0:$ea_result),
                    "ldux $rD, $addr", LdStLDU,
                    []>, RegConstraint<"$addr.ptrreg = $ea_result">,
                    NoEncode<"$ea_result">, isPPC64;
+}
 }
 
 def : Pat<(PPCload ixaddr:$src),
