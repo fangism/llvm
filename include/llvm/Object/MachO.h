@@ -741,7 +741,7 @@ MachOObjectFile<MachOT>::getRelocationValueString(DataRefImpl Rel,
         break;
     }
   // X86 and ARM share some relocation types in common.
-  } else if (Arch == Triple::x86 || Arch == Triple::arm) {
+  } else if (Arch == Triple::x86 || Arch == Triple::arm || Arch == Triple::ppc) {
     // Generic relocation types...
     switch (Type) {
       case macho::RIT_Pair: // GENERIC_RELOC_PAIR - prints no info
@@ -771,7 +771,7 @@ MachOObjectFile<MachOT>::getRelocationValueString(DataRefImpl Rel,
       }
     }
 
-    if (Arch == Triple::x86) {
+    if (Arch == Triple::x86 || Arch == Triple::ppc) {
       // All X86 relocations that need special printing were already
       // handled in the generic code.
       switch (Type) {
@@ -890,7 +890,7 @@ MachOObjectFile<MachOT>::getRelocationHidden(DataRefImpl Rel,
 
   // On arches that use the generic relocations, GENERIC_RELOC_PAIR
   // is always hidden.
-  if (Arch == Triple::x86 || Arch == Triple::arm) {
+  if (Arch == Triple::x86 || Arch == Triple::arm || Arch == Triple::ppc) {
     if (Type == macho::RIT_Pair) Result = true;
   } else if (Arch == Triple::x86_64) {
     // On x86_64, X86_64_RELOC_UNSIGNED is hidden only when it follows
