@@ -107,7 +107,7 @@ public:
     return RelocToApply();
   }
 
-  bool error() { return HasError; }
+  bool error() const { return HasError; }
 
 private:
   StringRef FileFormat;
