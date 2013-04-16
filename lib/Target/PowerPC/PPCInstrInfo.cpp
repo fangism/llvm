@@ -149,7 +149,8 @@ PPCInstrInfo::commuteInstruction(MachineInstr *MI, bool NewMI) const {
   MachineFunction &MF = *MI->getParent()->getParent();
 
   // Normal instructions can be commuted the obvious way.
-  if (MI->getOpcode() != PPC::RLWIMI)
+  if (MI->getOpcode() != PPC::RLWIMI &&
+      MI->getOpcode() != PPC::RLWIMIo)
     return TargetInstrInfo::commuteInstruction(MI, NewMI);
 
   // Cannot commute if it has a non-zero rotate count.
@@ -876,23 +877,38 @@ bool PPCInstrInfo::FoldImmediate(MachineInstr *UseMI, MachineInstr *DefMI,
   return true;
 }
 
+static bool MBBDefinesCTR(MachineBasicBlock &MBB) {
+  for (MachineBasicBlock::iterator I = MBB.begin(), IE = MBB.end();
+       I != IE; ++I)
+    if (I->definesRegister(PPC::CTR) || I->definesRegister(PPC::CTR8))
+      return true;
+  return false;
+}
+
+// We should make sure that, if we're going to predicate both sides of a
+// condition (a diamond), that both sides don't define the counter register. We
+// can predicate counter-decrement-based branches, but while that predicates
+// the branching, it does not predicate the counter decrement. If we tried to
+// merge the triangle into one predicated block, we'd decrement the counter
+// twice.
+bool PPCInstrInfo::isProfitableToIfCvt(MachineBasicBlock &TMBB,
+                     unsigned NumT, unsigned ExtraT,
+                     MachineBasicBlock &FMBB,
+                     unsigned NumF, unsigned ExtraF,
+                     const BranchProbability &Probability) const {
+  return !(MBBDefinesCTR(TMBB) && MBBDefinesCTR(FMBB));
+}
+
+
 bool PPCInstrInfo::isPredicated(const MachineInstr *MI) const {
-  unsigned OpC = MI->getOpcode();
-  switch (OpC) {
-  default:
-    return false;
-  case PPC::BCC:
-  case PPC::BCCTR:
-  case PPC::BCCTR8:
-  case PPC::BCCTRL:
-  case PPC::BCCTRL8:
-  case PPC::BCLR:
-  case PPC::BDZLR:
-  case PPC::BDZLR8:
-  case PPC::BDNZLR:
-  case PPC::BDNZLR8:
-    return true;
-  }
+  // The predicated branches are identified by their type, not really by the
+  // explicit presence of a predicate. Furthermore, some of them can be
+  // predicated more than once. Because if conversion won't try to predicate
+  // any instruction which already claims to be predicated (by returning true
+  // here), always return false. In doing so, we let isPredicable() be the
+  // final word on whether not the instruction can be (further) predicated.
+
+  return false;
 }
 
 bool PPCInstrInfo::isUnpredicatedTerminator(const MachineInstr *MI) const {

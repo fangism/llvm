@@ -4188,20 +4188,17 @@ AsmParser::parseMSInlineAsm(void *AsmLoc, std::string &AsmString,
   for (SmallVectorImpl<AsmRewrite>::iterator I = AsmStrRewrites.begin(),
                                              E = AsmStrRewrites.end();
        I != E; ++I) {
+    AsmRewriteKind Kind = (*I).Kind;
+    if (Kind == AOK_Delete)
+      continue;
+
     const char *Loc = (*I).Loc.getPointer();
     assert(Loc >= AsmStart && "Expected Loc to be at or after Start!");
 
-    unsigned AdditionalSkip = 0;
-    AsmRewriteKind Kind = (*I).Kind;
-
     // Emit everything up to the immediate/expression.
     unsigned Len = Loc - AsmStart;
-    if (Len) {
-      // For Input/Output operands we need to remove the brackets, if present.
-      if ((Kind == AOK_Input || Kind == AOK_Output) && Loc[-1] == '[')
-        --Len;
+    if (Len)
       OS << StringRef(AsmStart, Len);
-    }
 
     // Skip the original expression.
     if (Kind == AOK_Skip) {
@@ -4209,6 +4206,7 @@ AsmParser::parseMSInlineAsm(void *AsmLoc, std::string &AsmString,
       continue;
     }
 
+    unsigned AdditionalSkip = 0;
     // Rewrite expressions in $N notation.
     switch (Kind) {
     default: break;
@@ -4255,11 +4253,6 @@ AsmParser::parseMSInlineAsm(void *AsmLoc, std::string &AsmString,
 
     // Skip the original expression.
     AsmStart = Loc + (*I).Len + AdditionalSkip;
-
-    // For Input/Output operands we need to remove the brackets, if present.
-    if ((Kind == AOK_Input || Kind == AOK_Output) && AsmStart != AsmEnd &&
-        *AsmStart == ']')
-      ++AsmStart;
   }
 
   // Emit the remainder of the asm string.
