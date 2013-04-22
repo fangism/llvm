@@ -33,15 +33,28 @@ class Twine;
 /// MCAsmParserSemaCallback - Generic Sema callback for assembly parser.
 class MCAsmParserSemaCallback {
 public:
+  typedef struct {
+    bool IsVarDecl;
+    unsigned Length, Size, Type;
+
+    void clear() {
+      IsVarDecl = false;
+      Length = 1;
+      Size = 0;
+      Type = 0;
+    }
+  } InlineAsmIdentifierInfo;
+
   virtual ~MCAsmParserSemaCallback(); 
-  virtual void *LookupInlineAsmIdentifier(StringRef Name, void *Loc,
-                                          unsigned &Length, unsigned &Size, 
-                                          unsigned &Type, bool &IsVarDecl) = 0;
+  virtual void *LookupInlineAsmIdentifier(StringRef &LineBuf,
+                                          InlineAsmIdentifierInfo &Info) = 0;
 
   virtual bool LookupInlineAsmField(StringRef Base, StringRef Member,
                                     unsigned &Offset) = 0;
 };
 
+typedef MCAsmParserSemaCallback::InlineAsmIdentifierInfo
+  InlineAsmIdentifierInfo;
 
 /// MCAsmParser - Generic assembler parser interface, for use by target specific
 /// assembly parsers.

@@ -738,7 +738,9 @@ multiclass SteamOutputExportPattern<Instruction ExportInst,
       4095, imm:$mask, buf3inst, 0)>;
 }
 
-let usesCustomInserter = 1 in {
+// Export Instructions should not be duplicated by TailDuplication pass
+// (which assumes that duplicable instruction are affected by exec mask)
+let usesCustomInserter = 1, isNotDuplicable = 1 in {
 
 class ExportSwzInst : InstR600ISA<(
     outs),
@@ -1423,7 +1425,7 @@ let Predicates = [isR600] in {
     (MUL R600_Reg32:$src, (RECIPSQRT_CLAMPED_r600 R600_Reg32:$src))>;
 
   def R600_ExportSwz : ExportSwzInst {
-    let Word1{20-17} = 1; // BURST_COUNT
+    let Word1{20-17} = 0; // BURST_COUNT
     let Word1{21} = eop;
     let Word1{22} = 1; // VALID_PIXEL_MODE
     let Word1{30-23} = inst;
@@ -1432,7 +1434,7 @@ let Predicates = [isR600] in {
   defm : ExportPattern<R600_ExportSwz, 39>;
 
   def R600_ExportBuf : ExportBufInst {
-    let Word1{20-17} = 1; // BURST_COUNT
+    let Word1{20-17} = 0; // BURST_COUNT
     let Word1{21} = eop;
     let Word1{22} = 1; // VALID_PIXEL_MODE
     let Word1{30-23} = inst;
@@ -1568,6 +1570,9 @@ let Predicates = [isEGorCayman] in {
     VecALU
   >;
 
+  def BFI_INT_eg : R600_3OP <0x06, "BFI_INT", []>;
+  defm : BFIPatterns <BFI_INT_eg>;
+
   def BIT_ALIGN_INT_eg : R600_3OP <0xC, "BIT_ALIGN_INT",
     [(set R600_Reg32:$dst, (AMDGPUbitalign R600_Reg32:$src0, R600_Reg32:$src1,
                                           R600_Reg32:$src2))],
@@ -1622,7 +1627,7 @@ let hasSideEffects = 1 in {
     (FLT_TO_UINT_eg (TRUNC R600_Reg32:$src0))>;
 
   def EG_ExportSwz : ExportSwzInst {
-    let Word1{19-16} = 1; // BURST_COUNT
+    let Word1{19-16} = 0; // BURST_COUNT
     let Word1{20} = 1; // VALID_PIXEL_MODE
     let Word1{21} = eop;
     let Word1{29-22} = inst;
@@ -1632,7 +1637,7 @@ let hasSideEffects = 1 in {
   defm : ExportPattern<EG_ExportSwz, 83>;
 
   def EG_ExportBuf : ExportBufInst {
-    let Word1{19-16} = 1; // BURST_COUNT
+    let Word1{19-16} = 0; // BURST_COUNT
     let Word1{20} = 1; // VALID_PIXEL_MODE
     let Word1{21} = eop;
     let Word1{29-22} = inst;
