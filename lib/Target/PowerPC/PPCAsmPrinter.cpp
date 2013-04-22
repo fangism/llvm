@@ -338,14 +338,12 @@ MCSymbol *PPCAsmPrinter::lookUpOrCreateTOCEntry(MCSymbol *Sym) {
 /// the current output stream.
 ///
 void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
-  STACKTRACE_VERBOSE;
   MCInst TmpInst;
   
   // Lower multi-instruction pseudo operations.
   switch (MI->getOpcode()) {
   default: break;
   case TargetOpcode::DBG_VALUE: {
-    STACKTRACE_INDENT_PRINT("opcode DBG_VALUE" << endl);
     if (!isVerbose() || !OutStreamer.hasRawTextSupport()) return;
       
     SmallString<32> Str;
@@ -711,7 +709,6 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       .addReg(MI->getOperand(0).getReg()));
     return;
   case PPC::SYNC:
-    STACKTRACE_INDENT_PRINT("opcode PPC::SYNC" << endl);
     // In Book E sync is called msync, handle this special case here...
     if (Subtarget.isBookE()) {
       OutStreamer.EmitRawText(StringRef("\tmsync"));
@@ -816,7 +813,6 @@ void PPCLinuxAsmPrinter::EmitFunctionBodyEnd() {
 }
 
 void PPCDarwinAsmPrinter::EmitStartOfAsmFile(Module &M) {
-  STACKTRACE_VERBOSE;
   static const char *const CPUDirectives[] = {
     "",
     "ppc",
@@ -851,7 +847,6 @@ void PPCDarwinAsmPrinter::EmitStartOfAsmFile(Module &M) {
   
   // FIXME: This is a total hack, finish mc'izing the PPC backend.
   if (OutStreamer.hasRawTextSupport()) {
-    STACKTRACE_INDENT_PRINT("OutStreamer.hasRawTextSupport" << endl);
     assert(Directive < sizeof(CPUDirectives) / sizeof(*CPUDirectives) &&
            "CPUDirectives[] might not be up-to-date!");
     OutStreamer.EmitRawText("\t.machine " + Twine(CPUDirectives[Directive]));
@@ -884,6 +879,7 @@ static MCSymbol *GetLazyPtr(MCSymbol *Sym, MCContext &Ctx) {
   return Ctx.GetOrCreateSymbol(NoStub + "$lazy_ptr");
 }
 
+// 'L' needed to designate label as local
 static MCSymbol *GetAnonSym(MCSymbol *Sym, MCContext &Ctx) {
   // Add $tmp suffix to $stub, yielding $stub$tmp.
   return Ctx.GetOrCreateSymbol(Sym->getName() + "$tmp");
@@ -1030,6 +1026,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
 
 
 bool PPCDarwinAsmPrinter::doFinalization(Module &M) {
+  STACKTRACE_VERBOSE;
   bool isPPC64 = TM.getDataLayout()->getPointerSizeInBits() == 64;
 
   // Darwin/PPC always uses mach-o.
