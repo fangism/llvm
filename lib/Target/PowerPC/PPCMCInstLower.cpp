@@ -22,6 +22,10 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/Target/Mangler.h"
+
+#define	ENABLE_STACKTRACE		0
+#include "llvm/Support/stacktrace.h"
+#include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
 static MachineModuleInfoMachO &getMachOMMI(AsmPrinter &AP) {
@@ -30,14 +34,17 @@ static MachineModuleInfoMachO &getMachOMMI(AsmPrinter &AP) {
 
 
 static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
+  STACKTRACE_VERBOSE;
   MCContext &Ctx = AP.OutContext;
 
   SmallString<128> Name;
   if (!MO.isGlobal()) {
+    STACKTRACE_INDENT_PRINT("!MO.isGlobal()" << endl);
     assert(MO.isSymbol() && "Isn't a symbol reference");
     Name += AP.MAI->getGlobalPrefix();
     Name += MO.getSymbolName();
   } else {    
+    STACKTRACE_INDENT_PRINT("MO.isGlobal()" << endl);
     const GlobalValue *GV = MO.getGlobal();
     bool isImplicitlyPrivate = false;
     if (MO.getTargetFlags() == PPCII::MO_DARWIN_STUB ||
@@ -46,12 +53,25 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
     
     AP.Mang->getNameWithPrefix(Name, GV, isImplicitlyPrivate);
   }
+  STACKTRACE_INDENT_PRINT("base Name: " << Name << endl);
   
   // If the target flags on the operand changes the name of the symbol, do that
   // before we return the symbol.
   if (MO.getTargetFlags() == PPCII::MO_DARWIN_STUB) {
+    STACKTRACE_INDENT_PRINT("is PPCII::MO_DARWIN_STUB" << endl);
     Name += "$stub";
-    MCSymbol *Sym = Ctx.GetOrCreateSymbol(Name.str());
+#if 1
+    SmallString<128> StubName;
+    const char* const plp = AP.MAI->getPrivateGlobalPrefix();
+    if (!Name.startswith(plp)) {
+      // http://llvm.org/bugs/show_bug.cgi?id=15763
+      // stubs and lazy_ptrs should be local symbols, which need leading 'L'
+      StubName += plp;
+    }
+    StubName += Name;
+    STACKTRACE_INDENT_PRINT("stub Name: " << StubName << endl);
+#endif
+    MCSymbol *Sym = Ctx.GetOrCreateSymbol(StubName.str());
     MachineModuleInfoImpl::StubValueTy &StubSym =
       getMachOMMI(AP).getFnStubEntry(Sym);
     if (StubSym.getPointer())
@@ -64,6 +84,7 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
                   !MO.getGlobal()->hasInternalLinkage());
     } else {
       Name.erase(Name.end()-5, Name.end());
+      STACKTRACE_INDENT_PRINT("local stub Name: " << Name << endl);
       StubSym =
       MachineModuleInfoImpl::
       StubValueTy(Ctx.GetOrCreateSymbol(Name.str()), false);
