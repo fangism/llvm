@@ -14,6 +14,8 @@
 
 #include <stdlib.h>
 
+extern "C" char** environ;
+
 namespace {
 
 using namespace llvm;
