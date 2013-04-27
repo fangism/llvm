@@ -147,10 +147,6 @@ void R600MCCodeEmitter::EncodeInstruction(const MCInst &MI, raw_ostream &OS,
     return;
   } else {
     switch(MI.getOpcode()) {
-    case AMDGPU::STACK_SIZE: {
-      EmitByte(MI.getOperand(0).getImm(), OS);
-      break;
-    }
     case AMDGPU::RAT_WRITE_CACHELESS_32_eg:
     case AMDGPU::RAT_WRITE_CACHELESS_128_eg: {
       uint64_t inst = getBinaryCodeForInstr(MI, Fixups);
@@ -281,7 +277,11 @@ void R600MCCodeEmitter::EncodeInstruction(const MCInst &MI, raw_ostream &OS,
     case AMDGPU::EG_ExportSwz:
     case AMDGPU::R600_ExportSwz:
     case AMDGPU::EG_ExportBuf:
-    case AMDGPU::R600_ExportBuf: {
+    case AMDGPU::R600_ExportBuf:
+    case AMDGPU::PAD:
+    case AMDGPU::CF_END_R600:
+    case AMDGPU::CF_END_EG:
+    case AMDGPU::CF_END_CM: {
       uint64_t Inst = getBinaryCodeForInstr(MI, Fixups);
       EmitByte(INSTR_NATIVE, OS);
       Emit(Inst, OS);

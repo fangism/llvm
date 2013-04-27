@@ -10,6 +10,8 @@
 #include "DWARFContext.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Compression.h"
 #include "llvm/Support/Dwarf.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Path.h"
@@ -483,6 +485,22 @@ DIInliningInfo DWARFContext::getInliningInfoForAddress(uint64_t Address,
   return InliningInfo;
 }
 
+static bool consumeCompressedDebugSectionHeader(StringRef &data,
+                                                uint64_t &OriginalSize) {
+  // Consume "ZLIB" prefix.
+  if (!data.startswith("ZLIB"))
+    return false;
+  data = data.substr(4);
+  // Consume uncompressed section size (big-endian 8 bytes).
+  DataExtractor extractor(data, false, 8);
+  uint32_t Offset = 0;
+  OriginalSize = extractor.getU64(&Offset);
+  if (Offset == 0)
+    return false;
+  data = data.substr(Offset);
+  return true;
+}
+
 DWARFContextInMemory::DWARFContextInMemory(object::ObjectFile *Obj) :
   IsLittleEndian(Obj->isLittleEndian()),
   AddressSize(Obj->getBytesInAddress()) {
@@ -496,6 +514,22 @@ DWARFContextInMemory::DWARFContextInMemory(object::ObjectFile *Obj) :
     i->getContents(data);
 
     name = name.substr(name.find_first_not_of("._")); // Skip . and _ prefixes.
+
+    // Check if debug info section is compressed with zlib.
+    if (name.startswith("zdebug_")) {
+      uint64_t OriginalSize;
+      if (!zlib::isAvailable() ||
+          !consumeCompressedDebugSectionHeader(data, OriginalSize))
+        continue;
+      OwningPtr<MemoryBuffer> UncompressedSection;
+      if (zlib::uncompress(data, UncompressedSection, OriginalSize) !=
+          zlib::StatusOK)
+        continue;
+      // Make data point to uncompressed section contents and save its contents.
+      name = name.substr(1);
+      data = UncompressedSection->getBuffer();
+      UncompressedSections.push_back(UncompressedSection.take());
+    }
 
     StringRef *Section = StringSwitch<StringRef*>(name)
         .Case("debug_info", &InfoSection)
@@ -538,7 +572,7 @@ DWARFContextInMemory::DWARFContextInMemory(object::ObjectFile *Obj) :
              reloc_e = i->end_relocations();
            reloc_i != reloc_e; reloc_i.increment(ec)) {
         uint64_t Address;
-        reloc_i->getAddress(Address);
+        reloc_i->getOffset(Address);
         uint64_t Type;
         reloc_i->getType(Type);
         uint64_t SymAddr = 0;
@@ -582,6 +616,10 @@ DWARFContextInMemory::DWARFContextInMemory(object::ObjectFile *Obj) :
       }
     }
   }
+}
+
+DWARFContextInMemory::~DWARFContextInMemory() {
+  DeleteContainerPointers(UncompressedSections);
 }
 
 void DWARFContextInMemory::anchor() { }

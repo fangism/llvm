@@ -133,6 +133,10 @@ const DataLayout &AsmPrinter::getDataLayout() const {
   return *TM.getDataLayout();
 }
 
+StringRef AsmPrinter::getTargetTriple() const {
+  return TM.getTargetTriple();
+}
+
 /// getCurrentSection() - Return the current section we are emitting to.
 const MCSection *AsmPrinter::getCurrentSection() const {
   return OutStreamer.getCurrentSection().first;
@@ -813,7 +817,7 @@ void AsmPrinter::EmitDwarfRegOp(const MachineLocation &MLoc) const {
   // caller might be in the middle of an dwarf expression. We should
   // probably assert that Reg >= 0 once debug info generation is more mature.
 
-  if (int Offset =  MLoc.getOffset()) {
+  if (MLoc.isIndirect()) {
     if (Reg < 32) {
       OutStreamer.AddComment(
         dwarf::OperationEncodingString(dwarf::DW_OP_breg0 + Reg));
@@ -824,7 +828,7 @@ void AsmPrinter::EmitDwarfRegOp(const MachineLocation &MLoc) const {
       OutStreamer.AddComment(Twine(Reg));
       EmitULEB128(Reg);
     }
-    EmitSLEB128(Offset);
+    EmitSLEB128(MLoc.getOffset());
   } else {
     if (Reg < 32) {
       OutStreamer.AddComment(

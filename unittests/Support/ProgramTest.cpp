@@ -13,6 +13,12 @@
 #include "gtest/gtest.h"
 
 #include <stdlib.h>
+#if defined(__APPLE__)
+# include <crt_externs.h>
+#elif !defined(_MSC_VER)
+// Forward declare environ in case it's not provided by stdlib.h.
+extern char **environ;
+#endif
 
 extern "C" char** environ;
 
@@ -27,8 +33,12 @@ static cl::opt<std::string>
 ProgramTestStringArg2("program-test-string-arg2");
 
 static void CopyEnvironment(std::vector<const char *> &out) {
-  // environ appears to be pretty portable.
+#ifdef __APPLE__
+  char **envp = *_NSGetEnviron();
+#else
+  // environ seems to work for Windows and most other Unices.
   char **envp = environ;
+#endif
   while (*envp != 0) {
     out.push_back(*envp);
     ++envp;
