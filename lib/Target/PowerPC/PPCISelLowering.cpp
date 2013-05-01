@@ -2603,14 +2603,19 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
   // FIXME: FuncArg and Ins[ArgNo] must reference the same argument.
   // When passing anonymous aggregates, this is currently not true.
   // See LowerFormalArguments_64SVR4 for a fix.
+  // see: http://llvm.org/bugs/show_bug.cgi?id=14779
+  // for Darwin, reported as: http://llvm.org/bugs/show_bug.cgi?id=15821
   Function::const_arg_iterator FuncArg = MF.getFunction()->arg_begin();
-  for (unsigned ArgNo = 0, e = Ins.size(); ArgNo != e; ++ArgNo, ++FuncArg) {
+  unsigned CurArgIdx = 0;
+  for (unsigned ArgNo = 0, e = Ins.size(); ArgNo != e; ++ArgNo) {
     SDValue ArgVal;
     bool needsLoad = false;
     EVT ObjectVT = Ins[ArgNo].VT;
     unsigned ObjSize = ObjectVT.getSizeInBits()/8;
     unsigned ArgSize = ObjSize;
     ISD::ArgFlagsTy Flags = Ins[ArgNo].Flags;
+    std::advance(FuncArg, Ins[ArgNo].OrigArgIndex - CurArgIdx);
+    CurArgIdx = Ins[ArgNo].OrigArgIndex;
 
     unsigned CurArgOffset = ArgOffset;
 
