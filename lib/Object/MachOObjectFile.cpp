@@ -495,6 +495,19 @@ MachOObjectFile::getSymbolFileOffset(DataRefImpl Symb,
   return object_error::success;
 }
 
+error_code MachOObjectFile::getSymbolAlignment(DataRefImpl DRI,
+                                               uint32_t &Result) const {
+  uint32_t flags;
+  this->getSymbolFlags(DRI, flags);
+  if (flags & SymbolRef::SF_Common) {
+    SymbolTableEntryBase Entry = getSymbolTableEntryBase(this, DRI);
+    Result = 1 << MachO::GET_COMM_ALIGN(Entry.Flags);
+  } else {
+    Result = 0;
+  }
+  return object_error::success;
+}
+
 error_code MachOObjectFile::getSymbolSize(DataRefImpl DRI,
                                           uint64_t &Result) const {
   uint64_t BeginOffset;
@@ -609,8 +622,12 @@ error_code MachOObjectFile::getSymbolFlags(DataRefImpl DRI,
 
   if (MachOType & MachO::NlistMaskExternal) {
     Result |= SymbolRef::SF_Global;
-    if ((MachOType & MachO::NlistMaskType) == MachO::NListTypeUndefined)
-      Result |= SymbolRef::SF_Common;
+    if ((MachOType & MachO::NlistMaskType) == MachO::NListTypeUndefined) {
+      uint64_t Value;
+      getSymbolAddress(DRI, Value);
+      if (Value)
+        Result |= SymbolRef::SF_Common;
+    }
   }
 
   if (MachOFlags & (MachO::NListDescWeakRef | MachO::NListDescWeakDef))
@@ -1395,6 +1412,16 @@ MachOObjectFile::getAnyRelocationType(const macho::RelocationEntry &RE) const {
   if (isRelocationScattered(RE))
     return getScatteredRelocationType(RE);
   return getPlainRelocationType(this, RE);
+}
+
+SectionRef
+MachOObjectFile::getRelocationSection(const macho::RelocationEntry &RE) const {
+  if (isRelocationScattered(RE) || getPlainRelocationExternal(RE))
+    return *end_sections();
+  unsigned SecNum = getPlainRelocationSymbolNum(RE) - 1;
+  DataRefImpl DRI;
+  DRI.d.a = SecNum;
+  return SectionRef(DRI, this);
 }
 
 MachOObjectFile::LoadCommandInfo

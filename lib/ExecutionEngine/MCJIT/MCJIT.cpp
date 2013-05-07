@@ -14,6 +14,7 @@
 #include "llvm/ExecutionEngine/MCJIT.h"
 #include "llvm/ExecutionEngine/ObjectBuffer.h"
 #include "llvm/ExecutionEngine/ObjectImage.h"
+#include "llvm/ExecutionEngine/SectionMemoryManager.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -46,12 +47,13 @@ ExecutionEngine *MCJIT::createJIT(Module *M,
   // FIXME: Don't do this here.
   sys::DynamicLibrary::LoadLibraryPermanently(0, NULL);
 
-  return new MCJIT(M, TM, JMM, GVsWithCode);
+  return new MCJIT(M, TM, JMM ? JMM : new SectionMemoryManager(), GVsWithCode);
 }
 
 MCJIT::MCJIT(Module *m, TargetMachine *tm, RTDyldMemoryManager *MM,
              bool AllocateGVsWithCode)
-  : ExecutionEngine(m), TM(tm), Ctx(0), MemMgr(MM), Dyld(MM),
+  : ExecutionEngine(m), TM(tm), Ctx(0),
+    MemMgr(MM ? MM : new SectionMemoryManager()), Dyld(MemMgr),
     IsLoaded(false), M(m), ObjCache(0)  {
 
   setDataLayout(TM->getDataLayout());

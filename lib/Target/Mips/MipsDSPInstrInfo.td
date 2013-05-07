@@ -79,6 +79,8 @@ def MipsMSUBU_DSP : MipsDSPBase<"MSUBU_DSP", SDT_MipsDPA>;
 def MipsSHLL_DSP : MipsDSPBase<"SHLL_DSP", SDT_MipsSHIFT_DSP>;
 def MipsSHRA_DSP : MipsDSPBase<"SHRA_DSP", SDT_MipsSHIFT_DSP>;
 def MipsSHRL_DSP : MipsDSPBase<"SHRL_DSP", SDT_MipsSHIFT_DSP>;
+def MipsSETCC_DSP : MipsDSPBase<"SETCC_DSP", SDTSetCC>;
+def MipsSELECT_CC_DSP : MipsDSPBase<"SELECT_CC_DSP", SDTSelectCC>;
 
 // Flags.
 class UseAC {
@@ -786,11 +788,11 @@ class CMPU_EQ_QB_DESC : CMP_EQ_QB_R2_DESC_BASE<"cmpu.eq.qb",
 
 class CMPU_LT_QB_DESC : CMP_EQ_QB_R2_DESC_BASE<"cmpu.lt.qb",
                                                int_mips_cmpu_lt_qb, NoItinerary,
-                                               DSPRegs>, IsCommutable;
+                                               DSPRegs>;
 
 class CMPU_LE_QB_DESC : CMP_EQ_QB_R2_DESC_BASE<"cmpu.le.qb",
                                                int_mips_cmpu_le_qb, NoItinerary,
-                                               DSPRegs>, IsCommutable;
+                                               DSPRegs>;
 
 class CMPGU_EQ_QB_DESC : CMP_EQ_QB_R3_DESC_BASE<"cmpgu.eq.qb",
                                                 int_mips_cmpgu_eq_qb,
@@ -799,25 +801,21 @@ class CMPGU_EQ_QB_DESC : CMP_EQ_QB_R3_DESC_BASE<"cmpgu.eq.qb",
 
 class CMPGU_LT_QB_DESC : CMP_EQ_QB_R3_DESC_BASE<"cmpgu.lt.qb",
                                                 int_mips_cmpgu_lt_qb,
-                                                NoItinerary, CPURegs, DSPRegs>,
-                         IsCommutable;
+                                                NoItinerary, CPURegs, DSPRegs>;
 
 class CMPGU_LE_QB_DESC : CMP_EQ_QB_R3_DESC_BASE<"cmpgu.le.qb",
                                                 int_mips_cmpgu_le_qb,
-                                                NoItinerary, CPURegs, DSPRegs>,
-                         IsCommutable;
+                                                NoItinerary, CPURegs, DSPRegs>;
 
 class CMP_EQ_PH_DESC : CMP_EQ_QB_R2_DESC_BASE<"cmp.eq.ph", int_mips_cmp_eq_ph,
                                               NoItinerary, DSPRegs>,
                        IsCommutable;
 
 class CMP_LT_PH_DESC : CMP_EQ_QB_R2_DESC_BASE<"cmp.lt.ph", int_mips_cmp_lt_ph,
-                                              NoItinerary, DSPRegs>,
-                       IsCommutable;
+                                              NoItinerary, DSPRegs>;
 
 class CMP_LE_PH_DESC : CMP_EQ_QB_R2_DESC_BASE<"cmp.le.ph", int_mips_cmp_le_ph,
-                                              NoItinerary, DSPRegs>,
-                       IsCommutable;
+                                              NoItinerary, DSPRegs>;
 
 // Misc
 class BITREV_DESC : ABSQ_S_PH_R2_DESC_BASE<"bitrev", int_mips_bitrev,
@@ -968,13 +966,11 @@ class CMPGDU_EQ_QB_DESC : CMP_EQ_QB_R3_DESC_BASE<"cmpgdu.eq.qb",
 
 class CMPGDU_LT_QB_DESC : CMP_EQ_QB_R3_DESC_BASE<"cmpgdu.lt.qb",
                                                  int_mips_cmpgdu_lt_qb,
-                                                 NoItinerary, CPURegs, DSPRegs>,
-                          IsCommutable;
+                                                 NoItinerary, CPURegs, DSPRegs>;
 
 class CMPGDU_LE_QB_DESC : CMP_EQ_QB_R3_DESC_BASE<"cmpgdu.le.qb",
                                                  int_mips_cmpgdu_le_qb,
-                                                 NoItinerary, CPURegs, DSPRegs>,
-                          IsCommutable;
+                                                 NoItinerary, CPURegs, DSPRegs>;
 
 // Absolute
 class ABSQ_S_QB_DESC : ABSQ_S_PH_R2_DESC_BASE<"absq_s.qb", int_mips_absq_s_qb,
@@ -1235,13 +1231,35 @@ def PREPEND : PREPEND_ENC, PREPEND_DESC;
 }
 
 // Pseudos.
-/// Pseudo instructions for loading, storing and copying accumulator registers.
 let isPseudo = 1 in {
+  // Pseudo instructions for loading and storing accumulator registers.
   defm LOAD_AC_DSP  : LoadM<"load_ac_dsp", ACRegsDSP>;
   defm STORE_AC_DSP : StoreM<"store_ac_dsp", ACRegsDSP>;
+
+  // Pseudos for loading and storing ccond field of DSP control register.
+  defm LOAD_CCOND_DSP  : LoadM<"load_ccond_dsp", DSPCC>;
+  defm STORE_CCOND_DSP : StoreM<"store_ccond_dsp", DSPCC>;
 }
 
-def COPY_AC_DSP : PseudoSE<(outs ACRegsDSP:$dst), (ins ACRegsDSP:$src), []>;
+// Pseudo CMP and PICK instructions.
+class PseudoCMP<Instruction RealInst> :
+  PseudoDSP<(outs DSPCC:$cmp), (ins DSPRegs:$rs, DSPRegs:$rt), []>,
+  PseudoInstExpansion<(RealInst DSPRegs:$rs, DSPRegs:$rt)>, NeverHasSideEffects;
+
+class PseudoPICK<Instruction RealInst> :
+  PseudoDSP<(outs DSPRegs:$rd), (ins DSPCC:$cmp, DSPRegs:$rs, DSPRegs:$rt), []>,
+  PseudoInstExpansion<(RealInst DSPRegs:$rd, DSPRegs:$rs, DSPRegs:$rt)>,
+  NeverHasSideEffects;
+
+def PseudoCMP_EQ_PH : PseudoCMP<CMP_EQ_PH>;
+def PseudoCMP_LT_PH : PseudoCMP<CMP_LT_PH>;
+def PseudoCMP_LE_PH : PseudoCMP<CMP_LE_PH>;
+def PseudoCMPU_EQ_QB : PseudoCMP<CMPU_EQ_QB>;
+def PseudoCMPU_LT_QB : PseudoCMP<CMPU_LT_QB>;
+def PseudoCMPU_LE_QB : PseudoCMP<CMPU_LE_QB>;
+
+def PseudoPICK_PH : PseudoPICK<PICK_PH>;
+def PseudoPICK_QB : PseudoPICK<PICK_QB>;
 
 // Patterns.
 class DSPPat<dag pattern, dag result, Predicate pred = HasDSP> :
@@ -1303,6 +1321,57 @@ def : DSPShiftPat<SHRL_QB, v4i8, MipsSHRL_DSP, imm>;
 def : DSPShiftPat<SHLL_QB, v4i8, int_mips_shll_qb, immZExt3>;
 def : DSPShiftPat<SHRA_QB, v4i8, int_mips_shra_qb, immZExt3, HasDSPR2>;
 def : DSPShiftPat<SHRL_QB, v4i8, int_mips_shrl_qb, immZExt3>;
+
+// SETCC/SELECT_CC patterns.
+class DSPSetCCPat<Instruction Cmp, Instruction Pick, ValueType ValTy,
+                  CondCode CC> :
+  DSPPat<(ValTy (MipsSETCC_DSP ValTy:$a, ValTy:$b, CC)),
+         (ValTy (Pick (ValTy (Cmp ValTy:$a, ValTy:$b)),
+                      (ValTy (COPY_TO_REGCLASS (ADDiu ZERO, -1), DSPRegs)),
+                      (ValTy ZERO)))>;
+
+class DSPSetCCPatInv<Instruction Cmp, Instruction Pick, ValueType ValTy,
+                     CondCode CC> :
+  DSPPat<(ValTy (MipsSETCC_DSP ValTy:$a, ValTy:$b, CC)),
+         (ValTy (Pick (ValTy (Cmp ValTy:$a, ValTy:$b)),
+                      (ValTy ZERO),
+                      (ValTy (COPY_TO_REGCLASS (ADDiu ZERO, -1), DSPRegs))))>;
+
+class DSPSelectCCPat<Instruction Cmp, Instruction Pick, ValueType ValTy,
+                     CondCode CC> :
+  DSPPat<(ValTy (MipsSELECT_CC_DSP ValTy:$a, ValTy:$b, ValTy:$c, ValTy:$d, CC)),
+         (ValTy (Pick (ValTy (Cmp ValTy:$a, ValTy:$b)), $c, $d))>;
+
+class DSPSelectCCPatInv<Instruction Cmp, Instruction Pick, ValueType ValTy,
+                        CondCode CC> :
+  DSPPat<(ValTy (MipsSELECT_CC_DSP ValTy:$a, ValTy:$b, ValTy:$c, ValTy:$d, CC)),
+         (ValTy (Pick (ValTy (Cmp ValTy:$a, ValTy:$b)), $d, $c))>;
+
+def : DSPSetCCPat<PseudoCMP_EQ_PH, PseudoPICK_PH, v2i16, SETEQ>;
+def : DSPSetCCPat<PseudoCMP_LT_PH, PseudoPICK_PH, v2i16, SETLT>;
+def : DSPSetCCPat<PseudoCMP_LE_PH, PseudoPICK_PH, v2i16, SETLE>;
+def : DSPSetCCPatInv<PseudoCMP_EQ_PH, PseudoPICK_PH, v2i16, SETNE>;
+def : DSPSetCCPatInv<PseudoCMP_LT_PH, PseudoPICK_PH, v2i16, SETGE>;
+def : DSPSetCCPatInv<PseudoCMP_LE_PH, PseudoPICK_PH, v2i16, SETGT>;
+def : DSPSetCCPat<PseudoCMPU_EQ_QB, PseudoPICK_QB, v4i8, SETEQ>;
+def : DSPSetCCPat<PseudoCMPU_LT_QB, PseudoPICK_QB, v4i8, SETULT>;
+def : DSPSetCCPat<PseudoCMPU_LE_QB, PseudoPICK_QB, v4i8, SETULE>;
+def : DSPSetCCPatInv<PseudoCMPU_EQ_QB, PseudoPICK_QB, v4i8, SETNE>;
+def : DSPSetCCPatInv<PseudoCMPU_LT_QB, PseudoPICK_QB, v4i8, SETUGE>;
+def : DSPSetCCPatInv<PseudoCMPU_LE_QB, PseudoPICK_QB, v4i8, SETUGT>;
+
+def : DSPSelectCCPat<PseudoCMP_EQ_PH, PseudoPICK_PH, v2i16, SETEQ>;
+def : DSPSelectCCPat<PseudoCMP_LT_PH, PseudoPICK_PH, v2i16, SETLT>;
+def : DSPSelectCCPat<PseudoCMP_LE_PH, PseudoPICK_PH, v2i16, SETLE>;
+def : DSPSelectCCPatInv<PseudoCMP_EQ_PH, PseudoPICK_PH, v2i16, SETNE>;
+def : DSPSelectCCPatInv<PseudoCMP_LT_PH, PseudoPICK_PH, v2i16, SETGE>;
+def : DSPSelectCCPatInv<PseudoCMP_LE_PH, PseudoPICK_PH, v2i16, SETGT>;
+def : DSPSelectCCPat<PseudoCMPU_EQ_QB, PseudoPICK_QB, v4i8, SETEQ>;
+def : DSPSelectCCPat<PseudoCMPU_LT_QB, PseudoPICK_QB, v4i8, SETULT>;
+def : DSPSelectCCPat<PseudoCMPU_LE_QB, PseudoPICK_QB, v4i8, SETULE>;
+def : DSPSelectCCPatInv<PseudoCMPU_EQ_QB, PseudoPICK_QB, v4i8, SETNE>;
+def : DSPSelectCCPatInv<PseudoCMPU_LT_QB, PseudoPICK_QB, v4i8, SETUGE>;
+def : DSPSelectCCPatInv<PseudoCMPU_LE_QB, PseudoPICK_QB, v4i8, SETUGT>;
 
 // Extr patterns.
 class EXTR_W_TY1_R2_Pat<SDPatternOperator OpNode, Instruction Instr> :
