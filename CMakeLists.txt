@@ -84,12 +84,13 @@ set(LLVM_ALL_TARGETS
   NVPTX
   PowerPC
   Sparc
+  SystemZ
   X86
   XCore
   )
 
 # List of targets with JIT support:
-set(LLVM_TARGETS_WITH_JIT X86 PowerPC ARM Mips)
+set(LLVM_TARGETS_WITH_JIT X86 PowerPC ARM Mips SystemZ)
 
 set(LLVM_TARGETS_TO_BUILD "all"
     CACHE STRING "Semicolon-separated list of targets to build, or \"all\".")

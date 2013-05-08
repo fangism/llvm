@@ -402,6 +402,7 @@ AC_CACHE_CHECK([target architecture],[llvm_cv_target_arch],
   hexagon-*)              llvm_cv_target_arch="Hexagon" ;;
   mblaze-*)               llvm_cv_target_arch="MBlaze" ;;
   nvptx-*)                llvm_cv_target_arch="NVPTX" ;;
+  s390x-*)                llvm_cv_target_arch="SystemZ" ;;
   *)                      llvm_cv_target_arch="Unknown" ;;
 esac])
 
@@ -435,6 +436,7 @@ case $host in
   msp430-*)               host_arch="MSP430" ;;
   hexagon-*)              host_arch="Hexagon" ;;
   mblaze-*)               host_arch="MBlaze" ;;
+  s390x-*)                host_arch="SystemZ" ;;
   *)                      host_arch="Unknown" ;;
 esac
 
@@ -654,6 +656,7 @@ else
     Hexagon)     AC_SUBST(TARGET_HAS_JIT,0) ;;
     MBlaze)      AC_SUBST(TARGET_HAS_JIT,0) ;;
     NVPTX)       AC_SUBST(TARGET_HAS_JIT,0) ;;
+    SystemZ)     AC_SUBST(TARGET_HAS_JIT,1) ;;
     *)           AC_SUBST(TARGET_HAS_JIT,0) ;;
   esac
 fi
@@ -795,13 +798,13 @@ TARGETS_TO_BUILD=""
 AC_ARG_ENABLE([targets],AS_HELP_STRING([--enable-targets],
     [Build specific host targets: all or target1,target2,... Valid targets are:
      host, x86, x86_64, sparc, powerpc, arm, aarch64, mips, hexagon,
-     xcore, msp430, nvptx, and cpp (default=all)]),,
+     xcore, msp430, nvptx, systemz, and cpp (default=all)]),,
     enableval=all)
 if test "$enableval" = host-only ; then
   enableval=host
 fi
 case "$enableval" in
-  all) TARGETS_TO_BUILD="X86 Sparc PowerPC AArch64 ARM Mips XCore MSP430 CppBackend MBlaze NVPTX Hexagon" ;;
+  all) TARGETS_TO_BUILD="X86 Sparc PowerPC AArch64 ARM Mips XCore MSP430 CppBackend MBlaze NVPTX Hexagon SystemZ" ;;
   *)for a_target in `echo $enableval|sed -e 's/,/ /g' ` ; do
       case "$a_target" in
         x86)      TARGETS_TO_BUILD="X86 $TARGETS_TO_BUILD" ;;
@@ -820,6 +823,7 @@ case "$enableval" in
         hexagon)  TARGETS_TO_BUILD="Hexagon $TARGETS_TO_BUILD" ;;
         mblaze)   TARGETS_TO_BUILD="MBlaze $TARGETS_TO_BUILD" ;;
         nvptx)    TARGETS_TO_BUILD="NVPTX $TARGETS_TO_BUILD" ;;
+        systemz)  TARGETS_TO_BUILD="SystemZ $TARGETS_TO_BUILD" ;;
         host) case "$llvm_cv_target_arch" in
             x86)         TARGETS_TO_BUILD="X86 $TARGETS_TO_BUILD" ;;
             x86_64)      TARGETS_TO_BUILD="X86 $TARGETS_TO_BUILD" ;;
@@ -833,6 +837,7 @@ case "$enableval" in
             MSP430)      TARGETS_TO_BUILD="MSP430 $TARGETS_TO_BUILD" ;;
             Hexagon)     TARGETS_TO_BUILD="Hexagon $TARGETS_TO_BUILD" ;;
             NVPTX)       TARGETS_TO_BUILD="NVPTX $TARGETS_TO_BUILD" ;;
+            SystemZ)     TARGETS_TO_BUILD="SystemZ $TARGETS_TO_BUILD" ;;
             *)       AC_MSG_ERROR([Can not set target to build]) ;;
           esac ;;
         *) AC_MSG_ERROR([Unrecognized target $a_target]) ;;
@@ -1507,7 +1512,10 @@ AC_HEADER_STAT
 AC_HEADER_SYS_WAIT
 AC_HEADER_TIME
 
-AC_CHECK_HEADERS([cxxabi.h dlfcn.h execinfo.h fcntl.h inttypes.h limits.h link.h])
+AC_LANG_PUSH([C++])
+AC_CHECK_HEADERS([cxxabi.h])
+AC_LANG_POP([C++])
+AC_CHECK_HEADERS([dlfcn.h execinfo.h fcntl.h inttypes.h limits.h link.h])
 AC_CHECK_HEADERS([malloc.h setjmp.h signal.h stdint.h termios.h unistd.h])
 AC_CHECK_HEADERS([utime.h windows.h])
 AC_CHECK_HEADERS([sys/mman.h sys/param.h sys/resource.h sys/time.h sys/uio.h])
@@ -1774,7 +1782,7 @@ AC_DEFINE_UNQUOTED(LLVM_MANDIR, "$LLVM_MANDIR",
                    [Installation directory for man pages])
 AC_DEFINE_UNQUOTED(LLVM_CONFIGTIME, "$LLVM_CONFIGTIME",
                    [Time at which LLVM was configured])
-AC_DEFINE_UNQUOTED(LLVM_HOSTTRIPLE, "$host",
+AC_DEFINE_UNQUOTED(LLVM_HOST_TRIPLE, "$host",
                    [Host triple LLVM will be executed on])
 AC_DEFINE_UNQUOTED(LLVM_DEFAULT_TARGET_TRIPLE, "$target",
                    [Target triple LLVM will generate code for by default])

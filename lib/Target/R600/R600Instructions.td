@@ -1616,7 +1616,7 @@ let Predicates = [isEGorCayman] in {
     VecALU
   >;
 
-  def BFI_INT_eg : R600_3OP <0x06, "BFI_INT", []>;
+  def BFI_INT_eg : R600_3OP <0x06, "BFI_INT", [], VecALU>;
   defm : BFIPatterns <BFI_INT_eg>;
 
   def BIT_ALIGN_INT_eg : R600_3OP <0xC, "BIT_ALIGN_INT",
@@ -1668,6 +1668,9 @@ let hasSideEffects = 1 in {
   def : Pat<(fp_to_sint f32:$src0), (FLT_TO_INT_eg (TRUNC $src0))>;
 
   def : Pat<(fp_to_uint f32:$src0), (FLT_TO_UINT_eg (TRUNC $src0))>;
+
+  // SHA-256 Patterns
+  def : SHA256MaPattern <BFI_INT_eg, XOR_INT>;
 
   def EG_ExportSwz : ExportSwzInst {
     let Word1{19-16} = 0; // BURST_COUNT
