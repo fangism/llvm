@@ -1,5 +1,5 @@
-; RUN: llc -O0 -mcpu=g4 -mtriple=powerpc-apple-darwin8 < %s | FileCheck -check-prefix=DARWIN32 %s
-; RUN: llc -O0 -mcpu=ppc970 -mtriple=powerpc64-apple-darwin8 < %s | FileCheck -check-prefix=DARWIN64 %s
+; RUN: llc -O0 -mtriple=powerpc-apple-darwin8 < %s | FileCheck -check-prefix=DARWIN32 %s
+; RUN: llc -O0 -mtriple=powerpc64-apple-darwin8 < %s | FileCheck -check-prefix=DARWIN64 %s
 
 ; Test case cloned from "anon-aggr.ll", used for PR 14779.
 ; PR 15821: anonymous aggregates are not handled correctly.
