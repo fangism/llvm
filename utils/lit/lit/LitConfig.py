@@ -34,7 +34,8 @@ class LitConfig:
         self.debug = debug
         self.isWindows = bool(isWindows)
         self.params = dict(params)
-        self.bashPath = None
+	# local hack only, don't commit this patch
+        self.bashPath = '/sw/bin/bash'
 
         # Configuration files to look for when discovering test suites.
         self.config_prefix = config_prefix or 'lit'

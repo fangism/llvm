@@ -386,7 +386,8 @@ def parseIntegratedTestScript(test, normalize_slashes=False,
             if script and script[-1][-1] == '\\':
                 script[-1] = script[-1][:-1] + ln
             else:
-                script.append(ln)
+                script.append('gtimeout 5m ' +ln)
+		# do not commit this patch
         elif 'XFAIL:' in ln:
             items = ln[ln.index('XFAIL:') + 6:].split(',')
             xfails.extend([s.strip() for s in items])
