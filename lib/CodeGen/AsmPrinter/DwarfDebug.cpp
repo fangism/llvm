@@ -606,12 +606,13 @@ DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
     std::pair<ImportedEntityMap::const_iterator,
               ImportedEntityMap::const_iterator> Range = std::equal_range(
         ScopesWithImportedEntities.begin(), ScopesWithImportedEntities.end(),
-        std::pair<const MDNode *, const MDNode *>(DS, 0), CompareFirst());
+        std::pair<const MDNode *, const MDNode *>(DS, (const MDNode*)0),
+        CompareFirst());
     if (Children.empty() && Range.first == Range.second)
       return NULL;
     ScopeDIE = constructLexicalScopeDIE(TheCU, Scope);
     for (ImportedEntityMap::const_iterator i = Range.first; i != Range.second; ++i)
-      constructImportedModuleDIE(TheCU, i->second, ScopeDIE);
+      constructImportedEntityDIE(TheCU, i->second, ScopeDIE);
   }
 
   if (!ScopeDIE) return NULL;
@@ -682,7 +683,7 @@ CompileUnit *DwarfDebug::constructCompileUnit(const MDNode *N) {
 
   DIE *Die = new DIE(dwarf::DW_TAG_compile_unit);
   CompileUnit *NewCU = new CompileUnit(GlobalCUIndexCount++,
-                                       DIUnit.getLanguage(), Die, Asm,
+                                       DIUnit.getLanguage(), Die, N, Asm,
                                        this, &InfoHolder);
 
   FileIDCUMap[NewCU->getUniqueID()] = 0;
@@ -775,38 +776,47 @@ void DwarfDebug::constructSubprogramDIE(CompileUnit *TheCU,
     TheCU->addGlobalName(SP.getName(), SubprogramDie);
 }
 
-void DwarfDebug::constructImportedModuleDIE(CompileUnit *TheCU,
+void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU,
                                             const MDNode *N) {
-  DIImportedModule Module(N);
+  DIImportedEntity Module(N);
   if (!Module.Verify())
     return;
   if (DIE *D = TheCU->getOrCreateContextDIE(Module.getContext()))
-    constructImportedModuleDIE(TheCU, Module, D);
+    constructImportedEntityDIE(TheCU, Module, D);
 }
 
-void DwarfDebug::constructImportedModuleDIE(CompileUnit *TheCU, const MDNode *N,
+void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU, const MDNode *N,
                                             DIE *Context) {
-  DIImportedModule Module(N);
+  DIImportedEntity Module(N);
   if (!Module.Verify())
     return;
-  return constructImportedModuleDIE(TheCU, Module, Context);
+  return constructImportedEntityDIE(TheCU, Module, Context);
 }
 
-void DwarfDebug::constructImportedModuleDIE(CompileUnit *TheCU,
-                                            const DIImportedModule &Module,
+void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU,
+                                            const DIImportedEntity &Module,
                                             DIE *Context) {
   assert(Module.Verify() &&
          "Use one of the MDNode * overloads to handle invalid metadata");
   assert(Context && "Should always have a context for an imported_module");
-  DIE *IMDie = new DIE(dwarf::DW_TAG_imported_module);
+  DIE *IMDie = new DIE(Module.getTag());
   TheCU->insertDIE(Module, IMDie);
-  DIE *NSDie = TheCU->getOrCreateNameSpace(Module.getNameSpace());
+  DIE *EntityDie;
+  DIDescriptor Entity = Module.getEntity();
+  if (Entity.isNameSpace())
+    EntityDie = TheCU->getOrCreateNameSpace(DINameSpace(Entity));
+  else if (Entity.isSubprogram())
+    EntityDie = TheCU->getOrCreateSubprogramDIE(DISubprogram(Entity));
+  else if (Entity.isType())
+    EntityDie = TheCU->getOrCreateTypeDIE(DIType(Entity));
+  else
+    EntityDie = TheCU->getDIE(Entity);
   unsigned FileID = getOrCreateSourceID(Module.getContext().getFilename(),
                                         Module.getContext().getDirectory(),
                                         TheCU->getUniqueID());
   TheCU->addUInt(IMDie, dwarf::DW_AT_decl_file, 0, FileID);
   TheCU->addUInt(IMDie, dwarf::DW_AT_decl_line, 0, Module.getLineNumber());
-  TheCU->addDIEEntry(IMDie, dwarf::DW_AT_import, dwarf::DW_FORM_ref4, NSDie);
+  TheCU->addDIEEntry(IMDie, dwarf::DW_AT_import, dwarf::DW_FORM_ref4, EntityDie);
   Context->addChild(IMDie);
 }
 
@@ -831,11 +841,11 @@ void DwarfDebug::beginModule() {
   for (unsigned i = 0, e = CU_Nodes->getNumOperands(); i != e; ++i) {
     DICompileUnit CUNode(CU_Nodes->getOperand(i));
     CompileUnit *CU = constructCompileUnit(CUNode);
-    DIArray ImportedModules = CUNode.getImportedModules();
-    for (unsigned i = 0, e = ImportedModules.getNumElements(); i != e; ++i)
+    DIArray ImportedEntities = CUNode.getImportedEntities();
+    for (unsigned i = 0, e = ImportedEntities.getNumElements(); i != e; ++i)
       ScopesWithImportedEntities.push_back(std::make_pair(
-          DIImportedModule(ImportedModules.getElement(i)).getContext(),
-          ImportedModules.getElement(i)));
+          DIImportedEntity(ImportedEntities.getElement(i)).getContext(),
+          ImportedEntities.getElement(i)));
     std::sort(ScopesWithImportedEntities.begin(),
               ScopesWithImportedEntities.end(), CompareFirst());
     DIArray GVs = CUNode.getGlobalVariables();
@@ -852,8 +862,8 @@ void DwarfDebug::beginModule() {
       CU->getOrCreateTypeDIE(RetainedTypes.getElement(i));
     // Emit imported_modules last so that the relevant context is already
     // available.
-    for (unsigned i = 0, e = ImportedModules.getNumElements(); i != e; ++i)
-      constructImportedModuleDIE(CU, ImportedModules.getElement(i));
+    for (unsigned i = 0, e = ImportedEntities.getNumElements(); i != e; ++i)
+      constructImportedEntityDIE(CU, ImportedEntities.getElement(i));
     // If we're splitting the dwarf out now that we've got the entire
     // CU then construct a skeleton CU based upon it.
     if (useSplitDwarf()) {
@@ -2578,7 +2588,7 @@ CompileUnit *DwarfDebug::constructSkeletonCU(const MDNode *N) {
 
   DIE *Die = new DIE(dwarf::DW_TAG_compile_unit);
   CompileUnit *NewCU = new CompileUnit(GlobalCUIndexCount++,
-                                       DIUnit.getLanguage(), Die, Asm,
+                                       DIUnit.getLanguage(), Die, N, Asm,
                                        this, &SkeletonHolder);
 
   NewCU->addLocalString(Die, dwarf::DW_AT_GNU_dwo_name,

@@ -559,16 +559,16 @@ private:
   /// \brief Construct subprogram DIE.
   void constructSubprogramDIE(CompileUnit *TheCU, const MDNode *N);
 
-  /// \brief Construct import_module DIE.
-  void constructImportedModuleDIE(CompileUnit *TheCU, const MDNode *N);
+  /// \brief Construct imported_module or imported_declaration DIE.
+  void constructImportedEntityDIE(CompileUnit *TheCU, const MDNode *N);
 
   /// \brief Construct import_module DIE.
-  void constructImportedModuleDIE(CompileUnit *TheCU, const MDNode *N,
+  void constructImportedEntityDIE(CompileUnit *TheCU, const MDNode *N,
                                   DIE *Context);
 
   /// \brief Construct import_module DIE.
-  void constructImportedModuleDIE(CompileUnit *TheCU,
-                                  const DIImportedModule &Module,
+  void constructImportedEntityDIE(CompileUnit *TheCU,
+                                  const DIImportedEntity &Module,
                                   DIE *Context);
 
   /// \brief Register a source line with debug info. Returns the unique

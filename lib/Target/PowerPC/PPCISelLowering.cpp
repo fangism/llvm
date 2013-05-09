@@ -2600,10 +2600,6 @@ PPCTargetLowering::LowerFormalArguments_Darwin(
 
   SmallVector<SDValue, 8> MemOps;
   unsigned nAltivecParamsAtEnd = 0;
-  // FIXME: FuncArg and Ins[ArgNo] must reference the same argument.
-  // When passing anonymous aggregates, this is currently not true.
-  // See LowerFormalArguments_64SVR4 for a fix.
-  // see: http://llvm.org/bugs/show_bug.cgi?id=14779
   // for Darwin, reported as: http://llvm.org/bugs/show_bug.cgi?id=15821
   Function::const_arg_iterator FuncArg = MF.getFunction()->arg_begin();
   unsigned CurArgIdx = 0;
@@ -7409,18 +7405,6 @@ bool PPCTargetLowering::isLegalAddressingMode(const AddrMode &AM,
   }
 
   return true;
-}
-
-/// isLegalAddressImmediate - Return true if the integer value can be used
-/// as the offset of the target addressing mode for load / store of the
-/// given type.
-bool PPCTargetLowering::isLegalAddressImmediate(int64_t V,Type *Ty) const{
-  // PPC allows a sign-extended 16-bit immediate field.
-  return (V > -(1 << 16) && V < (1 << 16)-1);
-}
-
-bool PPCTargetLowering::isLegalAddressImmediate(GlobalValue* GV) const {
-  return false;
 }
 
 SDValue PPCTargetLowering::LowerRETURNADDR(SDValue Op,
