@@ -1677,9 +1677,6 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
   if (!MF->getTarget().Options.DisableFramePointerElim(*MF))
     TheCU->addFlag(CurFnDIE, dwarf::DW_AT_APPLE_omit_frame_ptr);
 
-  DebugFrames.push_back(FunctionDebugFrameInfo(Asm->getFunctionNumber(),
-                                               MMI->getFrameMoves()));
-
   // Clear debug info
   for (DenseMap<LexicalScope *, SmallVector<DbgVariable *, 8> >::iterator
          I = ScopeVariables.begin(), E = ScopeVariables.end(); I != E; ++I)
@@ -2069,7 +2066,7 @@ void DwarfDebug::emitAccelNames() {
     const StringMap<std::vector<DIE*> > &Names = TheCU->getAccelNames();
     for (StringMap<std::vector<DIE*> >::const_iterator
            GI = Names.begin(), GE = Names.end(); GI != GE; ++GI) {
-      const char *Name = GI->getKeyData();
+      StringRef Name = GI->getKey();
       const std::vector<DIE *> &Entities = GI->second;
       for (std::vector<DIE *>::const_iterator DI = Entities.begin(),
              DE = Entities.end(); DI != DE; ++DI)
@@ -2098,7 +2095,7 @@ void DwarfDebug::emitAccelObjC() {
     const StringMap<std::vector<DIE*> > &Names = TheCU->getAccelObjC();
     for (StringMap<std::vector<DIE*> >::const_iterator
            GI = Names.begin(), GE = Names.end(); GI != GE; ++GI) {
-      const char *Name = GI->getKeyData();
+      StringRef Name = GI->getKey();
       const std::vector<DIE *> &Entities = GI->second;
       for (std::vector<DIE *>::const_iterator DI = Entities.begin(),
              DE = Entities.end(); DI != DE; ++DI)
@@ -2126,7 +2123,7 @@ void DwarfDebug::emitAccelNamespaces() {
     const StringMap<std::vector<DIE*> > &Names = TheCU->getAccelNamespace();
     for (StringMap<std::vector<DIE*> >::const_iterator
            GI = Names.begin(), GE = Names.end(); GI != GE; ++GI) {
-      const char *Name = GI->getKeyData();
+      StringRef Name = GI->getKey();
       const std::vector<DIE *> &Entities = GI->second;
       for (std::vector<DIE *>::const_iterator DI = Entities.begin(),
              DE = Entities.end(); DI != DE; ++DI)
@@ -2161,7 +2158,7 @@ void DwarfDebug::emitAccelTypes() {
       = TheCU->getAccelTypes();
     for (StringMap<std::vector<std::pair<DIE*, unsigned> > >::const_iterator
            GI = Names.begin(), GE = Names.end(); GI != GE; ++GI) {
-      const char *Name = GI->getKeyData();
+      StringRef Name = GI->getKey();
       const std::vector<std::pair<DIE *, unsigned> > &Entities = GI->second;
       for (std::vector<std::pair<DIE *, unsigned> >::const_iterator DI
              = Entities.begin(), DE = Entities.end(); DI !=DE; ++DI)
@@ -2225,7 +2222,7 @@ void DwarfDebug::emitDebugPubnames() {
 
       if (Asm->isVerbose())
         Asm->OutStreamer.AddComment("External Name");
-      Asm->OutStreamer.EmitBytes(StringRef(Name, strlen(Name)+1), 0);
+      Asm->OutStreamer.EmitBytes(StringRef(Name, GI->getKeyLength()+1), 0);
     }
 
     Asm->OutStreamer.AddComment("End Mark");

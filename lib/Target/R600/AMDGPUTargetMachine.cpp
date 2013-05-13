@@ -70,6 +70,7 @@ AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, StringRef TT,
     InstrInfo = new SIInstrInfo(*this);
     TLInfo = new SITargetLowering(*this);
   }
+  initAsmInfo();
 }
 
 AMDGPUTargetMachine::~AMDGPUTargetMachine() {
@@ -115,7 +116,6 @@ AMDGPUPassConfig::addPreISel() {
 }
 
 bool AMDGPUPassConfig::addInstSelector() {
-  addPass(createAMDGPUPeepholeOpt(*TM));
   addPass(createAMDGPUISelDag(getAMDGPUTargetMachine()));
 
   const AMDGPUSubtarget &ST = TM->getSubtarget<AMDGPUSubtarget>();

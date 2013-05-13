@@ -303,11 +303,11 @@ STATISTIC(NumRets,        "Number of return value forwarding "
                           "retain+autoreleaes eliminated");
 STATISTIC(NumRRs,         "Number of retain+release paths eliminated");
 STATISTIC(NumPeeps,       "Number of calls peephole-optimized");
+#ifndef NDEBUG
 STATISTIC(NumRetainsBeforeOpt,
           "Number of retains before optimization.");
 STATISTIC(NumReleasesBeforeOpt,
           "Number of releases before optimization.");
-#ifndef NDEBUG
 STATISTIC(NumRetainsAfterOpt,
           "Number of retains after optimization.");
 STATISTIC(NumReleasesAfterOpt,
@@ -587,10 +587,16 @@ namespace {
     /// definition.
     void SetAsExit()  { BottomUpPathCount = 1; }
 
+    /// Attempt to find the PtrState object describing the top down state for
+    /// pointer Arg. Return a new initialized PtrState describing the top down
+    /// state for Arg if we do not find one.
     PtrState &getPtrTopDownState(const Value *Arg) {
       return PerPtrTopDown[Arg];
     }
 
+    /// Attempt to find the PtrState object describing the bottom up state for
+    /// pointer Arg. Return a new initialized PtrState describing the bottom up
+    /// state for Arg if we do not find one.
     PtrState &getPtrBottomUpState(const Value *Arg) {
       return PerPtrBottomUp[Arg];
     }
@@ -1440,11 +1446,7 @@ void ObjCARCOpt::OptimizeIndividualCalls(Function &F) {
     case IC_RetainBlock:
       // If we strength reduce an objc_retainBlock to an objc_retain, continue
       // onto the objc_retain peephole optimizations. Otherwise break.
-      if (!OptimizeRetainBlockCall(F, Inst, Class))
-        break;
-      // FALLTHROUGH
-    case IC_Retain:
-      ++NumRetainsBeforeOpt;
+      OptimizeRetainBlockCall(F, Inst, Class);
       break;
     case IC_RetainRV:
       if (OptimizeRetainRVCall(F, Inst))
@@ -1452,9 +1454,6 @@ void ObjCARCOpt::OptimizeIndividualCalls(Function &F) {
       break;
     case IC_AutoreleaseRV:
       OptimizeAutoreleaseRVCall(F, Inst, Class);
-      break;
-    case IC_Release:
-      ++NumReleasesBeforeOpt;
       break;
     }
 
@@ -3049,6 +3048,12 @@ bool ObjCARCOpt::runOnFunction(Function &F) {
         "\n");
 
   PA.setAA(&getAnalysis<AliasAnalysis>());
+
+#ifndef NDEBUG
+  if (AreStatisticsEnabled()) {
+    GatherStatistics(F, false);
+  }
+#endif
 
   // This pass performs several distinct transformations. As a compile-time aid
   // when compiling code that isn't ObjC, skip these if the relevant ObjC

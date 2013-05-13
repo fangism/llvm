@@ -3464,8 +3464,7 @@ SDValue DAGCombiner::visitXOR(SDNode *N) {
   if (N0.getOpcode() == ISD::AND && N0.getNode()->hasOneUse() &&
       N0->getOperand(1) == N1) {
     SDValue X = N0->getOperand(0);
-    SDValue NotX = DAG.getNode(ISD::XOR, X.getDebugLoc(), VT, X,
-      DAG.getConstant(APInt::getAllOnesValue(VT.getSizeInBits()), VT));
+    SDValue NotX = DAG.getNOT(X.getDebugLoc(), X, VT);
     AddToWorkList(NotX.getNode());
     return DAG.getNode(ISD::AND, N->getDebugLoc(), VT, NotX, N1);
   }
@@ -9255,19 +9254,33 @@ static SDValue partitionShuffleOfConcats(SDNode *N, SelectionDAG &DAG) {
   for (unsigned I = 0; I != NumConcats; ++I) {
     // Make sure we're dealing with a copy.
     unsigned Begin = I * NumElemsPerConcat;
-    if (SVN->getMaskElt(Begin) % NumElemsPerConcat != 0)
-      return SDValue();
-
-    for (unsigned J = 1; J != NumElemsPerConcat; ++J) {
-      if (SVN->getMaskElt(Begin + J - 1) + 1 != SVN->getMaskElt(Begin + J))
-        return SDValue();
+    bool AllUndef = true, NoUndef = true;
+    for (unsigned J = Begin; J != Begin + NumElemsPerConcat; ++J) {
+      if (SVN->getMaskElt(J) >= 0)
+        AllUndef = false;
+      else
+        NoUndef = false;
     }
 
-    unsigned FirstElt = SVN->getMaskElt(Begin) / NumElemsPerConcat;
-    if (FirstElt < N0.getNumOperands())
-      Ops.push_back(N0.getOperand(FirstElt));
-    else
-      Ops.push_back(N1.getOperand(FirstElt - N0.getNumOperands()));
+    if (NoUndef) {
+      if (SVN->getMaskElt(Begin) % NumElemsPerConcat != 0)
+        return SDValue();
+
+      for (unsigned J = 1; J != NumElemsPerConcat; ++J)
+        if (SVN->getMaskElt(Begin + J - 1) + 1 != SVN->getMaskElt(Begin + J))
+          return SDValue();
+
+      unsigned FirstElt = SVN->getMaskElt(Begin) / NumElemsPerConcat;
+      if (FirstElt < N0.getNumOperands())
+        Ops.push_back(N0.getOperand(FirstElt));
+      else
+        Ops.push_back(N1.getOperand(FirstElt - N0.getNumOperands()));
+
+    } else if (AllUndef) {
+      Ops.push_back(DAG.getUNDEF(N0.getOperand(0).getValueType()));
+    } else { // Mixed with general masks and undefs, can't do optimization.
+      return SDValue();
+    }
   }
 
   return DAG.getNode(ISD::CONCAT_VECTORS, N->getDebugLoc(), VT, Ops.data(),

@@ -243,6 +243,10 @@ int BoUpSLP::getTreeCost(ArrayRef<Value *> VL) {
   LaneMap.clear();
   MultiUserVals.clear();
   MustScalarize.clear();
+  MustExtract.clear();
+
+  // Find the location of the last root.
+  unsigned LastRootIndex = InstrIdx[GetLastInstr(VL, VL.size())];
 
   // Scan the tree and find which value is used by which lane, and which values
   // must be scalarized.
@@ -258,15 +262,32 @@ int BoUpSLP::getTreeCost(ArrayRef<Value *> VL) {
     for (Value::use_iterator I = (*it)->use_begin(), E = (*it)->use_end();
          I != E; ++I) {
       if (LaneMap.find(*I) == LaneMap.end()) {
-        MustScalarize.insert(*it);
-        DEBUG(dbgs()<<"SLP: Adding " << **it <<
-              " to MustScalarize because of an out of tree usage.\n");
-        break;
+        DEBUG(dbgs()<<"SLP: Instr " << **it << " has multiple users.\n");
+
+        // We don't have an ordering problem if the user is not in this basic
+        // block.
+        Instruction *Inst = cast<Instruction>(*I);
+        if (Inst->getParent() == BB) {
+          // We don't have an ordering problem if the user is after the last
+          // root.
+          unsigned Idx = InstrIdx[Inst];
+          if (Idx < LastRootIndex) {
+            MustScalarize.insert(*it);
+            DEBUG(dbgs()<<"SLP: Adding to MustScalarize "
+                  "because of an unsafe out of tree usage.\n");
+            break;
+          }
+        }
+
+        DEBUG(dbgs()<<"SLP: Adding to MustExtract "
+              "because of a safe out of tree usage.\n");
+        MustExtract.insert(*it);
+        continue;
       }
       if (Lane == -1) Lane = LaneMap[*I];
       if (Lane != LaneMap[*I]) {
         MustScalarize.insert(*it);
-        DEBUG(dbgs()<<"Adding " << **it <<
+        DEBUG(dbgs()<<"SLP: Adding " << **it <<
               " to MustScalarize because multiple lane use it: "
               << Lane << " and " << LaneMap[*I] << ".\n");
         break;
@@ -456,6 +477,13 @@ int BoUpSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
     }
   }
 
+  // Calculate the extract cost.
+  unsigned ExternalUserExtractCost = 0;
+  for (unsigned i = 0, e = VL.size(); i < e; ++i)
+    if (MustExtract.count(VL[i]))
+      ExternalUserExtractCost +=
+        TTI->getVectorInstrCost(Instruction::ExtractElement, VecTy, i);
+
   switch (Opcode) {
   case Instruction::ZExt:
   case Instruction::SExt:
@@ -469,7 +497,7 @@ int BoUpSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
   case Instruction::Trunc:
   case Instruction::FPTrunc:
   case Instruction::BitCast: {
-    int Cost = 0;
+    int Cost = ExternalUserExtractCost;
     ValueList Operands;
     Type *SrcTy = VL0->getOperand(0)->getType();
     // Prepare the operand vector.
@@ -510,7 +538,7 @@ int BoUpSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
   case Instruction::And:
   case Instruction::Or:
   case Instruction::Xor: {
-    int Cost = 0;
+    int Cost = ExternalUserExtractCost;
     // Calculate the cost of all of the operands.
     for (unsigned i = 0, e = VL0->getNumOperands(); i < e; ++i) {
       ValueList Operands;
@@ -540,7 +568,7 @@ int BoUpSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
     int ScalarLdCost = VecTy->getNumElements() *
       TTI->getMemoryOpCost(Instruction::Load, ScalarTy, 1, 0);
     int VecLdCost = TTI->getMemoryOpCost(Instruction::Load, ScalarTy, 1, 0);
-    return VecLdCost - ScalarLdCost;
+    return VecLdCost - ScalarLdCost + ExternalUserExtractCost;
   }
   case Instruction::Store: {
     // We know that we can merge the stores. Calculate the cost.
@@ -556,7 +584,7 @@ int BoUpSLP::getTreeCost_rec(ArrayRef<Value *> VL, unsigned Depth) {
     }
 
     int TotalCost = StoreCost + getTreeCost_rec(Operands, Depth + 1);
-    return TotalCost;
+    return TotalCost + ExternalUserExtractCost;
   }
   default:
     // Unable to vectorize unknown instructions.
@@ -583,15 +611,43 @@ Value *BoUpSLP::Scalarize(ArrayRef<Value *> VL, VectorType *Ty) {
     GatherInstructions.push_back(Vec);
   }
 
+  for (unsigned i = 0; i < Ty->getNumElements(); ++i)
+    VectorizedValues[VL[i]] = Vec;
+
   return Vec;
 }
 
 Value *BoUpSLP::vectorizeTree(ArrayRef<Value *> VL, int VF) {
   Value *V = vectorizeTree_rec(VL, VF);
+
+  Instruction *LastInstr = GetLastInstr(VL, VL.size());
+  int LastInstrIdx = InstrIdx[LastInstr];
+  IRBuilder<> Builder(LastInstr);
+  for (ValueSet::iterator it = MustExtract.begin(), e = MustExtract.end();
+       it != e; ++it) {
+    Instruction *I = cast<Instruction>(*it);
+    Value *Vec = VectorizedValues[I];
+    assert(LaneMap.count(I) && "Unable to find the lane for the external use");
+    Value *Idx = Builder.getInt32(LaneMap[I]);
+    Value *Extract = Builder.CreateExtractElement(Vec, Idx);
+    bool Replaced = false;
+    for (Value::use_iterator U = I->use_begin(), UE = U->use_end(); U != UE;
+         ++U) {
+      Instruction *UI = cast<Instruction>(*U);
+      if (UI->getParent() != I->getParent() || InstrIdx[UI] > LastInstrIdx)
+        UI->replaceUsesOfWith(I ,Extract);
+      Replaced = true;
+    }
+    assert(Replaced && "Must replace at least one outside user");
+    (void)Replaced;
+  }
+
   // We moved some instructions around. We have to number them again
   // before we can do any analysis.
   numberInstructions();
   MustScalarize.clear();
+  MustExtract.clear();
+  VectorizedValues.clear();
   return V;
 }
 
@@ -649,7 +705,10 @@ Value *BoUpSLP::vectorizeTree_rec(ArrayRef<Value *> VL, int VF) {
     IRBuilder<> Builder(GetLastInstr(VL, VF));
     CastInst *CI = dyn_cast<CastInst>(VL0);
     Value *V = Builder.CreateCast(CI->getOpcode(), InVec, VecTy);
-    VectorizedValues[VL0] = V;
+
+    for (int i = 0; i < VF; ++i)
+      VectorizedValues[VL[i]] = V;
+
     return V;
   }
   case Instruction::Add:
@@ -672,16 +731,19 @@ Value *BoUpSLP::vectorizeTree_rec(ArrayRef<Value *> VL, int VF) {
   case Instruction::Xor: {
     ValueList LHSVL, RHSVL;
     for (int i = 0; i < VF; ++i) {
-      RHSVL.push_back(cast<Instruction>(VL[i])->getOperand(0));
-      LHSVL.push_back(cast<Instruction>(VL[i])->getOperand(1));
+      LHSVL.push_back(cast<Instruction>(VL[i])->getOperand(0));
+      RHSVL.push_back(cast<Instruction>(VL[i])->getOperand(1));
     }
 
-    Value *RHS = vectorizeTree_rec(RHSVL, VF);
     Value *LHS = vectorizeTree_rec(LHSVL, VF);
+    Value *RHS = vectorizeTree_rec(RHSVL, VF);
     IRBuilder<> Builder(GetLastInstr(VL, VF));
     BinaryOperator *BinOp = cast<BinaryOperator>(VL0);
-    Value *V = Builder.CreateBinOp(BinOp->getOpcode(), RHS,LHS);
-    VectorizedValues[VL0] = V;
+    Value *V = Builder.CreateBinOp(BinOp->getOpcode(), LHS,RHS);
+
+    for (int i = 0; i < VF; ++i)
+      VectorizedValues[VL[i]] = V;
+
     return V;
   }
   case Instruction::Load: {
@@ -698,7 +760,10 @@ Value *BoUpSLP::vectorizeTree_rec(ArrayRef<Value *> VL, int VF) {
                                           VecTy->getPointerTo());
     LI = Builder.CreateLoad(VecPtr);
     LI->setAlignment(Alignment);
-    VectorizedValues[VL0] = LI;
+
+    for (int i = 0; i < VF; ++i)
+      VectorizedValues[VL[i]] = LI;
+
     return LI;
   }
   case Instruction::Store: {
@@ -721,9 +786,7 @@ Value *BoUpSLP::vectorizeTree_rec(ArrayRef<Value *> VL, int VF) {
     return 0;
   }
   default:
-    Value *S = Scalarize(VL, VecTy);
-    VectorizedValues[VL0] = S;
-    return S;
+    return Scalarize(VL, VecTy);
   }
 }
 

@@ -312,7 +312,6 @@ void X86FrameLowering::emitCalleeSavedFrameMoves(MachineFunction &MF,
   const std::vector<CalleeSavedInfo> &CSI = MFI->getCalleeSavedInfo();
   if (CSI.empty()) return;
 
-  std::vector<MachineMove> &Moves = MMI.getFrameMoves();
   const X86RegisterInfo *RegInfo = TM.getRegisterInfo();
   bool HasFP = hasFP(MF);
 
@@ -362,14 +361,21 @@ void X86FrameLowering::emitCalleeSavedFrameMoves(MachineFunction &MF,
 
     MachineLocation CSDst(MachineLocation::VirtualFP, Offset);
     MachineLocation CSSrc(Reg);
-    Moves.push_back(MachineMove(Label, CSDst, CSSrc));
+    MMI.addFrameMove(Label, CSDst, CSSrc);
   }
 }
 
 /// getCompactUnwindRegNum - Get the compact unwind number for a given
 /// register. The number corresponds to the enum lists in
 /// compact_unwind_encoding.h.
-static int getCompactUnwindRegNum(const uint16_t *CURegs, unsigned Reg) {
+static int getCompactUnwindRegNum(unsigned Reg, bool is64Bit) {
+  static const uint16_t CU32BitRegs[] = {
+    X86::EBX, X86::ECX, X86::EDX, X86::EDI, X86::ESI, X86::EBP, 0
+  };
+  static const uint16_t CU64BitRegs[] = {
+    X86::RBX, X86::R12, X86::R13, X86::R14, X86::R15, X86::RBP, 0
+  };
+  const uint16_t *CURegs = is64Bit ? CU64BitRegs : CU32BitRegs;
   for (int Idx = 1; *CURegs; ++CURegs, ++Idx)
     if (*CURegs == Reg)
       return Idx;
@@ -398,16 +404,8 @@ encodeCompactUnwindRegistersWithoutFrame(unsigned SavedRegs[CU_NUM_SAVED_REGS],
   //     4       3
   //     5       3
   //
-  static const uint16_t CU32BitRegs[] = {
-    X86::EBX, X86::ECX, X86::EDX, X86::EDI, X86::ESI, X86::EBP, 0
-  };
-  static const uint16_t CU64BitRegs[] = {
-    X86::RBX, X86::R12, X86::R13, X86::R14, X86::R15, X86::RBP, 0
-  };
-  const uint16_t *CURegs = (Is64Bit ? CU64BitRegs : CU32BitRegs);
-
   for (unsigned i = 0; i != CU_NUM_SAVED_REGS; ++i) {
-    int CUReg = getCompactUnwindRegNum(CURegs, SavedRegs[i]);
+    int CUReg = getCompactUnwindRegNum(SavedRegs[i], Is64Bit);
     if (CUReg == -1) return ~0U;
     SavedRegs[i] = CUReg;
   }
@@ -466,14 +464,6 @@ encodeCompactUnwindRegistersWithoutFrame(unsigned SavedRegs[CU_NUM_SAVED_REGS],
 static uint32_t
 encodeCompactUnwindRegistersWithFrame(unsigned SavedRegs[CU_NUM_SAVED_REGS],
                                       bool Is64Bit) {
-  static const uint16_t CU32BitRegs[] = {
-    X86::EBX, X86::ECX, X86::EDX, X86::EDI, X86::ESI, X86::EBP, 0
-  };
-  static const uint16_t CU64BitRegs[] = {
-    X86::RBX, X86::R12, X86::R13, X86::R14, X86::R15, X86::RBP, 0
-  };
-  const uint16_t *CURegs = (Is64Bit ? CU64BitRegs : CU32BitRegs);
-
   // Encode the registers in the order they were saved, 3-bits per register. The
   // registers are numbered from 1 to CU_NUM_SAVED_REGS.
   uint32_t RegEnc = 0;
@@ -481,7 +471,7 @@ encodeCompactUnwindRegistersWithFrame(unsigned SavedRegs[CU_NUM_SAVED_REGS],
     unsigned Reg = SavedRegs[I];
     if (Reg == 0) continue;
 
-    int CURegNum = getCompactUnwindRegNum(CURegs, Reg);
+    int CURegNum = getCompactUnwindRegNum(Reg, Is64Bit);
     if (CURegNum == -1) return ~0U;
 
     // Encode the 3-bit register number in order, skipping over 3-bits for each
@@ -533,6 +523,12 @@ uint32_t X86FrameLowering::getCompactUnwindEncoding(MachineFunction &MF) const {
     if (Opc == PushInstr) {
       // If there are too many saved registers, we cannot use compact encoding.
       if (SavedRegIdx >= CU_NUM_SAVED_REGS) return CU::UNWIND_MODE_DWARF;
+
+      unsigned Reg = MI.getOperand(0).getReg();
+      if (Reg == (Is64Bit ? X86::RAX : X86::EAX)) {
+        ExpectEnd = true;
+        continue;
+      }
 
       SavedRegs[SavedRegIdx++] = MI.getOperand(0).getReg();
       StackAdjust += OffsetSize;
@@ -735,7 +731,6 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
   //        REG < 64                    => DW_CFA_offset + Reg
   //        ELSE                        => DW_CFA_offset_extended
 
-  std::vector<MachineMove> &Moves = MMI.getFrameMoves();
   uint64_t NumBytes = 0;
   int stackGrowth = -SlotSize;
 
@@ -771,17 +766,17 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
       if (StackSize) {
         MachineLocation SPDst(MachineLocation::VirtualFP);
         MachineLocation SPSrc(MachineLocation::VirtualFP, 2 * stackGrowth);
-        Moves.push_back(MachineMove(FrameLabel, SPDst, SPSrc));
+        MMI.addFrameMove(FrameLabel, SPDst, SPSrc);
       } else {
         MachineLocation SPDst(StackPtr);
         MachineLocation SPSrc(StackPtr, stackGrowth);
-        Moves.push_back(MachineMove(FrameLabel, SPDst, SPSrc));
+        MMI.addFrameMove(FrameLabel, SPDst, SPSrc);
       }
 
       // Change the rule for the FramePtr to be an "offset" rule.
       MachineLocation FPDst(MachineLocation::VirtualFP, 2 * stackGrowth);
       MachineLocation FPSrc(FramePtr);
-      Moves.push_back(MachineMove(FrameLabel, FPDst, FPSrc));
+      MMI.addFrameMove(FrameLabel, FPDst, FPSrc);
     }
 
     // Update EBP with the new base value.
@@ -799,7 +794,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
       // Define the current CFA to use the EBP/RBP register.
       MachineLocation FPDst(FramePtr);
       MachineLocation FPSrc(MachineLocation::VirtualFP);
-      Moves.push_back(MachineMove(FrameLabel, FPDst, FPSrc));
+      MMI.addFrameMove(FrameLabel, FPDst, FPSrc);
     }
 
     // Mark the FramePtr as live-in in every block except the entry.
@@ -830,7 +825,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
       unsigned Ptr = StackSize ? MachineLocation::VirtualFP : StackPtr;
       MachineLocation SPDst(Ptr);
       MachineLocation SPSrc(Ptr, StackOffset);
-      Moves.push_back(MachineMove(Label, SPDst, SPSrc));
+      MMI.addFrameMove(Label, SPDst, SPSrc);
       StackOffset += stackGrowth;
     }
   }
@@ -968,11 +963,11 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
         MachineLocation SPDst(MachineLocation::VirtualFP);
         MachineLocation SPSrc(MachineLocation::VirtualFP,
                               -StackSize + stackGrowth);
-        Moves.push_back(MachineMove(Label, SPDst, SPSrc));
+        MMI.addFrameMove(Label, SPDst, SPSrc);
       } else {
         MachineLocation SPDst(StackPtr);
         MachineLocation SPSrc(StackPtr, stackGrowth);
-        Moves.push_back(MachineMove(Label, SPDst, SPSrc));
+        MMI.addFrameMove(Label, SPDst, SPSrc);
       }
     }
 
