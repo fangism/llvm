@@ -270,7 +270,7 @@ namespace llvm {
     }
 
     /// getSetCCResultType - Return the value type to use for ISD::SETCC.
-    virtual EVT getSetCCResultType(EVT VT) const;
+    virtual EVT getSetCCResultType(LLVMContext &Context, EVT VT) const;
 
     virtual MachineBasicBlock *
       EmitInstrWithCustomInserter(MachineInstr *MI,
@@ -480,6 +480,7 @@ namespace llvm {
                        unsigned InRegsParamRecordIdx,
                        unsigned OffsetFromOrigArg,
                        unsigned ArgOffset,
+                       unsigned ArgSize,
                        bool ForceMutable) const;
 
     void VarArgStyleRegisters(CCState &CCInfo, SelectionDAG &DAG,
@@ -489,6 +490,7 @@ namespace llvm {
 
     void computeRegArea(CCState &CCInfo, MachineFunction &MF,
                         unsigned InRegsParamRecordIdx,
+                        unsigned ArgSize,
                         unsigned &ArgRegsSize,
                         unsigned &ArgRegsSaveSize) const;
 

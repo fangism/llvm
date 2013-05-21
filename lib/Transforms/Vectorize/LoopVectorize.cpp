@@ -354,24 +354,10 @@ bool LoadHoisting::isHoistableLoad(Instruction *L) {
 
 static void addMemAccesses(BasicBlock *BB, SmallPtrSet<Value *, 8> &Set) {
   for (BasicBlock::iterator BI = BB->begin(), BE = BB->end(); BI != BE; ++BI) {
-    Instruction *I = &*BI;
-    Value *Addr = 0;
-
-    // Try a load.
-    LoadInst *LI = dyn_cast<LoadInst>(I);
-    if (LI) {
-      Addr = LI->getPointerOperand();
-      Set.insert(Addr);
-      continue;
-    }
-
-    // Try a store.
-    StoreInst *SI = dyn_cast<StoreInst>(I);
-    if (!SI)
-      continue;
-
-    Addr = SI->getPointerOperand();
-    Set.insert(Addr);
+    if (LoadInst *LI = dyn_cast<LoadInst>(BI)) // Try a load.
+      Set.insert(LI->getPointerOperand());
+    else if (StoreInst *SI = dyn_cast<StoreInst>(BI)) // Try a store.
+      Set.insert(SI->getPointerOperand());
   }
 }
 
@@ -2119,7 +2105,6 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
         // optimizations will clean it up.
 
         unsigned NumIncoming = P->getNumIncomingValues();
-        assert(NumIncoming > 1 && "Invalid PHI");
 
         // Generate a sequence of selects of the form:
         // SELECT(Mask3, In3,
@@ -2131,10 +2116,11 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
           VectorParts &In0 = getVectorValue(P->getIncomingValue(In));
 
           for (unsigned part = 0; part < UF; ++part) {
-            // We don't need to 'select' the first PHI operand because it is
-            // the default value if all of the other masks don't match.
+            // We might have single edge PHIs (blocks) - use an identity
+            // 'select' for the first PHI operand.
             if (In == 0)
-              Entry[part] = In0[part];
+              Entry[part] = Builder.CreateSelect(Cond[part], In0[part],
+                                                 In0[part]);
             else
               // Select between the current value and the previous incoming edge
               // based on the incoming mask.
@@ -2708,9 +2694,7 @@ void LoopVectorizationLegality::collectLoopUniforms() {
     Uniforms.insert(I);
 
     // Insert all operands.
-    for (int i = 0, Op = I->getNumOperands(); i < Op; ++i) {
-      Worklist.push_back(I->getOperand(i));
-    }
+    Worklist.insert(Worklist.end(), I->op_begin(), I->op_end());
   }
 }
 

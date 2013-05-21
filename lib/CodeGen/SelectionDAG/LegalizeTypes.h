@@ -1,4 +1,4 @@
-//===-- LegalizeTypes.h - Definition of the DAG Type Legalizer class ------===//
+//===-- LegalizeTypes.h - DAG Type Legalizer class definition ---*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -71,6 +71,10 @@ private:
   /// isTypeLegal - Return true if this type is legal on this target.
   bool isTypeLegal(EVT VT) const {
     return TLI.getTypeAction(*DAG.getContext(), VT) == TargetLowering::TypeLegal;
+  }
+
+  EVT getSetCCResultType(EVT VT) const {
+    return TLI.getSetCCResultType(*DAG.getContext(), VT);
   }
 
   /// IgnoreNodeResults - Pretend all of this node's results are legal.

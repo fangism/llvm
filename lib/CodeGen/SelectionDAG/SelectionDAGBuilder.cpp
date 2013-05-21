@@ -1710,8 +1710,10 @@ void SelectionDAGBuilder::visitJumpTableHeader(JumpTable &JT,
   // for the switch statement if the value being switched on exceeds the largest
   // case in the switch.
   SDValue CMP = DAG.getSetCC(getCurDebugLoc(),
-                             TLI.getSetCCResultType(Sub.getValueType()), Sub,
-                             DAG.getConstant(JTH.Last-JTH.First,VT),
+                             TLI.getSetCCResultType(*DAG.getContext(),
+                                                    Sub.getValueType()),
+                             Sub,
+                             DAG.getConstant(JTH.Last - JTH.First,VT),
                              ISD::SETUGT);
 
   // Set NextBlock to be the MBB immediately after the current one, if any.
@@ -1745,7 +1747,8 @@ void SelectionDAGBuilder::visitBitTestHeader(BitTestBlock &B,
 
   // Check range
   SDValue RangeCmp = DAG.getSetCC(getCurDebugLoc(),
-                                  TLI.getSetCCResultType(Sub.getValueType()),
+                                  TLI.getSetCCResultType(*DAG.getContext(),
+                                                         Sub.getValueType()),
                                   Sub, DAG.getConstant(B.Range, VT),
                                   ISD::SETUGT);
 
@@ -1811,14 +1814,14 @@ void SelectionDAGBuilder::visitBitTestCase(BitTestBlock &BB,
     // Testing for a single bit; just compare the shift count with what it
     // would need to be to shift a 1 bit in that position.
     Cmp = DAG.getSetCC(getCurDebugLoc(),
-                       TLI.getSetCCResultType(VT),
+                       TLI.getSetCCResultType(*DAG.getContext(), VT),
                        ShiftOp,
                        DAG.getConstant(CountTrailingZeros_64(B.Mask), VT),
                        ISD::SETEQ);
   } else if (PopCount == BB.Range) {
     // There is only one zero bit in the range, test for it directly.
     Cmp = DAG.getSetCC(getCurDebugLoc(),
-                       TLI.getSetCCResultType(VT),
+                       TLI.getSetCCResultType(*DAG.getContext(), VT),
                        ShiftOp,
                        DAG.getConstant(CountTrailingOnes_64(B.Mask), VT),
                        ISD::SETNE);
@@ -1831,7 +1834,7 @@ void SelectionDAGBuilder::visitBitTestCase(BitTestBlock &BB,
     SDValue AndOp = DAG.getNode(ISD::AND, getCurDebugLoc(),
                                 VT, SwitchVal, DAG.getConstant(B.Mask, VT));
     Cmp = DAG.getSetCC(getCurDebugLoc(),
-                       TLI.getSetCCResultType(VT),
+                       TLI.getSetCCResultType(*DAG.getContext(), VT),
                        AndOp, DAG.getConstant(0, VT),
                        ISD::SETNE);
   }
@@ -6753,8 +6756,14 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
 
     // If this argument is unused then remember its value. It is used to generate
     // debugging information.
-    if (I->use_empty() && NumValues)
+    if (I->use_empty() && NumValues) {
       SDB->setUnusedArgValue(I, InVals[i]);
+
+      // Also remember any frame index for use in FastISel.
+      if (FrameIndexSDNode *FI =
+          dyn_cast<FrameIndexSDNode>(InVals[i].getNode()))
+        FuncInfo->setArgumentFrameIndex(I, FI->getIndex());
+    }
 
     for (unsigned Val = 0; Val != NumValues; ++Val) {
       EVT VT = ValueVTs[Val];

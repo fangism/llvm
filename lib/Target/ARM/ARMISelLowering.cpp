@@ -1069,7 +1069,7 @@ const char *ARMTargetLowering::getTargetNodeName(unsigned Opcode) const {
   }
 }
 
-EVT ARMTargetLowering::getSetCCResultType(EVT VT) const {
+EVT ARMTargetLowering::getSetCCResultType(LLVMContext &, EVT VT) const {
   if (!VT.isVector()) return getPointerTy();
   return VT.changeVectorElementTypeToInteger();
 }
@@ -2630,6 +2630,7 @@ ARMTargetLowering::GetF64FormalArgument(CCValAssign &VA, CCValAssign &NextVA,
 void
 ARMTargetLowering::computeRegArea(CCState &CCInfo, MachineFunction &MF,
                                   unsigned InRegsParamRecordIdx,
+                                  unsigned ArgSize,
                                   unsigned &ArgRegsSize,
                                   unsigned &ArgRegsSaveSize)
   const {
@@ -2648,7 +2649,29 @@ ARMTargetLowering::computeRegArea(CCState &CCInfo, MachineFunction &MF,
 
   unsigned Align = MF.getTarget().getFrameLowering()->getStackAlignment();
   ArgRegsSize = NumGPRs * 4;
-  ArgRegsSaveSize = (ArgRegsSize + Align - 1) & ~(Align - 1);
+
+  // If parameter is split between stack and GPRs...
+  if (NumGPRs && Align == 8 &&
+      (ArgRegsSize < ArgSize ||
+        InRegsParamRecordIdx >= CCInfo.getInRegsParamsCount())) {
+    // Add padding for part of param recovered from GPRs, so
+    // its last byte must be at address K*8 - 1.
+    // We need to do it, since remained (stack) part of parameter has
+    // stack alignment, and we need to "attach" "GPRs head" without gaps
+    // to it:
+    // Stack:
+    // |---- 8 bytes block ----| |---- 8 bytes block ----| |---- 8 bytes...
+    // [ [padding] [GPRs head] ] [        Tail passed via stack       ....
+    //
+    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+    unsigned Padding =
+        ((ArgRegsSize + AFI->getArgRegsSaveSize() + Align - 1) & ~(Align-1)) -
+        (ArgRegsSize + AFI->getArgRegsSaveSize());
+    ArgRegsSaveSize = ArgRegsSize + Padding;
+  } else
+    // We don't need to extend regs save size for byval parameters if they
+    // are passed via GPRs only.
+    ArgRegsSaveSize = ArgRegsSize;
 }
 
 // The remaining GPRs hold either the beginning of variable-argument
@@ -2666,6 +2689,7 @@ ARMTargetLowering::StoreByValRegs(CCState &CCInfo, SelectionDAG &DAG,
                                   unsigned InRegsParamRecordIdx,
                                   unsigned OffsetFromOrigArg,
                                   unsigned ArgOffset,
+                                  unsigned ArgSize,
                                   bool ForceMutable) const {
 
   // Currently, two use-cases possible:
@@ -2695,7 +2719,8 @@ ARMTargetLowering::StoreByValRegs(CCState &CCInfo, SelectionDAG &DAG,
   }
 
   unsigned ArgRegsSize, ArgRegsSaveSize;
-  computeRegArea(CCInfo, MF, InRegsParamRecordIdx, ArgRegsSize, ArgRegsSaveSize);
+  computeRegArea(CCInfo, MF, InRegsParamRecordIdx, ArgSize,
+                 ArgRegsSize, ArgRegsSaveSize);
 
   // Store any by-val regs to their spots on the stack so that they may be
   // loaded by deferencing the result of formal parameter pointer or va_next.
@@ -2703,9 +2728,17 @@ ARMTargetLowering::StoreByValRegs(CCState &CCInfo, SelectionDAG &DAG,
   // was initialized, it can't be initialized again.
   if (ArgRegsSaveSize) {
 
+    unsigned Padding = ArgRegsSaveSize - ArgRegsSize;
+
+    if (Padding) {
+      assert(AFI->getStoredByValParamsPadding() == 0 &&
+             "The only parameter may be padded.");
+      AFI->setStoredByValParamsPadding(Padding);
+    }
+
     int FrameIndex = MFI->CreateFixedObject(
                       ArgRegsSaveSize,
-                      ArgOffset + ArgRegsSaveSize - ArgRegsSize,
+                      Padding + ArgOffset,
                       false);
     SDValue FIN = DAG.getFrameIndex(FrameIndex, getPointerTy());
 
@@ -2737,7 +2770,8 @@ ARMTargetLowering::StoreByValRegs(CCState &CCInfo, SelectionDAG &DAG,
     return FrameIndex;
   } else
     // This will point to the next argument passed via stack.
-    return MFI->CreateFixedObject(4, ArgOffset, !ForceMutable);
+    return MFI->CreateFixedObject(
+        4, AFI->getStoredByValParamsPadding() + ArgOffset, !ForceMutable);
 }
 
 // Setup stack frame, the va_list pointer will start from.
@@ -2756,7 +2790,7 @@ ARMTargetLowering::VarArgStyleRegisters(CCState &CCInfo, SelectionDAG &DAG,
   // argument passed via stack.
   int FrameIndex =
     StoreByValRegs(CCInfo, DAG, dl, Chain, 0, CCInfo.getInRegsParamsCount(),
-                   0, ArgOffset, ForceMutable);
+                   0, ArgOffset, 0, ForceMutable);
 
   AFI->setVarArgsFrameIndex(FrameIndex);
 }
@@ -2896,12 +2930,15 @@ ARMTargetLowering::LowerFormalArguments(SDValue Chain,
                 CurByValIndex,
                 Ins[VA.getValNo()].PartOffset,
                 VA.getLocMemOffset(),
+                Flags.getByValSize(),
                 true /*force mutable frames*/);
             InVals.push_back(DAG.getFrameIndex(FrameIndex, getPointerTy()));
             CCInfo.nextInRegsParam();
           } else {
+            unsigned FIOffset = VA.getLocMemOffset() +
+                                AFI->getStoredByValParamsPadding();
             int FI = MFI->CreateFixedObject(VA.getLocVT().getSizeInBits()/8,
-                                            VA.getLocMemOffset(), true);
+                                            FIOffset, true);
 
             // Create load nodes to retrieve arguments from the stack.
             SDValue FIN = DAG.getFrameIndex(FI, getPointerTy());
@@ -10434,17 +10471,15 @@ ARMTargetLowering::isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const {
 
 bool ARM::isBitFieldInvertedMask(unsigned v) {
   if (v == 0xffffffff)
-    return 0;
+    return false;
+
   // there can be 1's on either or both "outsides", all the "inside"
   // bits must be 0's
-  unsigned int lsb = 0, msb = 31;
-  while (v & (1 << msb)) --msb;
-  while (v & (1 << lsb)) ++lsb;
-  for (unsigned int i = lsb; i <= msb; ++i) {
-    if (v & (1 << i))
-      return 0;
-  }
-  return 1;
+  unsigned TO = CountTrailingOnes_32(v);
+  unsigned LO = CountLeadingOnes_32(v);
+  v = (v >> TO) << TO;
+  v = (v << LO) >> LO;
+  return v == 0;
 }
 
 /// isFPImmLegal - Returns true if the target can instruction select the

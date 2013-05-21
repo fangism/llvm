@@ -26,7 +26,8 @@ def SDT_MipsCallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 def SDT_ExtractLOHI : SDTypeProfile<1, 2, [SDTCisInt<0>, SDTCisVT<1, untyped>,
                                            SDTCisVT<2, i32>]>;
 def SDT_InsertLOHI : SDTypeProfile<1, 2, [SDTCisVT<0, untyped>,
-                                          SDTCisVT<1, i32>, SDTCisSameAs<1, 2>]>;
+                                          SDTCisVT<1, i32>,
+                                          SDTCisSameAs<1, 2>]>;
 def SDT_MipsMultDiv : SDTypeProfile<1, 2, [SDTCisVT<0, untyped>, SDTCisInt<1>,
                                     SDTCisSameAs<1, 2>]>;
 def SDT_MipsMAddMSub : SDTypeProfile<1, 3,
@@ -104,7 +105,8 @@ def MipsMSubu : SDNode<"MipsISD::MSubu", SDT_MipsMAddMSub>;
 // DivRem(u) nodes
 def MipsDivRem    : SDNode<"MipsISD::DivRem", SDT_MipsMultDiv>;
 def MipsDivRemU   : SDNode<"MipsISD::DivRemU", SDT_MipsMultDiv>;
-def MipsDivRem16  : SDNode<"MipsISD::DivRem16", SDT_MipsDivRem16, [SDNPOutGlue]>;
+def MipsDivRem16  : SDNode<"MipsISD::DivRem16", SDT_MipsDivRem16,
+                           [SDNPOutGlue]>;
 def MipsDivRemU16 : SDNode<"MipsISD::DivRemU16", SDT_MipsDivRem16,
                            [SDNPOutGlue]>;
 
@@ -389,6 +391,7 @@ class ArithLogicI<string opstr, Operand Od, RegisterOperand RO,
          [(set RO:$rt, (OpNode RO:$rs, imm_type:$imm16))],
          IIAlu, FrmI, opstr> {
   let isReMaterializable = 1;
+  let TwoOperandAliasConstraint = "$rs = $rt";
 }
 
 // Arithmetic Multiply ADD/SUB
@@ -637,6 +640,11 @@ class SYNC_FT :
   InstSE<(outs), (ins i32imm:$stype), "sync $stype", [(MipsSync imm:$stype)],
          NoItinerary, FrmOther>;
 
+let hasSideEffects = 1 in
+class TEQ_FT<string opstr, RegisterOperand RO> :
+  InstSE<(outs), (ins RO:$rs, RO:$rt, uimm16:$code_),
+         !strconcat(opstr, "\t$rs, $rt, $code_"), [], NoItinerary, FrmI>;
+
 // Mul, Div
 class Mult<string opstr, InstrItinClass itin, RegisterOperand RO,
            list<Register> DefRegs> :
@@ -651,12 +659,14 @@ class Mult<string opstr, InstrItinClass itin, RegisterOperand RO,
 // operands.
 class MultDivPseudo<Instruction RealInst, RegisterClass R0, RegisterOperand R1,
                     SDPatternOperator OpNode, InstrItinClass Itin,
-                    bit IsComm = 1, bit HasSideEffects = 0> :
+                    bit IsComm = 1, bit HasSideEffects = 0,
+                    bit UsesCustomInserter = 0> :
   PseudoSE<(outs R0:$ac), (ins R1:$rs, R1:$rt),
            [(set R0:$ac, (OpNode R1:$rs, R1:$rt))], Itin>,
   PseudoInstExpansion<(RealInst R1:$rs, R1:$rt)> {
   let isCommutable = IsComm;
   let hasSideEffects = HasSideEffects;
+  let usesCustomInserter = UsesCustomInserter;
 }
 
 // Pseudo multiply add/sub instruction with explicit accumulator register
@@ -923,6 +933,7 @@ defm SWL : StoreLeftRightM<"swl", MipsSWL, CPURegs>, LW_FM<0x2a>;
 defm SWR : StoreLeftRightM<"swr", MipsSWR, CPURegs>, LW_FM<0x2e>;
 
 def SYNC : SYNC_FT, SYNC_FM;
+def TEQ : TEQ_FT<"teq", CPURegsOpnd>, TEQ_FM<0x34>;
 
 /// Load-linked, Store-conditional
 let Predicates = [NotN64, HasStdEnc] in {
@@ -989,9 +1000,10 @@ def PseudoMULT  : MultDivPseudo<MULT, ACRegs, CPURegsOpnd, MipsMult, IIImul>;
 def PseudoMULTu : MultDivPseudo<MULTu, ACRegs, CPURegsOpnd, MipsMultu, IIImul>;
 def SDIV  : Div<"div", IIIdiv, CPURegsOpnd, [HI, LO]>, MULT_FM<0, 0x1a>;
 def UDIV  : Div<"divu", IIIdiv, CPURegsOpnd, [HI, LO]>, MULT_FM<0, 0x1b>;
-def PseudoSDIV : MultDivPseudo<SDIV, ACRegs, CPURegsOpnd, MipsDivRem, IIIdiv, 0>;
+def PseudoSDIV : MultDivPseudo<SDIV, ACRegs, CPURegsOpnd, MipsDivRem, IIIdiv,
+                               0, 1, 1>;
 def PseudoUDIV : MultDivPseudo<UDIV, ACRegs, CPURegsOpnd, MipsDivRemU, IIIdiv,
-                               0>;
+                               0, 1, 1>;
 
 def MTHI : MoveToLOHI<"mthi", CPURegs, [HI]>, MTLO_FM<0x11>;
 def MTLO : MoveToLOHI<"mtlo", CPURegs, [LO]>, MTLO_FM<0x13>;
@@ -1095,8 +1107,6 @@ def : InstAlias<"mfc2 $rt, $rd",
                 (MFC2_3OP CPURegsOpnd:$rt, CPURegsOpnd:$rd, 0), 0>;
 def : InstAlias<"mtc2 $rt, $rd",
                 (MTC2_3OP CPURegsOpnd:$rd, 0, CPURegsOpnd:$rt), 0>;
-def : InstAlias<"addiu $rs, $imm",
-                (ADDiu CPURegsOpnd:$rs, CPURegsOpnd:$rs, simm16:$imm), 0>;
 def : InstAlias<"bnez $rs,$offset",
                  (BNE CPURegsOpnd:$rs, ZERO, brtarget:$offset), 1>,
                  Requires<[NotMips64]>;
@@ -1272,6 +1282,8 @@ multiclass SeteqPats<RegisterClass RC, Instruction SLTiuOp, Instruction XOROp,
                      Instruction SLTuOp, Register ZEROReg> {
   def : MipsPat<(seteq RC:$lhs, 0),
                 (SLTiuOp RC:$lhs, 1)>;
+  def : MipsPat<(setne RC:$lhs, 0),
+                (SLTuOp ZEROReg, RC:$lhs)>;
   def : MipsPat<(seteq RC:$lhs, RC:$rhs),
                 (SLTiuOp (XOROp RC:$lhs, RC:$rhs), 1)>;
   def : MipsPat<(setne RC:$lhs, RC:$rhs),

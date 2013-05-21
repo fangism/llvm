@@ -1361,7 +1361,7 @@ void X86TargetLowering::resetOperationActions() {
   setPrefFunctionAlignment(4); // 2^4 bytes.
 }
 
-EVT X86TargetLowering::getSetCCResultType(EVT VT) const {
+EVT X86TargetLowering::getSetCCResultType(LLVMContext &, EVT VT) const {
   if (!VT.isVector()) return MVT::i8;
   return VT.changeVectorElementTypeToInteger();
 }
@@ -4756,19 +4756,27 @@ static SDValue getShuffleScalarElt(SDNode *N, unsigned Index, SelectionDAG &DAG,
 /// getNumOfConsecutiveZeros - Return the number of elements of a vector
 /// shuffle operation which come from a consecutively from a zero. The
 /// search can start in two different directions, from left or right.
-static
-unsigned getNumOfConsecutiveZeros(ShuffleVectorSDNode *SVOp, unsigned NumElems,
-                                  bool ZerosFromLeft, SelectionDAG &DAG) {
-  unsigned i;
-  for (i = 0; i != NumElems; ++i) {
-    unsigned Index = ZerosFromLeft ? i : NumElems-i-1;
+/// We count undefs as zeros until PreferredNum is reached.
+static unsigned getNumOfConsecutiveZeros(ShuffleVectorSDNode *SVOp,
+                                         unsigned NumElems, bool ZerosFromLeft,
+                                         SelectionDAG &DAG,
+                                         unsigned PreferredNum = -1U) {
+  unsigned NumZeros = 0;
+  for (unsigned i = 0; i != NumElems; ++i) {
+    unsigned Index = ZerosFromLeft ? i : NumElems - i - 1;
     SDValue Elt = getShuffleScalarElt(SVOp, Index, DAG, 0);
-    if (!(Elt.getNode() &&
-         (Elt.getOpcode() == ISD::UNDEF || X86::isZeroNode(Elt))))
+    if (!Elt.getNode())
+      break;
+
+    if (X86::isZeroNode(Elt))
+      ++NumZeros;
+    else if (Elt.getOpcode() == ISD::UNDEF) // Undef as zero up to PreferredNum.
+      NumZeros = std::min(NumZeros + 1, PreferredNum);
+    else
       break;
   }
 
-  return i;
+  return NumZeros;
 }
 
 /// isShuffleMaskConsecutive - Check if the shuffle mask indicies [MaskI, MaskE)
@@ -4806,8 +4814,9 @@ bool isShuffleMaskConsecutive(ShuffleVectorSDNode *SVOp,
 static bool isVectorShiftRight(ShuffleVectorSDNode *SVOp, SelectionDAG &DAG,
                                bool &isLeft, SDValue &ShVal, unsigned &ShAmt) {
   unsigned NumElems = SVOp->getValueType(0).getVectorNumElements();
-  unsigned NumZeros = getNumOfConsecutiveZeros(SVOp, NumElems,
-              false /* check zeros from right */, DAG);
+  unsigned NumZeros = getNumOfConsecutiveZeros(
+      SVOp, NumElems, false /* check zeros from right */, DAG,
+      SVOp->getMaskElt(0));
   unsigned OpSrc;
 
   if (!NumZeros)
@@ -4839,8 +4848,9 @@ static bool isVectorShiftRight(ShuffleVectorSDNode *SVOp, SelectionDAG &DAG,
 static bool isVectorShiftLeft(ShuffleVectorSDNode *SVOp, SelectionDAG &DAG,
                               bool &isLeft, SDValue &ShVal, unsigned &ShAmt) {
   unsigned NumElems = SVOp->getValueType(0).getVectorNumElements();
-  unsigned NumZeros = getNumOfConsecutiveZeros(SVOp, NumElems,
-              true /* check zeros from left */, DAG);
+  unsigned NumZeros = getNumOfConsecutiveZeros(
+      SVOp, NumElems, true /* check zeros from left */, DAG,
+      NumElems - SVOp->getMaskElt(NumElems - 1) - 1);
   unsigned OpSrc;
 
   if (!NumZeros)
@@ -6712,10 +6722,10 @@ X86TargetLowering::LowerVectorIntExtend(SDValue Op, SelectionDAG &DAG) const {
         // (bitcast (sclr2vec (ext_vec_elt x))) -> (bitcast (extract_subvector x)).
         unsigned Ratio = V.getValueSizeInBits() / V1.getValueSizeInBits();
         EVT FullVT = V.getValueType();
-        EVT SubVecVT = EVT::getVectorVT(*Context, 
+        EVT SubVecVT = EVT::getVectorVT(*Context,
                                         FullVT.getVectorElementType(),
                                         FullVT.getVectorNumElements()/Ratio);
-        V = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, SubVecVT, V, 
+        V = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, SubVecVT, V,
                         DAG.getIntPtrConstant(0));
       }
       V1 = DAG.getNode(ISD::BITCAST, DL, V1.getValueType(), V);
@@ -6871,6 +6881,11 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
                                 TargetMask, DAG);
   }
 
+  if (isPALIGNRMask(M, VT, Subtarget))
+    return getTargetShuffleNode(X86ISD::PALIGNR, dl, VT, V1, V2,
+                                getShufflePALIGNRImmediate(SVOp),
+                                DAG);
+
   // Check if this can be converted into a logical shift.
   bool isLeft = false;
   unsigned ShAmt = 0;
@@ -6987,11 +7002,6 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
   // The checks below are all present in isShuffleMaskLegal, but they are
   // inlined here right now to enable us to directly emit target specific
   // nodes, and remove one by one until they don't return Op anymore.
-
-  if (isPALIGNRMask(M, VT, Subtarget))
-    return getTargetShuffleNode(X86ISD::PALIGNR, dl, VT, V1, V2,
-                                getShufflePALIGNRImmediate(SVOp),
-                                DAG);
 
   if (ShuffleVectorSDNode::isSplatMask(&M[0], VT) &&
       SVOp->getSplatIndex() == 0 && V2IsUndef) {
@@ -8240,7 +8250,8 @@ SDValue X86TargetLowering::LowerUINT_TO_FP(SDValue Op,
   APInt FF(32, 0x5F800000ULL);
 
   // Check whether the sign bit is set.
-  SDValue SignSet = DAG.getSetCC(dl, getSetCCResultType(MVT::i64),
+  SDValue SignSet = DAG.getSetCC(dl,
+                                 getSetCCResultType(*DAG.getContext(), MVT::i64),
                                  Op.getOperand(0), DAG.getConstant(0, MVT::i64),
                                  ISD::SETLT);
 
@@ -17402,7 +17413,7 @@ static SDValue PerformVZEXT_MOVLCombine(SDNode *N, SelectionDAG &DAG) {
   return SDValue();
 }
 
-static SDValue PerformSIGN_EXTEND_INREGCombine(SDNode *N, SelectionDAG &DAG, 
+static SDValue PerformSIGN_EXTEND_INREGCombine(SDNode *N, SelectionDAG &DAG,
                                                const X86Subtarget *Subtarget) {
   EVT VT = N->getValueType(0);
   if (!VT.isVector())
@@ -17422,14 +17433,14 @@ static SDValue PerformSIGN_EXTEND_INREGCombine(SDNode *N, SelectionDAG &DAG,
       N0.getOpcode() == ISD::SIGN_EXTEND)) {
     SDValue N00 = N0.getOperand(0);
 
-    // EXTLOAD has a better solution on AVX2, 
+    // EXTLOAD has a better solution on AVX2,
     // it may be replaced with X86ISD::VSEXT node.
     if (N00.getOpcode() == ISD::LOAD && Subtarget->hasInt256())
       if (!ISD::isNormalLoad(N00.getNode()))
         return SDValue();
 
     if (N00.getValueType() == MVT::v4i32 && ExtraVT.getSizeInBits() < 128) {
-        SDValue Tmp = DAG.getNode(ISD::SIGN_EXTEND_INREG, dl, MVT::v4i32, 
+        SDValue Tmp = DAG.getNode(ISD::SIGN_EXTEND_INREG, dl, MVT::v4i32,
                                   N00, N1);
       return DAG.getNode(ISD::SIGN_EXTEND, dl, MVT::v4i64, Tmp);
     }
