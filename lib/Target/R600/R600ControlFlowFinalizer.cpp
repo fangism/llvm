@@ -14,8 +14,6 @@
 
 #define DEBUG_TYPE "r600cf"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/raw_ostream.h"
-
 #include "AMDGPU.h"
 #include "R600Defines.h"
 #include "R600InstrInfo.h"
@@ -24,8 +22,11 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/Support/raw_ostream.h"
 
-namespace llvm {
+using namespace llvm;
+
+namespace {
 
 class R600ControlFlowFinalizer : public MachineFunctionPass {
 
@@ -116,8 +117,15 @@ private:
       const MachineOperand &MO = *I;
       if (!MO.isReg())
         continue;
-      if (MO.isDef())
-        DstMI = MO.getReg();
+      if (MO.isDef()) {
+        unsigned Reg = MO.getReg();
+        if (AMDGPU::R600_Reg128RegClass.contains(Reg))
+          DstMI = Reg;
+        else
+          DstMI = TRI.getMatchingSuperReg(Reg,
+              TRI.getSubRegFromChannel(TRI.getHWRegChan(Reg)),
+              &AMDGPU::R600_Reg128RegClass);
+      }
       if (MO.isUse()) {
         unsigned Reg = MO.getReg();
         if (AMDGPU::R600_Reg128RegClass.contains(Reg))
@@ -320,7 +328,7 @@ public:
   virtual bool runOnMachineFunction(MachineFunction &MF) {
     unsigned MaxStack = 0;
     unsigned CurrentStack = 0;
-    bool hasPush;
+    bool HasPush = false;
     for (MachineFunction::iterator MB = MF.begin(), ME = MF.end(); MB != ME;
         ++MB) {
       MachineBasicBlock &MBB = *MB;
@@ -349,7 +357,7 @@ public:
         case AMDGPU::CF_ALU_PUSH_BEFORE:
           CurrentStack++;
           MaxStack = std::max(MaxStack, CurrentStack);
-          hasPush = true;
+          HasPush = true;
         case AMDGPU::CF_ALU:
           I = MI;
           AluClauses.push_back(MakeALUClause(MBB, I));
@@ -470,7 +478,7 @@ public:
           break;
         }
       }
-      MFI->StackSize = getHWStackSize(MaxStack, hasPush);
+      MFI->StackSize = getHWStackSize(MaxStack, HasPush);
     }
 
     return false;
@@ -483,7 +491,7 @@ public:
 
 char R600ControlFlowFinalizer::ID = 0;
 
-}
+} // end anonymous namespace
 
 
 llvm::FunctionPass *llvm::createR600ControlFlowFinalizer(TargetMachine &TM) {

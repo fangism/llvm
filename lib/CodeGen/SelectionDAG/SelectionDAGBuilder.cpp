@@ -1002,7 +1002,7 @@ void SelectionDAGBuilder::resolveDanglingDebugInfo(const Value *V,
         DAG.AddDbgValue(SDV, Val.getNode(), false);
       }
     } else
-      DEBUG(dbgs() << "Dropping debug info for " << DI << "\n");
+      DEBUG(dbgs() << "Dropping debug info for " << *DI << "\n");
     DanglingDebugInfoMap[V] = DanglingDebugInfo();
   }
 }
@@ -5037,6 +5037,11 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     setValue(&I, Res);
     return 0;
   }
+  case Intrinsic::annotation:
+  case Intrinsic::ptr_annotation:
+    // Drop the intrinsic, but forward the value
+    setValue(&I, getValue(I.getOperand(0)));
+    return 0;
   case Intrinsic::var_annotation:
     // Discard annotate attributes
     return 0;

@@ -13,17 +13,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "SIISelLowering.h"
-#include "AMDIL.h"
 #include "AMDGPU.h"
+#include "AMDIL.h"
 #include "AMDILIntrinsicInfo.h"
 #include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "SIRegisterInfo.h"
-#include "llvm/IR/Function.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/IR/Function.h"
 
 using namespace llvm;
 
@@ -338,7 +338,7 @@ SDValue SITargetLowering::LowerBRCOND(SDValue BRCOND,
   return Chain;
 }
 
-#define RSRC_DATA_FORMAT 0xf00000000000
+const uint64_t RSRC_DATA_FORMAT = 0xf00000000000LL;
 
 SDValue SITargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
   StoreSDNode *StoreNode = cast<StoreSDNode>(Op);
@@ -351,9 +351,9 @@ SDValue SITargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
     return SDValue();
   }
 
-  SDValue SrcSrc = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i128,
-                               DAG.getConstant(0, MVT::i64),
-			       DAG.getConstant(RSRC_DATA_FORMAT, MVT::i64));
+  SDValue Zero = DAG.getConstant(0, MVT::i64);
+  SDValue Format = DAG.getConstant(RSRC_DATA_FORMAT, MVT::i64);
+  SDValue SrcSrc = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i128, Zero, Format);
 
   SDValue Ops[2];
   Ops[0] = DAG.getNode(AMDGPUISD::BUFFER_STORE, DL, MVT::Other, Chain,
@@ -706,7 +706,7 @@ SDNode *SITargetLowering::foldOperands(MachineSDNode *Node,
 }
 
 /// \brief Helper function for adjustWritemask
-unsigned SubIdx2Lane(unsigned Idx) {
+static unsigned SubIdx2Lane(unsigned Idx) {
   switch (Idx) {
   default: return 0;
   case AMDGPU::sub0: return 0;
