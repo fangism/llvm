@@ -105,8 +105,7 @@ static unsigned getFixupKindLog2Size(unsigned Kind) {
   case PPC::reloc_signed_4byte:
 #endif
   case PPC::fixup_ppc_brcond14:
-  case PPC::fixup_ppc_lo16:
-  case PPC::fixup_ppc_ha16:
+  case PPC::fixup_ppc_half16:
 #if 0
   case PPC::fixup_ppc_lo14:
   case PPC::fixup_ppc_toc16:
@@ -135,11 +134,9 @@ getRelocType(
 	const bool IsPCRel) {
   STACKTRACE_BRIEF;
   STACKTRACE_INDENT_PRINT("getRelocType(): got FixupKind " << FixupKind << endl);
-#if 0
   const MCSymbolRefExpr::VariantKind Modifier = Target.isAbsolute() ?
     MCSymbolRefExpr::VK_None : Target.getSymA()->getKind();
   // determine the type of the relocation
-#endif
   unsigned Type = macho::RIT_PPC_VANILLA;
   if (IsPCRel) {			// relative to PC
     switch (FixupKind) {
@@ -151,12 +148,26 @@ getRelocType(
     case PPC::fixup_ppc_brcond14:
       Type = macho::RIT_PPC_BR14;
       break;
+#if 0
     case PPC::fixup_ppc_lo16:
       Type = macho::RIT_PPC_LO16;
       break;
     case PPC::fixup_ppc_ha16:
       Type = macho::RIT_PPC_HA16;
       break;
+#else
+    case PPC::fixup_ppc_half16:
+      switch (Modifier) {
+      default: llvm_unreachable("Unsupported Modifier");
+      case MCSymbolRefExpr::VK_PPC_ADDR16_HA:
+        Type = macho::RIT_PPC_HA16;
+        break;
+      case MCSymbolRefExpr::VK_PPC_ADDR16_LO:
+        Type = macho::RIT_PPC_LO16;
+        break;
+      }
+      break;
+#endif
 #if 0
     case PPC::fixup_ppc_lo14:
       Type = macho::RIT_PPC_LO14;
@@ -185,67 +196,26 @@ getRelocType(
       Type = macho::RIT_PPC_ADDR14;		// RIT_PPC_BR14?
       break;
 #endif
+#if 0
     case PPC::fixup_ppc_ha16:
-#if 0
-      switch (Modifier) {
-      default: llvm_unreachable("Unsupported Modifier");
-      case MCSymbolRefExpr::VK_PPC_TPREL16_HA:
-        Type = macho::RIT_PPC_HA16;		// RIT_PPC_TPREL16_HA;
-        break;
-#if 0
-      case MCSymbolRefExpr::VK_PPC_DTPREL16_HA:
-        Type = macho::RIT_PPC64_DTPREL16_HA;
-        break;
-#endif
-      case MCSymbolRefExpr::VK_None:
-        Type = macho::RIT_PPC_HA16;		// RIT_PPC_ADDR16_HA;
-	break;
-#if 0
-      case MCSymbolRefExpr::VK_PPC_TOC16_HA:
-        Type = macho::RIT_PPC64_TOC16_HA;
-        break;
-      case MCSymbolRefExpr::VK_PPC_GOT_TPREL16_HA:
-        Type = macho::RIT_PPC64_GOT_TPREL16_HA;
-        break;
-      case MCSymbolRefExpr::VK_PPC_GOT_TLSGD16_HA:
-        Type = macho::RIT_PPC64_GOT_TLSGD16_HA;
-        break;
-      case MCSymbolRefExpr::VK_PPC_GOT_TLSLD16_HA:
-        Type = macho::RIT_PPC64_GOT_TLSLD16_HA;
-        break;
-#endif
-      }
-#else
 	Type = macho::RIT_PPC_HA16_SECTDIFF;
-#endif
       break;
     case PPC::fixup_ppc_lo16:
-#if 0
+	Type = macho::RIT_PPC_LO16_SECTDIFF;
+      break;
+#else
+    case PPC::fixup_ppc_half16:
       switch (Modifier) {
       default: llvm_unreachable("Unsupported Modifier");
-      case MCSymbolRefExpr::VK_PPC_TPREL16_LO:
-        Type = macho::RIT_PPC_LO16;		// RIT_PPC_TPREL16_LO;
+      case MCSymbolRefExpr::VK_PPC_ADDR16_HA:
+        Type = macho::RIT_PPC_HA16_SECTDIFF;
         break;
-      case MCSymbolRefExpr::VK_PPC_DTPREL16_LO:
-        Type = macho::RIT_PPC64_DTPREL16_LO;
-        break;
-      case MCSymbolRefExpr::VK_None:
-        Type = macho::RIT_PPC_ADDR16_LO;
-	break;
-      case MCSymbolRefExpr::VK_PPC_TOC16_LO:
-        Type = macho::RIT_PPC64_TOC16_LO;
-        break;
-      case MCSymbolRefExpr::VK_PPC_GOT_TLSGD16_LO:
-        Type = macho::RIT_PPC64_GOT_TLSGD16_LO;
-        break;
-      case MCSymbolRefExpr::VK_PPC_GOT_TLSLD16_LO:
-        Type = macho::RIT_PPC64_GOT_TLSLD16_LO;
+      case MCSymbolRefExpr::VK_PPC_ADDR16_LO:
+        Type = macho::RIT_PPC_LO16_SECTDIFF;
         break;
       }
-#else
-	Type = macho::RIT_PPC_LO16_SECTDIFF;
-#endif
       break;
+#endif
 #if 0
     case PPC::fixup_ppc_lo14:
       Type = macho::RIT_PPC_LO14_SECTDIFF;
@@ -364,6 +334,22 @@ makeScatteredRelocationInfo(
 }
 
 /**
+	Compute fixup offset (address).
+ */
+static
+uint32_t
+getFixupOffset(const MCAsmLayout &Layout,
+	    const MCFragment *Fragment,
+	    const MCFixup &Fixup) {
+  uint32_t FixupOffset = Layout.getFragmentOffset(Fragment)+Fixup.getOffset();
+  // On Mach-O, ppc_fixup_half16 relocations must refer to the
+  // start of the instruction, not the second halfword, as ELF does
+  if (Fixup.getKind() == PPC::fixup_ppc_half16)
+    FixupOffset &= ~uint32_t(3);
+  return FixupOffset;
+}
+
+/**
 	\return false if falling back to using non-scattered relocation,
 		otherwise true for normal scattered relocation.
  */
@@ -379,11 +365,11 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
                                                     uint64_t &FixedValue) {
   STACKTRACE_VERBOSE;
   // caller already computes these, can we just pass and reuse?
-  uint32_t FixupOffset = Layout.getFragmentOffset(Fragment)+Fixup.getOffset();
+  const uint32_t FixupOffset = getFixupOffset(Layout, Fragment, Fixup);
   const MCFixupKind FK = Fixup.getKind();
-  unsigned IsPCRel = Writer->isFixupKindPCRel(Asm, FK);
+  const unsigned IsPCRel = Writer->isFixupKindPCRel(Asm, FK);
 //  unsigned Type = macho::RIT_PPC_VANILLA;
-  unsigned Type = getRelocType(Target, FK, IsPCRel);
+  const unsigned Type = getRelocType(Target, FK, IsPCRel);
   STACKTRACE_INDENT_PRINT("mach-o scattered reloc type: " << Type << endl);
     /*
      * odcctools-20090808:as/write_object.c:fix_to_relocation_entries():
@@ -468,13 +454,20 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
 #endif
 
     // Is this supposed to follow MCTarget/PPCAsmBackend.cpp:adjustFixupValue()?
+    // see PPCMCExpr::EvaluateAsRelocatableImpl()
     uint32_t other_half = 0;
     switch (Type) {
     case macho::RIT_PPC_LO16_SECTDIFF:
       other_half = (FixedValue >> 16) & 0xffff;
+// applyFixupOffset longer extracts the high part because it now assumes 
+// this was already done.  
+// It looks like this is not true for the FixedValue needed with Mach-O relocs.
+// So we need to adjust FixedValue again here.
+      FixedValue &= 0xffff;
       break;
     case macho::RIT_PPC_HA16_SECTDIFF:
       other_half = FixedValue & 0xffff;
+      FixedValue = ((FixedValue >> 16) + ((FixedValue & 0x8000) ? 1 : 0)) & 0xffff;
       break;
     default:
 //      llvm_unreachable("Unhandled PPC scattered relocation type.");
@@ -576,7 +569,7 @@ if (0) {
 }
 
   // See <reloc.h>.
-  const uint32_t FixupOffset = Layout.getFragmentOffset(Fragment)+Fixup.getOffset();
+  const uint32_t FixupOffset = getFixupOffset(Layout, Fragment, Fixup);
   STACKTRACE_INDENT_PRINT("FixupOffset = " << hex(FixupOffset) << endl);
   unsigned Index = 0;
   unsigned IsExtern = 0;
