@@ -110,7 +110,7 @@ namespace {
 
     /// SelectCC - Select a comparison of the specified values with the
     /// specified condition code, returning the CR# of the expression.
-    SDValue SelectCC(SDValue LHS, SDValue RHS, ISD::CondCode CC, DebugLoc dl);
+    SDValue SelectCC(SDValue LHS, SDValue RHS, ISD::CondCode CC, SDLoc dl);
 
     /// SelectAddrImm - Returns true if the address N can be represented by
     /// a base register plus a signed 16-bit displacement [r+imm].
@@ -332,17 +332,17 @@ static bool isOpcWithIntImmediate(SDNode *N, unsigned Opc, unsigned& Imm) {
 bool PPCDAGToDAGISel::isRunOfOnes(unsigned Val, unsigned &MB, unsigned &ME) {
   if (isShiftedMask_32(Val)) {
     // look for the first non-zero bit
-    MB = CountLeadingZeros_32(Val);
+    MB = countLeadingZeros(Val);
     // look for the first zero bit after the run of ones
-    ME = CountLeadingZeros_32((Val - 1) ^ Val);
+    ME = countLeadingZeros((Val - 1) ^ Val);
     return true;
   } else {
     Val = ~Val; // invert mask
     if (isShiftedMask_32(Val)) {
       // effectively look for the first zero bit
-      ME = CountLeadingZeros_32(Val) - 1;
+      ME = countLeadingZeros(Val) - 1;
       // effectively look for the first one bit after the run of zeros
-      MB = CountLeadingZeros_32((Val - 1) ^ Val) + 1;
+      MB = countLeadingZeros((Val - 1) ^ Val) + 1;
       return true;
     }
   }
@@ -397,7 +397,7 @@ bool PPCDAGToDAGISel::isRotateAndMask(SDNode *N, unsigned Mask,
 SDNode *PPCDAGToDAGISel::SelectBitfieldInsert(SDNode *N) {
   SDValue Op0 = N->getOperand(0);
   SDValue Op1 = N->getOperand(1);
-  DebugLoc dl = N->getDebugLoc();
+  SDLoc dl(N);
 
   APInt LKZ, LKO, RKZ, RKO;
   CurDAG->ComputeMaskedBits(Op0, LKZ, LKO);
@@ -466,7 +466,7 @@ SDNode *PPCDAGToDAGISel::SelectBitfieldInsert(SDNode *N) {
 /// SelectCC - Select a comparison of the specified values with the specified
 /// condition code, returning the CR# of the expression.
 SDValue PPCDAGToDAGISel::SelectCC(SDValue LHS, SDValue RHS,
-                                    ISD::CondCode CC, DebugLoc dl) {
+                                    ISD::CondCode CC, SDLoc dl) {
   // Always select the LHS.
   unsigned Opc;
 
@@ -710,7 +710,7 @@ static unsigned int getVCmpEQInst(MVT::SimpleValueType VecVT) {
 
 
 SDNode *PPCDAGToDAGISel::SelectSETCC(SDNode *N) {
-  DebugLoc dl = N->getDebugLoc();
+  SDLoc dl(N);
   unsigned Imm;
   ISD::CondCode CC = cast<CondCodeSDNode>(N->getOperand(2))->get();
   EVT PtrVT = CurDAG->getTargetLoweringInfo().getPointerTy();
@@ -894,7 +894,7 @@ SDNode *PPCDAGToDAGISel::SelectSETCC(SDNode *N) {
 // Select - Convert the specified operand from a target-independent to a
 // target-specific node if it hasn't already been changed.
 SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
-  DebugLoc dl = N->getDebugLoc();
+  SDLoc dl(N);
   if (N->isMachineOpcode())
     return NULL;   // Already selected.
 
@@ -912,7 +912,7 @@ SDNode *PPCDAGToDAGISel::Select(SDNode *N) {
 
       // If it can't be represented as a 32 bit value.
       if (!isInt<32>(Imm)) {
-        Shift = CountTrailingZeros_64(Imm);
+        Shift = countTrailingZeros<uint64_t>(Imm);
         int64_t ImmSh = static_cast<uint64_t>(Imm) >> Shift;
 
         // If the shifted value fits 32 bits.
@@ -1528,7 +1528,7 @@ void PPCDAGToDAGISel::PostprocessISelDAG() {
     // immediate operand, add it now.
     if (ReplaceFlags) {
       if (GlobalAddressSDNode *GA = dyn_cast<GlobalAddressSDNode>(ImmOpnd)) {
-        DebugLoc dl = GA->getDebugLoc();
+        SDLoc dl(GA);
         const GlobalValue *GV = GA->getGlobal();
         ImmOpnd = CurDAG->getTargetGlobalAddress(GV, dl, MVT::i64, 0, Flags);
       } else if (ConstantPoolSDNode *CP =
