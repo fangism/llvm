@@ -6,6 +6,10 @@ CHECK_CXX_SOURCE_COMPILES("
 #ifdef _MSC_VER
 #include <windows.h>
 #endif
+#define	NEED_DARWIN_ATOMICS (defined(__APPLE__) && defined(__GNUC__) && (__GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 2)))
+#if NEED_DARWIN_ATOMICS
+#include <libkern/OSAtomic.h>
+#endif
 int main() {
 #ifdef _MSC_VER
         volatile LONG val = 1;
@@ -13,6 +17,12 @@ int main() {
         InterlockedCompareExchange(&val, 0, 1);
         InterlockedIncrement(&val);
         InterlockedDecrement(&val);
+#elif NEED_DARWIN_ATOMICS
+	volatile int32_t val = 1;
+	OSMemoryBarrier();
+	OSAtomicCompareAndSwap32Barrier(1, 0, &val);
+	OSAtomicIncrement32(&val);
+	OSAtomicDecrement32(&val);
 #else
         volatile unsigned long val = 1;
         __sync_synchronize();
