@@ -18,7 +18,7 @@ int main() {
         InterlockedIncrement(&val);
         InterlockedDecrement(&val);
 #elif NEED_DARWIN_ATOMICS
-	volatile int32_t val = 1;
+	int32_t val = 1;
 	OSMemoryBarrier();
 	OSAtomicCompareAndSwap32Barrier(1, 0, &val);
 	OSAtomicIncrement32(&val);
