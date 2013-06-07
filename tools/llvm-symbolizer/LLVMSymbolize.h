@@ -82,9 +82,11 @@ private:
 
   struct SymbolDesc {
     uint64_t Addr;
-    uint64_t AddrEnd;
+    // If size is 0, assume that symbol occupies the whole memory range up to
+    // the following symbol.
+    uint64_t Size;
     friend bool operator<(const SymbolDesc &s1, const SymbolDesc &s2) {
-      return s1.AddrEnd <= s2.Addr;
+      return s1.Addr < s2.Addr;
     }
   };
   typedef std::map<SymbolDesc, StringRef> SymbolMapTy;

@@ -59,10 +59,22 @@ SUnit* R600SchedStrategy::pickNode(bool &IsTopNode) {
   bool AllowSwitchFromAlu = (CurEmitted >= InstKindLimit[CurInstKind]) &&
       (!Available[IDFetch].empty() || !Available[IDOther].empty());
 
-  if ((AllowSwitchToAlu && CurInstKind != IDAlu) ||
-      (!AllowSwitchFromAlu && CurInstKind == IDAlu)) {
+  // We want to scheduled AR defs as soon as possible to make sure they aren't
+  // put in a different ALU clause from their uses.
+  if (!SU && !UnscheduledARDefs.empty()) {
+      SU = UnscheduledARDefs[0];
+      UnscheduledARDefs.erase(UnscheduledARDefs.begin());
+      NextInstKind = IDAlu;
+  }
+
+  if (!SU && ((AllowSwitchToAlu && CurInstKind != IDAlu) ||
+      (!AllowSwitchFromAlu && CurInstKind == IDAlu))) {
     // try to pick ALU
     SU = pickAlu();
+    if (!SU && !PhysicalRegCopy.empty()) {
+      SU = PhysicalRegCopy.front();
+      PhysicalRegCopy.erase(PhysicalRegCopy.begin());
+    }
     if (SU) {
       if (CurEmitted >= InstKindLimit[IDAlu])
         CurEmitted = 0;
@@ -84,6 +96,15 @@ SUnit* R600SchedStrategy::pickNode(bool &IsTopNode) {
       NextInstKind = IDOther;
   }
 
+  // We want to schedule the AR uses as late as possible to make sure that
+  // the AR defs have been released.
+  if (!SU && !UnscheduledARUses.empty()) {
+      SU = UnscheduledARUses[0];
+      UnscheduledARUses.erase(UnscheduledARUses.begin());
+      NextInstKind = IDAlu;
+  }
+
+
   DEBUG(
       if (SU) {
         dbgs() << " ** Pick node **\n";
@@ -102,7 +123,6 @@ SUnit* R600SchedStrategy::pickNode(bool &IsTopNode) {
 }
 
 void R600SchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
-
   if (NextInstKind != CurInstKind) {
     DEBUG(dbgs() << "Instruction Type Switch\n");
     if (NextInstKind != IDAlu)
@@ -140,15 +160,41 @@ void R600SchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   }
 }
 
+static bool
+isPhysicalRegCopy(MachineInstr *MI) {
+  if (MI->getOpcode() != AMDGPU::COPY)
+    return false;
+
+  return !TargetRegisterInfo::isVirtualRegister(MI->getOperand(1).getReg());
+}
+
 void R600SchedStrategy::releaseTopNode(SUnit *SU) {
   DEBUG(dbgs() << "Top Releasing ";SU->dump(DAG););
-
 }
 
 void R600SchedStrategy::releaseBottomNode(SUnit *SU) {
   DEBUG(dbgs() << "Bottom Releasing ";SU->dump(DAG););
+  if (isPhysicalRegCopy(SU->getInstr())) {
+    PhysicalRegCopy.push_back(SU);
+    return;
+  }
 
   int IK = getInstKind(SU);
+
+  // Check for AR register defines
+  for (MachineInstr::const_mop_iterator I = SU->getInstr()->operands_begin(),
+                                        E = SU->getInstr()->operands_end();
+                                        I != E; ++I) {
+    if (I->isReg() && I->getReg() == AMDGPU::AR_X) {
+      if (I->isDef()) {
+        UnscheduledARDefs.push_back(SU);
+      } else {
+        UnscheduledARUses.push_back(SU);
+      }
+      return;
+    }
+  }
+
   // There is no export clause, we can schedule one as soon as its ready
   if (IK == IDOther)
     Available[IDOther].push_back(SU);

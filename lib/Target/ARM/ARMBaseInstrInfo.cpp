@@ -113,8 +113,7 @@ ScheduleHazardRecognizer *ARMBaseInstrInfo::
 CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
                                    const ScheduleDAG *DAG) const {
   if (Subtarget.isThumb2() || Subtarget.hasVFP2())
-    return (ScheduleHazardRecognizer *)
-      new ARMHazardRecognizer(II, *this, getRegisterInfo(), Subtarget, DAG);
+    return (ScheduleHazardRecognizer *)new ARMHazardRecognizer(II, DAG);
   return TargetInstrInfo::CreateTargetPostRAHazardRecognizer(II, DAG);
 }
 
@@ -4152,6 +4151,8 @@ bool ARMBaseInstrInfo::hasNOP() const {
 }
 
 bool ARMBaseInstrInfo::isSwiftFastImmShift(const MachineInstr *MI) const {
+  if (MI->getNumOperands() < 4)
+    return true;
   unsigned ShOpVal = MI->getOperand(3).getImm();
   unsigned ShImm = ARM_AM::getSORegOffset(ShOpVal);
   // Swift supports faster shifts for: lsl 2, lsl 1, and lsr 1.

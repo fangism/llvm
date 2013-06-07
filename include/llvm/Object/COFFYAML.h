@@ -14,9 +14,8 @@
 #ifndef LLVM_OBJECT_COFFYAML_H
 #define LLVM_OBJECT_COFFYAML_H
 
-
+#include "llvm/Object/YAML.h"
 #include "llvm/Support/COFF.h"
-#include "llvm/Support/YAMLTraits.h"
 
 namespace llvm {
 
@@ -36,11 +35,17 @@ inline SectionCharacteristics operator|(SectionCharacteristics a,
 // The structure of the yaml files is not an exact 1:1 match to COFF. In order
 // to use yaml::IO, we use these structures which are closer to the source.
 namespace COFFYAML {
+  struct Relocation {
+    uint32_t VirtualAddress;
+    uint16_t Type;
+    StringRef SymbolName;
+  };
+
   struct Section {
     COFF::section Header;
     unsigned Alignment;
-    StringRef SectionData;
-    std::vector<COFF::relocation> Relocations;
+    object::yaml::BinaryRef SectionData;
+    std::vector<Relocation> Relocations;
     StringRef Name;
     Section();
   };
@@ -49,7 +54,7 @@ namespace COFFYAML {
     COFF::symbol Header;
     COFF::SymbolBaseType SimpleType;
     COFF::SymbolComplexType ComplexType;
-    StringRef AuxiliaryData;
+    object::yaml::BinaryRef AuxiliaryData;
     StringRef Name;
     Symbol();
   };
@@ -65,7 +70,7 @@ namespace COFFYAML {
 
 LLVM_YAML_IS_SEQUENCE_VECTOR(COFFYAML::Section)
 LLVM_YAML_IS_SEQUENCE_VECTOR(COFFYAML::Symbol)
-LLVM_YAML_IS_SEQUENCE_VECTOR(COFF::relocation)
+LLVM_YAML_IS_SEQUENCE_VECTOR(COFFYAML::Relocation)
 
 namespace llvm {
 namespace yaml {
@@ -106,8 +111,8 @@ struct ScalarBitSetTraits<COFF::SectionCharacteristics> {
 };
 
 template <>
-struct MappingTraits<COFF::relocation> {
-  static void mapping(IO &IO, COFF::relocation &Rel);
+struct MappingTraits<COFFYAML::Relocation> {
+  static void mapping(IO &IO, COFFYAML::Relocation &Rel);
 };
 
 template <>

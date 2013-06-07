@@ -74,8 +74,6 @@ static TargetLoweringObjectFile *CreateTLOF(const PPCTargetMachine &TM) {
 PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
   : TargetLowering(TM, CreateTLOF(TM)), PPCSubTarget(*TM.getSubtargetImpl()) {
   const PPCSubtarget *Subtarget = &TM.getSubtarget<PPCSubtarget>();
-  PPCRegInfo = TM.getRegisterInfo();
-  PPCII = TM.getInstrInfo();
 
   setPow2DivIsCheap();
 
@@ -3101,7 +3099,7 @@ void PrepareTailCall(SelectionDAG &DAG, SDValue &InFlag, SDValue &Chain,
 
   // Emit callseq_end just before tailcall node.
   Chain = DAG.getCALLSEQ_END(Chain, DAG.getIntPtrConstant(NumBytes, true),
-                             DAG.getIntPtrConstant(0, true), InFlag);
+                             DAG.getIntPtrConstant(0, true), InFlag, dl);
   InFlag = Chain.getValue(1);
 }
 
@@ -3423,7 +3421,7 @@ PPCTargetLowering::FinishCall(CallingConv::ID CallConv, SDLoc dl,
 
   Chain = DAG.getCALLSEQ_END(Chain, DAG.getIntPtrConstant(NumBytes, true),
                              DAG.getIntPtrConstant(BytesCalleePops, true),
-                             InFlag);
+                             InFlag, dl);
   if (!Ins.empty())
     InFlag = Chain.getValue(1);
 
@@ -3558,7 +3556,8 @@ PPCTargetLowering::LowerCall_32SVR4(SDValue Chain, SDValue Callee,
 
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
-  Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, true));
+  Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, true),
+                               dl);
   SDValue CallSeqStart = Chain;
 
   // Load the return address and frame pointer so it can be moved somewhere else
@@ -3609,7 +3608,8 @@ PPCTargetLowering::LowerCall_32SVR4(SDValue Chain, SDValue Callee,
 
       // This must go outside the CALLSEQ_START..END.
       SDValue NewCallSeqStart = DAG.getCALLSEQ_START(MemcpyCall,
-                           CallSeqStart.getNode()->getOperand(1));
+                           CallSeqStart.getNode()->getOperand(1),
+                           SDLoc(MemcpyCall));
       DAG.ReplaceAllUsesWith(CallSeqStart.getNode(),
                              NewCallSeqStart.getNode());
       Chain = CallSeqStart = NewCallSeqStart;
@@ -3691,7 +3691,8 @@ PPCTargetLowering::createMemcpyOutsideCallSeq(SDValue Arg, SDValue PtrOff,
                         Flags, DAG, dl);
   // The MEMCPY must go outside the CALLSEQ_START..END.
   SDValue NewCallSeqStart = DAG.getCALLSEQ_START(MemcpyCall,
-                             CallSeqStart.getNode()->getOperand(1));
+                             CallSeqStart.getNode()->getOperand(1),
+                             SDLoc(MemcpyCall));
   DAG.ReplaceAllUsesWith(CallSeqStart.getNode(),
                          NewCallSeqStart.getNode());
   return NewCallSeqStart;
@@ -3745,7 +3746,8 @@ PPCTargetLowering::LowerCall_64SVR4(SDValue Chain, SDValue Callee,
 
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
-  Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, true));
+  Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, true),
+                               dl);
   SDValue CallSeqStart = Chain;
 
   // Load the return address and frame pointer so it can be move somewhere else
@@ -4116,7 +4118,8 @@ PPCTargetLowering::LowerCall_Darwin(SDValue Chain, SDValue Callee,
 
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
-  Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, true));
+  Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, true),
+                               dl);
   SDValue CallSeqStart = Chain;
 
   // Load the return address and frame pointer so it can be move somewhere else
@@ -6068,7 +6071,9 @@ PPCTargetLowering::emitEHSjLjSetJmp(MachineInstr *MI,
 
   // Setup
   MIB = BuildMI(*thisMBB, MI, DL, TII->get(PPC::BCLalways)).addMBB(mainMBB);
-  MIB.addRegMask(PPCRegInfo->getNoPreservedMask());
+  const PPCRegisterInfo *TRI =
+    static_cast<const PPCRegisterInfo*>(getTargetMachine().getRegisterInfo());
+  MIB.addRegMask(TRI->getNoPreservedMask());
 
   BuildMI(*thisMBB, MI, DL, TII->get(PPC::LI), restoreDstReg).addImm(1);
 
@@ -6231,8 +6236,10 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     Cond.push_back(MI->getOperand(1));
 
     DebugLoc dl = MI->getDebugLoc();
-    PPCII->insertSelect(*BB, MI, dl, MI->getOperand(0).getReg(), Cond,
-                        MI->getOperand(2).getReg(), MI->getOperand(3).getReg());
+    const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
+    TII->insertSelect(*BB, MI, dl, MI->getOperand(0).getReg(),
+                      Cond, MI->getOperand(2).getReg(),
+                      MI->getOperand(3).getReg());
   } else if (MI->getOpcode() == PPC::SELECT_CC_I4 ||
              MI->getOpcode() == PPC::SELECT_CC_I8 ||
              MI->getOpcode() == PPC::SELECT_CC_F4 ||

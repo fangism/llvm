@@ -200,6 +200,7 @@ namespace {
     bool SelectAddr(SDNode *Parent, SDValue N, SDValue &Base,
                     SDValue &Scale, SDValue &Index, SDValue &Disp,
                     SDValue &Segment);
+    bool SelectMOV64Imm32(SDValue N, SDValue &Imm);
     bool SelectLEAAddr(SDValue N, SDValue &Base,
                        SDValue &Scale, SDValue &Index, SDValue &Disp,
                        SDValue &Segment);
@@ -229,7 +230,7 @@ namespace {
                                    SDValue &Scale, SDValue &Index,
                                    SDValue &Disp, SDValue &Segment) {
       Base  = (AM.BaseType == X86ISelAddressMode::FrameIndexBase) ?
-        CurDAG->getTargetFrameIndex(AM.Base_FrameIndex, TLI.getPointerTy()) :
+        CurDAG->getTargetFrameIndex(AM.Base_FrameIndex, TLI->getPointerTy()) :
         AM.Base_Reg;
       Scale = getI8Imm(AM.Scale);
       Index = AM.IndexReg;
@@ -1380,6 +1381,33 @@ bool X86DAGToDAGISel::SelectScalarSSELoad(SDNode *Root,
 }
 
 
+bool X86DAGToDAGISel::SelectMOV64Imm32(SDValue N, SDValue &Imm) {
+  if (const ConstantSDNode *CN = dyn_cast<ConstantSDNode>(N)) {
+    uint64_t ImmVal = CN->getZExtValue();
+    if ((uint32_t)ImmVal != (uint64_t)ImmVal)
+      return false;
+
+    Imm = CurDAG->getTargetConstant(ImmVal, MVT::i64);
+    return true;
+  }
+
+  // In static codegen with small code model, we can get the address of a label
+  // into a register with 'movl'. TableGen has already made sure we're looking
+  // at a label of some kind.
+  assert(N->getOpcode() == X86ISD::Wrapper && "Unexpected node type for MOV32ri64");
+  N = N.getOperand(0);
+
+  if (N->getOpcode() != ISD::TargetConstantPool &&
+      N->getOpcode() != ISD::TargetJumpTable &&
+      N->getOpcode() != ISD::TargetGlobalAddress &&
+      N->getOpcode() != ISD::TargetExternalSymbol &&
+      N->getOpcode() != ISD::TargetBlockAddress)
+    return false;
+
+  Imm = N;
+  return TM.getCodeModel() == CodeModel::Small;
+}
+
 /// SelectLEAAddr - it calls SelectAddr and determines if the maximal addressing
 /// mode it matches can be cost effectively emitted as an LEA instruction.
 bool X86DAGToDAGISel::SelectLEAAddr(SDValue N,
@@ -1487,7 +1515,7 @@ bool X86DAGToDAGISel::TryFoldLoad(SDNode *P, SDValue N,
 ///
 SDNode *X86DAGToDAGISel::getGlobalBaseReg() {
   unsigned GlobalBaseReg = getInstrInfo()->getGlobalBaseReg(MF);
-  return CurDAG->getRegister(GlobalBaseReg, TLI.getPointerTy()).getNode();
+  return CurDAG->getRegister(GlobalBaseReg, TLI->getPointerTy()).getNode();
 }
 
 SDNode *X86DAGToDAGISel::SelectAtomic64(SDNode *Node, unsigned Opc) {
@@ -2013,6 +2041,8 @@ SDNode *X86DAGToDAGISel::Select(SDNode *Node) {
     case Intrinsic::x86_avx2_gather_d_d_256:
     case Intrinsic::x86_avx2_gather_q_d:
     case Intrinsic::x86_avx2_gather_q_d_256: {
+      if (!Subtarget->hasAVX2())
+        break;
       unsigned Opc;
       switch (IntNo) {
       default: llvm_unreachable("Impossible intrinsic");
@@ -2363,27 +2393,24 @@ SDNode *X86DAGToDAGISel::Select(SDNode *Node) {
     }
 
     unsigned LoReg, HiReg, ClrReg;
-    unsigned ClrOpcode, SExtOpcode;
+    unsigned SExtOpcode;
     switch (NVT.getSimpleVT().SimpleTy) {
     default: llvm_unreachable("Unsupported VT!");
     case MVT::i8:
       LoReg = X86::AL;  ClrReg = HiReg = X86::AH;
-      ClrOpcode  = 0;
       SExtOpcode = X86::CBW;
       break;
     case MVT::i16:
       LoReg = X86::AX;  HiReg = X86::DX;
-      ClrOpcode  = X86::MOV16r0; ClrReg = X86::DX;
+      ClrReg = X86::DX;
       SExtOpcode = X86::CWD;
       break;
     case MVT::i32:
       LoReg = X86::EAX; ClrReg = HiReg = X86::EDX;
-      ClrOpcode  = X86::MOV32r0;
       SExtOpcode = X86::CDQ;
       break;
     case MVT::i64:
       LoReg = X86::RAX; ClrReg = HiReg = X86::RDX;
-      ClrOpcode  = X86::MOV64r0;
       SExtOpcode = X86::CQO;
       break;
     }
@@ -2421,8 +2448,29 @@ SDNode *X86DAGToDAGISel::Select(SDNode *Node) {
           SDValue(CurDAG->getMachineNode(SExtOpcode, dl, MVT::Glue, InFlag),0);
       } else {
         // Zero out the high part, effectively zero extending the input.
-        SDValue ClrNode =
-          SDValue(CurDAG->getMachineNode(ClrOpcode, dl, NVT), 0);
+        SDValue ClrNode = SDValue(CurDAG->getMachineNode(X86::MOV32r0, dl, NVT), 0);       
+        switch (NVT.getSimpleVT().SimpleTy) {
+        case MVT::i16:
+          ClrNode =
+              SDValue(CurDAG->getMachineNode(
+                          TargetOpcode::EXTRACT_SUBREG, dl, MVT::i16, ClrNode,
+                          CurDAG->getTargetConstant(X86::sub_16bit, MVT::i32)),
+                      0);
+          break;
+        case MVT::i32:
+          break;
+        case MVT::i64:
+          ClrNode =
+              SDValue(CurDAG->getMachineNode(
+                          TargetOpcode::SUBREG_TO_REG, dl, MVT::i64,
+                          CurDAG->getTargetConstant(0, MVT::i64), ClrNode,
+                          CurDAG->getTargetConstant(X86::sub_32bit, MVT::i32)),
+                      0);
+          break;
+        default:
+          llvm_unreachable("Unexpected division source");
+        }
+
         InFlag = CurDAG->getCopyToReg(CurDAG->getEntryNode(), dl, ClrReg,
                                       ClrNode, InFlag).getValue(1);
       }

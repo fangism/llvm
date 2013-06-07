@@ -377,13 +377,14 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
   }
 }
 
-// FIXME: PR16013: this routine needs modification to handle repeated relocations.
 void RuntimeDyldELF::resolveARMRelocation(const SectionEntry &Section,
                                           uint64_t Offset,
                                           uint32_t Value,
                                           uint32_t Type,
                                           int32_t Addend) {
   // TODO: Add Thumb relocations.
+  uint32_t *Placeholder = reinterpret_cast<uint32_t*>(Section.ObjAddress +
+                                                      Offset);
   uint32_t* TargetPtr = (uint32_t*)(Section.Address + Offset);
   uint32_t FinalAddress = ((Section.LoadAddress + Offset) & 0xFFFFFFFF);
   Value += Addend;
@@ -402,42 +403,49 @@ void RuntimeDyldELF::resolveARMRelocation(const SectionEntry &Section,
 
   // Write a 32bit value to relocation address, taking into account the
   // implicit addend encoded in the target.
-  case ELF::R_ARM_TARGET1 :
-  case ELF::R_ARM_ABS32 :
-    *TargetPtr += Value;
+  case ELF::R_ARM_TARGET1:
+  case ELF::R_ARM_ABS32:
+    *TargetPtr = *Placeholder + Value;
     break;
-
   // Write first 16 bit of 32 bit value to the mov instruction.
   // Last 4 bit should be shifted.
-  case ELF::R_ARM_MOVW_ABS_NC :
+  case ELF::R_ARM_MOVW_ABS_NC:
     // We are not expecting any other addend in the relocation address.
     // Using 0x000F0FFF because MOVW has its 16 bit immediate split into 2
     // non-contiguous fields.
+    assert((*Placeholder & 0x000F0FFF) == 0);
     Value = Value & 0xFFFF;
-    *TargetPtr &= ~0x000F0FFF; // Not really right; see FIXME at top.
-    *TargetPtr |= Value & 0xFFF;
+    *TargetPtr = *Placeholder | (Value & 0xFFF);
     *TargetPtr |= ((Value >> 12) & 0xF) << 16;
     break;
-
   // Write last 16 bit of 32 bit value to the mov instruction.
   // Last 4 bit should be shifted.
-  case ELF::R_ARM_MOVT_ABS :
+  case ELF::R_ARM_MOVT_ABS:
     // We are not expecting any other addend in the relocation address.
     // Use 0x000F0FFF for the same reason as R_ARM_MOVW_ABS_NC.
+    assert((*Placeholder & 0x000F0FFF) == 0);
+
     Value = (Value >> 16) & 0xFFFF;
-    *TargetPtr &= ~0x000F0FFF; // Not really right; see FIXME at top.
-    *TargetPtr |= Value & 0xFFF;
+    *TargetPtr = *Placeholder | (Value & 0xFFF);
     *TargetPtr |= ((Value >> 12) & 0xF) << 16;
     break;
-
   // Write 24 bit relative value to the branch instruction.
   case ELF::R_ARM_PC24 :    // Fall through.
   case ELF::R_ARM_CALL :    // Fall through.
-  case ELF::R_ARM_JUMP24 :
+  case ELF::R_ARM_JUMP24: {
     int32_t RelValue = static_cast<int32_t>(Value - FinalAddress - 8);
     RelValue = (RelValue & 0x03FFFFFC) >> 2;
+    assert((*TargetPtr & 0xFFFFFF) == 0xFFFFFE);
     *TargetPtr &= 0xFF000000;
     *TargetPtr |= RelValue;
+    break;
+  }
+  case ELF::R_ARM_PRIVATE_0:
+    // This relocation is reserved by the ARM ELF ABI for internal use. We
+    // appropriate it here to act as an R_ARM_ABS32 without any addend for use
+    // in the stubs created during JIT (which can't put an addend into the
+    // original object file).
+    *TargetPtr = Value;
     break;
   }
 }
@@ -521,9 +529,13 @@ void RuntimeDyldELF::findOPDEntrySection(ObjectImage &Obj,
   error_code err;
   for (section_iterator si = Obj.begin_sections(),
      se = Obj.end_sections(); si != se; si.increment(err)) {
-    StringRef SectionName;
-    check(si->getName(SectionName));
-    if (SectionName != ".opd")
+    section_iterator RelSecI = si->getRelocatedSection();
+    if (RelSecI == Obj.end_sections())
+      continue;
+
+    StringRef RelSectionName;
+    check(RelSecI->getName(RelSectionName));
+    if (RelSectionName != ".opd")
       continue;
 
     for (relocation_iterator i = si->begin_relocations(),
@@ -539,9 +551,8 @@ void RuntimeDyldELF::findOPDEntrySection(ObjectImage &Obj,
         continue;
       }
 
-      SymbolRef TargetSymbol;
       uint64_t TargetSymbolOffset;
-      check(i->getSymbol(TargetSymbol));
+      symbol_iterator TargetSymbol = i->getSymbol();
       check(i->getOffset(TargetSymbolOffset));
       int64_t Addend;
       check(getELFRelocationAddend(*i, Addend));
@@ -564,7 +575,7 @@ void RuntimeDyldELF::findOPDEntrySection(ObjectImage &Obj,
         continue;
 
       section_iterator tsi(Obj.end_sections());
-      check(TargetSymbol.getSection(tsi));
+      check(TargetSymbol->getSection(tsi));
       Rel.SectionID = findOrEmitSection(Obj, (*tsi), true, LocalSections);
       Rel.Addend = (intptr_t)Addend;
       return;
@@ -765,28 +776,32 @@ void RuntimeDyldELF::processRelocationRef(unsigned SectionID,
   Check(RelI.getType(RelType));
   int64_t Addend;
   Check(getELFRelocationAddend(RelI, Addend));
-  SymbolRef Symbol;
-  Check(RelI.getSymbol(Symbol));
+  symbol_iterator Symbol = RelI.getSymbol();
 
   // Obtain the symbol name which is referenced in the relocation
   StringRef TargetName;
-  Symbol.getName(TargetName);
+  if (Symbol != Obj.end_symbols())
+    Symbol->getName(TargetName);
   DEBUG(dbgs() << "\t\tRelType: " << RelType
                << " Addend: " << Addend
                << " TargetName: " << TargetName
                << "\n");
   RelocationValueRef Value;
   // First search for the symbol in the local symbol table
-  SymbolTableMap::const_iterator lsi = Symbols.find(TargetName.data());
-  SymbolRef::Type SymType;
-  Symbol.getType(SymType);
+  SymbolTableMap::const_iterator lsi = Symbols.end();
+  SymbolRef::Type SymType = SymbolRef::ST_Unknown;
+  if (Symbol != Obj.end_symbols()) {
+    lsi = Symbols.find(TargetName.data());
+    Symbol->getType(SymType);
+  }
   if (lsi != Symbols.end()) {
     Value.SectionID = lsi->second.first;
     Value.Addend = lsi->second.second + Addend;
   } else {
     // Search for the symbol in the global symbol table
-    SymbolTableMap::const_iterator gsi =
-        GlobalSymbolTable.find(TargetName.data());
+    SymbolTableMap::const_iterator gsi = GlobalSymbolTable.end();
+    if (Symbol != Obj.end_symbols())
+      gsi = GlobalSymbolTable.find(TargetName.data());
     if (gsi != GlobalSymbolTable.end()) {
       Value.SectionID = gsi->second.first;
       Value.Addend = gsi->second.second + Addend;
@@ -797,7 +812,7 @@ void RuntimeDyldELF::processRelocationRef(unsigned SectionID,
           // and can be changed by another developers. Maybe best way is add
           // a new symbol type ST_Section to SymbolRef and use it.
           section_iterator si(Obj.end_sections());
-          Symbol.getSection(si);
+          Symbol->getSection(si);
           if (si == Obj.end_sections())
             llvm_unreachable("Symbol section not found, bad object file format!");
           DEBUG(dbgs() << "\t\tThis is section symbol\n");
@@ -898,7 +913,7 @@ void RuntimeDyldELF::processRelocationRef(unsigned SectionID,
       uint8_t *StubTargetAddr = createStubFunction(Section.Address +
                                                    Section.StubOffset);
       RelocationEntry RE(SectionID, StubTargetAddr - Section.Address,
-                         ELF::R_ARM_ABS32, Value.Addend);
+                         ELF::R_ARM_PRIVATE_0, Value.Addend);
       if (Value.SymbolName)
         addRelocationForSymbol(RE, Value.SymbolName);
       else

@@ -70,6 +70,11 @@ SPARC
 * `SPARC resources <http://www.sparc.org/resource.htm>`_
 * `SPARC standards <http://www.sparc.org/standards.html>`_
 
+SystemZ
+-------
+
+* `z/Architecture Principles of Operation (registration required, free sign-up) <http://www-01.ibm.com/support/docview.wss?uid=isg2b9de5f05a9d57819852571c500428f9a>`_
+
 X86
 ---
 
@@ -98,12 +103,16 @@ Other relevant lists
 ABI
 ===
 
+* `System V Application Binary Interface <http://www.sco.com/developers/gabi/latest/contents.html>`_
+* `Itanium C++ ABI <http://mentorembedded.github.io/cxx-abi/>`_
+
 Linux
 -----
 
 * `PowerPC 64-bit ELF ABI Supplement <http://www.linuxbase.org/spec/ELF/ppc64/>`_
 * `Procedure Call Standard for the AArch64 Architecture <http://infocenter.arm.com/help/topic/com.arm.doc.ihi0055a/IHI0055A_aapcs64.pdf>`_
 * `ELF for the ARM 64-bit Architecture (AArch64) <http://infocenter.arm.com/help/topic/com.arm.doc.ihi0056a/IHI0056A_aaelf64.pdf>`_
+* `System z ELF ABI Supplement <http://legacy.redhat.com/pub/redhat/linux/7.1/es/os/s390x/doc/lzsabi0.pdf>`_
 
 OS X
 ----

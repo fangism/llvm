@@ -15,6 +15,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 
 #include <sstream>
@@ -63,7 +64,12 @@ ModuleInfo::ModuleInfo(ObjectFile *Obj, DIContext *DICtx)
         SymbolAddress == UnknownAddressOrSize)
       continue;
     uint64_t SymbolSize;
-    if (error(si->getSize(SymbolSize)) || SymbolSize == UnknownAddressOrSize)
+    // Getting symbol size is linear for Mach-O files, so assume that symbol
+    // occupies the memory range up to the following symbol.
+    if (isa<MachOObjectFile>(Obj))
+      SymbolSize = 0;
+    else if (error(si->getSize(SymbolSize)) ||
+             SymbolSize == UnknownAddressOrSize)
       continue;
     StringRef SymbolName;
     if (error(si->getName(SymbolName)))
@@ -71,7 +77,7 @@ ModuleInfo::ModuleInfo(ObjectFile *Obj, DIContext *DICtx)
     // FIXME: If a function has alias, there are two entries in symbol table
     // with same address size. Make sure we choose the correct one.
     SymbolMapTy &M = SymbolType == SymbolRef::ST_Function ? Functions : Objects;
-    SymbolDesc SD = { SymbolAddress, SymbolAddress + SymbolSize };
+    SymbolDesc SD = { SymbolAddress, SymbolSize };
     M.insert(std::make_pair(SD, SymbolName));
   }
 }
@@ -80,15 +86,18 @@ bool ModuleInfo::getNameFromSymbolTable(SymbolRef::Type Type, uint64_t Address,
                                         std::string &Name, uint64_t &Addr,
                                         uint64_t &Size) const {
   const SymbolMapTy &M = Type == SymbolRef::ST_Function ? Functions : Objects;
-  SymbolDesc SD = { Address, Address + 1 };
-  SymbolMapTy::const_iterator it = M.find(SD);
-  if (it == M.end())
+  if (M.empty())
     return false;
-  if (Address < it->first.Addr || Address >= it->first.AddrEnd)
+  SymbolDesc SD = { Address, Address };
+  SymbolMapTy::const_iterator it = M.upper_bound(SD);
+  if (it == M.begin())
+    return false;
+  --it;
+  if (it->first.Size != 0 && it->first.Addr + it->first.Size <= Address)
     return false;
   Name = it->second.str();
   Addr = it->first.Addr;
-  Size = it->first.AddrEnd - it->first.Addr;
+  Size = it->first.Size;
   return true;
 }
 
@@ -200,8 +209,8 @@ static bool getObjectEndianness(const ObjectFile *Obj, bool &IsLittleEndian) {
 
 static ObjectFile *getObjectFile(const std::string &Path) {
   OwningPtr<MemoryBuffer> Buff;
-  if (error_code ec = MemoryBuffer::getFile(Path, Buff))
-    error(ec);
+  if (error(MemoryBuffer::getFile(Path, Buff)))
+    return 0;
   return ObjectFile::createObjectFile(Buff.take());
 }
 
@@ -236,9 +245,12 @@ LLVMSymbolizer::getOrCreateModuleInfo(const std::string &ModuleName) {
     if (isa<MachOObjectFile>(Obj)) {
       const std::string &ResourceName =
           getDarwinDWARFResourceForModule(ModuleName);
-      ObjectFile *ResourceObj = getObjectFile(ResourceName);
-      if (ResourceObj != 0)
-        DbgObj = ResourceObj;
+      bool ResourceFileExists = false;
+      if (!sys::fs::exists(ResourceName, ResourceFileExists) &&
+          ResourceFileExists) {
+        if (ObjectFile *ResourceObj = getObjectFile(ResourceName))
+          DbgObj = ResourceObj;
+      }
     }
     Context = DIContext::getDWARFContext(DbgObj);
     assert(Context);

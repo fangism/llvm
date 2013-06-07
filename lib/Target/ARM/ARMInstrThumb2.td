@@ -554,7 +554,8 @@ multiclass T2I_bin_irs<bits<4> opcod, string opc,
    def ri : T2sTwoRegImm<
                 (outs rGPR:$Rd), (ins rGPR:$Rn, t2_so_imm:$imm), iii,
                  opc, "\t$Rd, $Rn, $imm",
-                 [(set rGPR:$Rd, (opnode rGPR:$Rn, t2_so_imm:$imm))]> {
+                 [(set rGPR:$Rd, (opnode rGPR:$Rn, t2_so_imm:$imm))]>,
+                 Sched<[WriteALU, ReadALU]> {
      let Inst{31-27} = 0b11110;
      let Inst{25} = 0;
      let Inst{24-21} = opcod;
@@ -563,7 +564,8 @@ multiclass T2I_bin_irs<bits<4> opcod, string opc,
    // register
    def rr : T2sThreeReg<(outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), iir,
                  opc, !strconcat(wide, "\t$Rd, $Rn, $Rm"),
-                 [(set rGPR:$Rd, (opnode rGPR:$Rn, rGPR:$Rm))]> {
+                 [(set rGPR:$Rd, (opnode rGPR:$Rn, rGPR:$Rm))]>,
+                 Sched<[WriteALU, ReadALU, ReadALU]> {
      let isCommutable = Commutable;
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
@@ -576,7 +578,8 @@ multiclass T2I_bin_irs<bits<4> opcod, string opc,
    def rs : T2sTwoRegShiftedReg<
                  (outs rGPR:$Rd), (ins rGPR:$Rn, t2_so_reg:$ShiftedRm), iis,
                  opc, !strconcat(wide, "\t$Rd, $Rn, $ShiftedRm"),
-                 [(set rGPR:$Rd, (opnode rGPR:$Rn, t2_so_reg:$ShiftedRm))]> {
+                 [(set rGPR:$Rd, (opnode rGPR:$Rn, t2_so_reg:$ShiftedRm))]>,
+                 Sched<[WriteALUsi, ReadALU]>  {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = opcod;
@@ -635,7 +638,8 @@ multiclass T2I_rbin_irs<bits<4> opcod, string opc, PatFrag opnode> {
    def ri : T2sTwoRegImm<
                  (outs rGPR:$Rd), (ins rGPR:$Rn, t2_so_imm:$imm), IIC_iALUi,
                  opc, ".w\t$Rd, $Rn, $imm",
-                 [(set rGPR:$Rd, (opnode t2_so_imm:$imm, rGPR:$Rn))]> {
+                 [(set rGPR:$Rd, (opnode t2_so_imm:$imm, rGPR:$Rn))]>,
+                 Sched<[WriteALU, ReadALU]> {
      let Inst{31-27} = 0b11110;
      let Inst{25} = 0;
      let Inst{24-21} = opcod;
@@ -645,7 +649,8 @@ multiclass T2I_rbin_irs<bits<4> opcod, string opc, PatFrag opnode> {
    def rr : T2sThreeReg<
                  (outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), IIC_iALUr,
                  opc, "\t$Rd, $Rn, $Rm",
-                 [/* For disassembly only; pattern left blank */]> {
+                 [/* For disassembly only; pattern left blank */]>,
+                 Sched<[WriteALU, ReadALU, ReadALU]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = opcod;
@@ -657,7 +662,8 @@ multiclass T2I_rbin_irs<bits<4> opcod, string opc, PatFrag opnode> {
    def rs : T2sTwoRegShiftedReg<
                  (outs rGPR:$Rd), (ins rGPR:$Rn, t2_so_reg:$ShiftedRm),
                  IIC_iALUsir, opc, "\t$Rd, $Rn, $ShiftedRm",
-                 [(set rGPR:$Rd, (opnode t2_so_reg:$ShiftedRm, rGPR:$Rn))]> {
+                 [(set rGPR:$Rd, (opnode t2_so_reg:$ShiftedRm, rGPR:$Rn))]>,
+                 Sched<[WriteALUsi, ReadALU]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = opcod;
@@ -678,12 +684,14 @@ multiclass T2I_bin_s_irs<InstrItinClass iii, InstrItinClass iir,
                          (ins GPRnopc:$Rn, t2_so_imm:$imm, pred:$p),
                          4, iii,
                          [(set rGPR:$Rd, CPSR, (opnode GPRnopc:$Rn,
-                                                t2_so_imm:$imm))]>;
+                                                t2_so_imm:$imm))]>,
+            Sched<[WriteALU, ReadALU]>;
    // register
    def rr : t2PseudoInst<(outs rGPR:$Rd), (ins GPRnopc:$Rn, rGPR:$Rm, pred:$p),
                          4, iir,
                          [(set rGPR:$Rd, CPSR, (opnode GPRnopc:$Rn,
-                                                rGPR:$Rm))]> {
+                                                rGPR:$Rm))]>,
+            Sched<[WriteALU, ReadALU, ReadALU]> {
      let isCommutable = Commutable;
    }
    // shifted register
@@ -691,7 +699,8 @@ multiclass T2I_bin_s_irs<InstrItinClass iii, InstrItinClass iir,
                          (ins GPRnopc:$Rn, t2_so_reg:$ShiftedRm, pred:$p),
                          4, iis,
                          [(set rGPR:$Rd, CPSR, (opnode GPRnopc:$Rn,
-                                                t2_so_reg:$ShiftedRm))]>;
+                                                t2_so_reg:$ShiftedRm))]>,
+            Sched<[WriteALUsi, ReadALUsr]>;
 }
 }
 
@@ -704,13 +713,15 @@ multiclass T2I_rbin_s_is<PatFrag opnode> {
                          (ins rGPR:$Rn, t2_so_imm:$imm, pred:$p),
                          4, IIC_iALUi,
                          [(set rGPR:$Rd, CPSR, (opnode t2_so_imm:$imm,
-                                                rGPR:$Rn))]>;
+                                                rGPR:$Rn))]>,
+            Sched<[WriteALU, ReadALU]>;
    // shifted register
    def rs : t2PseudoInst<(outs rGPR:$Rd),
                          (ins rGPR:$Rn, t2_so_reg:$ShiftedRm, pred:$p),
                          4, IIC_iALUsi,
                          [(set rGPR:$Rd, CPSR, (opnode t2_so_reg:$ShiftedRm,
-                                                rGPR:$Rn))]>;
+                                                rGPR:$Rn))]>,
+            Sched<[WriteALUsi, ReadALU]>;
 }
 }
 
@@ -725,7 +736,8 @@ multiclass T2I_bin_ii12rs<bits<3> op23_21, string opc, PatFrag opnode,
    def ri : T2sTwoRegImm<
                (outs GPRnopc:$Rd), (ins GPRnopc:$Rn, t2_so_imm:$imm), IIC_iALUi,
                opc, ".w\t$Rd, $Rn, $imm",
-               [(set GPRnopc:$Rd, (opnode GPRnopc:$Rn, t2_so_imm:$imm))]> {
+               [(set GPRnopc:$Rd, (opnode GPRnopc:$Rn, t2_so_imm:$imm))]>,
+               Sched<[WriteALU, ReadALU]> {
      let Inst{31-27} = 0b11110;
      let Inst{25} = 0;
      let Inst{24} = 1;
@@ -737,7 +749,8 @@ multiclass T2I_bin_ii12rs<bits<3> op23_21, string opc, PatFrag opnode,
    def ri12 : T2I<
                   (outs GPRnopc:$Rd), (ins GPR:$Rn, imm0_4095:$imm), IIC_iALUi,
                   !strconcat(opc, "w"), "\t$Rd, $Rn, $imm",
-                  [(set GPRnopc:$Rd, (opnode GPR:$Rn, imm0_4095:$imm))]> {
+                  [(set GPRnopc:$Rd, (opnode GPR:$Rn, imm0_4095:$imm))]>,
+                  Sched<[WriteALU, ReadALU]> {
      bits<4> Rd;
      bits<4> Rn;
      bits<12> imm;
@@ -755,7 +768,8 @@ multiclass T2I_bin_ii12rs<bits<3> op23_21, string opc, PatFrag opnode,
    // register
    def rr : T2sThreeReg<(outs GPRnopc:$Rd), (ins GPRnopc:$Rn, rGPR:$Rm),
                  IIC_iALUr, opc, ".w\t$Rd, $Rn, $Rm",
-                 [(set GPRnopc:$Rd, (opnode GPRnopc:$Rn, rGPR:$Rm))]> {
+                 [(set GPRnopc:$Rd, (opnode GPRnopc:$Rn, rGPR:$Rm))]>,
+                 Sched<[WriteALU, ReadALU, ReadALU]> {
      let isCommutable = Commutable;
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
@@ -769,7 +783,8 @@ multiclass T2I_bin_ii12rs<bits<3> op23_21, string opc, PatFrag opnode,
    def rs : T2sTwoRegShiftedReg<
                  (outs GPRnopc:$Rd), (ins GPRnopc:$Rn, t2_so_reg:$ShiftedRm),
                  IIC_iALUsi, opc, ".w\t$Rd, $Rn, $ShiftedRm",
-              [(set GPRnopc:$Rd, (opnode GPRnopc:$Rn, t2_so_reg:$ShiftedRm))]> {
+              [(set GPRnopc:$Rd, (opnode GPRnopc:$Rn, t2_so_reg:$ShiftedRm))]>,
+              Sched<[WriteALUsi, ReadALU]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24} = 1;
@@ -787,7 +802,7 @@ multiclass T2I_adde_sube_irs<bits<4> opcod, string opc, PatFrag opnode,
    def ri : T2sTwoRegImm<(outs rGPR:$Rd), (ins rGPR:$Rn, t2_so_imm:$imm),
                  IIC_iALUi, opc, "\t$Rd, $Rn, $imm",
                [(set rGPR:$Rd, CPSR, (opnode rGPR:$Rn, t2_so_imm:$imm, CPSR))]>,
-                 Requires<[IsThumb2]> {
+                 Requires<[IsThumb2]>, Sched<[WriteALU, ReadALU]> {
      let Inst{31-27} = 0b11110;
      let Inst{25} = 0;
      let Inst{24-21} = opcod;
@@ -797,7 +812,7 @@ multiclass T2I_adde_sube_irs<bits<4> opcod, string opc, PatFrag opnode,
    def rr : T2sThreeReg<(outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), IIC_iALUr,
                  opc, ".w\t$Rd, $Rn, $Rm",
                  [(set rGPR:$Rd, CPSR, (opnode rGPR:$Rn, rGPR:$Rm, CPSR))]>,
-                 Requires<[IsThumb2]> {
+                 Requires<[IsThumb2]>, Sched<[WriteALU, ReadALU, ReadALU]> {
      let isCommutable = Commutable;
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
@@ -811,7 +826,7 @@ multiclass T2I_adde_sube_irs<bits<4> opcod, string opc, PatFrag opnode,
                  (outs rGPR:$Rd), (ins rGPR:$Rn, t2_so_reg:$ShiftedRm),
                  IIC_iALUsi, opc, ".w\t$Rd, $Rn, $ShiftedRm",
          [(set rGPR:$Rd, CPSR, (opnode rGPR:$Rn, t2_so_reg:$ShiftedRm, CPSR))]>,
-                 Requires<[IsThumb2]> {
+                 Requires<[IsThumb2]>, Sched<[WriteALUsi, ReadALU]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = opcod;
@@ -826,7 +841,8 @@ multiclass T2I_sh_ir<bits<2> opcod, string opc, Operand ty, PatFrag opnode> {
    def ri : T2sTwoRegShiftImm<
                  (outs rGPR:$Rd), (ins rGPR:$Rm, ty:$imm), IIC_iMOVsi,
                  opc, ".w\t$Rd, $Rm, $imm",
-                 [(set rGPR:$Rd, (opnode rGPR:$Rm, (i32 ty:$imm)))]> {
+                 [(set rGPR:$Rd, (opnode rGPR:$Rm, (i32 ty:$imm)))]>,
+                 Sched<[WriteALU]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-21} = 0b010010;
      let Inst{19-16} = 0b1111; // Rn
@@ -836,7 +852,8 @@ multiclass T2I_sh_ir<bits<2> opcod, string opc, Operand ty, PatFrag opnode> {
    def rr : T2sThreeReg<
                  (outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), IIC_iMOVsr,
                  opc, ".w\t$Rd, $Rn, $Rm",
-                 [(set rGPR:$Rd, (opnode rGPR:$Rn, rGPR:$Rm))]> {
+                 [(set rGPR:$Rd, (opnode rGPR:$Rn, rGPR:$Rm))]>,
+                 Sched<[WriteALU]> {
      let Inst{31-27} = 0b11111;
      let Inst{26-23} = 0b0100;
      let Inst{22-21} = opcod;
@@ -880,7 +897,7 @@ let isCompare = 1, Defs = [CPSR] in {
    def ri : T2OneRegCmpImm<
                 (outs), (ins GPRnopc:$Rn, t2_so_imm:$imm), iii,
                 opc, ".w\t$Rn, $imm",
-                [(opnode GPRnopc:$Rn, t2_so_imm:$imm)]> {
+                [(opnode GPRnopc:$Rn, t2_so_imm:$imm)]>, Sched<[WriteCMP]> {
      let Inst{31-27} = 0b11110;
      let Inst{25} = 0;
      let Inst{24-21} = opcod;
@@ -892,7 +909,7 @@ let isCompare = 1, Defs = [CPSR] in {
    def rr : T2TwoRegCmp<
                 (outs), (ins GPRnopc:$Rn, rGPR:$Rm), iir,
                 opc, ".w\t$Rn, $Rm",
-                [(opnode GPRnopc:$Rn, rGPR:$Rm)]> {
+                [(opnode GPRnopc:$Rn, rGPR:$Rm)]>, Sched<[WriteCMP]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = opcod;
@@ -906,7 +923,8 @@ let isCompare = 1, Defs = [CPSR] in {
    def rs : T2OneRegCmpShiftedReg<
                 (outs), (ins GPRnopc:$Rn, t2_so_reg:$ShiftedRm), iis,
                 opc, ".w\t$Rn, $ShiftedRm",
-                [(opnode GPRnopc:$Rn, t2_so_reg:$ShiftedRm)]> {
+                [(opnode GPRnopc:$Rn, t2_so_reg:$ShiftedRm)]>,
+                Sched<[WriteCMPsi]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = opcod;
@@ -1167,7 +1185,8 @@ class T2PCOneRegImm<dag oops, dag iops, InstrItinClass itin,
 // assembler.
 def t2ADR : T2PCOneRegImm<(outs rGPR:$Rd),
               (ins t2adrlabel:$addr, pred:$p),
-              IIC_iALUi, "adr{$p}.w\t$Rd, $addr", []> {
+              IIC_iALUi, "adr{$p}.w\t$Rd, $addr", []>,
+              Sched<[WriteALU, ReadALU]> {
   let Inst{31-27} = 0b11110;
   let Inst{25-24} = 0b10;
   // Inst{23:21} = '11' (add = FALSE) or '00' (add = TRUE)
@@ -1190,12 +1209,12 @@ def t2ADR : T2PCOneRegImm<(outs rGPR:$Rd),
 
 let neverHasSideEffects = 1, isReMaterializable = 1 in
 def t2LEApcrel   : t2PseudoInst<(outs rGPR:$Rd), (ins i32imm:$label, pred:$p),
-                                4, IIC_iALUi, []>;
+                                4, IIC_iALUi, []>, Sched<[WriteALU, ReadALU]>;
 let hasSideEffects = 1 in
 def t2LEApcrelJT : t2PseudoInst<(outs rGPR:$Rd),
                                 (ins i32imm:$label, nohash_imm:$id, pred:$p),
                                 4, IIC_iALUi,
-                                []>;
+                                []>, Sched<[WriteALU, ReadALU]>;
 
 
 //===----------------------------------------------------------------------===//
@@ -1520,7 +1539,8 @@ multiclass T2Ipl<bits<1> write, bits<1> instr, string opc> {
 
   def i12 : T2Ii12<(outs), (ins t2addrmode_imm12:$addr), IIC_Preload, opc,
                 "\t$addr",
-              [(ARMPreload t2addrmode_imm12:$addr, (i32 write), (i32 instr))]> {
+              [(ARMPreload t2addrmode_imm12:$addr, (i32 write), (i32 instr))]>,
+              Sched<[WritePreLd]> {
     let Inst{31-25} = 0b1111100;
     let Inst{24} = instr;
     let Inst{22} = 0;
@@ -1537,7 +1557,8 @@ multiclass T2Ipl<bits<1> write, bits<1> instr, string opc> {
 
   def i8 : T2Ii8<(outs), (ins t2addrmode_negimm8:$addr), IIC_Preload, opc,
                 "\t$addr",
-            [(ARMPreload t2addrmode_negimm8:$addr, (i32 write), (i32 instr))]> {
+            [(ARMPreload t2addrmode_negimm8:$addr, (i32 write), (i32 instr))]>,
+            Sched<[WritePreLd]> {
     let Inst{31-25} = 0b1111100;
     let Inst{24} = instr;
     let Inst{23} = 0; // U = 0
@@ -1554,7 +1575,8 @@ multiclass T2Ipl<bits<1> write, bits<1> instr, string opc> {
 
   def s : T2Iso<(outs), (ins t2addrmode_so_reg:$addr), IIC_Preload, opc,
                "\t$addr",
-             [(ARMPreload t2addrmode_so_reg:$addr, (i32 write), (i32 instr))]> {
+             [(ARMPreload t2addrmode_so_reg:$addr, (i32 write), (i32 instr))]>,
+             Sched<[WritePreLd]> {
     let Inst{31-25} = 0b1111100;
     let Inst{24} = instr;
     let Inst{23} = 0; // add = TRUE for T1
@@ -1743,7 +1765,7 @@ defm t2STM : thumb2_st_mult<"stm", IIC_iStore_m, IIC_iStore_mu, 0>;
 
 let neverHasSideEffects = 1 in
 def t2MOVr : T2sTwoReg<(outs GPRnopc:$Rd), (ins GPR:$Rm), IIC_iMOVr,
-                   "mov", ".w\t$Rd, $Rm", []> {
+                   "mov", ".w\t$Rd, $Rm", []>, Sched<[WriteALU]> {
   let Inst{31-27} = 0b11101;
   let Inst{26-25} = 0b01;
   let Inst{24-21} = 0b0010;
@@ -1763,7 +1785,7 @@ let isReMaterializable = 1, isAsCheapAsAMove = 1, isMoveImm = 1,
     AddedComplexity = 1 in
 def t2MOVi : T2sOneRegImm<(outs rGPR:$Rd), (ins t2_so_imm:$imm), IIC_iMOVi,
                    "mov", ".w\t$Rd, $imm",
-                   [(set rGPR:$Rd, t2_so_imm:$imm)]> {
+                   [(set rGPR:$Rd, t2_so_imm:$imm)]>, Sched<[WriteALU]> {
   let Inst{31-27} = 0b11110;
   let Inst{25} = 0;
   let Inst{24-21} = 0b0010;
@@ -1786,7 +1808,7 @@ def : t2InstAlias<"mov${p} $Rd, $imm", (t2MOVi rGPR:$Rd, t2_so_imm:$imm,
 let isReMaterializable = 1, isAsCheapAsAMove = 1, isMoveImm = 1 in
 def t2MOVi16 : T2I<(outs rGPR:$Rd), (ins imm0_65535_expr:$imm), IIC_iMOVi,
                    "movw", "\t$Rd, $imm",
-                   [(set rGPR:$Rd, imm0_65535:$imm)]> {
+                   [(set rGPR:$Rd, imm0_65535:$imm)]>, Sched<[WriteALU]> {
   let Inst{31-27} = 0b11110;
   let Inst{25} = 1;
   let Inst{24-21} = 0b0010;
@@ -1812,7 +1834,8 @@ def t2MOVTi16 : T2I<(outs rGPR:$Rd),
                     (ins rGPR:$src, imm0_65535_expr:$imm), IIC_iMOVi,
                     "movt", "\t$Rd, $imm",
                     [(set rGPR:$Rd,
-                          (or (and rGPR:$src, 0xffff), lo16AllZero:$imm))]> {
+                          (or (and rGPR:$src, 0xffff), lo16AllZero:$imm))]>,
+                          Sched<[WriteALU]> {
   let Inst{31-27} = 0b11110;
   let Inst{25} = 1;
   let Inst{24-21} = 0b0110;
@@ -1831,7 +1854,8 @@ def t2MOVTi16 : T2I<(outs rGPR:$Rd),
 }
 
 def t2MOVTi16_ga_pcrel : PseudoInst<(outs rGPR:$Rd),
-                     (ins rGPR:$src, i32imm:$addr, pclabel:$id), IIC_iMOVi, []>;
+                     (ins rGPR:$src, i32imm:$addr, pclabel:$id), IIC_iMOVi, []>,
+                     Sched<[WriteALU]>;
 } // Constraints
 
 def : T2Pat<(or rGPR:$src, 0xffff0000), (t2MOVTi16 rGPR:$src, 0xffff)>;
@@ -2171,7 +2195,7 @@ def : T2Pat<(rotr rGPR:$lhs, (and rGPR:$rhs, lo5AllOne)),
 let Uses = [CPSR] in {
 def t2RRX : T2sTwoReg<(outs rGPR:$Rd), (ins rGPR:$Rm), IIC_iMOVsi,
                    "rrx", "\t$Rd, $Rm",
-                   [(set rGPR:$Rd, (ARMrrx rGPR:$Rm))]> {
+                   [(set rGPR:$Rd, (ARMrrx rGPR:$Rm))]>, Sched<[WriteALU]> {
   let Inst{31-27} = 0b11101;
   let Inst{26-25} = 0b01;
   let Inst{24-21} = 0b0010;
@@ -2185,7 +2209,8 @@ let isCodeGenOnly = 1, Defs = [CPSR] in {
 def t2MOVsrl_flag : T2TwoRegShiftImm<
                         (outs rGPR:$Rd), (ins rGPR:$Rm), IIC_iMOVsi,
                         "lsrs", ".w\t$Rd, $Rm, #1",
-                        [(set rGPR:$Rd, (ARMsrl_flag rGPR:$Rm))]> {
+                        [(set rGPR:$Rd, (ARMsrl_flag rGPR:$Rm))]>,
+                        Sched<[WriteALU]> {
   let Inst{31-27} = 0b11101;
   let Inst{26-25} = 0b01;
   let Inst{24-21} = 0b0010;
@@ -2199,7 +2224,8 @@ def t2MOVsrl_flag : T2TwoRegShiftImm<
 def t2MOVsra_flag : T2TwoRegShiftImm<
                         (outs rGPR:$Rd), (ins rGPR:$Rm), IIC_iMOVsi,
                         "asrs", ".w\t$Rd, $Rm, #1",
-                        [(set rGPR:$Rd, (ARMsra_flag rGPR:$Rm))]> {
+                        [(set rGPR:$Rd, (ARMsra_flag rGPR:$Rm))]>,
+                        Sched<[WriteALU]> {
   let Inst{31-27} = 0b11101;
   let Inst{26-25} = 0b01;
   let Inst{24-21} = 0b0010;
@@ -2320,7 +2346,7 @@ multiclass T2I_un_irs<bits<4> opcod, string opc,
    // shifted imm
    def i : T2sOneRegImm<(outs rGPR:$Rd), (ins t2_so_imm:$imm), iii,
                 opc, "\t$Rd, $imm",
-                [(set rGPR:$Rd, (opnode t2_so_imm:$imm))]> {
+                [(set rGPR:$Rd, (opnode t2_so_imm:$imm))]>, Sched<[WriteALU]> {
      let isAsCheapAsAMove = Cheap;
      let isReMaterializable = ReMat;
      let isMoveImm = MoveImm;
@@ -2333,7 +2359,7 @@ multiclass T2I_un_irs<bits<4> opcod, string opc,
    // register
    def r : T2sTwoReg<(outs rGPR:$Rd), (ins rGPR:$Rm), iir,
                 opc, ".w\t$Rd, $Rm",
-                [(set rGPR:$Rd, (opnode rGPR:$Rm))]> {
+                [(set rGPR:$Rd, (opnode rGPR:$Rm))]>, Sched<[WriteALU]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = opcod;
@@ -2345,7 +2371,8 @@ multiclass T2I_un_irs<bits<4> opcod, string opc,
    // shifted register
    def s : T2sOneRegShiftedReg<(outs rGPR:$Rd), (ins t2_so_reg:$ShiftedRm), iis,
                 opc, ".w\t$Rd, $ShiftedRm",
-                [(set rGPR:$Rd, (opnode t2_so_reg:$ShiftedRm))]> {
+                [(set rGPR:$Rd, (opnode t2_so_reg:$ShiftedRm))]>,
+                Sched<[WriteALU]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = opcod;
@@ -2804,22 +2831,27 @@ class T2I_misc<bits<2> op1, bits<2> op2, dag oops, dag iops,
 }
 
 def t2CLZ : T2I_misc<0b11, 0b00, (outs rGPR:$Rd), (ins rGPR:$Rm), IIC_iUNAr,
-                    "clz", "\t$Rd, $Rm", [(set rGPR:$Rd, (ctlz rGPR:$Rm))]>;
+                    "clz", "\t$Rd, $Rm", [(set rGPR:$Rd, (ctlz rGPR:$Rm))]>,
+                    Sched<[WriteALU]>;
 
 def t2RBIT : T2I_misc<0b01, 0b10, (outs rGPR:$Rd), (ins rGPR:$Rm), IIC_iUNAr,
                       "rbit", "\t$Rd, $Rm",
-                      [(set rGPR:$Rd, (ARMrbit rGPR:$Rm))]>;
+                      [(set rGPR:$Rd, (ARMrbit rGPR:$Rm))]>,
+                      Sched<[WriteALU]>;
 
 def t2REV : T2I_misc<0b01, 0b00, (outs rGPR:$Rd), (ins rGPR:$Rm), IIC_iUNAr,
-                 "rev", ".w\t$Rd, $Rm", [(set rGPR:$Rd, (bswap rGPR:$Rm))]>;
+                 "rev", ".w\t$Rd, $Rm", [(set rGPR:$Rd, (bswap rGPR:$Rm))]>,
+                 Sched<[WriteALU]>;
 
 def t2REV16 : T2I_misc<0b01, 0b01, (outs rGPR:$Rd), (ins rGPR:$Rm), IIC_iUNAr,
                        "rev16", ".w\t$Rd, $Rm",
-                [(set rGPR:$Rd, (rotr (bswap rGPR:$Rm), (i32 16)))]>;
+                [(set rGPR:$Rd, (rotr (bswap rGPR:$Rm), (i32 16)))]>,
+                Sched<[WriteALU]>;
 
 def t2REVSH : T2I_misc<0b01, 0b11, (outs rGPR:$Rd), (ins rGPR:$Rm), IIC_iUNAr,
                        "revsh", ".w\t$Rd, $Rm",
-                 [(set rGPR:$Rd, (sra (bswap rGPR:$Rm), (i32 16)))]>;
+                 [(set rGPR:$Rd, (sra (bswap rGPR:$Rm), (i32 16)))]>,
+                 Sched<[WriteALU]>;
 
 def : T2Pat<(or (sra (shl rGPR:$Rm, (i32 24)), (i32 16)),
                 (and (srl rGPR:$Rm, (i32 8)), 0xFF)),
@@ -2831,7 +2863,8 @@ def t2PKHBT : T2ThreeReg<
                   [(set rGPR:$Rd, (or (and rGPR:$Rn, 0xFFFF),
                                       (and (shl rGPR:$Rm, pkh_lsl_amt:$sh),
                                            0xFFFF0000)))]>,
-                  Requires<[HasT2ExtractPack, IsThumb2]> {
+                  Requires<[HasT2ExtractPack, IsThumb2]>,
+                  Sched<[WriteALUsi, ReadALU]> {
   let Inst{31-27} = 0b11101;
   let Inst{26-25} = 0b01;
   let Inst{24-20} = 0b01100;
@@ -2859,7 +2892,8 @@ def t2PKHTB : T2ThreeReg<
                   [(set rGPR:$Rd, (or (and rGPR:$Rn, 0xFFFF0000),
                                        (and (sra rGPR:$Rm, pkh_asr_amt:$sh),
                                             0xFFFF)))]>,
-                  Requires<[HasT2ExtractPack, IsThumb2]> {
+                  Requires<[HasT2ExtractPack, IsThumb2]>,
+                  Sched<[WriteALUsi, ReadALU]> {
   let Inst{31-27} = 0b11101;
   let Inst{26-25} = 0b01;
   let Inst{24-20} = 0b01100;
@@ -2900,7 +2934,8 @@ let isCompare = 1, Defs = [CPSR] in {
    def t2CMNri : T2OneRegCmpImm<
                 (outs), (ins GPRnopc:$Rn, t2_so_imm:$imm), IIC_iCMPi,
                 "cmn", ".w\t$Rn, $imm",
-                [(ARMcmn GPRnopc:$Rn, (ineg t2_so_imm:$imm))]> {
+                [(ARMcmn GPRnopc:$Rn, (ineg t2_so_imm:$imm))]>,
+                Sched<[WriteCMP, ReadALU]> {
      let Inst{31-27} = 0b11110;
      let Inst{25} = 0;
      let Inst{24-21} = 0b1000;
@@ -2913,7 +2948,7 @@ let isCompare = 1, Defs = [CPSR] in {
                 (outs), (ins GPRnopc:$Rn, rGPR:$Rm), IIC_iCMPr,
                 "cmn", ".w\t$Rn, $Rm",
                 [(BinOpFrag<(ARMcmpZ node:$LHS,(ineg node:$RHS))>
-                  GPRnopc:$Rn, rGPR:$Rm)]> {
+                  GPRnopc:$Rn, rGPR:$Rm)]>, Sched<[WriteCMP, ReadALU, ReadALU]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = 0b1000;
@@ -2928,7 +2963,8 @@ let isCompare = 1, Defs = [CPSR] in {
                 (outs), (ins GPRnopc:$Rn, t2_so_reg:$ShiftedRm), IIC_iCMPsi,
                 "cmn", ".w\t$Rn, $ShiftedRm",
                 [(BinOpFrag<(ARMcmpZ node:$LHS,(ineg node:$RHS))>
-                  GPRnopc:$Rn, t2_so_reg:$ShiftedRm)]> {
+                  GPRnopc:$Rn, t2_so_reg:$ShiftedRm)]>,
+                  Sched<[WriteCMPsi, ReadALU, ReadALU]> {
      let Inst{31-27} = 0b11101;
      let Inst{26-25} = 0b01;
      let Inst{24-21} = 0b1000;
@@ -2968,14 +3004,15 @@ def t2MOVCCr : t2PseudoInst<(outs rGPR:$Rd),
                             (ins rGPR:$false, rGPR:$Rm, pred:$p),
                             4, IIC_iCMOVr,
    [/*(set rGPR:$Rd, (ARMcmov rGPR:$false, rGPR:$Rm, imm:$cc, CCR:$ccr))*/]>,
-                RegConstraint<"$false = $Rd">;
+                RegConstraint<"$false = $Rd">,
+                Sched<[WriteALU]>;
 
 let isMoveImm = 1 in
 def t2MOVCCi : t2PseudoInst<(outs rGPR:$Rd),
                             (ins rGPR:$false, t2_so_imm:$imm, pred:$p),
                    4, IIC_iCMOVi,
 [/*(set rGPR:$Rd,(ARMcmov rGPR:$false,t2_so_imm:$imm, imm:$cc, CCR:$ccr))*/]>,
-                   RegConstraint<"$false = $Rd">;
+                   RegConstraint<"$false = $Rd">, Sched<[WriteALU]>;
 
 // FIXME: Pseudo-ize these. For now, just mark codegen only.
 let isCodeGenOnly = 1 in {
@@ -2983,7 +3020,7 @@ let isMoveImm = 1 in
 def t2MOVCCi16 : T2I<(outs rGPR:$Rd), (ins rGPR:$false, imm0_65535_expr:$imm),
                       IIC_iCMOVi,
                       "movw", "\t$Rd, $imm", []>,
-                      RegConstraint<"$false = $Rd"> {
+                      RegConstraint<"$false = $Rd">, Sched<[WriteALU]> {
   let Inst{31-27} = 0b11110;
   let Inst{25} = 1;
   let Inst{24-21} = 0b0010;
@@ -3010,7 +3047,7 @@ def t2MVNCCi : T2OneRegImm<(outs rGPR:$Rd), (ins rGPR:$false, t2_so_imm:$imm),
                    IIC_iCMOVi, "mvn", "\t$Rd, $imm",
 [/*(set rGPR:$Rd,(ARMcmov rGPR:$false,t2_so_imm_not:$imm,
                    imm:$cc, CCR:$ccr))*/]>,
-                   RegConstraint<"$false = $Rd"> {
+                   RegConstraint<"$false = $Rd">, Sched<[WriteALU]> {
   let Inst{31-27} = 0b11110;
   let Inst{25} = 0;
   let Inst{24-21} = 0b0011;
@@ -3021,7 +3058,7 @@ def t2MVNCCi : T2OneRegImm<(outs rGPR:$Rd), (ins rGPR:$false, t2_so_imm:$imm),
 
 class T2I_movcc_sh<bits<2> opcod, dag oops, dag iops, InstrItinClass itin,
                    string opc, string asm, list<dag> pattern>
-  : T2TwoRegShiftImm<oops, iops, itin, opc, asm, pattern> {
+  : T2TwoRegShiftImm<oops, iops, itin, opc, asm, pattern>, Sched<[WriteALU]> {
   let Inst{31-27} = 0b11101;
   let Inst{26-25} = 0b01;
   let Inst{24-21} = 0b0010;
@@ -3243,7 +3280,7 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
 let isPredicable = 1 in
 def t2B   : T2I<(outs), (ins uncondbrtarget:$target), IIC_Br,
                  "b", ".w\t$target",
-                 [(br bb:$target)]> {
+                 [(br bb:$target)]>, Sched<[WriteBr]> {
   let Inst{31-27} = 0b11110;
   let Inst{15-14} = 0b10;
   let Inst{12} = 1;
@@ -3261,17 +3298,20 @@ let isNotDuplicable = 1, isIndirectBranch = 1 in {
 def t2BR_JT : t2PseudoInst<(outs),
           (ins GPR:$target, GPR:$index, i32imm:$jt, i32imm:$id),
            0, IIC_Br,
-          [(ARMbr2jt GPR:$target, GPR:$index, tjumptable:$jt, imm:$id)]>;
+          [(ARMbr2jt GPR:$target, GPR:$index, tjumptable:$jt, imm:$id)]>,
+          Sched<[WriteBr]>;
 
 // FIXME: Add a non-pc based case that can be predicated.
 def t2TBB_JT : t2PseudoInst<(outs),
-        (ins GPR:$index, i32imm:$jt, i32imm:$id), 0, IIC_Br, []>;
+        (ins GPR:$index, i32imm:$jt, i32imm:$id), 0, IIC_Br, []>,
+        Sched<[WriteBr]>;
 
 def t2TBH_JT : t2PseudoInst<(outs),
-        (ins GPR:$index, i32imm:$jt, i32imm:$id), 0, IIC_Br, []>;
+        (ins GPR:$index, i32imm:$jt, i32imm:$id), 0, IIC_Br, []>,
+        Sched<[WriteBr]>;
 
 def t2TBB : T2I<(outs), (ins addrmode_tbb:$addr), IIC_Br,
-                    "tbb", "\t$addr", []> {
+                    "tbb", "\t$addr", []>, Sched<[WriteBrTbl]> {
   bits<4> Rn;
   bits<4> Rm;
   let Inst{31-20} = 0b111010001101;
@@ -3284,7 +3324,7 @@ def t2TBB : T2I<(outs), (ins addrmode_tbb:$addr), IIC_Br,
 }
 
 def t2TBH : T2I<(outs), (ins addrmode_tbh:$addr), IIC_Br,
-                   "tbh", "\t$addr", []> {
+                   "tbh", "\t$addr", []>, Sched<[WriteBrTbl]> {
   bits<4> Rn;
   bits<4> Rm;
   let Inst{31-20} = 0b111010001101;
@@ -3304,7 +3344,7 @@ def t2TBH : T2I<(outs), (ins addrmode_tbh:$addr), IIC_Br,
 let isBranch = 1, isTerminator = 1 in
 def t2Bcc : T2I<(outs), (ins brtarget:$target), IIC_Br,
                 "b", ".w\t$target",
-                [/*(ARMbrcond bb:$target, imm:$cc)*/]> {
+                [/*(ARMbrcond bb:$target, imm:$cc)*/]>, Sched<[WriteBr]> {
   let Inst{31-27} = 0b11110;
   let Inst{15-14} = 0b10;
   let Inst{12} = 0;
@@ -3331,7 +3371,7 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in {
                    (ins uncondbrtarget:$dst, pred:$p),
                    4, IIC_Br, [],
                    (t2B uncondbrtarget:$dst, pred:$p)>,
-                 Requires<[IsThumb2, IsIOS]>;
+                 Requires<[IsThumb2, IsIOS]>, Sched<[WriteBr]>;
 }
 
 // IT block
@@ -3353,7 +3393,8 @@ def t2IT : Thumb2XI<(outs), (ins it_pred:$cc, it_mask:$mask),
 
 // Branch and Exchange Jazelle -- for disassembly only
 // Rm = Inst{19-16}
-def t2BXJ : T2I<(outs), (ins rGPR:$func), NoItinerary, "bxj", "\t$func", []> {
+def t2BXJ : T2I<(outs), (ins rGPR:$func), NoItinerary, "bxj", "\t$func", []>,
+    Sched<[WriteBr]> {
   bits<4> func;
   let Inst{31-27} = 0b11110;
   let Inst{26} = 0;
@@ -3367,7 +3408,7 @@ let isBranch = 1, isTerminator = 1 in {
   def tCBZ  : T1I<(outs), (ins tGPR:$Rn, t_cbtarget:$target), IIC_Br,
                   "cbz\t$Rn, $target", []>,
               T1Misc<{0,0,?,1,?,?,?}>,
-              Requires<[IsThumb2]> {
+              Requires<[IsThumb2]>, Sched<[WriteBr]> {
     // A8.6.27
     bits<6> target;
     bits<3> Rn;
@@ -3379,7 +3420,7 @@ let isBranch = 1, isTerminator = 1 in {
   def tCBNZ : T1I<(outs), (ins tGPR:$Rn, t_cbtarget:$target), IIC_Br,
                   "cbnz\t$Rn, $target", []>,
               T1Misc<{1,0,?,1,?,?,?}>,
-              Requires<[IsThumb2]> {
+              Requires<[IsThumb2]>, Sched<[WriteBr]> {
     // A8.6.27
     bits<6> target;
     bits<3> Rn;
@@ -3981,7 +4022,7 @@ def : t2InstAlias<"sbc${s}${p} $Rd, $Rn, $ShiftedRm",
 
 // Aliases for ADD without the ".w" optional width specifier.
 def : t2InstAlias<"add${s}${p} $Rd, $Rn, $imm",
-        (t2ADDri GPRnopc:$Rd, GPRnopc:$Rn, t2_so_imm:$imm, pred:$p, cc_out:$s)>;
+        (t2ADDri rGPR:$Rd, GPRnopc:$Rn, t2_so_imm:$imm, pred:$p, cc_out:$s)>;
 def : t2InstAlias<"add${p} $Rd, $Rn, $imm",
            (t2ADDri12 GPRnopc:$Rd, GPR:$Rn, imm0_4095:$imm, pred:$p)>;
 def : t2InstAlias<"add${s}${p} $Rd, $Rn, $Rm",

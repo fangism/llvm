@@ -47,7 +47,7 @@ cl::desc("Disable compare instruction optimization"), cl::Hidden);
 
 PPCInstrInfo::PPCInstrInfo(PPCTargetMachine &tm)
   : PPCGenInstrInfo(PPC::ADJCALLSTACKDOWN, PPC::ADJCALLSTACKUP),
-    TM(tm), RI(*TM.getSubtargetImpl(), *this) {}
+    TM(tm), RI(*TM.getSubtargetImpl()) {}
 
 /// CreateTargetHazardRecognizer - Return the hazard recognizer to use for
 /// this target when scheduling the DAG.
@@ -74,10 +74,9 @@ ScheduleHazardRecognizer *PPCInstrInfo::CreateTargetPostRAHazardRecognizer(
   // Most subtargets use a PPC970 recognizer.
   if (Directive != PPC::DIR_440 && Directive != PPC::DIR_A2 &&
       Directive != PPC::DIR_E500mc && Directive != PPC::DIR_E5500) {
-    const TargetInstrInfo *TII = TM.getInstrInfo();
-    assert(TII && "No InstrInfo?");
+    assert(TM.getInstrInfo() && "No InstrInfo?");
 
-    return new PPCHazardRecognizer970(*TII);
+    return new PPCHazardRecognizer970(TM);
   }
 
   return new PPCScoreboardHazardRecognizer(II, DAG);
