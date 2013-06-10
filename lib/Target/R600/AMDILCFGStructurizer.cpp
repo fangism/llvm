@@ -11,8 +11,8 @@
 #define DEBUGME 0
 #define DEBUG_TYPE "structcfg"
 
+#include "AMDGPU.h"
 #include "AMDGPUInstrInfo.h"
-#include "AMDIL.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
@@ -28,8 +28,11 @@
 #include "llvm/CodeGen/MachinePostDominators.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/Target/TargetInstrInfo.h"
+#include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
+
+#define DEFAULT_VEC_SLOTS 8
 
 // TODO: move-begin.
 
@@ -2472,23 +2475,26 @@ public:
 
 protected:
   TargetMachine &TM;
-  const TargetInstrInfo *TII;
-  const AMDGPURegisterInfo *TRI;
 
 public:
   AMDGPUCFGStructurizer(char &pid, TargetMachine &tm);
   const TargetInstrInfo *getTargetInstrInfo() const;
+  const AMDGPURegisterInfo *getTargetRegisterInfo() const;
 };
 
 } // end anonymous namespace
 AMDGPUCFGStructurizer::AMDGPUCFGStructurizer(char &pid, TargetMachine &tm)
-: MachineFunctionPass(pid), TM(tm), TII(tm.getInstrInfo()),
-  TRI(static_cast<const AMDGPURegisterInfo *>(tm.getRegisterInfo())) {
+  : MachineFunctionPass(pid), TM(tm) {
 }
 
 const TargetInstrInfo *AMDGPUCFGStructurizer::getTargetInstrInfo() const {
-  return TII;
+  return TM.getInstrInfo();
 }
+
+const AMDGPURegisterInfo *AMDGPUCFGStructurizer::getTargetRegisterInfo() const {
+  return static_cast<const AMDGPURegisterInfo *>(TM.getRegisterInfo());
+}
+
 //===----------------------------------------------------------------------===//
 //
 // CFGPrepare
@@ -3017,7 +3023,8 @@ FunctionPass *llvm::createAMDGPUCFGPreparationPass(TargetMachine &tm) {
 }
 
 bool AMDGPUCFGPrepare::runOnMachineFunction(MachineFunction &func) {
-  return CFGStructurizer<AMDGPUCFGStructurizer>().prepare(func, *this, TRI);
+  return CFGStructurizer<AMDGPUCFGStructurizer>().prepare(func, *this,
+                                                       getTargetRegisterInfo());
 }
 
 // createAMDGPUCFGStructurizerPass- Returns a pass
@@ -3026,5 +3033,6 @@ FunctionPass *llvm::createAMDGPUCFGStructurizerPass(TargetMachine &tm) {
 }
 
 bool AMDGPUCFGPerform::runOnMachineFunction(MachineFunction &func) {
-  return CFGStructurizer<AMDGPUCFGStructurizer>().run(func, *this, TRI);
+  return CFGStructurizer<AMDGPUCFGStructurizer>().run(func, *this,
+                                                      getTargetRegisterInfo());
 }

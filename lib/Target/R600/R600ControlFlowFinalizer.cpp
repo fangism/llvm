@@ -49,7 +49,7 @@ private:
 
   static char ID;
   const R600InstrInfo *TII;
-  const R600RegisterInfo &TRI;
+  const R600RegisterInfo *TRI;
   unsigned MaxFetchInst;
   const AMDGPUSubtarget &ST;
 
@@ -65,7 +65,7 @@ private:
 
   const MCInstrDesc &getHWInstrDesc(ControlFlowInstruction CFI) const {
     unsigned Opcode = 0;
-    bool isEg = (ST.device()->getGeneration() >= AMDGPUDeviceInfo::HD5XXX);
+    bool isEg = (ST.getGeneration() >= AMDGPUSubtarget::EVERGREEN);
     switch (CFI) {
     case CF_TC:
       Opcode = isEg ? AMDGPU::CF_TC_EG : AMDGPU::CF_TC_R600;
@@ -98,7 +98,7 @@ private:
       Opcode = isEg ? AMDGPU::POP_EG : AMDGPU::POP_R600;
       break;
     case CF_END:
-      if (ST.device()->getDeviceFlag() == OCL_DEVICE_CAYMAN) {
+      if (ST.hasCaymanISA()) {
         Opcode = AMDGPU::CF_END_CM;
         break;
       }
@@ -110,7 +110,7 @@ private:
   }
 
   bool isCompatibleWithClause(const MachineInstr *MI,
-  std::set<unsigned> &DstRegs, std::set<unsigned> &SrcRegs) const {
+      std::set<unsigned> &DstRegs) const {
     unsigned DstMI, SrcMI;
     for (MachineInstr::const_mop_iterator I = MI->operands_begin(),
         E = MI->operands_end(); I != E; ++I) {
@@ -122,8 +122,8 @@ private:
         if (AMDGPU::R600_Reg128RegClass.contains(Reg))
           DstMI = Reg;
         else
-          DstMI = TRI.getMatchingSuperReg(Reg,
-              TRI.getSubRegFromChannel(TRI.getHWRegChan(Reg)),
+          DstMI = TRI->getMatchingSuperReg(Reg,
+              TRI->getSubRegFromChannel(TRI->getHWRegChan(Reg)),
               &AMDGPU::R600_Reg128RegClass);
       }
       if (MO.isUse()) {
@@ -131,14 +131,12 @@ private:
         if (AMDGPU::R600_Reg128RegClass.contains(Reg))
           SrcMI = Reg;
         else
-          SrcMI = TRI.getMatchingSuperReg(Reg,
-              TRI.getSubRegFromChannel(TRI.getHWRegChan(Reg)),
+          SrcMI = TRI->getMatchingSuperReg(Reg,
+              TRI->getSubRegFromChannel(TRI->getHWRegChan(Reg)),
               &AMDGPU::R600_Reg128RegClass);
       }
     }
-    if ((DstRegs.find(SrcMI) == DstRegs.end()) &&
-        (SrcRegs.find(DstMI) == SrcRegs.end())) {
-      SrcRegs.insert(SrcMI);
+    if ((DstRegs.find(SrcMI) == DstRegs.end())) {
       DstRegs.insert(DstMI);
       return true;
     } else
@@ -152,7 +150,7 @@ private:
     std::vector<MachineInstr *> ClauseContent;
     unsigned AluInstCount = 0;
     bool IsTex = TII->usesTextureCache(ClauseHead);
-    std::set<unsigned> DstRegs, SrcRegs;
+    std::set<unsigned> DstRegs;
     for (MachineBasicBlock::iterator E = MBB.end(); I != E; ++I) {
       if (IsTrivialInst(I))
         continue;
@@ -161,7 +159,7 @@ private:
       if ((IsTex && !TII->usesTextureCache(I)) ||
           (!IsTex && !TII->usesVertexCache(I)))
         break;
-      if (!isCompatibleWithClause(I, DstRegs, SrcRegs))
+      if (!isCompatibleWithClause(I, DstRegs))
         break;
       AluInstCount ++;
       ClauseContent.push_back(I);
@@ -301,31 +299,35 @@ private:
   }
 
   unsigned getHWStackSize(unsigned StackSubEntry, bool hasPush) const {
-    switch (ST.device()->getGeneration()) {
-    case AMDGPUDeviceInfo::HD4XXX:
+    switch (ST.getGeneration()) {
+    case AMDGPUSubtarget::R600:
+    case AMDGPUSubtarget::R700:
       if (hasPush)
         StackSubEntry += 2;
       break;
-    case AMDGPUDeviceInfo::HD5XXX:
+    case AMDGPUSubtarget::EVERGREEN:
       if (hasPush)
         StackSubEntry ++;
-    case AMDGPUDeviceInfo::HD6XXX:
+    case AMDGPUSubtarget::NORTHERN_ISLANDS:
       StackSubEntry += 2;
       break;
+    default: llvm_unreachable("Not a VLIW4/VLIW5 GPU");
     }
     return (StackSubEntry + 3)/4; // Need ceil value of StackSubEntry/4
   }
 
 public:
   R600ControlFlowFinalizer(TargetMachine &tm) : MachineFunctionPass(ID),
-    TII (static_cast<const R600InstrInfo *>(tm.getInstrInfo())),
-    TRI(TII->getRegisterInfo()),
+    TII (0), TRI(0),
     ST(tm.getSubtarget<AMDGPUSubtarget>()) {
       const AMDGPUSubtarget &ST = tm.getSubtarget<AMDGPUSubtarget>();
       MaxFetchInst = ST.getTexVTXClauseSize();
   }
 
   virtual bool runOnMachineFunction(MachineFunction &MF) {
+    TII=static_cast<const R600InstrInfo *>(MF.getTarget().getInstrInfo());
+    TRI=static_cast<const R600RegisterInfo *>(MF.getTarget().getRegisterInfo());
+
     unsigned MaxStack = 0;
     unsigned CurrentStack = 0;
     bool HasPush = false;

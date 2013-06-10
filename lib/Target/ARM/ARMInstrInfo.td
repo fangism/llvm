@@ -3279,9 +3279,11 @@ class AAI<bits<8> op27_20, bits<8> op11_4, string opc,
 
 // Saturating add/subtract
 
+let DecoderMethod = "DecodeQADDInstruction" in
 def QADD    : AAI<0b00010000, 0b00000101, "qadd",
                   [(set GPRnopc:$Rd, (int_arm_qadd GPRnopc:$Rm, GPRnopc:$Rn))],
                   (ins GPRnopc:$Rm, GPRnopc:$Rn), "\t$Rd, $Rm, $Rn">;
+
 def QSUB    : AAI<0b00010010, 0b00000101, "qsub",
                   [(set GPRnopc:$Rd, (int_arm_qsub GPRnopc:$Rm, GPRnopc:$Rn))],
                   (ins GPRnopc:$Rm, GPRnopc:$Rn), "\t$Rd, $Rm, $Rn">;
@@ -4211,6 +4213,16 @@ def memb_opt : Operand<i32> {
   let DecoderMethod = "DecodeMemBarrierOption";
 }
 
+def InstSyncBarrierOptOperand : AsmOperandClass {
+  let Name = "InstSyncBarrierOpt";
+  let ParserMethod = "parseInstSyncBarrierOptOperand";
+}
+def instsyncb_opt : Operand<i32> {
+  let PrintMethod = "printInstSyncBOption";
+  let ParserMatchClass = InstSyncBarrierOptOperand;
+  let DecoderMethod = "DecodeInstSyncBarrierOption";
+}
+
 // memory barriers protect the atomic sequences
 let hasSideEffects = 1 in {
 def DMB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
@@ -4231,7 +4243,7 @@ def DSB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
 }
 
 // ISB has only full system option
-def ISB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
+def ISB : AInoP<(outs), (ins instsyncb_opt:$opt), MiscFrm, NoItinerary,
                 "isb", "\t$opt", []>,
                 Requires<[IsARM, HasDB]> {
   bits<4> opt;

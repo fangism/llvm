@@ -279,6 +279,8 @@ static DecodeStatus DecodeCoprocessor(MCInst &Inst, unsigned Insn,
                                uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeMemBarrierOption(MCInst &Inst, unsigned Insn,
                                uint64_t Address, const void *Decoder);
+static DecodeStatus DecodeInstSyncBarrierOption(MCInst &Inst, unsigned Insn,
+                               uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeMSRMask(MCInst &Inst, unsigned Insn,
                                uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeDoubleRegLoad(MCInst &Inst, unsigned Insn,
@@ -358,6 +360,8 @@ static DecodeStatus DecodeThumbAddSPImm(MCInst &Inst, uint16_t Val,
 static DecodeStatus DecodeThumbAddSPReg(MCInst &Inst, uint16_t Insn,
                                 uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeThumbCPS(MCInst &Inst, uint16_t Insn,
+                                uint64_t Address, const void *Decoder);
+static DecodeStatus DecodeQADDInstruction(MCInst &Inst, unsigned Insn,
                                 uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeThumbBLXOffset(MCInst &Inst, unsigned Insn,
                                 uint64_t Address, const void *Decoder);
@@ -1733,6 +1737,29 @@ static DecodeStatus DecodeRFEInstruction(MCInst &Inst, unsigned Insn,
   return S;
 }
 
+static DecodeStatus DecodeQADDInstruction(MCInst &Inst, unsigned Insn,
+                               uint64_t Address, const void *Decoder) {
+  DecodeStatus S = MCDisassembler::Success;
+
+  unsigned Rd = fieldFromInstruction(Insn, 12, 4);
+  unsigned Rm = fieldFromInstruction(Insn, 0, 4);
+  unsigned Rn = fieldFromInstruction(Insn, 16, 4);
+  unsigned pred = fieldFromInstruction(Insn, 28, 4);
+
+  if (pred == 0xF)
+    return DecodeCPSInstruction(Inst, Insn, Address, Decoder);
+
+  if (!Check(S, DecodeGPRnopcRegisterClass(Inst, Rd, Address, Decoder)))
+    return MCDisassembler::Fail;
+  if (!Check(S, DecodeGPRnopcRegisterClass(Inst, Rm, Address, Decoder)))
+    return MCDisassembler::Fail;
+  if (!Check(S, DecodeGPRnopcRegisterClass(Inst, Rn, Address, Decoder)))
+    return MCDisassembler::Fail;
+  if (!Check(S, DecodePredicateOperand(Inst, pred, Address, Decoder)))
+    return MCDisassembler::Fail;
+  return S;
+}
+
 static DecodeStatus DecodeMemMultipleWritebackInstruction(MCInst &Inst,
                                   unsigned Insn,
                                   uint64_t Address, const void *Decoder) {
@@ -1743,6 +1770,7 @@ static DecodeStatus DecodeMemMultipleWritebackInstruction(MCInst &Inst,
   unsigned reglist = fieldFromInstruction(Insn, 0, 16);
 
   if (pred == 0xF) {
+    // Ambiguous with RFE and SRS
     switch (Inst.getOpcode()) {
       case ARM::LDMDA:
         Inst.setOpcode(ARM::RFEDA);
@@ -1793,11 +1821,16 @@ static DecodeStatus DecodeMemMultipleWritebackInstruction(MCInst &Inst,
         Inst.setOpcode(ARM::SRSIB_UPD);
         break;
       default:
-        if (!Check(S, MCDisassembler::Fail)) return MCDisassembler::Fail;
+        return MCDisassembler::Fail;
     }
 
     // For stores (which become SRS's, the only operand is the mode.
     if (fieldFromInstruction(Insn, 20, 1) == 0) {
+      // Check SRS encoding constraints
+      if (!(fieldFromInstruction(Insn, 22, 1) == 1 &&
+            fieldFromInstruction(Insn, 20, 1) == 0))
+        return MCDisassembler::Fail;
+
       Inst.addOperand(
           MCOperand::CreateImm(fieldFromInstruction(Insn, 0, 4)));
       return S;
@@ -1826,6 +1859,13 @@ static DecodeStatus DecodeCPSInstruction(MCInst &Inst, unsigned Insn,
   unsigned mode = fieldFromInstruction(Insn, 0, 5);
 
   DecodeStatus S = MCDisassembler::Success;
+
+  // This decoder is called from multiple location that do not check
+  // the full encoding is valid before they do.
+  if (fieldFromInstruction(Insn, 5, 1) != 0 ||
+      fieldFromInstruction(Insn, 16, 1) != 0 ||
+      fieldFromInstruction(Insn, 20, 8) != 0x10)
+    return MCDisassembler::Fail;
 
   // imod == '01' --> UNPREDICTABLE
   // NOTE: Even though this is technically UNPREDICTABLE, we choose to
@@ -3515,6 +3555,15 @@ static DecodeStatus DecodeMemBarrierOption(MCInst &Inst, unsigned Val,
   return MCDisassembler::Success;
 }
 
+static DecodeStatus DecodeInstSyncBarrierOption(MCInst &Inst, unsigned Val,
+                                        uint64_t Address, const void *Decoder) {
+  if (Val & ~0xf)
+    return MCDisassembler::Fail;
+
+  Inst.addOperand(MCOperand::CreateImm(Val));
+  return MCDisassembler::Success;
+}
+
 static DecodeStatus DecodeMSRMask(MCInst &Inst, unsigned Val,
                           uint64_t Address, const void *Decoder) {
   if (!Val) return MCDisassembler::Fail;
@@ -4432,16 +4481,18 @@ static DecodeStatus DecodeVCVTD(MCInst &Inst, unsigned Insn,
   Vm |= (fieldFromInstruction(Insn, 5, 1) << 4);
   unsigned imm = fieldFromInstruction(Insn, 16, 6);
   unsigned cmode = fieldFromInstruction(Insn, 8, 4);
+  unsigned op = fieldFromInstruction(Insn, 5, 1);
 
   DecodeStatus S = MCDisassembler::Success;
 
   // VMOVv2f32 is ambiguous with these decodings.
   if (!(imm & 0x38) && cmode == 0xF) {
+    if (op == 1) return MCDisassembler::Fail;
     Inst.setOpcode(ARM::VMOVv2f32);
     return DecodeNEONModImmInstruction(Inst, Insn, Address, Decoder);
   }
 
-  if (!(imm & 0x20)) Check(S, MCDisassembler::SoftFail);
+  if (!(imm & 0x20)) return MCDisassembler::Fail;
 
   if (!Check(S, DecodeDPRRegisterClass(Inst, Vd, Address, Decoder)))
     return MCDisassembler::Fail;
@@ -4460,16 +4511,18 @@ static DecodeStatus DecodeVCVTQ(MCInst &Inst, unsigned Insn,
   Vm |= (fieldFromInstruction(Insn, 5, 1) << 4);
   unsigned imm = fieldFromInstruction(Insn, 16, 6);
   unsigned cmode = fieldFromInstruction(Insn, 8, 4);
+  unsigned op = fieldFromInstruction(Insn, 5, 1);
 
   DecodeStatus S = MCDisassembler::Success;
 
   // VMOVv4f32 is ambiguous with these decodings.
   if (!(imm & 0x38) && cmode == 0xF) {
+    if (op == 1) return MCDisassembler::Fail;
     Inst.setOpcode(ARM::VMOVv4f32);
     return DecodeNEONModImmInstruction(Inst, Insn, Address, Decoder);
   }
 
-  if (!(imm & 0x20)) Check(S, MCDisassembler::SoftFail);
+  if (!(imm & 0x20)) return MCDisassembler::Fail;
 
   if (!Check(S, DecodeQPRRegisterClass(Inst, Vd, Address, Decoder)))
     return MCDisassembler::Fail;
