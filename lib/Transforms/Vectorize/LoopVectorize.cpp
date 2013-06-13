@@ -80,6 +80,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/PatternMatch.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/ValueHandle.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -216,7 +217,7 @@ private:
   /// This function adds 0, 1, 2 ... to each vector element, starting at zero.
   /// If Negate is set then negative numbers are added e.g. (0, -1, -2, ...).
   /// The sequence starts at StartIndex.
-  Value *getConsecutiveVector(Value* Val, unsigned StartIdx, bool Negate);
+  Value *getConsecutiveVector(Value* Val, int StartIdx, bool Negate);
 
   /// When we go over instructions in the basic block we rely on previous
   /// values within the current basic block or on loop invariant values.
@@ -382,7 +383,7 @@ public:
 
     // The starting value of the reduction.
     // It does not have to be zero!
-    Value *StartValue;
+    TrackingVH<Value> StartValue;
     // The instruction who's value is used outside the loop.
     Instruction *LoopExitInstr;
     // The kind of the reduction.
@@ -427,7 +428,7 @@ public:
     /// This flag indicates if we need to add the runtime check.
     bool Need;
     /// Holds the pointers that we need to check.
-    SmallVector<Value*, 2> Pointers;
+    SmallVector<TrackingVH<Value>, 2> Pointers;
     /// Holds the pointer value at the beginning of the loop.
     SmallVector<const SCEV*, 2> Starts;
     /// Holds the pointer value at the end of the loop.
@@ -441,7 +442,7 @@ public:
     InductionInfo(Value *Start, InductionKind K) : StartValue(Start), IK(K) {}
     InductionInfo() : StartValue(0), IK(IK_NoInduction) {}
     /// Start value.
-    Value *StartValue;
+    TrackingVH<Value> StartValue;
     /// Induction kind.
     InductionKind IK;
   };
@@ -829,7 +830,7 @@ Value *InnerLoopVectorizer::getBroadcastInstrs(Value *V) {
   return Shuf;
 }
 
-Value *InnerLoopVectorizer::getConsecutiveVector(Value* Val, unsigned StartIdx,
+Value *InnerLoopVectorizer::getConsecutiveVector(Value* Val, int StartIdx,
                                                  bool Negate) {
   assert(Val->getType()->isVectorTy() && "Must be a vector");
   assert(Val->getType()->getScalarType()->isIntegerTy() &&
@@ -842,8 +843,8 @@ Value *InnerLoopVectorizer::getConsecutiveVector(Value* Val, unsigned StartIdx,
 
   // Create a vector of consecutive numbers from zero to VF.
   for (int i = 0; i < VLen; ++i) {
-    int Idx = Negate ? (-i): i;
-    Indices.push_back(ConstantInt::get(ITy, StartIdx + Idx));
+    int64_t Idx = Negate ? (-i) : i;
+    Indices.push_back(ConstantInt::get(ITy, StartIdx + Idx, Negate));
   }
 
   // Add the consecutive indices to the vector value.
@@ -2072,7 +2073,8 @@ InnerLoopVectorizer::vectorizeBlockInLoop(LoopVectorizationLegality *Legal,
           // After broadcasting the induction variable we need to make the
           // vector consecutive by adding  ... -3, -2, -1, 0.
           for (unsigned part = 0; part < UF; ++part)
-            Entry[part] = getConsecutiveVector(Broadcasted, -VF * part, true);
+            Entry[part] = getConsecutiveVector(Broadcasted, -(int)VF * part,
+                                               true);
           continue;
         }
 
@@ -2306,7 +2308,10 @@ bool LoopVectorizationLegality::canVectorizeWithIfConvert() {
 }
 
 bool LoopVectorizationLegality::canVectorize() {
-  assert(TheLoop->getLoopPreheader() && "No preheader!!");
+  // We must have a loop in canonical form. Loops with indirectbr in them cannot
+  // be canonicalized.
+  if (!TheLoop->getLoopPreheader())
+    return false;
 
   // We can only vectorize innermost loops.
   if (TheLoop->getSubLoopsVector().size())
@@ -2373,6 +2378,26 @@ bool LoopVectorizationLegality::canVectorize() {
   return true;
 }
 
+/// \brief Check that the instruction has outside loop users and is not an
+/// identified reduction variable.
+static bool hasOutsideLoopUser(const Loop *TheLoop, Instruction *Inst,
+                               SmallPtrSet<Value *, 4> &Reductions) {
+  // Reduction instructions are allowed to have exit users. All other
+  // instructions must not have external users.
+  if (!Reductions.count(Inst))
+    //Check that all of the users of the loop are inside the BB.
+    for (Value::use_iterator I = Inst->use_begin(), E = Inst->use_end();
+         I != E; ++I) {
+      Instruction *U = cast<Instruction>(*I);
+      // This user may be a reduction exit value.
+      if (!TheLoop->contains(U)) {
+        DEBUG(dbgs() << "LV: Found an outside user for : "<< *U << "\n");
+        return true;
+      }
+    }
+  return false;
+}
+
 bool LoopVectorizationLegality::canVectorizeInstrs() {
   BasicBlock *PreHeader = TheLoop->getLoopPreheader();
   BasicBlock *Header = TheLoop->getHeader();
@@ -2411,8 +2436,13 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
         // If this PHINode is not in the header block, then we know that we
         // can convert it to select during if-conversion. No need to check if
         // the PHIs in this block are induction or reduction variables.
-        if (*bb != Header)
-          continue;
+        if (*bb != Header) {
+          // Check that this instruction has no outside users or is an
+          // identified reduction value with an outside user.
+          if(!hasOutsideLoopUser(TheLoop, it, AllowedExit))
+            continue;
+          return false;
+        }
 
         // We only allow if-converted PHIs with more than two incoming values.
         if (Phi->getNumIncomingValues() != 2) {
@@ -2505,17 +2535,9 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
 
       // Reduction instructions are allowed to have exit users.
       // All other instructions must not have external users.
-      if (!AllowedExit.count(it))
-        //Check that all of the users of the loop are inside the BB.
-        for (Value::use_iterator I = it->use_begin(), E = it->use_end();
-             I != E; ++I) {
-          Instruction *U = cast<Instruction>(*I);
-          // This user may be a reduction exit value.
-          if (!TheLoop->contains(U)) {
-            DEBUG(dbgs() << "LV: Found an outside user for : "<< *U << "\n");
-            return false;
-          }
-        }
+      if (hasOutsideLoopUser(TheLoop, it, AllowedExit))
+        return false;
+
     } // next instr.
 
   }
