@@ -315,11 +315,6 @@ makeRelocationInfo(
                (Log2Size  << 5) |	// was << 25
                (IsExtern  << 4) |	// was << 27
                (Type      << 0));	// was << 28
-	", Index: " << Index <<
-	", IsPCRel: " << IsPCRel <<
-	", Log2Size: " << Log2Size <<
-	", IsExtern: " << IsExtern <<
-	", Type: " << Type << endl);
 }
 
 static
