@@ -165,6 +165,8 @@ static DecodeStatus DecodetcGPRRegisterClass(MCInst &Inst, unsigned RegNo,
                                    uint64_t Address, const void *Decoder);
 static DecodeStatus DecoderGPRRegisterClass(MCInst &Inst, unsigned RegNo,
                                    uint64_t Address, const void *Decoder);
+static DecodeStatus DecodeGPRPairRegisterClass(MCInst &Inst, unsigned RegNo,
+                                   uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeSPRRegisterClass(MCInst &Inst, unsigned RegNo,
                                    uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeDPRRegisterClass(MCInst &Inst, unsigned RegNo,
@@ -239,15 +241,15 @@ static DecodeStatus DecodeBranchImmInstruction(MCInst &Inst,unsigned Insn,
                                uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeAddrMode6Operand(MCInst &Inst, unsigned Val,
                                uint64_t Address, const void *Decoder);
+static DecodeStatus DecodeVLDST1Instruction(MCInst &Inst, unsigned Val,
+                               uint64_t Address, const void *Decoder);
+static DecodeStatus DecodeVLDST2Instruction(MCInst &Inst, unsigned Val,
+                               uint64_t Address, const void *Decoder);
+static DecodeStatus DecodeVLDST3Instruction(MCInst &Inst, unsigned Val,
+                               uint64_t Address, const void *Decoder);
+static DecodeStatus DecodeVLDST4Instruction(MCInst &Inst, unsigned Val,
+                               uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeVLDInstruction(MCInst &Inst, unsigned Val,
-                               uint64_t Address, const void *Decoder);
-static DecodeStatus DecodeVST1Instruction(MCInst &Inst, unsigned Val,
-                               uint64_t Address, const void *Decoder);
-static DecodeStatus DecodeVST2Instruction(MCInst &Inst, unsigned Val,
-                               uint64_t Address, const void *Decoder);
-static DecodeStatus DecodeVST3Instruction(MCInst &Inst, unsigned Val,
-                               uint64_t Address, const void *Decoder);
-static DecodeStatus DecodeVST4Instruction(MCInst &Inst, unsigned Val,
                                uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeVSTInstruction(MCInst &Inst, unsigned Val,
                                uint64_t Address, const void *Decoder);
@@ -852,6 +854,26 @@ static DecodeStatus DecodetGPRRegisterClass(MCInst &Inst, unsigned RegNo,
   if (RegNo > 7)
     return MCDisassembler::Fail;
   return DecodeGPRRegisterClass(Inst, RegNo, Address, Decoder);
+}
+
+static const uint16_t GPRPairDecoderTable[] = {
+  ARM::R0_R1, ARM::R2_R3,   ARM::R4_R5,  ARM::R6_R7,
+  ARM::R8_R9, ARM::R10_R11, ARM::R12_SP
+};
+
+static DecodeStatus DecodeGPRPairRegisterClass(MCInst &Inst, unsigned RegNo,
+                                   uint64_t Address, const void *Decoder) {
+  DecodeStatus S = MCDisassembler::Success;
+
+  if (RegNo > 13)
+    return MCDisassembler::Fail;
+
+  if ((RegNo & 1) || RegNo == 0xe)
+     S = MCDisassembler::SoftFail;
+
+  unsigned RegisterPair = GPRPairDecoderTable[RegNo/2];
+  Inst.addOperand(MCOperand::CreateReg(RegisterPair));
+  return S;
 }
 
 static DecodeStatus DecodetcGPRRegisterClass(MCInst &Inst, unsigned RegNo,
@@ -2082,7 +2104,7 @@ DecodeT2BInstruction(MCInst &Inst, unsigned Insn,
   unsigned imm10 = fieldFromInstruction(Insn, 16, 10);
   unsigned imm11 = fieldFromInstruction(Insn, 0, 11);
   unsigned tmp = (S << 23) | (I1 << 22) | (I2 << 21) | (imm10 << 11) | imm11;
-  int imm32 = SignExtend32<24>(tmp << 1);
+  int imm32 = SignExtend32<25>(tmp << 1);
   if (!tryAddingSymbolicOperand(Address, Address + imm32 + 4,
                                 true, 4, Inst, Decoder))
     Inst.addOperand(MCOperand::CreateImm(imm32));
@@ -2408,47 +2430,55 @@ static DecodeStatus DecodeVLDInstruction(MCInst &Inst, unsigned Insn,
   return S;
 }
 
-static DecodeStatus DecodeVST1Instruction(MCInst& Inst, unsigned Insn,
-                                          uint64_t Addr, const void* Decoder) {
+static DecodeStatus DecodeVLDST1Instruction(MCInst &Inst, unsigned Insn,
+                                   uint64_t Address, const void *Decoder) {
   unsigned type = fieldFromInstruction(Insn, 8, 4);
   unsigned align = fieldFromInstruction(Insn, 4, 2);
-  if(type == 7 && (align & 2)) return MCDisassembler::Fail;
-  if(type == 10 && align == 3) return MCDisassembler::Fail;
-  if(type == 6 && (align & 2)) return MCDisassembler::Fail;
-  
-  return DecodeVSTInstruction(Inst, Insn, Addr, Decoder);
+  if (type == 6 && (align & 2)) return MCDisassembler::Fail;
+  if (type == 7 && (align & 2)) return MCDisassembler::Fail;
+  if (type == 10 && align == 3) return MCDisassembler::Fail;
+
+  unsigned load = fieldFromInstruction(Insn, 21, 1);
+  return load ? DecodeVLDInstruction(Inst, Insn, Address, Decoder)
+              : DecodeVSTInstruction(Inst, Insn, Address, Decoder);
 }
 
-static DecodeStatus DecodeVST2Instruction(MCInst& Inst, unsigned Insn,
-                                          uint64_t Addr, const void* Decoder) {
+static DecodeStatus DecodeVLDST2Instruction(MCInst &Inst, unsigned Insn,
+                                   uint64_t Address, const void *Decoder) {
   unsigned size = fieldFromInstruction(Insn, 6, 2);
-  if(size == 3) return MCDisassembler::Fail;
+  if (size == 3) return MCDisassembler::Fail;
 
   unsigned type = fieldFromInstruction(Insn, 8, 4);
   unsigned align = fieldFromInstruction(Insn, 4, 2);
-  if(type == 8 && align == 3) return MCDisassembler::Fail;
-  if(type == 9 && align == 3) return MCDisassembler::Fail;
-  
-  return DecodeVSTInstruction(Inst, Insn, Addr, Decoder);
+  if (type == 8 && align == 3) return MCDisassembler::Fail;
+  if (type == 9 && align == 3) return MCDisassembler::Fail;
+
+  unsigned load = fieldFromInstruction(Insn, 21, 1);
+  return load ? DecodeVLDInstruction(Inst, Insn, Address, Decoder)
+              : DecodeVSTInstruction(Inst, Insn, Address, Decoder);
 }
 
-static DecodeStatus DecodeVST3Instruction(MCInst& Inst, unsigned Insn,
-                                          uint64_t Addr, const void* Decoder) {
+static DecodeStatus DecodeVLDST3Instruction(MCInst &Inst, unsigned Insn,
+                                   uint64_t Address, const void *Decoder) {
   unsigned size = fieldFromInstruction(Insn, 6, 2);
-  if(size == 3) return MCDisassembler::Fail;
+  if (size == 3) return MCDisassembler::Fail;
 
   unsigned align = fieldFromInstruction(Insn, 4, 2);
-  if(align & 2) return MCDisassembler::Fail;
+  if (align & 2) return MCDisassembler::Fail;
 
-  return DecodeVSTInstruction(Inst, Insn, Addr, Decoder);
+  unsigned load = fieldFromInstruction(Insn, 21, 1);
+  return load ? DecodeVLDInstruction(Inst, Insn, Address, Decoder)
+              : DecodeVSTInstruction(Inst, Insn, Address, Decoder);
 }
 
-static DecodeStatus DecodeVST4Instruction(MCInst& Inst, unsigned Insn,
-                                          uint64_t Addr, const void* Decoder) {
+static DecodeStatus DecodeVLDST4Instruction(MCInst &Inst, unsigned Insn,
+                                   uint64_t Address, const void *Decoder) {
   unsigned size = fieldFromInstruction(Insn, 6, 2);
-  if(size == 3) return MCDisassembler::Fail;
+  if (size == 3) return MCDisassembler::Fail;
 
-  return DecodeVSTInstruction(Inst, Insn, Addr, Decoder);
+  unsigned load = fieldFromInstruction(Insn, 21, 1);
+  return load ? DecodeVLDInstruction(Inst, Insn, Address, Decoder)
+              : DecodeVSTInstruction(Inst, Insn, Address, Decoder);
 }
 
 static DecodeStatus DecodeVSTInstruction(MCInst &Inst, unsigned Insn,
@@ -3579,11 +3609,10 @@ static DecodeStatus DecodeDoubleRegLoad(MCInst &Inst, unsigned Insn,
   unsigned Rn = fieldFromInstruction(Insn, 16, 4);
   unsigned pred = fieldFromInstruction(Insn, 28, 4);
 
-  if ((Rt & 1) || Rt == 0xE || Rn == 0xF) return MCDisassembler::Fail;
+  if (Rn == 0xF)
+    S = MCDisassembler::SoftFail;
 
-  if (!Check(S, DecodeGPRRegisterClass(Inst, Rt, Address, Decoder)))
-    return MCDisassembler::Fail;
-  if (!Check(S, DecodeGPRRegisterClass(Inst, Rt+1, Address, Decoder)))
+  if (!Check(S, DecodeGPRPairRegisterClass(Inst, Rt, Address, Decoder)))
     return MCDisassembler::Fail;
   if (!Check(S, DecodeGPRRegisterClass(Inst, Rn, Address, Decoder)))
     return MCDisassembler::Fail;
@@ -3592,7 +3621,6 @@ static DecodeStatus DecodeDoubleRegLoad(MCInst &Inst, unsigned Insn,
 
   return S;
 }
-
 
 static DecodeStatus DecodeDoubleRegStore(MCInst &Inst, unsigned Insn,
                                          uint64_t Address, const void *Decoder){
@@ -3606,12 +3634,10 @@ static DecodeStatus DecodeDoubleRegStore(MCInst &Inst, unsigned Insn,
   if (!Check(S, DecodeGPRnopcRegisterClass(Inst, Rd, Address, Decoder)))
     return MCDisassembler::Fail;
 
-  if ((Rt & 1) || Rt == 0xE || Rn == 0xF) return MCDisassembler::Fail;
-  if (Rd == Rn || Rd == Rt || Rd == Rt+1) return MCDisassembler::Fail;
+  if (Rn == 0xF || Rd == Rn || Rd == Rt || Rd == Rt+1)
+    S = MCDisassembler::SoftFail;
 
-  if (!Check(S, DecodeGPRRegisterClass(Inst, Rt, Address, Decoder)))
-    return MCDisassembler::Fail;
-  if (!Check(S, DecodeGPRRegisterClass(Inst, Rt+1, Address, Decoder)))
+  if (!Check(S, DecodeGPRPairRegisterClass(Inst, Rt, Address, Decoder)))
     return MCDisassembler::Fail;
   if (!Check(S, DecodeGPRRegisterClass(Inst, Rn, Address, Decoder)))
     return MCDisassembler::Fail;

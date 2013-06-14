@@ -25,6 +25,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/PathV1.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SystemUtils.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -148,7 +149,7 @@ bool BugDriver::runPasses(Module *Program,
     return 1;
   }
 
-  sys::Path tool = sys::Program::FindProgramByName("opt");
+  std::string tool = sys::FindProgramByName("opt");
   if (tool.empty()) {
     errs() << "Cannot find `opt' in PATH!\n";
     return 1;
@@ -159,14 +160,13 @@ bool BugDriver::runPasses(Module *Program,
 
   // setup the child process' arguments
   SmallVector<const char*, 8> Args;
-  std::string Opt = tool.str();
   if (UseValgrind) {
     Args.push_back("valgrind");
     Args.push_back("--error-exitcode=1");
     Args.push_back("-q");
     Args.push_back(tool.c_str());
   } else
-    Args.push_back(Opt.c_str());
+    Args.push_back(tool.c_str());
 
   Args.push_back("-o");
   Args.push_back(OutputFilename.c_str());
@@ -196,17 +196,17 @@ bool BugDriver::runPasses(Module *Program,
 
   sys::Path prog;
   if (UseValgrind)
-    prog = sys::Program::FindProgramByName("valgrind");
+    prog = sys::FindProgramByName("valgrind");
   else
     prog = tool;
 
   // Redirect stdout and stderr to nowhere if SilencePasses is given
-  sys::Path Nowhere;
-  const sys::Path *Redirects[3] = {0, &Nowhere, &Nowhere};
+  StringRef Nowhere;
+  const StringRef *Redirects[3] = {0, &Nowhere, &Nowhere};
 
-  int result = sys::Program::ExecuteAndWait(prog, Args.data(), 0,
-                                            (SilencePasses ? Redirects : 0),
-                                            Timeout, MemoryLimit, &ErrMsg);
+  int result = sys::ExecuteAndWait(prog.str(), Args.data(), 0,
+                                   (SilencePasses ? Redirects : 0), Timeout,
+                                   MemoryLimit, &ErrMsg);
 
   // If we are supposed to delete the bitcode file or if the passes crashed,
   // remove it now.  This may fail if the file was never created, but that's ok.

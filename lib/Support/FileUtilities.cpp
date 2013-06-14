@@ -171,21 +171,19 @@ static bool CompareNumbers(const char *&F1P, const char *&F2P,
 /// error occurs, allowing the caller to distinguish between a failed diff and a
 /// file system error.
 ///
-int llvm::DiffFilesWithTolerance(const sys::PathWithStatus &FileA,
-                                 const sys::PathWithStatus &FileB,
+int llvm::DiffFilesWithTolerance(StringRef NameA,
+                                 StringRef NameB,
                                  double AbsTol, double RelTol,
                                  std::string *Error) {
-  const sys::FileStatus *FileAStat = FileA.getFileStatus(false, Error);
-  if (!FileAStat)
-    return 2;
-  const sys::FileStatus *FileBStat = FileB.getFileStatus(false, Error);
-  if (!FileBStat)
-    return 2;
-
   // Check for zero length files because some systems croak when you try to
   // mmap an empty file.
-  size_t A_size = FileAStat->getSize();
-  size_t B_size = FileBStat->getSize();
+  uint64_t A_size;
+  if (sys::fs::file_size(NameA, A_size))
+    return false;
+
+  uint64_t B_size;
+  if (sys::fs::file_size(NameB, B_size))
+    return false;
 
   // If they are both zero sized then they're the same
   if (A_size == 0 && B_size == 0)
@@ -201,13 +199,13 @@ int llvm::DiffFilesWithTolerance(const sys::PathWithStatus &FileA,
   // Now its safe to mmap the files into memory because both files
   // have a non-zero size.
   OwningPtr<MemoryBuffer> F1;
-  if (error_code ec = MemoryBuffer::getFile(FileA.c_str(), F1)) {
+  if (error_code ec = MemoryBuffer::getFile(NameA, F1)) {
     if (Error)
       *Error = ec.message();
     return 2;
   }
   OwningPtr<MemoryBuffer> F2;
-  if (error_code ec = MemoryBuffer::getFile(FileB.c_str(), F2)) {
+  if (error_code ec = MemoryBuffer::getFile(NameB, F2)) {
     if (Error)
       *Error = ec.message();
     return 2;

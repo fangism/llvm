@@ -786,7 +786,6 @@ SHLIBEXT
 SHLIBPATH_VAR
 LLVM_PREFIX
 LLVM_BINDIR
-LLVM_LIBDIR
 LLVM_DATADIR
 LLVM_DOCSDIR
 LLVM_ETCDIR
@@ -9398,24 +9397,6 @@ _ACEOF
 fi
 
 
-{ echo "$as_me:$LINENO: checking which variable specifies run-time library path" >&5
-echo $ECHO_N "checking which variable specifies run-time library path... $ECHO_C" >&6; }
-if test "${libltdl_cv_shlibpath_var+set}" = set; then
-  echo $ECHO_N "(cached) $ECHO_C" >&6
-else
-  libltdl_cv_shlibpath_var="$shlibpath_var"
-fi
-{ echo "$as_me:$LINENO: result: $libltdl_cv_shlibpath_var" >&5
-echo "${ECHO_T}$libltdl_cv_shlibpath_var" >&6; }
-if test -n "$libltdl_cv_shlibpath_var"; then
-
-cat >>confdefs.h <<_ACEOF
-#define LTDL_SHLIBPATH_VAR "$libltdl_cv_shlibpath_var"
-_ACEOF
-
-fi
-
-
 { echo "$as_me:$LINENO: checking for the default library search path" >&5
 echo $ECHO_N "checking for the default library search path... $ECHO_C" >&6; }
 if test "${libltdl_cv_sys_search_path+set}" = set; then
@@ -10537,7 +10518,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<EOF
-#line 10540 "configure"
+#line 10521 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -11099,7 +11080,6 @@ _ACEOF
 
 fi
 done
-
 
 
 
@@ -22308,7 +22288,6 @@ if test "${prefix}" = "NONE" ; then
 fi
 eval LLVM_PREFIX="${prefix}";
 eval LLVM_BINDIR="${prefix}/bin";
-eval LLVM_LIBDIR="${prefix}/lib";
 eval LLVM_DATADIR="${prefix}/share/llvm";
 eval LLVM_DOCSDIR="${prefix}/share/doc/llvm";
 eval LLVM_ETCDIR="${prefix}/etc/llvm";
@@ -22316,7 +22295,6 @@ eval LLVM_INCLUDEDIR="${prefix}/include";
 eval LLVM_INFODIR="${prefix}/info";
 eval LLVM_MANDIR="${prefix}/man";
 LLVM_CONFIGTIME=`date`
-
 
 
 
@@ -22339,11 +22317,6 @@ _ACEOF
 
 cat >>confdefs.h <<_ACEOF
 #define LLVM_BINDIR "$LLVM_BINDIR"
-_ACEOF
-
-
-cat >>confdefs.h <<_ACEOF
-#define LLVM_LIBDIR "$LLVM_LIBDIR"
 _ACEOF
 
 
@@ -22434,7 +22407,7 @@ echo "$as_me: WARNING: --enable-bindings=ocaml specified, but ocamlopt not found
 
       else
         # ocaml stdlib is outside our prefix; use libdir/ocaml
-        OCAML_LIBDIR=$LLVM_LIBDIR/ocaml
+        OCAML_LIBDIR=${prefix}/lib/ocaml
 
       fi
     fi
@@ -23518,7 +23491,6 @@ SHLIBEXT!$SHLIBEXT$ac_delim
 SHLIBPATH_VAR!$SHLIBPATH_VAR$ac_delim
 LLVM_PREFIX!$LLVM_PREFIX$ac_delim
 LLVM_BINDIR!$LLVM_BINDIR$ac_delim
-LLVM_LIBDIR!$LLVM_LIBDIR$ac_delim
 LLVM_DATADIR!$LLVM_DATADIR$ac_delim
 LLVM_DOCSDIR!$LLVM_DOCSDIR$ac_delim
 LLVM_ETCDIR!$LLVM_ETCDIR$ac_delim
@@ -23528,6 +23500,7 @@ LLVM_MANDIR!$LLVM_MANDIR$ac_delim
 LLVM_CONFIGTIME!$LLVM_CONFIGTIME$ac_delim
 BINDINGS_TO_BUILD!$BINDINGS_TO_BUILD$ac_delim
 ALL_BINDINGS!$ALL_BINDINGS$ac_delim
+OCAML_LIBDIR!$OCAML_LIBDIR$ac_delim
 _ACEOF
 
   if test `sed -n "s/.*$ac_delim\$/X/p" conf$$subs.sed | grep -c X` = 97; then
@@ -23569,7 +23542,6 @@ _ACEOF
 ac_delim='%!_!# '
 for ac_last_try in false false false false false :; do
   cat >conf$$subs.sed <<_ACEOF
-OCAML_LIBDIR!$OCAML_LIBDIR$ac_delim
 ENABLE_VISIBILITY_INLINES_HIDDEN!$ENABLE_VISIBILITY_INLINES_HIDDEN$ac_delim
 RPATH!$RPATH$ac_delim
 RDYNAMIC!$RDYNAMIC$ac_delim
@@ -23578,7 +23550,7 @@ LIBOBJS!$LIBOBJS$ac_delim
 LTLIBOBJS!$LTLIBOBJS$ac_delim
 _ACEOF
 
-  if test `sed -n "s/.*$ac_delim\$/X/p" conf$$subs.sed | grep -c X` = 7; then
+  if test `sed -n "s/.*$ac_delim\$/X/p" conf$$subs.sed | grep -c X` = 6; then
     break
   elif $ac_last_try; then
     { { echo "$as_me:$LINENO: error: could not make $CONFIG_STATUS" >&5

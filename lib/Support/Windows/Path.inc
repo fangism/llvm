@@ -20,10 +20,6 @@
 #include <cstdio>
 #include <malloc.h>
 
-// We need to undo a macro defined in Windows.h, otherwise we won't compile:
-#undef CopyFile
-#undef GetCurrentDirectory
-
 // Windows happily accepts either forward or backward slashes, though any path
 // returned by a Win32 API will have backward slashes.  As LLVM code basically
 // assumes forward slashes are used, backward slashs are converted where they
@@ -151,39 +147,6 @@ void Path::makeAbsolute() {
   }
 }
 
-bool
-Path::isAbsolute(const char *NameStart, unsigned NameLen) {
-  assert(NameStart);
-  // FIXME: This does not handle correctly an absolute path starting from
-  // a drive letter or in UNC format.
-  switch (NameLen) {
-  case 0:
-    return false;
-  case 1:
-  case 2:
-    return NameStart[0] == '/';
-  default:
-    return
-      (NameStart[0] == '/' || (NameStart[1] == ':' && NameStart[2] == '/')) ||
-      (NameStart[0] == '\\' || (NameStart[1] == ':' && NameStart[2] == '\\'));
-  }
-}
-
-bool
-Path::isAbsolute() const {
-  // FIXME: This does not handle correctly an absolute path starting from
-  // a drive letter or in UNC format.
-  switch (path.length()) {
-    case 0:
-      return false;
-    case 1:
-    case 2:
-      return path[0] == '/';
-    default:
-      return path[0] == '/' || (path[1] == ':' && path[2] == '/');
-  }
-}
-
 static Path *TempDirectory;
 
 Path
@@ -233,81 +196,6 @@ Path::GetTemporaryDirectory(std::string* ErrMsg) {
   return *TempDirectory;
 }
 
-// FIXME: the following set of functions don't map to Windows very well.
-Path
-Path::GetRootDirectory() {
-  // This is the only notion that that Windows has of a root directory. Nothing
-  // is here except for drives.
-  return Path("file:///");
-}
-
-void
-Path::GetSystemLibraryPaths(std::vector<sys::Path>& Paths) {
-  char buff[MAX_PATH];
-  // Generic form of C:\Windows\System32
-  HRESULT res =  SHGetFolderPathA(NULL,
-                                  CSIDL_FLAG_CREATE | CSIDL_SYSTEM,
-                                  NULL,
-                                  SHGFP_TYPE_CURRENT,
-                                  buff);
-  if (res != S_OK) {
-    assert(0 && "Failed to get system directory");
-    return;
-  }
-  Paths.push_back(sys::Path(buff));
-
-  // Reset buff.
-  buff[0] = 0;
-  // Generic form of C:\Windows
-  res =  SHGetFolderPathA(NULL,
-                          CSIDL_FLAG_CREATE | CSIDL_WINDOWS,
-                          NULL,
-                          SHGFP_TYPE_CURRENT,
-                          buff);
-  if (res != S_OK) {
-    assert(0 && "Failed to get windows directory");
-    return;
-  }
-  Paths.push_back(sys::Path(buff));
-}
-
-void
-Path::GetBitcodeLibraryPaths(std::vector<sys::Path>& Paths) {
-  char * env_var = getenv("LLVM_LIB_SEARCH_PATH");
-  if (env_var != 0) {
-    getPathList(env_var,Paths);
-  }
-#ifdef LLVM_LIBDIR
-  {
-    Path tmpPath;
-    if (tmpPath.set(LLVM_LIBDIR))
-      if (tmpPath.canRead())
-        Paths.push_back(tmpPath);
-  }
-#endif
-  GetSystemLibraryPaths(Paths);
-}
-
-Path
-Path::GetUserHomeDirectory() {
-  char buff[MAX_PATH];
-  HRESULT res = SHGetFolderPathA(NULL,
-                                 CSIDL_FLAG_CREATE | CSIDL_APPDATA,
-                                 NULL,
-                                 SHGFP_TYPE_CURRENT,
-                                 buff);
-  if (res != S_OK)
-    assert(0 && "Failed to get user home directory");
-  return Path(buff);
-}
-
-Path
-Path::GetCurrentDirectory() {
-  char pathname[MAX_PATH];
-  ::GetCurrentDirectoryA(MAX_PATH,pathname);
-  return Path(pathname);
-}
-
 /// GetMainExecutable - Return the path to the main executable, given the
 /// value of argv[0] from program startup.
 Path Path::GetMainExecutable(const char *argv0, void *MainAddr) {
@@ -318,43 +206,6 @@ Path Path::GetMainExecutable(const char *argv0, void *MainAddr) {
 
 
 // FIXME: the above set of functions don't map to Windows very well.
-
-
-StringRef Path::getDirname() const {
-  return getDirnameCharSep(path, "/");
-}
-
-StringRef
-Path::getBasename() const {
-  // Find the last slash
-  size_t slash = path.rfind('/');
-  if (slash == std::string::npos)
-    slash = 0;
-  else
-    slash++;
-
-  size_t dot = path.rfind('.');
-  if (dot == std::string::npos || dot < slash)
-    return StringRef(path).substr(slash);
-  else
-    return StringRef(path).substr(slash, dot - slash);
-}
-
-StringRef
-Path::getSuffix() const {
-  // Find the last slash
-  size_t slash = path.rfind('/');
-  if (slash == std::string::npos)
-    slash = 0;
-  else
-    slash++;
-
-  size_t dot = path.rfind('.');
-  if (dot == std::string::npos || dot < slash)
-    return StringRef("");
-  else
-    return StringRef(path).substr(dot + 1);
-}
 
 bool
 Path::exists() const {
@@ -411,23 +262,6 @@ Path::isRegularFile() const {
   return res;
 }
 
-StringRef
-Path::getLast() const {
-  // Find the last slash
-  size_t pos = path.rfind('/');
-
-  // Handle the corner cases
-  if (pos == std::string::npos)
-    return path;
-
-  // If the last character is a slash, we have a root directory
-  if (pos == path.length()-1)
-    return path;
-
-  // Return everything after the last slash
-  return StringRef(path).substr(pos+1);
-}
-
 const FileStatus *
 PathWithStatus::getFileStatus(bool update, std::string *ErrStr) const {
   if (!fsIsValid || update) {
@@ -482,11 +316,6 @@ bool Path::makeWriteableOnDisk(std::string* ErrMsg) {
       return true;
     }
   }
-  return false;
-}
-
-bool Path::makeExecutableOnDisk(std::string* ErrMsg) {
-  // All files are executable on Windows (ignoring security attributes).
   return false;
 }
 
@@ -671,18 +500,6 @@ Path::createDirectoryOnDisk(bool create_parents, std::string* ErrMsg) {
 }
 
 bool
-Path::createFileOnDisk(std::string* ErrMsg) {
-  // Create the file
-  HANDLE h = CreateFile(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_NEW,
-                        FILE_ATTRIBUTE_NORMAL, NULL);
-  if (h == INVALID_HANDLE_VALUE)
-    return MakeErrMsg(ErrMsg, path + ": Can't create file: ");
-
-  CloseHandle(h);
-  return false;
-}
-
-bool
 Path::eraseFromDisk(bool remove_contents, std::string *ErrStr) const {
   WIN32_FILE_ATTRIBUTE_DATA fi;
   if (!GetFileAttributesEx(path.c_str(), GetFileExInfoStandard, &fi))
@@ -763,31 +580,6 @@ Path::eraseFromDisk(bool remove_contents, std::string *ErrStr) const {
   }
 }
 
-bool Path::getMagicNumber(std::string& Magic, unsigned len) const {
-  assert(len < 1024 && "Request for magic string too long");
-  char* buf = reinterpret_cast<char*>(alloca(len));
-
-  HANDLE h = CreateFile(path.c_str(),
-                        GENERIC_READ,
-                        FILE_SHARE_READ,
-                        NULL,
-                        OPEN_EXISTING,
-                        FILE_ATTRIBUTE_NORMAL,
-                        NULL);
-  if (h == INVALID_HANDLE_VALUE)
-    return false;
-
-  DWORD nRead = 0;
-  BOOL ret = ReadFile(h, buf, len, &nRead, NULL);
-  CloseHandle(h);
-
-  if (!ret || nRead != len)
-    return false;
-
-  Magic = std::string(buf, len);
-  return true;
-}
-
 bool
 Path::renamePathOnDisk(const Path& newName, std::string* ErrMsg) {
   if (!MoveFileEx(path.c_str(), newName.c_str(), MOVEFILE_REPLACE_EXISTING))
@@ -854,16 +646,6 @@ Path::setStatusInfoOnDisk(const FileStatus &si, std::string *ErrMsg) const {
 }
 
 bool
-CopyFile(const sys::Path &Dest, const sys::Path &Src, std::string* ErrMsg) {
-  // Can't use CopyFile macro defined in Windows.h because it would mess up the
-  // above line.  We use the expansion it would have in a non-UNICODE build.
-  if (!::CopyFileA(Src.c_str(), Dest.c_str(), false))
-    return MakeErrMsg(ErrMsg, "Can't copy '" + Src.str() +
-               "' to '" + Dest.str() + "': ");
-  return false;
-}
-
-bool
 Path::makeUnique(bool reuse_current, std::string* ErrMsg) {
   bool Exists;
   if (reuse_current && (fs::exists(path, Exists) || !Exists))
@@ -911,16 +693,5 @@ Path::createTemporaryFileOnDisk(bool reuse_current, std::string* ErrMsg) {
   CloseHandle(h);
   return false;
 }
-
-/// MapInFilePages - Not yet implemented on win32.
-const char *Path::MapInFilePages(int FD, size_t FileSize, off_t Offset) {
-  return 0;
-}
-
-/// MapInFilePages - Not yet implemented on win32.
-void Path::UnMapFilePages(const char *Base, size_t FileSize) {
-  assert(0 && "NOT IMPLEMENTED");
-}
-
 }
 }
