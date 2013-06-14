@@ -21,9 +21,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
 
-#define	ENABLE_STACKTRACE		0
-#include "llvm/Support/stacktrace.h"
-
 using namespace llvm;
 
 static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
@@ -141,7 +138,6 @@ namespace {
     DarwinPPCAsmBackend(const Target &T) : PPCAsmBackend(T) { }
 
     MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
-      STACKTRACE_VERBOSE;
       bool is64 = getPointerSize() == 8;
       return createPPCMachObjectWriter(OS, 
                                       /*Is64Bit=*/is64,
@@ -178,7 +174,6 @@ namespace {
 
 
 MCAsmBackend *llvm::createPPCAsmBackend(const Target &T, StringRef TT, StringRef CPU) {
-  STACKTRACE_VERBOSE;
   if (Triple(TT).isOSDarwin())
     return new DarwinPPCAsmBackend(T);
 

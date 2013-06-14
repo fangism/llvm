@@ -24,9 +24,6 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/Target/Mangler.h"
 
-#define	ENABLE_STACKTRACE		0
-#include "llvm/Support/stacktrace.h"
-#include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
 static MachineModuleInfoMachO &getMachOMMI(AsmPrinter &AP) {
@@ -35,17 +32,14 @@ static MachineModuleInfoMachO &getMachOMMI(AsmPrinter &AP) {
 
 
 static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
-  STACKTRACE_VERBOSE;
   MCContext &Ctx = AP.OutContext;
 
   SmallString<128> Name;
   if (!MO.isGlobal()) {
-    STACKTRACE_INDENT_PRINT("!MO.isGlobal()" << endl);
     assert(MO.isSymbol() && "Isn't a symbol reference");
     Name += AP.MAI->getGlobalPrefix();
     Name += MO.getSymbolName();
   } else {    
-    STACKTRACE_INDENT_PRINT("MO.isGlobal()" << endl);
     const GlobalValue *GV = MO.getGlobal();
     bool isImplicitlyPrivate = false;
     if (MO.getTargetFlags() == PPCII::MO_DARWIN_STUB ||
@@ -54,12 +48,10 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
     
     AP.Mang->getNameWithPrefix(Name, GV, isImplicitlyPrivate);
   }
-  STACKTRACE_INDENT_PRINT("base Name: " << Name << endl);
   
   // If the target flags on the operand changes the name of the symbol, do that
   // before we return the symbol.
   if (MO.getTargetFlags() == PPCII::MO_DARWIN_STUB) {
-    STACKTRACE_INDENT_PRINT("is PPCII::MO_DARWIN_STUB" << endl);
     Name += "$stub";
     const char *PGP = AP.MAI->getPrivateGlobalPrefix();
     const char *Prefix = "";
@@ -81,7 +73,6 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
                   !MO.getGlobal()->hasInternalLinkage());
     } else {
       Name.erase(Name.end()-5, Name.end());
-      STACKTRACE_INDENT_PRINT("local stub Name: " << Name << endl);
       StubSym =
       MachineModuleInfoImpl::
       StubValueTy(Ctx.GetOrCreateSymbol(Name.str()), false);

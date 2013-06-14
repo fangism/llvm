@@ -57,9 +57,6 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 
-#define	ENABLE_STACKTRACE			0
-#include "llvm/Support/stacktrace.h"
-
 using namespace llvm;
 
 namespace {
@@ -887,7 +884,6 @@ static MCSymbol *GetAnonSym(MCSymbol *Sym, MCContext &Ctx) {
 
 void PPCDarwinAsmPrinter::
 EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
-  STACKTRACE_VERBOSE;
   bool isPPC64 = TM.getDataLayout()->getPointerSizeInBits() == 64;
   
   const TargetLoweringObjectFileMachO &TLOFMacho = 
@@ -899,7 +895,6 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
   // Output stubs for dynamically-linked functions
   // see http://developer.apple.com/library/mac/#documentation/developertools/reference/assembler/050-PowerPC_Addressing_Modes_and_Assembler_Instructions/ppc_instructions.html
   if (TM.getRelocationModel() == Reloc::PIC_) {
-    STACKTRACE_INDENT_PRINT("Reloc::PIC_" << endl);
     const MCSection *StubSection = 
     OutContext.getMachOSection("__TEXT", "__picsymbolstub1",
                                MCSectionMachO::S_SYMBOL_STUBS |
@@ -968,7 +963,6 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
     return;
   }
   
-  STACKTRACE_INDENT_PRINT("not Reloc::PIC_" << endl);
   const MCSection *StubSection =
     OutContext.getMachOSection("__TEXT","__symbol_stub1",
                                MCSectionMachO::S_SYMBOL_STUBS |
@@ -1026,7 +1020,6 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
 
 
 bool PPCDarwinAsmPrinter::doFinalization(Module &M) {
-  STACKTRACE_VERBOSE;
   bool isPPC64 = TM.getDataLayout()->getPointerSizeInBits() == 64;
 
   // Darwin/PPC always uses mach-o.

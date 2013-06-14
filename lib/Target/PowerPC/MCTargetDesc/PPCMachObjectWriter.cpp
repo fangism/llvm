@@ -32,15 +32,8 @@ http://opensource.apple.com/source/cctools/cctools-809/as/ppc.c
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
 
-#define	ENABLE_STACKTRACE		0
-
-#include "llvm/Support/stacktrace.h"	// for debugging
-
 using namespace llvm;
 using namespace llvm::object;
-#if ENABLE_STACKTRACE
-using llvm::endl;
-#endif
 
 namespace {
 class PPCMachObjectWriter : public MCMachObjectTargetWriter {
@@ -88,10 +81,8 @@ public:
 		getFixupKindInfo() for sizes.
  */
 static unsigned getFixupKindLog2Size(unsigned Kind) {
-  STACKTRACE_VERBOSE;
   switch (Kind) {
   default:
-    STACKTRACE_INDENT_PRINT("Kind = " << Kind << endl);
     llvm_unreachable("invalid fixup kind!");
   case FK_PCRel_1:
   case FK_Data_1: return 0;
@@ -133,8 +124,6 @@ getRelocType(
 	const MCValue &Target,
 	const MCFixupKind FixupKind,	// from Fixup.getKind()
 	const bool IsPCRel) {
-  STACKTRACE_BRIEF;
-  STACKTRACE_INDENT_PRINT("getRelocType(): got FixupKind " << FixupKind << endl);
 #if 0
   const MCSymbolRefExpr::VariantKind Modifier = Target.isAbsolute() ?
     MCSymbolRefExpr::VK_None : Target.getSymA()->getKind();
@@ -319,7 +308,6 @@ makeRelocationInfo(
 	const unsigned Log2Size,
 	const unsigned IsExtern, 
 	const unsigned Type) {
-  STACKTRACE_BRIEF;
   MRE.Word0 = FixupOffset;
 // experimenting with order (endian fishiness on PPC?)
   MRE.Word1 = ((Index     << 8) |	// was << 0
@@ -327,14 +315,11 @@ makeRelocationInfo(
                (Log2Size  << 5) |	// was << 25
                (IsExtern  << 4) |	// was << 27
                (Type      << 0));	// was << 28
-  STACKTRACE_INDENT_PRINT("FixupOffset: " << hex(FixupOffset) <<
 	", Index: " << Index <<
 	", IsPCRel: " << IsPCRel <<
 	", Log2Size: " << Log2Size <<
 	", IsExtern: " << IsExtern <<
 	", Type: " << Type << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word0 = " << hex(MRE.Word0) << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word1 = " << hex(MRE.Word1) << endl);
 }
 
 static
@@ -347,7 +332,6 @@ makeScatteredRelocationInfo(
 	const unsigned Log2Size,
 	const unsigned IsPCRel, 
 	const uint32_t Value2) {
-  STACKTRACE_BRIEF;
   // FIXME: see <mach-o/reloc.h> for note on endianness
   MRE.Word0 = ((Addr      <<  0) |
                (Type      << 24) |
@@ -355,12 +339,6 @@ makeScatteredRelocationInfo(
                (IsPCRel   << 30) |
                macho::RF_Scattered);
   MRE.Word1 = Value2;
-  STACKTRACE_INDENT_PRINT("Addr: " << hex(Addr) <<
-	", Type: " << Type <<
-	", Log2Size: " << Log2Size <<
-	", IsPCRel: " << IsPCRel << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word0 = " << hex(MRE.Word0) << endl);
-  STACKTRACE_INDENT_PRINT("MRE.Word1 = " << hex(MRE.Word1) << endl);
 }
 
 /**
@@ -377,14 +355,12 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
                                                     MCValue Target,
                                                     unsigned Log2Size,
                                                     uint64_t &FixedValue) {
-  STACKTRACE_VERBOSE;
   // caller already computes these, can we just pass and reuse?
   uint32_t FixupOffset = Layout.getFragmentOffset(Fragment)+Fixup.getOffset();
   const MCFixupKind FK = Fixup.getKind();
   unsigned IsPCRel = Writer->isFixupKindPCRel(Asm, FK);
 //  unsigned Type = macho::RIT_PPC_VANILLA;
   unsigned Type = getRelocType(Target, FK, IsPCRel);
-  STACKTRACE_INDENT_PRINT("mach-o scattered reloc type: " << Type << endl);
     /*
      * odcctools-20090808:as/write_object.c:fix_to_relocation_entries():
      * Determine if this is left as a local relocation entry or
@@ -407,8 +383,6 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
 
   uint32_t Value = Writer->getSymbolAddress(A_SD, Layout);
   uint64_t SecAddr = Writer->getSectionAddress(A_SD->getFragment()->getParent());
-  STACKTRACE_INDENT_PRINT("A symbol address: " << hex(Value) << endl);
-  STACKTRACE_INDENT_PRINT("A section address: " << hex(SecAddr) << endl);
   FixedValue += SecAddr;
   uint32_t Value2 = 0;
 
@@ -433,11 +407,8 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
 #endif
     // FIXME: is Type correct? see include/llvm/Object/MachOFormat.h
     Value2 = Writer->getSymbolAddress(B_SD, Layout);
-    STACKTRACE_INDENT_PRINT("B symbol address: " << hex(Value2) << endl);
     FixedValue -= Writer->getSectionAddress(B_SD->getFragment()->getParent());
   }
-  STACKTRACE_INDENT_PRINT("Type = " << Type << endl);
-  STACKTRACE_INDENT_PRINT("FixedValue: " << hex(FixedValue) << endl);
   // FIXME: does FixedValue get used??
 
   // Relocations are written out in reverse order, so the PAIR comes first.
@@ -450,7 +421,6 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
 //  if (Type == macho::RIT_Difference ||
 //      Type == macho::RIT_Generic_LocalDifference)
   {
-    STACKTRACE_INDENT_PRINT("Type is Difference or Generic_LocalDifference" << endl);
 #if 1
     // X86 had this piece, but ARM does not
     // If the offset is too large to fit in a scattered relocation,
@@ -481,7 +451,6 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
       break;
     }
 
-    STACKTRACE_INDENT_PRINT("scattered relocation entry, part 1" << endl);
     macho::RelocationEntry MRE;
     makeScatteredRelocationInfo(MRE,
 //	0,
@@ -501,7 +470,6 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
       return false;
 #endif
   }
-  STACKTRACE_INDENT_PRINT("scattered relocation entry" << endl);
   macho::RelocationEntry MRE;
   makeScatteredRelocationInfo(MRE,
 	FixupOffset, Type, Log2Size, IsPCRel, Value);
@@ -517,15 +485,10 @@ void PPCMachObjectWriter::RecordPPCRelocation(MachObjectWriter *Writer,
                                               const MCFixup &Fixup,
                                               MCValue Target,
                                               uint64_t &FixedValue) {
-  STACKTRACE_VERBOSE;
   const MCFixupKind FK = Fixup.getKind();	// unsigned
-  STACKTRACE_INDENT_PRINT("FK = " << FK << endl);
   const unsigned Log2Size = getFixupKindLog2Size(FK);
-  STACKTRACE_INDENT_PRINT("Log2Size = " << Log2Size << endl);
   const bool IsPCRel = Writer->isFixupKindPCRel(Asm, FK);
-  STACKTRACE_INDENT_PRINT("IsPCRel = " << IsPCRel << endl);
   const unsigned RelocType = getRelocType(Target, FK, IsPCRel);
-  STACKTRACE_INDENT_PRINT("RelocType = " << RelocType << endl);
 
 #if 0
   if (!getRelocType(Target, FK, IsPCRel))
@@ -551,21 +514,17 @@ void PPCMachObjectWriter::RecordPPCRelocation(MachObjectWriter *Writer,
   }
 
   // this doesn't seem right for RIT_PPC_BR24
-  STACKTRACE_INDENT_PRINT("getting symbol A" << endl);
   // Get the symbol data, if any.
   MCSymbolData *SD = 0;
   if (Target.getSymA())
     SD = &Asm.getSymbolData(Target.getSymA()->getSymbol());
-  if (SD) STACKTRACE_INDENT_PRINT("using symbol A data" << endl);
 
 if (0) {
   // If this is an internal relocation with an offset, it also needs a scattered
   // relocation entry.
   uint32_t Offset = Target.getConstant();
-  STACKTRACE_INDENT_PRINT("Target.getConstant(): " << hex(Offset) << endl);
   if (IsPCRel)
     Offset += 1 << Log2Size;
-  STACKTRACE_INDENT_PRINT("Offset: " << hex(Offset) << endl);
   // Try to record the scattered relocation if needed. Fall back to non
   // scattered if necessary (see comments in RecordScatteredRelocation()
   // for details).
@@ -577,18 +536,10 @@ if (0) {
 
   // See <reloc.h>.
   const uint32_t FixupOffset = Layout.getFragmentOffset(Fragment)+Fixup.getOffset();
-  STACKTRACE_INDENT_PRINT("FixupOffset = " << hex(FixupOffset) << endl);
   unsigned Index = 0;
   unsigned IsExtern = 0;
 //  unsigned Type = 0;
   unsigned Type = RelocType;
-
-#if ENABLE_STACKTRACE
-  MCSectionData* FragmentParent = Fragment->getParent();
-  const MCSection& Sec(FragmentParent->getSection());
-  STACKTRACE_INDENT_PRINT("section kind: " << Sec.getKind().getKindEnum() << endl);
-  STACKTRACE_INDENT_PRINT("section label: " << Sec.getLabelBeginName() << endl);
-#endif
 
   if (Target.isAbsolute()) { // constant
     // SymbolNum of 0 indicates the absolute section.
@@ -600,23 +551,18 @@ if (0) {
     // the above line stolen from ARM, not sure
 //    Type = macho::RIT_PPC_VANILLA;
   } else {
-    STACKTRACE_INDENT_PRINT("target is relative" << endl);
     // Resolve constant variables.
     if (SD->getSymbol().isVariable()) {
-      STACKTRACE_INDENT_PRINT("symbol is variable" << endl);
       int64_t Res;
       if (SD->getSymbol().getVariableValue()->EvaluateAsAbsolute(
             Res, Layout, Writer->getSectionAddressMap())) {
         FixedValue = Res;
-        STACKTRACE_INDENT_PRINT("evaluated FixedValue = " <<
-		hex(FixedValue) << endl);
         return;
       }
     }
 
     // Check whether we need an external or internal relocation.
     if (Writer->doesSymbolRequireExternRelocation(SD)) {
-      STACKTRACE_INDENT_PRINT("requires extern relocation" << endl);
       IsExtern = 1;
       Index = SD->getIndex();
       // For external relocations, make sure to offset the fixup value to
@@ -625,7 +571,6 @@ if (0) {
       if (!SD->Symbol->isUndefined())
         FixedValue -= Layout.getSymbolOffset(SD);
     } else {
-      STACKTRACE_INDENT_PRINT("no extern relocation" << endl);
       // The index is the section ordinal (1-based).
       const MCSectionData &SymSD = Asm.getSectionData(
         SD->getSymbol().getSection());
@@ -634,8 +579,6 @@ if (0) {
     }
     if (IsPCRel)
       FixedValue -= Writer->getSectionAddress(Fragment->getParent());
-    STACKTRACE_INDENT_PRINT("Index = " << Index << endl);
-    STACKTRACE_INDENT_PRINT("fixed address = " << FixedValue << endl);
 
 //    Type = macho::RIT_PPC_VANILLA;
   }
@@ -651,7 +594,6 @@ MCObjectWriter *llvm::createPPCMachObjectWriter(raw_ostream &OS,
                                                 bool Is64Bit,
                                                 uint32_t CPUType,
                                                 uint32_t CPUSubtype) {
-  STACKTRACE_VERBOSE;
   return createMachObjectWriter(new PPCMachObjectWriter(Is64Bit,
                                                         CPUType,
                                                         CPUSubtype),
