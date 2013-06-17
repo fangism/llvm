@@ -83,7 +83,7 @@ static size_t vectorDataSize(const std::vector<T> &Vec) {
 
 template <class T>
 static void writeVectorData(raw_ostream &OS, const std::vector<T> &Vec) {
-  OS.write((const char *)Vec.data(), vectorDataSize(Vec));
+  OS.write((const char *)&Vec.front(), vectorDataSize(Vec));
 }
 
 template <class T>
