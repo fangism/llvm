@@ -34,7 +34,8 @@ class SmallBitVector {
   // pointer to memory containing size, allocation size, and the array of bits.
   uintptr_t X;
 
-  enum {
+// gcc-4.0 workaround: make certain enums non-anonymous
+  enum _nums {
     // The number of bits in this class.
     NumBaseBits = sizeof(uintptr_t) * CHAR_BIT,
 
