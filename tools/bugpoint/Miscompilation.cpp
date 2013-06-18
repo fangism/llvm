@@ -25,6 +25,7 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/PathV1.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 using namespace llvm;
 
@@ -120,7 +121,7 @@ ReduceMiscompilingPasses::doTest(std::vector<std::string> &Prefix,
     return InternalError;
   if (Diff) {
     outs() << " nope.\n";
-    sys::Path(BitcodeResult).eraseFromDisk();
+    sys::fs::remove(BitcodeResult);
     return KeepPrefix;
   }
   outs() << " yup.\n";      // No miscompilation!
@@ -135,7 +136,7 @@ ReduceMiscompilingPasses::doTest(std::vector<std::string> &Prefix,
            << BitcodeResult << "'!\n";
     exit(1);
   }
-  sys::Path(BitcodeResult).eraseFromDisk();  // No longer need the file on disk
+  sys::fs::remove(BitcodeResult);
 
   // Don't check if there are no passes in the suffix.
   if (Suffix.empty())

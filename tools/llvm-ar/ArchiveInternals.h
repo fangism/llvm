@@ -11,18 +11,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LIB_ARCHIVE_ARCHIVEINTERNALS_H
-#define LIB_ARCHIVE_ARCHIVEINTERNALS_H
+#ifndef TOOLS_LLVM_AR_ARCHIVEINTERNALS_H
+#define TOOLS_LLVM_AR_ARCHIVEINTERNALS_H
 
+#include "Archive.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Bitcode/Archive.h"
 #include "llvm/Support/TimeValue.h"
 #include <cstring>
 
 #define ARFILE_MAGIC "!<arch>\n"                   ///< magic string
 #define ARFILE_MAGIC_LEN (sizeof(ARFILE_MAGIC)-1)  ///< length of magic string
 #define ARFILE_SVR4_SYMTAB_NAME "/               " ///< SVR4 symtab entry name
-#define ARFILE_LLVM_SYMTAB_NAME "#_LLVM_SYM_TAB_#" ///< LLVM symtab entry name
 #define ARFILE_BSD4_SYMTAB_NAME "__.SYMDEF SORTED" ///< BSD4 symtab entry name
 #define ARFILE_STRTAB_NAME      "//              " ///< Name of string table
 #define ARFILE_PAD "\n"                            ///< inter-file align padding

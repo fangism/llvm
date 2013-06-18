@@ -42,6 +42,7 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Target/Mangler.h"
+#include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
@@ -562,10 +563,15 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
 
   // cast away const; DIetc do not take const operands for some reason.
   DIVariable V(const_cast<MDNode*>(MI->getOperand(2).getMetadata()));
-  if (V.getContext().isSubprogram())
-    OS << DISubprogram(V.getContext()).getDisplayName() << ":";
+  if (V.getContext().isSubprogram()) {
+    StringRef Name = DISubprogram(V.getContext()).getDisplayName();
+    if (!Name.empty())
+      OS << Name << ":";
+  }
   OS << V.getName() << " <- ";
 
+  int64_t Offset = MI->getOperand(1).getImm();
+  bool Deref = false;
   // Register or immediate value. Register 0 means undef.
   if (MI->getOperand(0).isFPImm()) {
     APFloat APF = APFloat(MI->getOperand(0).getFPImm()->getValueAPF());
@@ -586,18 +592,33 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
   } else if (MI->getOperand(0).isCImm()) {
     MI->getOperand(0).getCImm()->getValue().print(OS, false /*isSigned*/);
   } else {
-    assert(MI->getOperand(0).isReg() && "Unknown operand type");
-    if (MI->getOperand(0).getReg() == 0) {
+    unsigned Reg;
+    if (MI->getOperand(0).isReg()) {
+      Reg = MI->getOperand(0).getReg();
+      Deref = Offset != 0; // FIXME: use a better sentinel value so that deref
+                           // of a reg with a zero offset is valid
+    } else {
+      assert(MI->getOperand(0).isFI() && "Unknown operand type");
+      const TargetFrameLowering *TFI = AP.TM.getFrameLowering();
+      Offset += TFI->getFrameIndexReference(*AP.MF, MI->getOperand(0).getIndex(), Reg);
+      Deref = true;
+    }
+    if (Reg == 0) {
       // Suppress offset, it is not meaningful here.
       OS << "undef";
       // NOTE: Want this comment at start of line, don't emit with AddComment.
       AP.OutStreamer.EmitRawText(OS.str());
       return true;
     }
-    OS << AP.TM.getRegisterInfo()->getName(MI->getOperand(0).getReg());
+    if (Deref)
+      OS << '[';
+    OS << AP.TM.getRegisterInfo()->getName(Reg);
   }
 
-  OS << '+' << MI->getOperand(1).getImm();
+  if (Offset)
+    OS << '+' << Offset;
+  if (Deref)
+    OS << ']';
   // NOTE: Want this comment at start of line, don't emit with AddComment.
   AP.OutStreamer.EmitRawText(OS.str());
   return true;
@@ -788,14 +809,6 @@ void AsmPrinter::EmitFunctionBody() {
   EmitJumpTableInfo();
 
   OutStreamer.AddBlankLine();
-}
-
-/// getDebugValueLocation - Get location information encoded by DBG_VALUE
-/// operands.
-MachineLocation AsmPrinter::
-getDebugValueLocation(const MachineInstr *MI) const {
-  // Target specific DBG_VALUE instructions are handled by each target.
-  return MachineLocation();
 }
 
 /// EmitDwarfRegOp - Emit dwarf register operation.

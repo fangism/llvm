@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Bitcode/Archive.h"
+#include "Archive.h"
 #include "ArchiveInternals.h"
 #include "llvm/Bitcode/ReaderWriter.h"
 #include "llvm/IR/Module.h"
@@ -89,12 +89,6 @@ bool ArchiveMember::replaceWith(const sys::Path& newFile, std::string* ErrMsg) {
     flags |= BSD4SymbolTableFlag;
   else
     flags &= ~BSD4SymbolTableFlag;
-
-  // LLVM symbol tables have a very specific name
-  if (path.str() == ARFILE_LLVM_SYMTAB_NAME)
-    flags |= LLVMSymbolTableFlag;
-  else
-    flags &= ~LLVMSymbolTableFlag;
 
   // String table name
   if (path.str() == ARFILE_STRTAB_NAME)

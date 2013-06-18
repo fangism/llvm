@@ -33,6 +33,7 @@ using namespace llvm;
 // to deduplicate suffixes. std::map<> with a custom comparator is likely
 // to be the simplest implementation, but a suffix trie could be more
 // suitable for the job.
+namespace {
 class StringTableBuilder {
   /// \brief Indices of strings currently present in `Buf`.
   StringMap<unsigned> StringIndices;
@@ -60,10 +61,12 @@ public:
     OS.write(Buf.data(), Buf.size());
   }
 };
+} // end anonymous namespace
 
 // This class is used to build up a contiguous binary blob while keeping
 // track of an offset in the output (which notionally begins at
 // `InitialOffset`).
+namespace {
 class ContiguousBlobAccumulator {
   const uint64_t InitialOffset;
   raw_svector_ostream OS;
@@ -75,6 +78,32 @@ public:
   uint64_t currentOffset() const { return InitialOffset + OS.tell(); }
   void writeBlobToStream(raw_ostream &Out) { Out << OS.str(); }
 };
+} // end anonymous namespace
+
+// Used to keep track of section names, so that in the YAML file sections
+// can be referenced by name instead of by index.
+namespace {
+class SectionNameToIdxMap {
+  StringMap<int> Map;
+public:
+  /// \returns true if name is already present in the map.
+  bool addName(StringRef SecName, unsigned i) {
+    StringMapEntry<int> &Entry = Map.GetOrCreateValue(SecName, -1);
+    if (Entry.getValue() != -1)
+      return true;
+    Entry.setValue((int)i);
+    return false;
+  }
+  /// \returns true if name is not present in the map
+  bool lookupSection(StringRef SecName, unsigned &Idx) const {
+    StringMap<int>::const_iterator I = Map.find(SecName);
+    if (I == Map.end())
+      return true;
+    Idx = I->getValue();
+    return false;
+  }
+};
+} // end anonymous namespace
 
 template <class T>
 static size_t vectorDataSize(const std::vector<T> &Vec) {
@@ -91,8 +120,21 @@ static void zero(T &Obj) {
   memset(&Obj, 0, sizeof(Obj));
 }
 
+/// \brief Create a string table in `SHeader`, which we assume is already
+/// zero'd.
+template <class Elf_Shdr>
+static void createStringTableSectionHeader(Elf_Shdr &SHeader,
+                                           StringTableBuilder &STB,
+                                           ContiguousBlobAccumulator &CBA) {
+  SHeader.sh_type = ELF::SHT_STRTAB;
+  SHeader.sh_offset = CBA.currentOffset();
+  SHeader.sh_size = STB.size();
+  STB.writeToStream(CBA.getOS());
+  SHeader.sh_addralign = 1;
+}
+
 template <class ELFT>
-static void writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
+static int writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
   using namespace llvm::ELF;
   using namespace llvm::object;
   typedef typename ELFObjectFile<ELFT>::Elf_Ehdr Elf_Ehdr;
@@ -131,6 +173,8 @@ static void writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
     ELFYAML::Section S;
     S.Type = SHT_NULL;
     zero(S.Flags);
+    zero(S.Address);
+    zero(S.AddressAlign);
     Sections.insert(Sections.begin(), S);
   }
   // "+ 1" for string table.
@@ -138,7 +182,19 @@ static void writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
   // Place section header string table last.
   Header.e_shstrndx = Sections.size();
 
-  StringTableBuilder StrTab;
+  SectionNameToIdxMap SN2I;
+  for (unsigned i = 0, e = Sections.size(); i != e; ++i) {
+    StringRef Name = Sections[i].Name;
+    if (Name.empty())
+      continue;
+    if (SN2I.addName(Name, i)) {
+      errs() << "error: Repeated section name: '" << Name
+             << "' at YAML section number " << i << ".\n";
+      return 1;
+    }
+  }
+
+  StringTableBuilder SHStrTab;
   SmallVector<char, 128> Buf;
   // XXX: This offset is tightly coupled with the order that we write
   // things to `OS`.
@@ -150,7 +206,7 @@ static void writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
     const ELFYAML::Section &Sec = Sections[i];
     Elf_Shdr SHeader;
     zero(SHeader);
-    SHeader.sh_name = StrTab.addString(Sec.Name);
+    SHeader.sh_name = SHStrTab.addString(Sec.Name);
     SHeader.sh_type = Sec.Type;
     SHeader.sh_flags = Sec.Flags;
     SHeader.sh_addr = Sec.Address;
@@ -159,32 +215,31 @@ static void writeELF(raw_ostream &OS, const ELFYAML::Object &Doc) {
     SHeader.sh_size = Sec.Content.binary_size();
     Sec.Content.writeAsBinary(CBA.getOS());
 
-    SHeader.sh_link = 0;
+    if (!Sec.Link.empty()) {
+      unsigned Index;
+      if (SN2I.lookupSection(Sec.Link, Index)) {
+        errs() << "error: Unknown section referenced: '" << Sec.Link
+               << "' at YAML section number " << i << ".\n";
+        return 1;
+      }
+      SHeader.sh_link = Index;
+    }
     SHeader.sh_info = 0;
     SHeader.sh_addralign = Sec.AddressAlign;
     SHeader.sh_entsize = 0;
     SHeaders.push_back(SHeader);
   }
 
-  // String table header.
-  Elf_Shdr StrTabSHeader;
-  zero(StrTabSHeader);
-  StrTabSHeader.sh_name = 0;
-  StrTabSHeader.sh_type = SHT_STRTAB;
-  StrTabSHeader.sh_flags = 0;
-  StrTabSHeader.sh_addr = 0;
-  StrTabSHeader.sh_offset = CBA.currentOffset();
-  StrTabSHeader.sh_size = StrTab.size();
-  StrTab.writeToStream(CBA.getOS());
-  StrTabSHeader.sh_link = 0;
-  StrTabSHeader.sh_info = 0;
-  StrTabSHeader.sh_addralign = 1;
-  StrTabSHeader.sh_entsize = 0;
+  // Section header string table header.
+  Elf_Shdr SHStrTabSHeader;
+  zero(SHStrTabSHeader);
+  createStringTableSectionHeader(SHStrTabSHeader, SHStrTab, CBA);
 
   OS.write((const char *)&Header, sizeof(Header));
   writeVectorData(OS, SHeaders);
-  OS.write((const char *)&StrTabSHeader, sizeof(StrTabSHeader));
+  OS.write((const char *)&SHStrTabSHeader, sizeof(SHStrTabSHeader));
   CBA.writeBlobToStream(OS);
+  return 0;
 }
 
 int yaml2elf(llvm::raw_ostream &Out, llvm::MemoryBuffer *Buf) {
@@ -197,15 +252,13 @@ int yaml2elf(llvm::raw_ostream &Out, llvm::MemoryBuffer *Buf) {
   }
   if (Doc.Header.Class == ELFYAML::ELF_ELFCLASS(ELF::ELFCLASS64)) {
     if (Doc.Header.Data == ELFYAML::ELF_ELFDATA(ELF::ELFDATA2LSB))
-      writeELF<object::ELFType<support::little, 8, true> >(outs(), Doc);
+      return writeELF<object::ELFType<support::little, 8, true> >(outs(), Doc);
     else
-      writeELF<object::ELFType<support::big, 8, true> >(outs(), Doc);
+      return writeELF<object::ELFType<support::big, 8, true> >(outs(), Doc);
   } else {
     if (Doc.Header.Data == ELFYAML::ELF_ELFDATA(ELF::ELFDATA2LSB))
-      writeELF<object::ELFType<support::little, 4, false> >(outs(), Doc);
+      return writeELF<object::ELFType<support::little, 4, false> >(outs(), Doc);
     else
-      writeELF<object::ELFType<support::big, 4, false> >(outs(), Doc);
+      return writeELF<object::ELFType<support::big, 4, false> >(outs(), Doc);
   }
-
-  return 0;
 }
