@@ -199,6 +199,7 @@ struct file_magic {
     macho_bundle,             ///< Mach-O Bundle file
     macho_dynamically_linked_shared_lib_stub, ///< Mach-O Shared lib stub
     macho_dsym_companion,     ///< Mach-O dSYM companion file
+    macho_universal_binary,   ///< Mach-O universal binary
     coff_object,              ///< COFF object file
     pecoff_executable         ///< PECOFF executable file
   };
@@ -507,6 +508,10 @@ error_code status_known(const Twine &path, bool &result);
 error_code unique_file(const Twine &model, int &result_fd,
                        SmallVectorImpl<char> &result_path,
                        bool makeAbsolute = true, unsigned mode = 0600);
+
+/// @brief Simpler version for clients that don't want an open file.
+error_code unique_file(const Twine &Model, SmallVectorImpl<char> &ResultPath,
+                       bool MakeAbsolute = true, unsigned Mode = 0600);
 
 /// @brief Canonicalize path.
 ///

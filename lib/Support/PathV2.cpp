@@ -18,8 +18,11 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
-#ifdef __APPLE__
+
+#if !defined(_MSC_VER) && !defined(__MINGW32__)
 #include <unistd.h>
+#else
+#include <io.h>
 #endif
 
 namespace {
@@ -625,6 +628,14 @@ bool is_relative(const Twine &path) {
 
 namespace fs {
 
+error_code unique_file(const Twine &Model, SmallVectorImpl<char> &ResultPath,
+                       bool MakeAbsolute, unsigned Mode) {
+  int FD;
+  error_code Ret = unique_file(Model, FD, ResultPath, MakeAbsolute, Mode);
+  close(FD);
+  return Ret;
+}
+
 error_code make_absolute(SmallVectorImpl<char> &path) {
   StringRef p(path.data(), path.size());
 
@@ -813,8 +824,7 @@ error_code has_magic(const Twine &path, const Twine &magic, bool &result) {
         // This is complicated by an overlap with Java class files.
         // See the Mach-O section in /usr/share/file/magic for details.
         if (Magic.size() >= 8 && Magic[7] < 43)
-          // FIXME: Universal Binary of any type.
-          return file_magic::macho_dynamically_linked_shared_lib;
+          return file_magic::macho_universal_binary;
       }
       break;
 

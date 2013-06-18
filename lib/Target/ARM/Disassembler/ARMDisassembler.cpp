@@ -347,6 +347,14 @@ static DecodeStatus DecodeT2AddrModeSOReg(MCInst &Inst, unsigned Val,
                                uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeT2LoadShift(MCInst &Inst, unsigned Val,
                                uint64_t Address, const void *Decoder);
+static DecodeStatus DecodeT2LoadImm8(MCInst &Inst, unsigned Insn,
+                               uint64_t Address, const void* Decoder);
+static DecodeStatus DecodeT2LoadImm12(MCInst &Inst, unsigned Insn,
+                               uint64_t Address, const void* Decoder);
+static DecodeStatus DecodeT2LoadT(MCInst &Inst, unsigned Insn,
+                               uint64_t Address, const void* Decoder);
+static DecodeStatus DecodeT2LoadLabel(MCInst &Inst, unsigned Insn,
+                               uint64_t Address, const void* Decoder);
 static DecodeStatus DecodeT2Imm8S4(MCInst &Inst, unsigned Val,
                                uint64_t Address, const void *Decoder);
 static DecodeStatus DecodeT2AddrModeImm8s4(MCInst &Inst, unsigned Val,
@@ -3164,6 +3172,17 @@ static DecodeStatus DecodeT2AddrModeSOReg(MCInst &Inst, unsigned Val,
   unsigned Rm = fieldFromInstruction(Val, 2, 4);
   unsigned imm = fieldFromInstruction(Val, 0, 2);
 
+  // Thumb stores cannot use PC as dest register.
+  switch (Inst.getOpcode()) {
+  case ARM::t2STRHs:
+  case ARM::t2STRBs:
+  case ARM::t2STRs:
+    if (Rn == 15)
+      return MCDisassembler::Fail;
+  default:
+    break;
+  }
+
   if (!Check(S, DecodeGPRRegisterClass(Inst, Rn, Address, Decoder)))
     return MCDisassembler::Fail;
   if (!Check(S, DecoderGPRRegisterClass(Inst, Rm, Address, Decoder)))
@@ -3177,19 +3196,9 @@ static DecodeStatus DecodeT2LoadShift(MCInst &Inst, unsigned Insn,
                               uint64_t Address, const void *Decoder) {
   DecodeStatus S = MCDisassembler::Success;
 
-  switch (Inst.getOpcode()) {
-    case ARM::t2PLDs:
-    case ARM::t2PLDWs:
-    case ARM::t2PLIs:
-      break;
-    default: {
-      unsigned Rt = fieldFromInstruction(Insn, 12, 4);
-      if (!Check(S, DecoderGPRRegisterClass(Inst, Rt, Address, Decoder)))
-    return MCDisassembler::Fail;
-    }
-  }
-
+  unsigned Rt = fieldFromInstruction(Insn, 12, 4);
   unsigned Rn = fieldFromInstruction(Insn, 16, 4);
+
   if (Rn == 0xF) {
     switch (Inst.getOpcode()) {
       case ARM::t2LDRBs:
@@ -3204,19 +3213,32 @@ static DecodeStatus DecodeT2LoadShift(MCInst &Inst, unsigned Insn,
       case ARM::t2LDRSBs:
         Inst.setOpcode(ARM::t2LDRSBpci);
         break;
-      case ARM::t2PLDs:
+      case ARM::t2LDRs:
+        Inst.setOpcode(ARM::t2LDRpci);
+        break;
+      case ARM::t2PLDs: {
         Inst.setOpcode(ARM::t2PLDi12);
         Inst.addOperand(MCOperand::CreateReg(ARM::PC));
-        break;
+        int imm = fieldFromInstruction(Insn, 0, 12);
+        if (!fieldFromInstruction(Insn, 23, 1)) imm *= -1;
+        Inst.addOperand(MCOperand::CreateImm(imm));
+        return S;
+      }
       default:
         return MCDisassembler::Fail;
     }
 
-    int imm = fieldFromInstruction(Insn, 0, 12);
-    if (!fieldFromInstruction(Insn, 23, 1)) imm *= -1;
-    Inst.addOperand(MCOperand::CreateImm(imm));
+    return DecodeT2LoadLabel(Inst, Insn, Address, Decoder);
+  }
 
-    return S;
+  switch (Inst.getOpcode()) {
+    case ARM::t2PLDs:
+    case ARM::t2PLDWs:
+    case ARM::t2PLIs:
+      break;
+    default:
+      if (!Check(S, DecodeGPRRegisterClass(Inst, Rt, Address, Decoder)))
+        return MCDisassembler::Fail;
   }
 
   unsigned addrmode = fieldFromInstruction(Insn, 4, 2);
@@ -3224,6 +3246,154 @@ static DecodeStatus DecodeT2LoadShift(MCInst &Inst, unsigned Insn,
   addrmode |= fieldFromInstruction(Insn, 16, 4) << 6;
   if (!Check(S, DecodeT2AddrModeSOReg(Inst, addrmode, Address, Decoder)))
     return MCDisassembler::Fail;
+
+  return S;
+}
+
+static DecodeStatus DecodeT2LoadImm8(MCInst &Inst, unsigned Insn,
+                                uint64_t Address, const void* Decoder) {
+  DecodeStatus S = MCDisassembler::Success;
+
+  unsigned Rn = fieldFromInstruction(Insn, 16, 4);
+  unsigned Rt = fieldFromInstruction(Insn, 12, 4);
+  unsigned U = fieldFromInstruction(Insn, 9, 1);
+  unsigned imm = fieldFromInstruction(Insn, 0, 8);
+  imm |= (U << 8);
+  imm |= (Rn << 9);
+
+  if (Rn == 15) {
+    switch (Inst.getOpcode()) {
+    case ARM::t2LDRi8:
+      Inst.setOpcode(ARM::t2LDRpci);
+      break;
+    case ARM::t2LDRBi8:
+      Inst.setOpcode(ARM::t2LDRBpci);
+      break;
+    case ARM::t2LDRSBi8:
+      Inst.setOpcode(ARM::t2LDRSBpci);
+      break;
+    case ARM::t2LDRHi8:
+      Inst.setOpcode(ARM::t2LDRHpci);
+      break;
+    case ARM::t2LDRSHi8:
+      Inst.setOpcode(ARM::t2LDRSHpci);
+      break;
+    default:
+      return MCDisassembler::Fail;
+    }
+    return DecodeT2LoadLabel(Inst, Insn, Address, Decoder);
+  }
+
+  if (!Check(S, DecodeGPRRegisterClass(Inst, Rt, Address, Decoder)))
+    return MCDisassembler::Fail;
+  if (!Check(S, DecodeT2AddrModeImm8(Inst, imm, Address, Decoder)))
+    return MCDisassembler::Fail;
+  return S;
+}
+
+static DecodeStatus DecodeT2LoadImm12(MCInst &Inst, unsigned Insn,
+                                uint64_t Address, const void* Decoder) {
+  DecodeStatus S = MCDisassembler::Success;
+
+  unsigned Rn = fieldFromInstruction(Insn, 16, 4);
+  unsigned Rt = fieldFromInstruction(Insn, 12, 4);
+  unsigned imm = fieldFromInstruction(Insn, 0, 12);
+  imm |= (Rn << 13);
+
+  if (Rn == 15) {
+    switch (Inst.getOpcode()) {
+    case ARM::t2LDRi12:
+      Inst.setOpcode(ARM::t2LDRpci);
+      break;
+    case ARM::t2LDRHi12:
+      Inst.setOpcode(ARM::t2LDRHpci);
+      break;
+    case ARM::t2LDRSHi12:
+      Inst.setOpcode(ARM::t2LDRSHpci);
+      break;
+    case ARM::t2LDRBi12:
+      Inst.setOpcode(ARM::t2LDRBpci);
+      break;
+    case ARM::t2LDRSBi12:
+      Inst.setOpcode(ARM::t2LDRSBpci);
+      break;
+    default:
+      return MCDisassembler::Fail;
+    }
+    return DecodeT2LoadLabel(Inst, Insn, Address, Decoder);
+  }
+
+  if (!Check(S, DecodeGPRRegisterClass(Inst, Rt, Address, Decoder)))
+    return MCDisassembler::Fail;
+  if (!Check(S, DecodeT2AddrModeImm12(Inst, imm, Address, Decoder)))
+    return MCDisassembler::Fail;
+  return S;
+}
+
+static DecodeStatus DecodeT2LoadT(MCInst &Inst, unsigned Insn,
+                                uint64_t Address, const void* Decoder) {
+  DecodeStatus S = MCDisassembler::Success;
+
+  unsigned Rn = fieldFromInstruction(Insn, 16, 4);
+  unsigned Rt = fieldFromInstruction(Insn, 12, 4);
+  unsigned imm = fieldFromInstruction(Insn, 0, 8);
+  imm |= (Rn << 9);
+
+  if (Rn == 15) {
+    switch (Inst.getOpcode()) {
+    case ARM::t2LDRT:
+      Inst.setOpcode(ARM::t2LDRpci);
+      break;
+    case ARM::t2LDRBT:
+      Inst.setOpcode(ARM::t2LDRBpci);
+      break;
+    case ARM::t2LDRHT:
+      Inst.setOpcode(ARM::t2LDRHpci);
+      break;
+    case ARM::t2LDRSBT:
+      Inst.setOpcode(ARM::t2LDRSBpci);
+      break;
+    case ARM::t2LDRSHT:
+      Inst.setOpcode(ARM::t2LDRSHpci);
+      break;
+    default:
+      return MCDisassembler::Fail;
+    }
+    return DecodeT2LoadLabel(Inst, Insn, Address, Decoder);
+  }
+
+  if (!Check(S, DecoderGPRRegisterClass(Inst, Rt, Address, Decoder)))
+    return MCDisassembler::Fail;
+  if (!Check(S, DecodeT2AddrModeImm8(Inst, imm, Address, Decoder)))
+    return MCDisassembler::Fail;
+  return S;
+}
+
+static DecodeStatus DecodeT2LoadLabel(MCInst &Inst, unsigned Insn,
+                                uint64_t Address, const void* Decoder) {
+  DecodeStatus S = MCDisassembler::Success;
+
+  unsigned Rt = fieldFromInstruction(Insn, 12, 4);
+  unsigned U = fieldFromInstruction(Insn, 23, 1);
+  int imm = fieldFromInstruction(Insn, 0, 12);
+
+  // FIXME: detect and decode PLD properly
+  if (Inst.getOpcode() == ARM::t2LDRBpci && Rt == 15) {
+    Inst.setOpcode(ARM::t2PLDi12);
+    Inst.addOperand(MCOperand::CreateReg(ARM::PC));
+  } else {
+    if (!Check(S, DecodeGPRRegisterClass(Inst, Rt, Address, Decoder)))
+      return MCDisassembler::Fail;
+  }
+
+  if (!U) {
+    // Special case for #-0.
+    if (imm == 0)
+      imm = INT32_MIN;
+    else
+      imm = -imm;
+  }
+  Inst.addOperand(MCOperand::CreateImm(imm));
 
   return S;
 }
@@ -3292,6 +3462,21 @@ static DecodeStatus DecodeT2AddrModeImm8(MCInst &Inst, unsigned Val,
   unsigned Rn = fieldFromInstruction(Val, 9, 4);
   unsigned imm = fieldFromInstruction(Val, 0, 9);
 
+  // Thumb stores cannot use PC as dest register.
+  switch (Inst.getOpcode()) {
+  case ARM::t2STRT:
+  case ARM::t2STRBT:
+  case ARM::t2STRHT:
+  case ARM::t2STRi8:
+  case ARM::t2STRHi8:
+  case ARM::t2STRBi8:
+    if (Rn == 15)
+      return MCDisassembler::Fail;
+    break;
+  default:
+    break;
+  }
+
   // Some instructions always use an additive offset.
   switch (Inst.getOpcode()) {
     case ARM::t2LDRT:
@@ -3327,6 +3512,34 @@ static DecodeStatus DecodeT2LdStPre(MCInst &Inst, unsigned Insn,
   addr |= Rn << 9;
   unsigned load = fieldFromInstruction(Insn, 20, 1);
 
+  if (Rn == 15) {
+    switch (Inst.getOpcode()) {
+    case ARM::t2LDR_PRE:
+    case ARM::t2LDR_POST:
+      Inst.setOpcode(ARM::t2LDRpci);
+      break;
+    case ARM::t2LDRB_PRE:
+    case ARM::t2LDRB_POST:
+      Inst.setOpcode(ARM::t2LDRBpci);
+      break;
+    case ARM::t2LDRH_PRE:
+    case ARM::t2LDRH_POST:
+      Inst.setOpcode(ARM::t2LDRHpci);
+      break;
+    case ARM::t2LDRSB_PRE:
+    case ARM::t2LDRSB_POST:
+      Inst.setOpcode(ARM::t2LDRSBpci);
+      break;
+    case ARM::t2LDRSH_PRE:
+    case ARM::t2LDRSH_POST:
+      Inst.setOpcode(ARM::t2LDRSHpci);
+      break;
+    default:
+      return MCDisassembler::Fail;
+    }
+    return DecodeT2LoadLabel(Inst, Insn, Address, Decoder);
+  }
+
   if (!load) {
     if (!Check(S, DecodeGPRRegisterClass(Inst, Rn, Address, Decoder)))
       return MCDisassembler::Fail;
@@ -3352,6 +3565,17 @@ static DecodeStatus DecodeT2AddrModeImm12(MCInst &Inst, unsigned Val,
 
   unsigned Rn = fieldFromInstruction(Val, 13, 4);
   unsigned imm = fieldFromInstruction(Val, 0, 12);
+
+  // Thumb stores cannot use PC as dest register.
+  switch (Inst.getOpcode()) {
+  case ARM::t2STRi12:
+  case ARM::t2STRBi12:
+  case ARM::t2STRHi12:
+    if (Rn == 15)
+      return MCDisassembler::Fail;
+  default:
+    break;
+  }
 
   if (!Check(S, DecodeGPRRegisterClass(Inst, Rn, Address, Decoder)))
     return MCDisassembler::Fail;
