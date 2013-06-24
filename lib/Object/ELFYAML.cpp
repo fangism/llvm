@@ -212,12 +212,40 @@ void ScalarEnumerationTraits<ELFYAML::ELF_ELFDATA>::enumeration(
 #undef ECase
 }
 
+void ScalarEnumerationTraits<ELFYAML::ELF_ELFOSABI>::enumeration(
+    IO &IO, ELFYAML::ELF_ELFOSABI &Value) {
+#define ECase(X) IO.enumCase(Value, #X, ELF::X);
+  ECase(ELFOSABI_NONE)
+  ECase(ELFOSABI_HPUX)
+  ECase(ELFOSABI_NETBSD)
+  ECase(ELFOSABI_GNU)
+  ECase(ELFOSABI_GNU)
+  ECase(ELFOSABI_HURD)
+  ECase(ELFOSABI_SOLARIS)
+  ECase(ELFOSABI_AIX)
+  ECase(ELFOSABI_IRIX)
+  ECase(ELFOSABI_FREEBSD)
+  ECase(ELFOSABI_TRU64)
+  ECase(ELFOSABI_MODESTO)
+  ECase(ELFOSABI_OPENBSD)
+  ECase(ELFOSABI_OPENVMS)
+  ECase(ELFOSABI_NSK)
+  ECase(ELFOSABI_AROS)
+  ECase(ELFOSABI_FENIXOS)
+  ECase(ELFOSABI_C6000_ELFABI)
+  ECase(ELFOSABI_C6000_LINUX)
+  ECase(ELFOSABI_ARM)
+  ECase(ELFOSABI_STANDALONE)
+#undef ECase
+}
+
 void ScalarEnumerationTraits<ELFYAML::ELF_SHT>::enumeration(
     IO &IO, ELFYAML::ELF_SHT &Value) {
 #define ECase(X) IO.enumCase(Value, #X, ELF::X);
   ECase(SHT_NULL)
   ECase(SHT_PROGBITS)
-  ECase(SHT_SYMTAB)
+  // No SHT_SYMTAB. Use the top-level `Symbols` key instead.
+  // FIXME: Issue a diagnostic with this information.
   ECase(SHT_STRTAB)
   ECase(SHT_RELA)
   ECase(SHT_HASH)
@@ -251,13 +279,43 @@ void ScalarBitSetTraits<ELFYAML::ELF_SHF>::bitset(IO &IO,
 #undef BCase
 }
 
+void ScalarEnumerationTraits<ELFYAML::ELF_STT>::enumeration(
+    IO &IO, ELFYAML::ELF_STT &Value) {
+#define ECase(X) IO.enumCase(Value, #X, ELF::X);
+  ECase(STT_NOTYPE)
+  ECase(STT_OBJECT)
+  ECase(STT_FUNC)
+  ECase(STT_SECTION)
+  ECase(STT_FILE)
+  ECase(STT_COMMON)
+  ECase(STT_TLS)
+  ECase(STT_GNU_IFUNC)
+#undef ECase
+}
+
 void MappingTraits<ELFYAML::FileHeader>::mapping(IO &IO,
                                                  ELFYAML::FileHeader &FileHdr) {
   IO.mapRequired("Class", FileHdr.Class);
   IO.mapRequired("Data", FileHdr.Data);
+  IO.mapOptional("OSABI", FileHdr.OSABI, ELFYAML::ELF_ELFOSABI(0));
   IO.mapRequired("Type", FileHdr.Type);
   IO.mapRequired("Machine", FileHdr.Machine);
   IO.mapOptional("Entry", FileHdr.Entry, Hex64(0));
+}
+
+void MappingTraits<ELFYAML::Symbol>::mapping(IO &IO, ELFYAML::Symbol &Symbol) {
+  IO.mapOptional("Name", Symbol.Name, StringRef());
+  IO.mapOptional("Type", Symbol.Type, ELFYAML::ELF_STT(0));
+  IO.mapOptional("Section", Symbol.Section, StringRef());
+  IO.mapOptional("Value", Symbol.Value, Hex64(0));
+  IO.mapOptional("Size", Symbol.Size, Hex64(0));
+}
+
+void MappingTraits<ELFYAML::LocalGlobalWeakSymbols>::mapping(
+    IO &IO, ELFYAML::LocalGlobalWeakSymbols &Symbols) {
+  IO.mapOptional("Local", Symbols.Local);
+  IO.mapOptional("Global", Symbols.Global);
+  IO.mapOptional("Weak", Symbols.Weak);
 }
 
 void MappingTraits<ELFYAML::Section>::mapping(IO &IO,
@@ -274,6 +332,7 @@ void MappingTraits<ELFYAML::Section>::mapping(IO &IO,
 void MappingTraits<ELFYAML::Object>::mapping(IO &IO, ELFYAML::Object &Object) {
   IO.mapRequired("FileHeader", Object.Header);
   IO.mapOptional("Sections", Object.Sections);
+  IO.mapOptional("Symbols", Object.Symbols);
 }
 
 } // end namespace yaml

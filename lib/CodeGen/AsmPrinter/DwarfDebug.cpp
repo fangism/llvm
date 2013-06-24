@@ -1519,11 +1519,9 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
                 DEBUG(dbgs() << "Dropping DBG_VALUE for empty range:\n"
                       << "\t" << *Prev << "\n");
                 History.pop_back();
-              }
-              else {
+              } else if (llvm::next(PrevMBB) != PrevMBB->getParent()->end())
                 // Terminate after LastMI.
                 History.push_back(LastMI);
-              }
             }
           }
         }
@@ -1592,7 +1590,7 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
       if (LastMI == PrevMBB->end())
         // Drop DBG_VALUE for empty range.
         History.pop_back();
-      else {
+      else if (PrevMBB != &PrevMBB->getParent()->back()) {
         // Terminate after LastMI.
         History.push_back(LastMI);
       }
@@ -2443,7 +2441,7 @@ void DwarfDebug::emitDebugLoc() {
       } else if (Entry.isLocation()) {
         if (!DV.hasComplexAddress())
           // Regular entry.
-          Asm->EmitDwarfRegOp(Entry.Loc);
+          Asm->EmitDwarfRegOp(Entry.Loc, DV.isIndirect());
         else {
           // Complex address entry.
           unsigned N = DV.getNumAddrElements();
@@ -2451,7 +2449,7 @@ void DwarfDebug::emitDebugLoc() {
           if (N >= 2 && DV.getAddrElement(0) == DIBuilder::OpPlus) {
             if (Entry.Loc.getOffset()) {
               i = 2;
-              Asm->EmitDwarfRegOp(Entry.Loc);
+              Asm->EmitDwarfRegOp(Entry.Loc, DV.isIndirect());
               Asm->OutStreamer.AddComment("DW_OP_deref");
               Asm->EmitInt8(dwarf::DW_OP_deref);
               Asm->OutStreamer.AddComment("DW_OP_plus_uconst");
@@ -2461,11 +2459,11 @@ void DwarfDebug::emitDebugLoc() {
               // If first address element is OpPlus then emit
               // DW_OP_breg + Offset instead of DW_OP_reg + Offset.
               MachineLocation Loc(Entry.Loc.getReg(), DV.getAddrElement(1));
-              Asm->EmitDwarfRegOp(Loc);
+              Asm->EmitDwarfRegOp(Loc, DV.isIndirect());
               i = 2;
             }
           } else {
-            Asm->EmitDwarfRegOp(Entry.Loc);
+            Asm->EmitDwarfRegOp(Entry.Loc, DV.isIndirect());
           }
 
           // Emit remaining complex address elements.

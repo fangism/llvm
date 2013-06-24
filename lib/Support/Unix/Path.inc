@@ -324,17 +324,6 @@ Path::isSymLink() const {
   return S_ISLNK(buf.st_mode);
 }
 
-
-bool
-Path::canRead() const {
-  return 0 == access(path.c_str(), R_OK);
-}
-
-bool
-Path::canWrite() const {
-  return 0 == access(path.c_str(), W_OK);
-}
-
 bool
 Path::isRegularFile() const {
   // Get the status so we can determine if it's a file or directory
@@ -347,18 +336,6 @@ Path::isRegularFile() const {
     return true;
 
   return false;
-}
-
-bool
-Path::canExecute() const {
-  if (0 != access(path.c_str(), R_OK | X_OK ))
-    return false;
-  struct stat buf;
-  if (0 != stat(path.c_str(), &buf))
-    return false;
-  if (!S_ISREG(buf.st_mode))
-    return false;
-  return true;
 }
 
 const FileStatus *
@@ -374,7 +351,6 @@ PathWithStatus::getFileStatus(bool update, std::string *ErrStr) const {
     status.mode = buf.st_mode;
     status.user = buf.st_uid;
     status.group = buf.st_gid;
-    status.uniqueID = uint64_t(buf.st_ino);
     status.isDir  = S_ISDIR(buf.st_mode);
     status.isFile = S_ISREG(buf.st_mode);
     fsIsValid = true;
@@ -410,36 +386,6 @@ bool Path::makeReadableOnDisk(std::string* ErrMsg) {
 bool Path::makeWriteableOnDisk(std::string* ErrMsg) {
   if (!AddPermissionBits(*this, 0222))
     return MakeErrMsg(ErrMsg, path + ": can't make file writable");
-  return false;
-}
-
-bool
-Path::getDirectoryContents(std::set<Path>& result, std::string* ErrMsg) const {
-  DIR* direntries = ::opendir(path.c_str());
-  if (direntries == 0)
-    return MakeErrMsg(ErrMsg, path + ": can't open directory");
-
-  std::string dirPath = path;
-  if (!lastIsSlash(dirPath))
-    dirPath += '/';
-
-  result.clear();
-  struct dirent* de = ::readdir(direntries);
-  for ( ; de != 0; de = ::readdir(direntries)) {
-    if (de->d_name[0] != '.') {
-      Path aPath(dirPath + (const char*)de->d_name);
-      struct stat st;
-      if (0 != lstat(aPath.path.c_str(), &st)) {
-        if (S_ISLNK(st.st_mode))
-          continue; // dangling symlink -- ignore
-        return MakeErrMsg(ErrMsg,
-                          aPath.path +  ": can't determine file object type");
-      }
-      result.insert(aPath);
-    }
-  }
-
-  closedir(direntries);
   return false;
 }
 

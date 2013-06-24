@@ -29,11 +29,11 @@ using namespace llvm;
 unsigned
 ArchiveMember::getMemberSize() const {
   // Basically its the file size plus the header size
-  unsigned result =  info.fileSize + sizeof(ArchiveMemberHeader);
+  unsigned result = Size + sizeof(ArchiveMemberHeader);
 
   // If it has a long filename, include the name length
   if (hasLongFilename())
-    result += path.str().length() + 1;
+    result += path.length() + 1;
 
   // If its now odd lengthed, include the padding byte
   if (result % 2 != 0 )
@@ -47,11 +47,11 @@ ArchiveMember::getMemberSize() const {
 ArchiveMember::ArchiveMember()
   : parent(0), path("--invalid--"), flags(0), data(0)
 {
-  info.user = sys::Process::GetCurrentUserId();
-  info.group = sys::Process::GetCurrentGroupId();
-  info.mode = 0777;
-  info.fileSize = 0;
-  info.modTime = sys::TimeValue::now();
+  User = sys::Process::GetCurrentUserId();
+  Group = sys::Process::GetCurrentGroupId();
+  Mode = 0777;
+  Size = 0;
+  ModTime = sys::TimeValue::now();
 }
 
 // This is the constructor that the Archive class uses when it is building or
@@ -67,7 +67,7 @@ ArchiveMember::ArchiveMember(Archive* PAR)
 // This method allows an ArchiveMember to be replaced with the data for a
 // different file, presumably as an update to the member. It also makes sure
 // the flags are reset correctly.
-bool ArchiveMember::replaceWith(const sys::Path& newFile, std::string* ErrMsg) {
+bool ArchiveMember::replaceWith(StringRef newFile, std::string* ErrMsg) {
   bool Exists;
   if (sys::fs::exists(newFile.str(), Exists) || !Exists) {
     if (ErrMsg)
@@ -76,35 +76,28 @@ bool ArchiveMember::replaceWith(const sys::Path& newFile, std::string* ErrMsg) {
   }
 
   data = 0;
-  path = newFile;
+  path = newFile.str();
 
   // SVR4 symbol tables have an empty name
-  if (path.str() == ARFILE_SVR4_SYMTAB_NAME)
+  if (path == ARFILE_SVR4_SYMTAB_NAME)
     flags |= SVR4SymbolTableFlag;
   else
     flags &= ~SVR4SymbolTableFlag;
 
   // BSD4.4 symbol tables have a special name
-  if (path.str() == ARFILE_BSD4_SYMTAB_NAME)
+  if (path == ARFILE_BSD4_SYMTAB_NAME)
     flags |= BSD4SymbolTableFlag;
   else
     flags &= ~BSD4SymbolTableFlag;
 
   // String table name
-  if (path.str() == ARFILE_STRTAB_NAME)
+  if (path == ARFILE_STRTAB_NAME)
     flags |= StringTableFlag;
   else
     flags &= ~StringTableFlag;
 
-  // If it has a slash then it has a path
-  bool hasSlash = path.str().find('/') != std::string::npos;
-  if (hasSlash)
-    flags |= HasPathFlag;
-  else
-    flags &= ~HasPathFlag;
-
   // If it has a slash or its over 15 chars then its a long filename format
-  if (hasSlash || path.str().length() > 15)
+  if (path.length() > 15)
     flags |= HasLongFilenameFlag;
   else
     flags &= ~HasLongFilenameFlag;
@@ -113,12 +106,22 @@ bool ArchiveMember::replaceWith(const sys::Path& newFile, std::string* ErrMsg) {
   const char* signature = (const char*) data;
   SmallString<4> magic;
   if (!signature) {
-    sys::fs::get_magic(path.str(), magic.capacity(), magic);
+    sys::fs::get_magic(path, magic.capacity(), magic);
     signature = magic.c_str();
-    const sys::FileStatus *FSinfo = path.getFileStatus(false, ErrMsg);
-    if (FSinfo)
-      info = *FSinfo;
-    else
+
+    sys::fs::file_status Status;
+    error_code EC = sys::fs::status(path, Status);
+    if (EC)
+      return true;
+
+    User = Status.getUser();
+    Group = Status.getGroup();
+    Mode = Status.permissions();
+    ModTime = Status.getLastModificationTime();
+
+    // FIXME: On posix this is a second stat.
+    EC = sys::fs::file_size(path, Size);
+    if (EC)
       return true;
   }
 
@@ -135,10 +138,9 @@ bool ArchiveMember::replaceWith(const sys::Path& newFile, std::string* ErrMsg) {
 // Archive constructor - this is the only constructor that gets used for the
 // Archive class. Everything else (default,copy) is deprecated. This just
 // initializes and maps the file into memory, if requested.
-Archive::Archive(const sys::Path& filename, LLVMContext& C)
-  : archPath(filename), members(), mapfile(0), base(0), symTab(), strtab(),
-    symTabSize(0), firstFileOffset(0), modules(), foreignST(0), Context(C) {
-}
+Archive::Archive(StringRef filename, LLVMContext &C)
+    : archPath(filename), members(), mapfile(0), base(0), strtab(),
+      firstFileOffset(0), modules(), Context(C) {}
 
 bool
 Archive::mapToMemory(std::string* ErrMsg) {
@@ -159,17 +161,7 @@ void Archive::cleanUpMemory() {
   mapfile = 0;
   base = 0;
 
-  // Forget the entire symbol table
-  symTab.clear();
-  symTabSize = 0;
-
   firstFileOffset = 0;
-
-  // Free the foreign symbol table member
-  if (foreignST) {
-    delete foreignST;
-    foreignST = 0;
-  }
 
   // Delete any Modules and ArchiveMember's we've allocated as a result of
   // symbol table searches.
@@ -184,71 +176,3 @@ Archive::~Archive() {
   cleanUpMemory();
 }
 
-
-
-static void getSymbols(Module*M, std::vector<std::string>& symbols) {
-  // Loop over global variables
-  for (Module::global_iterator GI = M->global_begin(), GE=M->global_end(); GI != GE; ++GI)
-    if (!GI->isDeclaration() && !GI->hasLocalLinkage())
-      if (!GI->getName().empty())
-        symbols.push_back(GI->getName());
-
-  // Loop over functions
-  for (Module::iterator FI = M->begin(), FE = M->end(); FI != FE; ++FI)
-    if (!FI->isDeclaration() && !FI->hasLocalLinkage())
-      if (!FI->getName().empty())
-        symbols.push_back(FI->getName());
-
-  // Loop over aliases
-  for (Module::alias_iterator AI = M->alias_begin(), AE = M->alias_end();
-       AI != AE; ++AI) {
-    if (AI->hasName())
-      symbols.push_back(AI->getName());
-  }
-}
-
-// Get just the externally visible defined symbols from the bitcode
-bool llvm::GetBitcodeSymbols(const sys::Path& fName,
-                             LLVMContext& Context,
-                             std::vector<std::string>& symbols,
-                             std::string* ErrMsg) {
-  OwningPtr<MemoryBuffer> Buffer;
-  if (error_code ec = MemoryBuffer::getFileOrSTDIN(fName.c_str(), Buffer)) {
-    if (ErrMsg) *ErrMsg = "Could not open file '" + fName.str() + "'" + ": "
-                        + ec.message();
-    return true;
-  }
-
-  Module *M = ParseBitcodeFile(Buffer.get(), Context, ErrMsg);
-  if (!M)
-    return true;
-
-  // Get the symbols
-  getSymbols(M, symbols);
-
-  // Done with the module.
-  delete M;
-  return true;
-}
-
-Module*
-llvm::GetBitcodeSymbols(const char *BufPtr, unsigned Length,
-                        const std::string& ModuleID,
-                        LLVMContext& Context,
-                        std::vector<std::string>& symbols,
-                        std::string* ErrMsg) {
-  // Get the module.
-  OwningPtr<MemoryBuffer> Buffer(
-    MemoryBuffer::getMemBufferCopy(StringRef(BufPtr, Length),ModuleID.c_str()));
-
-  Module *M = ParseBitcodeFile(Buffer.get(), Context, ErrMsg);
-  if (!M)
-    return 0;
-
-  // Get the symbols
-  getSymbols(M, symbols);
-
-  // Done with the module. Note that it's the caller's responsibility to delete
-  // the Module.
-  return M;
-}

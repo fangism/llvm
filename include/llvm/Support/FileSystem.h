@@ -33,6 +33,7 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/TimeValue.h"
 #include "llvm/Support/system_error.h"
 #include <ctime>
 #include <iterator>
@@ -151,6 +152,9 @@ class file_status
   #if defined(LLVM_ON_UNIX)
   dev_t fs_st_dev;
   ino_t fs_st_ino;
+  time_t fs_st_mtime;
+  uid_t fs_st_uid;
+  gid_t fs_st_gid;
   #elif defined (LLVM_ON_WIN32)
   uint32_t LastWriteTimeHigh;
   uint32_t LastWriteTimeLow;
@@ -162,6 +166,7 @@ class file_status
   #endif
   friend bool equivalent(file_status A, file_status B);
   friend error_code status(const Twine &path, file_status &result);
+  friend error_code getUniqueID(const Twine Path, uint64_t &Result);
   file_type Type;
   perms Perms;
 public:
@@ -172,7 +177,20 @@ public:
   // getters
   file_type type() const { return Type; }
   perms permissions() const { return Perms; }
-  
+  TimeValue getLastModificationTime() const;
+
+  #if defined(LLVM_ON_UNIX)
+  uint32_t getUser() const { return fs_st_uid; }
+  uint32_t getGroup() const { return fs_st_gid; }
+  #elif defined (LLVM_ON_WIN32)
+  uint32_t getUser() const {
+    return 9999; // Not applicable to Windows, so...
+  }
+  uint32_t getGroup() const {
+    return 9999; // Not applicable to Windows, so...
+  }
+  #endif
+
   // setters
   void type(file_type v) { Type = v; }
   void permissions(perms p) { Perms = p; }
@@ -356,6 +374,12 @@ inline bool exists(const Twine &path) {
 /// @returns True if we can execute it, false otherwise.
 bool can_execute(const Twine &Path);
 
+/// @brief Can we write this file?
+///
+/// @param Path Input path.
+/// @returns True if we can write to it, false otherwise.
+bool can_write(const Twine &Path);
+
 /// @brief Do file_status's represent the same thing?
 ///
 /// @param A Input file_status.
@@ -424,6 +448,15 @@ bool is_regular_file(file_status status);
 ///          platform specific error_code.
 error_code is_regular_file(const Twine &path, bool &result);
 
+/// @brief Simpler version of is_regular_file for clients that don't need to
+///        differentiate between an error and false.
+inline bool is_regular_file(const Twine &Path) {
+  bool Result;
+  if (is_regular_file(Path, Result))
+    return false;
+  return Result;
+}
+
 /// @brief Does this status represent something that exists but is not a
 ///        directory, regular file, or symlink?
 ///
@@ -471,6 +504,8 @@ error_code status(const Twine &path, file_status &result);
 /// @returns errc::success if permissions have been changed, otherwise a
 ///          platform specific error_code.
 error_code permissions(const Twine &path, perms prms);
+
+error_code setLastModificationAndAccessTime(int FD, TimeValue Time);
 
 /// @brief Is status available?
 ///
@@ -555,6 +590,8 @@ file_magic identify_magic(StringRef magic);
 /// @returns errc::success if result has been successfully set, otherwise a
 ///          platform specific error_code.
 error_code identify_magic(const Twine &path, file_magic &result);
+
+error_code getUniqueID(const Twine Path, uint64_t &Result);
 
 /// This class represents a memory mapped file. It is based on
 /// boost::iostreams::mapped_file.

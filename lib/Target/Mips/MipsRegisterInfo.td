@@ -388,19 +388,38 @@ def ACRegsDSP : RegisterClass<"Mips", [untyped], 64, (sequence "AC%u", 0, 3)> {
 def DSPCC : RegisterClass<"Mips", [v4i8, v2i16], 32, (add DSPCCond)>;
 
 // Register Operands.
-def CPURegsAsmOperand : AsmOperandClass {
+
+class MipsAsmRegOperand : AsmOperandClass {
+  let RenderMethod = "addRegAsmOperands";
+}
+def CPURegsAsmOperand : MipsAsmRegOperand {
   let Name = "CPURegsAsm";
   let ParserMethod = "parseCPURegs";
 }
 
-def CPU64RegsAsmOperand : AsmOperandClass {
+def CPU64RegsAsmOperand : MipsAsmRegOperand {
   let Name = "CPU64RegsAsm";
   let ParserMethod = "parseCPU64Regs";
 }
 
-def CCRAsmOperand : AsmOperandClass {
+def CCRAsmOperand : MipsAsmRegOperand {
   let Name = "CCRAsm";
   let ParserMethod = "parseCCRRegs";
+}
+
+def AFGR64AsmOperand : MipsAsmRegOperand {
+  let Name = "AFGR64Asm";
+  let ParserMethod = "parseAFGR64Regs";
+}
+
+def FGR64AsmOperand : MipsAsmRegOperand {
+  let Name = "FGR64Asm";
+  let ParserMethod = "parseFGR64Regs";
+}
+
+def FGR32AsmOperand : MipsAsmRegOperand {
+  let Name = "FGR32Asm";
+  let ParserMethod = "parseFGR32Regs";
 }
 
 def CPURegsOpnd : RegisterOperand<CPURegs, "printCPURegs"> {
@@ -415,12 +434,12 @@ def CCROpnd : RegisterOperand<CCR, "printCPURegs"> {
   let ParserMatchClass = CCRAsmOperand;
 }
 
-def HWRegsAsmOperand : AsmOperandClass {
+def HWRegsAsmOperand : MipsAsmRegOperand {
   let Name = "HWRegsAsm";
   let ParserMethod = "parseHWRegs";
 }
 
-def HW64RegsAsmOperand : AsmOperandClass {
+def HW64RegsAsmOperand : MipsAsmRegOperand {
   let Name = "HW64RegsAsm";
   let ParserMethod = "parseHW64Regs";
 }
@@ -431,4 +450,16 @@ def HWRegsOpnd : RegisterOperand<HWRegs, "printCPURegs"> {
 
 def HW64RegsOpnd : RegisterOperand<HWRegs64, "printCPURegs"> {
   let ParserMatchClass = HW64RegsAsmOperand;
+}
+
+def AFGR64RegsOpnd : RegisterOperand<AFGR64> {
+  let ParserMatchClass = AFGR64AsmOperand;
+}
+
+def FGR64RegsOpnd : RegisterOperand<FGR64> {
+  let ParserMatchClass = FGR64AsmOperand;
+}
+
+def FGR32RegsOpnd : RegisterOperand<FGR32> {
+  let ParserMatchClass = FGR32AsmOperand;
 }

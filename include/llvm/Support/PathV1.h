@@ -17,7 +17,6 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/TimeValue.h"
-#include <set>
 #include <string>
 #include <vector>
 
@@ -45,19 +44,17 @@ namespace sys {
     uint32_t    mode;       ///< Mode of the file, if applicable
     uint32_t    user;       ///< User ID of owner, if applicable
     uint32_t    group;      ///< Group ID of owner, if applicable
-    uint64_t    uniqueID;   ///< A number to uniquely ID this file
     bool        isDir  : 1; ///< True if this is a directory.
     bool        isFile : 1; ///< True if this is a file.
 
     FileStatus() : fileSize(0), modTime(0,0), mode(0777), user(999),
-                   group(999), uniqueID(0), isDir(false), isFile(false) { }
+                   group(999), isDir(false), isFile(false) { }
 
     TimeValue getTimestamp() const { return modTime; }
     uint64_t getSize() const { return fileSize; }
     uint32_t getMode() const { return mode; }
     uint32_t getUser() const { return user; }
     uint32_t getGroup() const { return group; }
-    uint64_t getUniqueID() const { return uniqueID; }
   };
 
   /// This class provides an abstraction for the path to a file or directory
@@ -235,17 +232,6 @@ namespace sys {
       /// @brief Determine if the path references a dynamic library.
       bool isDynamicLibrary() const;
 
-      /// This function determines if the path name in the object references a
-      /// native object file by looking at it's magic number. The term object
-      /// file is defined as "an organized collection of separate, named
-      /// sequences of binary data." This covers the obvious file formats such
-      /// as COFF and ELF, but it also includes llvm ir bitcode, archives,
-      /// libraries, etc...
-      /// @returns true if the file starts with the magic number for an object
-      /// file.
-      /// @brief Determine if the path references an object file.
-      bool isObjectFile() const;
-
       /// This function determines if the path name references an existing file
       /// or directory in the file system.
       /// @returns true if the pathname references an existing file or
@@ -269,47 +255,12 @@ namespace sys {
       LLVM_ATTRIBUTE_DEPRECATED(bool isSymLink() const,
         LLVM_PATH_DEPRECATED_MSG(fs::is_symlink));
 
-      /// This function determines if the path name references a readable file
-      /// or directory in the file system. This function checks for
-      /// the existence and readability (by the current program) of the file
-      /// or directory.
-      /// @returns true if the pathname references a readable file.
-      /// @brief Determines if the path is a readable file or directory
-      /// in the file system.
-      bool canRead() const;
-
-      /// This function determines if the path name references a writable file
-      /// or directory in the file system. This function checks for the
-      /// existence and writability (by the current program) of the file or
-      /// directory.
-      /// @returns true if the pathname references a writable file.
-      /// @brief Determines if the path is a writable file or directory
-      /// in the file system.
-      bool canWrite() const;
-
       /// This function checks that what we're trying to work only on a regular
       /// file. Check for things like /dev/null, any block special file, or
       /// other things that aren't "regular" regular files.
       /// @returns true if the file is S_ISREG.
       /// @brief Determines if the file is a regular file
       bool isRegularFile() const;
-
-      /// This function determines if the path name references an executable
-      /// file in the file system. This function checks for the existence and
-      /// executability (by the current program) of the file.
-      /// @returns true if the pathname references an executable file.
-      /// @brief Determines if the path is an executable file in the file
-      /// system.
-      bool canExecute() const;
-
-      /// This function builds a list of paths that are the names of the
-      /// files and directories in a directory.
-      /// @returns true if an error occurs, true otherwise
-      /// @brief Build a list of directory's contents.
-      bool getDirectoryContents(
-        std::set<Path> &paths, ///< The resulting list of file & directory names
-        std::string* ErrMsg    ///< Optional place to return an error message.
-      ) const;
 
     /// @}
     /// @name Path Mutators

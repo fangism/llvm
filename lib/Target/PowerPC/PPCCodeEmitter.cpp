@@ -63,6 +63,9 @@ namespace {
     unsigned get_crbitm_encoding(const MachineInstr &MI, unsigned OpNo) const;
     unsigned getDirectBrEncoding(const MachineInstr &MI, unsigned OpNo) const;
     unsigned getCondBrEncoding(const MachineInstr &MI, unsigned OpNo) const;
+    unsigned getAbsDirectBrEncoding(const MachineInstr &MI,
+                                    unsigned OpNo) const;
+    unsigned getAbsCondBrEncoding(const MachineInstr &MI, unsigned OpNo) const;
 
     unsigned getS16ImmEncoding(const MachineInstr &MI, unsigned OpNo) const;
     unsigned getMemRIEncoding(const MachineInstr &MI, unsigned OpNo) const;
@@ -193,6 +196,19 @@ unsigned PPCCodeEmitter::getCondBrEncoding(const MachineInstr &MI,
   return 0;
 }
 
+unsigned PPCCodeEmitter::getAbsDirectBrEncoding(const MachineInstr &MI,
+                                                unsigned OpNo) const {
+  const MachineOperand &MO = MI.getOperand(OpNo);
+  if (MO.isReg() || MO.isImm()) return getMachineOpValue(MI, MO);
+
+  llvm_unreachable("Absolute branch relocations unsupported on the old JIT.");
+}
+
+unsigned PPCCodeEmitter::getAbsCondBrEncoding(const MachineInstr &MI,
+                                              unsigned OpNo) const {
+  llvm_unreachable("Absolute branch relocations unsupported on the old JIT.");
+}
+
 unsigned PPCCodeEmitter::getS16ImmEncoding(const MachineInstr &MI,
                                            unsigned OpNo) const {
   const MachineOperand &MO = MI.getOperand(OpNo);
@@ -201,8 +217,8 @@ unsigned PPCCodeEmitter::getS16ImmEncoding(const MachineInstr &MI,
   unsigned RelocID;
   switch (MO.getTargetFlags() & PPCII::MO_ACCESS_MASK) {
     default: llvm_unreachable("Unsupported target operand flags!");
-    case PPCII::MO_HA16: RelocID = PPC::reloc_absolute_high; break;
-    case PPCII::MO_LO16: RelocID = PPC::reloc_absolute_low; break;
+    case PPCII::MO_LO: RelocID = PPC::reloc_absolute_low; break;
+    case PPCII::MO_HA: RelocID = PPC::reloc_absolute_high; break;
   }
 
   MCE.addRelocation(GetRelocation(MO, RelocID));

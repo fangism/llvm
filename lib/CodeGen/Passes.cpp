@@ -396,15 +396,15 @@ void TargetPassConfig::addPassesToHandleExceptions() {
     // removed from the parent invoke(s). This could happen when a landing
     // pad is shared by multiple invokes and is also a target of a normal
     // edge from elsewhere.
-    addPass(createSjLjEHPreparePass(TM->getTargetLowering()));
+    addPass(createSjLjEHPreparePass(TM));
     // FALLTHROUGH
   case ExceptionHandling::DwarfCFI:
   case ExceptionHandling::ARM:
   case ExceptionHandling::Win64:
-    addPass(createDwarfEHPass(TM->getTargetLowering()));
+    addPass(createDwarfEHPass(TM));
     break;
   case ExceptionHandling::None:
-    addPass(createLowerInvokePass(TM->getTargetLowering()));
+    addPass(createLowerInvokePass(TM));
 
     // The lower invoke pass may create unreachable code. Remove it.
     addPass(createUnreachableBlockEliminationPass());
@@ -416,13 +416,13 @@ void TargetPassConfig::addPassesToHandleExceptions() {
 /// before exception handling preparation passes.
 void TargetPassConfig::addCodeGenPrepare() {
   if (getOptLevel() != CodeGenOpt::None && !DisableCGP)
-    addPass(createCodeGenPreparePass(getTargetLowering()));
+    addPass(createCodeGenPreparePass(TM));
 }
 
 /// Add common passes that perform LLVM IR to IR transforms in preparation for
 /// instruction selection.
 void TargetPassConfig::addISelPrepare() {
-  addPass(createStackProtectorPass(getTargetLowering()));
+  addPass(createStackProtectorPass(TM));
 
   addPreISel();
 

@@ -21,6 +21,7 @@
 #include "llvm/CodeGen/LiveIntervalAnalysis.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/RegisterClassInfo.h"
 #include "llvm/CodeGen/ScheduleDFS.h"
@@ -487,12 +488,13 @@ void ScheduleDAGMI::initRegPressure() {
   const std::vector<unsigned> &RegionPressure =
     RPTracker.getPressure().MaxSetPressure;
   for (unsigned i = 0, e = RegionPressure.size(); i < e; ++i) {
-    unsigned Limit = TRI->getRegPressureSetLimit(i);
-    DEBUG(dbgs() << TRI->getRegPressureSetName(i)
-          << "Limit " << Limit
-          << " Actual " << RegionPressure[i] << "\n");
-    if (RegionPressure[i] > Limit)
+    unsigned Limit = RegClassInfo->getRegPressureSetLimit(i);
+    if (RegionPressure[i] > Limit) {
+      DEBUG(dbgs() << TRI->getRegPressureSetName(i)
+            << " Limit " << Limit
+            << " Actual " << RegionPressure[i] << "\n");
       RegionCriticalPSets.push_back(PressureElement(i, 0));
+    }
   }
   DEBUG(dbgs() << "Excess PSets: ";
         for (unsigned i = 0, e = RegionCriticalPSets.size(); i != e; ++i)
@@ -513,7 +515,7 @@ updateScheduledPressure(const std::vector<unsigned> &NewMaxPressure) {
   }
   DEBUG(
     for (unsigned i = 0, e = NewMaxPressure.size(); i < e; ++i) {
-      unsigned Limit = TRI->getRegPressureSetLimit(i);
+      unsigned Limit = RegClassInfo->getRegPressureSetLimit(i);
       if (NewMaxPressure[i] > Limit ) {
         dbgs() << "  " << TRI->getRegPressureSetName(i) << ": "
                << NewMaxPressure[i] << " > " << Limit << "\n";
@@ -1665,7 +1667,7 @@ void ConvergingScheduler::SchedBoundary::setPolicy(CandPolicy &Policy,
              << getResourceName(ZoneCritResIdx) << "\n";
     }
     if (OtherResLimited)
-      dbgs() << "  RemainingLimit: " << getResourceName(OtherCritIdx);
+      dbgs() << "  RemainingLimit: " << getResourceName(OtherCritIdx) << "\n";
     if (!IsResourceLimited && !OtherResLimited)
       dbgs() << "  Latency limited both directions.\n");
 

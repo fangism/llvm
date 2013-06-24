@@ -244,27 +244,6 @@ Path::isSymLink() const {
 }
 
 bool
-Path::canRead() const {
-  // FIXME: take security attributes into account.
-  DWORD attr = GetFileAttributes(path.c_str());
-  return attr != INVALID_FILE_ATTRIBUTES;
-}
-
-bool
-Path::canWrite() const {
-  // FIXME: take security attributes into account.
-  DWORD attr = GetFileAttributes(path.c_str());
-  return (attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_READONLY);
-}
-
-bool
-Path::canExecute() const {
-  // FIXME: take security attributes into account.
-  DWORD attr = GetFileAttributes(path.c_str());
-  return attr != INVALID_FILE_ATTRIBUTES;
-}
-
-bool
 Path::isRegularFile() const {
   bool res;
   if (fs::is_regular_file(path, res))
@@ -289,13 +268,6 @@ PathWithStatus::getFileStatus(bool update, std::string *ErrStr) const {
     status.mode = fi.dwFileAttributes & FILE_ATTRIBUTE_READONLY ? 0555 : 0777;
     status.user = 9999;    // Not applicable to Windows, so...
     status.group = 9999;   // Not applicable to Windows, so...
-
-    // FIXME: this is only unique if the file is accessed by the same file path.
-    // How do we do this for C:\dir\file and ..\dir\file ? Unix has inode
-    // numbers, but the concept doesn't exist in Windows.
-    status.uniqueID = 0;
-    for (unsigned i = 0; i < path.length(); ++i)
-      status.uniqueID += path[i];
 
     ULARGE_INTEGER ui;
     ui.LowPart = fi.ftLastWriteTime.dwLowDateTime;
@@ -325,54 +297,6 @@ bool Path::makeWriteableOnDisk(std::string* ErrMsg) {
       MakeErrMsg(ErrMsg, std::string(path) + ": Can't make file writable: ");
       return true;
     }
-  }
-  return false;
-}
-
-bool
-Path::getDirectoryContents(std::set<Path>& result, std::string* ErrMsg) const {
-  WIN32_FILE_ATTRIBUTE_DATA fi;
-  if (!GetFileAttributesEx(path.c_str(), GetFileExInfoStandard, &fi)) {
-    MakeErrMsg(ErrMsg, path + ": can't get status of file");
-    return true;
-  }
-
-  if (!(fi.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-    if (ErrMsg)
-      *ErrMsg = path + ": not a directory";
-    return true;
-  }
-
-  result.clear();
-  WIN32_FIND_DATA fd;
-  std::string searchpath = path;
-  if (path.size() == 0 || searchpath[path.size()-1] == '/')
-    searchpath += "*";
-  else
-    searchpath += "/*";
-
-  HANDLE h = FindFirstFile(searchpath.c_str(), &fd);
-  if (h == INVALID_HANDLE_VALUE) {
-    if (GetLastError() == ERROR_FILE_NOT_FOUND)
-      return true; // not really an error, now is it?
-    MakeErrMsg(ErrMsg, path + ": Can't read directory: ");
-    return true;
-  }
-
-  do {
-    if (fd.cFileName[0] == '.')
-      continue;
-    Path aPath(path);
-    aPath.appendComponent(&fd.cFileName[0]);
-    result.insert(aPath);
-  } while (FindNextFile(h, &fd));
-
-  DWORD err = GetLastError();
-  FindClose(h);
-  if (err != ERROR_NO_MORE_FILES) {
-    SetLastError(err);
-    MakeErrMsg(ErrMsg, path + ": Can't read directory: ");
-    return true;
   }
   return false;
 }

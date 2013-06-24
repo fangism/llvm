@@ -63,7 +63,8 @@ namespace llvm {
       FlagObjcClassComplete  = 1 << 9,
       FlagObjectPointer      = 1 << 10,
       FlagVector             = 1 << 11,
-      FlagStaticMember       = 1 << 12
+      FlagStaticMember       = 1 << 12,
+      FlagIndirectVariable   = 1 << 13
     };
   protected:
     const MDNode *DbgNode;
@@ -221,7 +222,7 @@ namespace llvm {
     explicit DIEnumerator(const MDNode *N = 0) : DIDescriptor(N) {}
 
     StringRef getName() const        { return getStringField(1); }
-    uint64_t getEnumValue() const      { return getUInt64Field(2); }
+    int64_t getEnumValue() const      { return getInt64Field(2); }
     bool Verify() const;
   };
 
@@ -551,6 +552,11 @@ namespace llvm {
 
     bool isObjectPointer() const {
       return (getUnsignedField(6) & FlagObjectPointer) != 0;
+    }
+
+    /// \brief Return true if this variable is represented as a pointer.
+    bool isIndirect() const {
+      return (getUnsignedField(6) & FlagIndirectVariable) != 0;
     }
 
     /// getInlinedAt - If this variable is inlined then return inline location.

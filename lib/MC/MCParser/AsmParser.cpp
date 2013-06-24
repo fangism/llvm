@@ -160,6 +160,13 @@ private:
   int64_t CppHashLineNumber;
   SMLoc CppHashLoc;
   int CppHashBuf;
+  /// When generating dwarf for assembly source files we need to calculate the
+  /// logical line number based on the last parsed cpp hash file line comment
+  /// and current line. Since this is slow and messes up the SourceMgr's 
+  /// cache we save the last info we queried with SrcMgr.FindLineNumber().
+  SMLoc LastQueryIDLoc;
+  int LastQueryBuffer;
+  unsigned LastQueryLine;
 
   /// AssemblerDialect. ~OU means unset value and use value provided by MAI.
   unsigned AssemblerDialect;
@@ -805,11 +812,21 @@ bool AsmParser::ParsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
     // Look for 'b' or 'f' following an Integer as a directional label
     if (Lexer.getKind() == AsmToken::Identifier) {
       StringRef IDVal = getTok().getString();
+      // Lookup the symbol variant if used.
+      std::pair<StringRef, StringRef> Split = IDVal.split('@');
+      MCSymbolRefExpr::VariantKind Variant = MCSymbolRefExpr::VK_None;
+      if (Split.first.size() != IDVal.size()) {
+        Variant = MCSymbolRefExpr::getVariantKindForName(Split.second);
+        if (Variant == MCSymbolRefExpr::VK_Invalid) {
+          Variant = MCSymbolRefExpr::VK_None;
+          return TokError("invalid variant '" + Split.second + "'");
+        }
+	IDVal = Split.first;
+      }
       if (IDVal == "f" || IDVal == "b"){
         MCSymbol *Sym = Ctx.GetDirectionalLocalSymbol(IntVal,
                                                       IDVal == "f" ? 1 : 0);
-        Res = MCSymbolRefExpr::Create(Sym, MCSymbolRefExpr::VK_None,
-                                      getContext());
+        Res = MCSymbolRefExpr::Create(Sym, Variant, getContext());
         if (IDVal == "b" && Sym->isUndefined())
           return Error(Loc, "invalid reference to undefined symbol");
         EndLoc = Lexer.getTok().getEndLoc();
@@ -1509,7 +1526,18 @@ bool AsmParser::ParseStatement(ParseStatementInfo &Info) {
         getStreamer().EmitDwarfFileDirective(
           getContext().nextGenDwarfFileNumber(), StringRef(), CppHashFilename);
 
-       unsigned CppHashLocLineNo = SrcMgr.FindLineNumber(CppHashLoc,CppHashBuf);
+       // Since SrcMgr.FindLineNumber() is slow and messes up the SourceMgr's 
+       // cache with the different Loc from the call above we save the last
+       // info we queried here with SrcMgr.FindLineNumber().
+       unsigned CppHashLocLineNo;
+       if (LastQueryIDLoc == CppHashLoc && LastQueryBuffer == CppHashBuf)
+         CppHashLocLineNo = LastQueryLine;
+       else {
+         CppHashLocLineNo = SrcMgr.FindLineNumber(CppHashLoc, CppHashBuf);
+         LastQueryLine = CppHashLocLineNo;
+         LastQueryIDLoc = CppHashLoc;
+         LastQueryBuffer = CppHashBuf;
+       }
        Line = CppHashLineNumber - 1 + (Line - CppHashLocLineNo);
     }
 

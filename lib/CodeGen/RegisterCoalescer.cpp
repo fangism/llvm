@@ -166,7 +166,8 @@ namespace {
 
     /// reMaterializeTrivialDef - If the source of a copy is defined by a
     /// trivial computation, replace the copy by rematerialize the definition.
-    bool reMaterializeTrivialDef(CoalescerPair &CP, MachineInstr *CopyMI);
+    bool reMaterializeTrivialDef(CoalescerPair &CP, MachineInstr *CopyMI,
+                                 bool &IsDefCopy);
 
     /// canJoinPhys - Return true if a physreg copy should be joined.
     bool canJoinPhys(const CoalescerPair &CP);
@@ -731,7 +732,9 @@ bool RegisterCoalescer::removeCopyByCommutingDef(const CoalescerPair &CP,
 /// reMaterializeTrivialDef - If the source of a copy is defined by a trivial
 /// computation, replace the copy by rematerialize the definition.
 bool RegisterCoalescer::reMaterializeTrivialDef(CoalescerPair &CP,
-                                                MachineInstr *CopyMI) {
+                                                MachineInstr *CopyMI,
+                                                bool &IsDefCopy) {
+  IsDefCopy = false;
   unsigned SrcReg = CP.isFlipped() ? CP.getDstReg() : CP.getSrcReg();
   unsigned SrcIdx = CP.isFlipped() ? CP.getDstIdx() : CP.getSrcIdx();
   unsigned DstReg = CP.isFlipped() ? CP.getSrcReg() : CP.getDstReg();
@@ -750,6 +753,10 @@ bool RegisterCoalescer::reMaterializeTrivialDef(CoalescerPair &CP,
   if (!DefMI)
     return false;
   assert(DefMI && "Defining instruction disappeared");
+  if (DefMI->isCopyLike()) {
+    IsDefCopy = true;
+    return false;
+  }
   if (!DefMI->isAsCheapAsAMove())
     return false;
   if (!TII->isTriviallyReMaterializable(DefMI, AA))
@@ -1064,8 +1071,11 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
     if (!canJoinPhys(CP)) {
       // Before giving up coalescing, if definition of source is defined by
       // trivial computation, try rematerializing it.
-      if (reMaterializeTrivialDef(CP, CopyMI))
+      bool IsDefCopy;
+      if (reMaterializeTrivialDef(CP, CopyMI, IsDefCopy))
         return true;
+      if (IsDefCopy)
+        Again = true;  // May be possible to coalesce later.
       return false;
     }
   } else {
@@ -1097,7 +1107,8 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
 
     // If definition of source is defined by trivial computation, try
     // rematerializing it.
-    if (reMaterializeTrivialDef(CP, CopyMI))
+    bool IsDefCopy;
+    if (reMaterializeTrivialDef(CP, CopyMI, IsDefCopy))
       return true;
 
     // If we can eliminate the copy without merging the live ranges, do so now.
@@ -2061,6 +2072,9 @@ static bool isLocalCopy(MachineInstr *Copy, const LiveIntervals *LIS) {
   if (!Copy->isCopy())
     return false;
 
+  if (Copy->getOperand(1).isUndef())
+    return false;
+
   unsigned SrcReg = Copy->getOperand(1).getReg();
   unsigned DstReg = Copy->getOperand(0).getReg();
   if (TargetRegisterInfo::isPhysicalRegister(SrcReg)
@@ -2106,8 +2120,8 @@ RegisterCoalescer::copyCoalesceInMBB(MachineBasicBlock *MBB) {
     // are not inherently easier to resolve, but slightly preferable until we
     // have local live range splitting. In particular this is required by
     // cmp+jmp macro fusion.
-    for (MachineBasicBlock::reverse_iterator
-           MII = MBB->rbegin(), E = MBB->rend(); MII != E; ++MII) {
+    for (MachineBasicBlock::iterator MII = MBB->begin(), E = MBB->end();
+         MII != E; ++MII) {
       if (!MII->isCopyLike())
         continue;
       if (isLocalCopy(&(*MII), LIS))

@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "MCTargetDesc/PPCMCTargetDesc.h"
+#include "MCTargetDesc/PPCMCExpr.h"
 #include "llvm/MC/MCTargetAsmParser.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCExpr.h"
@@ -125,6 +126,10 @@ class PPCAsmParser : public MCTargetAsmParser {
                          unsigned &RegNo, int64_t &IntVal);
 
   virtual bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc);
+
+  const MCExpr *ExtractModifierFromExpr(const MCExpr *E,
+                                        PPCMCExpr::VariantKind &Variant);
+  bool ParseExpression(const MCExpr *&EVal);
 
   bool ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands);
 
@@ -262,6 +267,12 @@ public:
   bool isS16ImmX4() const { return Kind == Expression ||
                                    (Kind == Immediate && isInt<16>(getImm()) &&
                                     (getImm() & 3) == 0); }
+  bool isDirectBr() const { return Kind == Expression ||
+                                   (Kind == Immediate && isInt<26>(getImm()) &&
+                                    (getImm() & 3) == 0); }
+  bool isCondBr() const { return Kind == Expression ||
+                                 (Kind == Immediate && isInt<16>(getImm()) &&
+                                  (getImm() & 3) == 0); }
   bool isRegNumber() const { return Kind == Immediate && isUInt<5>(getImm()); }
   bool isCCRegNumber() const { return Kind == Immediate &&
                                       isUInt<3>(getImm()); }
@@ -342,6 +353,14 @@ public:
     assert(N == 1 && "Invalid number of operands!");
     if (Kind == Immediate)
       Inst.addOperand(MCOperand::CreateImm(getImm()));
+    else
+      Inst.addOperand(MCOperand::CreateExpr(getExpr()));
+  }
+
+  void addBranchTargetOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    if (Kind == Immediate)
+      Inst.addOperand(MCOperand::CreateImm(getImm() / 4));
     else
       Inst.addOperand(MCOperand::CreateExpr(getExpr()));
   }
@@ -540,6 +559,106 @@ ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc) {
   return Error(StartLoc, "invalid register name");
 }
 
+/// Extract @l/@ha modifier from expression.  Recursively scan
+/// the expression and check for VK_PPC_LO/HI/HA
+/// symbol variants.  If all symbols with modifier use the same
+/// variant, return the corresponding PPCMCExpr::VariantKind,
+/// and a modified expression using the default symbol variant.
+/// Otherwise, return NULL.
+const MCExpr *PPCAsmParser::
+ExtractModifierFromExpr(const MCExpr *E,
+                        PPCMCExpr::VariantKind &Variant) {
+  MCContext &Context = getParser().getContext();
+  Variant = PPCMCExpr::VK_PPC_None;
+
+  switch (E->getKind()) {
+  case MCExpr::Target:
+  case MCExpr::Constant:
+    return 0;
+
+  case MCExpr::SymbolRef: {
+    const MCSymbolRefExpr *SRE = cast<MCSymbolRefExpr>(E);
+
+    switch (SRE->getKind()) {
+    case MCSymbolRefExpr::VK_PPC_LO:
+      Variant = PPCMCExpr::VK_PPC_LO;
+      break;
+    case MCSymbolRefExpr::VK_PPC_HI:
+      Variant = PPCMCExpr::VK_PPC_HI;
+      break;
+    case MCSymbolRefExpr::VK_PPC_HA:
+      Variant = PPCMCExpr::VK_PPC_HA;
+      break;
+    case MCSymbolRefExpr::VK_PPC_HIGHER:
+      Variant = PPCMCExpr::VK_PPC_HIGHER;
+      break;
+    case MCSymbolRefExpr::VK_PPC_HIGHERA:
+      Variant = PPCMCExpr::VK_PPC_HIGHERA;
+      break;
+    case MCSymbolRefExpr::VK_PPC_HIGHEST:
+      Variant = PPCMCExpr::VK_PPC_HIGHEST;
+      break;
+    case MCSymbolRefExpr::VK_PPC_HIGHESTA:
+      Variant = PPCMCExpr::VK_PPC_HIGHESTA;
+      break;
+    default:
+      return 0;
+    }
+
+    return MCSymbolRefExpr::Create(&SRE->getSymbol(), Context);
+  }
+
+  case MCExpr::Unary: {
+    const MCUnaryExpr *UE = cast<MCUnaryExpr>(E);
+    const MCExpr *Sub = ExtractModifierFromExpr(UE->getSubExpr(), Variant);
+    if (!Sub)
+      return 0;
+    return MCUnaryExpr::Create(UE->getOpcode(), Sub, Context);
+  }
+
+  case MCExpr::Binary: {
+    const MCBinaryExpr *BE = cast<MCBinaryExpr>(E);
+    PPCMCExpr::VariantKind LHSVariant, RHSVariant;
+    const MCExpr *LHS = ExtractModifierFromExpr(BE->getLHS(), LHSVariant);
+    const MCExpr *RHS = ExtractModifierFromExpr(BE->getRHS(), RHSVariant);
+
+    if (!LHS && !RHS)
+      return 0;
+
+    if (!LHS) LHS = BE->getLHS();
+    if (!RHS) RHS = BE->getRHS();
+
+    if (LHSVariant == PPCMCExpr::VK_PPC_None)
+      Variant = RHSVariant;
+    else if (RHSVariant == PPCMCExpr::VK_PPC_None)
+      Variant = LHSVariant;
+    else if (LHSVariant == RHSVariant)
+      Variant = LHSVariant;
+    else
+      return 0;
+
+    return MCBinaryExpr::Create(BE->getOpcode(), LHS, RHS, Context);
+  }
+  }
+
+  llvm_unreachable("Invalid expression kind!");
+}
+
+/// Parse an expression.  This differs from the default "parseExpression"
+/// in that it handles complex @l/@ha modifiers.
+bool PPCAsmParser::
+ParseExpression(const MCExpr *&EVal) {
+  if (getParser().parseExpression(EVal))
+    return true;
+
+  PPCMCExpr::VariantKind Variant;
+  const MCExpr *E = ExtractModifierFromExpr(EVal, Variant);
+  if (E)
+    EVal = PPCMCExpr::Create(Variant, E, getParser().getContext());
+
+  return false;
+}
+
 bool PPCAsmParser::
 ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   SMLoc S = Parser.getTok().getLoc();
@@ -571,7 +690,7 @@ ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   case AsmToken::Identifier:
   case AsmToken::Dot:
   case AsmToken::Dollar:
-    if (!getParser().parseExpression(EVal))
+    if (!ParseExpression(EVal))
       break;
     /* fall through */
   default:
@@ -628,6 +747,22 @@ bool PPCAsmParser::
 ParseInstruction(ParseInstructionInfo &Info, StringRef Name, SMLoc NameLoc,
                  SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   // The first operand is the token for the instruction name.
+  // If the next character is a '+' or '-', we need to add it to the
+  // instruction name, to match what TableGen is doing.
+  if (getLexer().is(AsmToken::Plus)) {
+    getLexer().Lex();
+    char *NewOpcode = new char[Name.size() + 1];
+    memcpy(NewOpcode, Name.data(), Name.size());
+    NewOpcode[Name.size()] = '+';
+    Name = StringRef(NewOpcode, Name.size() + 1);
+  }
+  if (getLexer().is(AsmToken::Minus)) {
+    getLexer().Lex();
+    char *NewOpcode = new char[Name.size() + 1];
+    memcpy(NewOpcode, Name.data(), Name.size());
+    NewOpcode[Name.size()] = '-';
+    Name = StringRef(NewOpcode, Name.size() + 1);
+  }
   // If the instruction ends in a '.', we need to create a separate
   // token for it, to match what TableGen is doing.
   size_t Dot = Name.find('.');

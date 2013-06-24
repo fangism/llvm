@@ -7948,8 +7948,11 @@ static SDValue AddCombineTo64bitMLAL(SDNode *AddcNode,
 
   assert(AddcNode->getNumValues() == 2 &&
          AddcNode->getValueType(0) == MVT::i32 &&
-         AddcNode->getValueType(1) == MVT::Glue &&
-         "Expect ADDC with two result values: i32, glue");
+         "Expect ADDC with two result values. First: i32");
+
+  // Check that we have a glued ADDC node.
+  if (AddcNode->getValueType(1) != MVT::Glue)
+    return SDValue();
 
   // Check that the ADDC adds the low result of the S/UMUL_LOHI.
   if (AddcOp0->getOpcode() != ISD::UMUL_LOHI &&
@@ -10181,9 +10184,19 @@ void ARMTargetLowering::computeMaskedBitsForTargetNode(const SDValue Op,
                                                        APInt &KnownOne,
                                                        const SelectionDAG &DAG,
                                                        unsigned Depth) const {
-  KnownZero = KnownOne = APInt(KnownOne.getBitWidth(), 0);
+  unsigned BitWidth = KnownOne.getBitWidth();
+  KnownZero = KnownOne = APInt(BitWidth, 0);
   switch (Op.getOpcode()) {
   default: break;
+  case ARMISD::ADDC:
+  case ARMISD::ADDE:
+  case ARMISD::SUBC:
+  case ARMISD::SUBE:
+    // These nodes' second result is a boolean
+    if (Op.getResNo() == 0)
+      break;
+    KnownZero |= APInt::getHighBitsSet(BitWidth, BitWidth - 1);
+    break;
   case ARMISD::CMOV: {
     // Bits are known zero/one if known on the LHS and RHS.
     DAG.ComputeMaskedBits(Op.getOperand(0), KnownZero, KnownOne, Depth+1);
@@ -10297,7 +10310,7 @@ ARMTargetLowering::getSingleConstraintMatchWeight(
 typedef std::pair<unsigned, const TargetRegisterClass*> RCPair;
 RCPair
 ARMTargetLowering::getRegForInlineAsmConstraint(const std::string &Constraint,
-                                                EVT VT) const {
+                                                MVT VT) const {
   if (Constraint.size() == 1) {
     // GCC ARM Constraint Letters
     switch (Constraint[0]) {

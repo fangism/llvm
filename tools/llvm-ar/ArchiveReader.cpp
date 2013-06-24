@@ -174,14 +174,14 @@ Archive::parseMemberHeader(const char*& At, const char* End, std::string* error)
 
   // Fill in fields of the ArchiveMember
   member->parent = this;
-  member->path.set(pathname);
-  member->info.fileSize = MemberSize;
-  member->info.modTime.fromEpochTime(atoi(Hdr->date));
+  member->path = pathname;
+  member->Size = MemberSize;
+  member->ModTime.fromEpochTime(atoi(Hdr->date));
   unsigned int mode;
   sscanf(Hdr->mode, "%o", &mode);
-  member->info.mode = mode;
-  member->info.user = atoi(Hdr->uid);
-  member->info.group = atoi(Hdr->gid);
+  member->Mode = mode;
+  member->User = atoi(Hdr->uid);
+  member->Group = atoi(Hdr->gid);
   member->flags = flags;
   member->data = At;
 
@@ -207,7 +207,6 @@ Archive::loadArchive(std::string* error) {
 
   // Set up parsing
   members.clear();
-  symTab.clear();
   const char *At = base;
   const char *End = mapfile->getBufferEnd();
 
@@ -226,14 +225,6 @@ Archive::loadArchive(std::string* error) {
 
     // check if this is the foreign symbol table
     if (mbr->isSVR4SymbolTable() || mbr->isBSD4SymbolTable()) {
-      // We just save this but don't do anything special
-      // with it. It doesn't count as the "first file".
-      if (foreignST) {
-        // What? Multiple foreign symbol tables? Just chuck it
-        // and retain the last one found.
-        delete foreignST;
-      }
-      foreignST = mbr;
       At += mbr->getSize();
       if ((intptr_t(At) & 1) == 1)
         At++;
@@ -265,38 +256,14 @@ Archive::loadArchive(std::string* error) {
 
 // Open and completely load the archive file.
 Archive*
-Archive::OpenAndLoad(const sys::Path& File, LLVMContext& C,
+Archive::OpenAndLoad(StringRef File, LLVMContext& C,
                      std::string* ErrorMessage) {
-  OwningPtr<Archive> result ( new Archive(File, C));
+  OwningPtr<Archive> result(new Archive(File, C));
   if (result->mapToMemory(ErrorMessage))
     return NULL;
   if (!result->loadArchive(ErrorMessage))
     return NULL;
   return result.take();
-}
-
-// Get all the bitcode modules from the archive
-bool
-Archive::getAllModules(std::vector<Module*>& Modules,
-                       std::string* ErrMessage) {
-
-  for (iterator I=begin(), E=end(); I != E; ++I) {
-    if (I->isBitcode()) {
-      std::string FullMemberName = archPath.str() +
-        "(" + I->getPath().str() + ")";
-      MemoryBuffer *Buffer =
-        MemoryBuffer::getMemBufferCopy(StringRef(I->getData(), I->getSize()),
-                                       FullMemberName.c_str());
-      
-      Module *M = ParseBitcodeFile(Buffer, Context, ErrMessage);
-      delete Buffer;
-      if (!M)
-        return true;
-
-      Modules.push_back(M);
-    }
-  }
-  return false;
 }
 
 // Load just the symbol table from the archive file
@@ -305,7 +272,6 @@ Archive::loadSymbolTable(std::string* ErrorMsg) {
 
   // Set up parsing
   members.clear();
-  symTab.clear();
   const char *At = base;
   const char *End = mapfile->getBufferEnd();
 
@@ -361,197 +327,4 @@ Archive::loadSymbolTable(std::string* ErrorMsg) {
 
   firstFileOffset = FirstFile - base;
   return true;
-}
-
-// Open the archive and load just the symbol tables
-Archive* Archive::OpenAndLoadSymbols(const sys::Path& File,
-                                     LLVMContext& C,
-                                     std::string* ErrorMessage) {
-  OwningPtr<Archive> result ( new Archive(File, C) );
-  if (result->mapToMemory(ErrorMessage))
-    return NULL;
-  if (!result->loadSymbolTable(ErrorMessage))
-    return NULL;
-  return result.take();
-}
-
-// Look up one symbol in the symbol table and return the module that defines
-// that symbol.
-Module*
-Archive::findModuleDefiningSymbol(const std::string& symbol, 
-                                  std::string* ErrMsg) {
-  SymTabType::iterator SI = symTab.find(symbol);
-  if (SI == symTab.end())
-    return 0;
-
-  // The symbol table was previously constructed assuming that the members were
-  // written without the symbol table header. Because VBR encoding is used, the
-  // values could not be adjusted to account for the offset of the symbol table
-  // because that could affect the size of the symbol table due to VBR encoding.
-  // We now have to account for this by adjusting the offset by the size of the
-  // symbol table and its header.
-  unsigned fileOffset =
-    SI->second +                // offset in symbol-table-less file
-    firstFileOffset;            // add offset to first "real" file in archive
-
-  // See if the module is already loaded
-  ModuleMap::iterator MI = modules.find(fileOffset);
-  if (MI != modules.end())
-    return MI->second.first;
-
-  // Module hasn't been loaded yet, we need to load it
-  const char* modptr = base + fileOffset;
-  ArchiveMember* mbr = parseMemberHeader(modptr, mapfile->getBufferEnd(),
-                                         ErrMsg);
-  if (!mbr)
-    return 0;
-
-  // Now, load the bitcode module to get the Module.
-  std::string FullMemberName = archPath.str() + "(" +
-    mbr->getPath().str() + ")";
-  MemoryBuffer *Buffer =
-    MemoryBuffer::getMemBufferCopy(StringRef(mbr->getData(), mbr->getSize()),
-                                   FullMemberName.c_str());
-  
-  Module *m = getLazyBitcodeModule(Buffer, Context, ErrMsg);
-  if (!m)
-    return 0;
-
-  modules.insert(std::make_pair(fileOffset, std::make_pair(m, mbr)));
-
-  return m;
-}
-
-// Look up multiple symbols in the symbol table and return a set of
-// Modules that define those symbols.
-bool
-Archive::findModulesDefiningSymbols(std::set<std::string>& symbols,
-                                    SmallVectorImpl<Module*>& result,
-                                    std::string* error) {
-  if (!mapfile || !base) {
-    if (error)
-      *error = "Empty archive invalid for finding modules defining symbols";
-    return false;
-  }
-
-  if (symTab.empty()) {
-    // We don't have a symbol table, so we must build it now but lets also
-    // make sure that we populate the modules table as we do this to ensure
-    // that we don't load them twice when findModuleDefiningSymbol is called
-    // below.
-
-    // Get a pointer to the first file
-    const char* At  = base + firstFileOffset;
-    const char* End = mapfile->getBufferEnd();
-
-    while ( At < End) {
-      // Compute the offset to be put in the symbol table
-      unsigned offset = At - base - firstFileOffset;
-
-      // Parse the file's header
-      ArchiveMember* mbr = parseMemberHeader(At, End, error);
-      if (!mbr)
-        return false;
-
-      // If it contains symbols
-      if (mbr->isBitcode()) {
-        // Get the symbols
-        std::vector<std::string> symbols;
-        std::string FullMemberName = archPath.str() + "(" +
-          mbr->getPath().str() + ")";
-        Module* M = 
-          GetBitcodeSymbols(At, mbr->getSize(), FullMemberName, Context,
-                            symbols, error);
-
-        if (M) {
-          // Insert the module's symbols into the symbol table
-          for (std::vector<std::string>::iterator I = symbols.begin(),
-               E=symbols.end(); I != E; ++I ) {
-            symTab.insert(std::make_pair(*I, offset));
-          }
-          // Insert the Module and the ArchiveMember into the table of
-          // modules.
-          modules.insert(std::make_pair(offset, std::make_pair(M, mbr)));
-        } else {
-          if (error)
-            *error = "Can't parse bitcode member: " + 
-              mbr->getPath().str() + ": " + *error;
-          delete mbr;
-          return false;
-        }
-      }
-
-      // Go to the next file location
-      At += mbr->getSize();
-      if ((intptr_t(At) & 1) == 1)
-        At++;
-    }
-  }
-
-  // At this point we have a valid symbol table (one way or another) so we
-  // just use it to quickly find the symbols requested.
-
-  SmallPtrSet<Module*, 16> Added;
-  for (std::set<std::string>::iterator I=symbols.begin(),
-         Next = I,
-         E=symbols.end(); I != E; I = Next) {
-    // Increment Next before we invalidate it.
-    ++Next;
-
-    // See if this symbol exists
-    Module* m = findModuleDefiningSymbol(*I,error);
-    if (!m)
-      continue;
-    bool NewMember = Added.insert(m);
-    if (!NewMember)
-      continue;
-
-    // The symbol exists, insert the Module into our result.
-    result.push_back(m);
-
-    // Remove the symbol now that its been resolved.
-    symbols.erase(I);
-  }
-  return true;
-}
-
-bool Archive::isBitcodeArchive() {
-  // Make sure the symTab has been loaded. In most cases this should have been
-  // done when the archive was constructed, but still,  this is just in case.
-  if (symTab.empty())
-    if (!loadSymbolTable(0))
-      return false;
-
-  // Now that we know it's been loaded, return true
-  // if it has a size
-  if (symTab.size()) return true;
-
-  // We still can't be sure it isn't a bitcode archive
-  if (!loadArchive(0))
-    return false;
-
-  std::vector<Module *> Modules;
-  std::string ErrorMessage;
-
-  // Scan the archive, trying to load a bitcode member.  We only load one to
-  // see if this works.
-  for (iterator I = begin(), E = end(); I != E; ++I) {
-    if (!I->isBitcode())
-      continue;
-    
-    std::string FullMemberName = 
-      archPath.str() + "(" + I->getPath().str() + ")";
-
-    MemoryBuffer *Buffer =
-      MemoryBuffer::getMemBufferCopy(StringRef(I->getData(), I->getSize()),
-                                     FullMemberName.c_str());
-    Module *M = ParseBitcodeFile(Buffer, Context);
-    delete Buffer;
-    if (!M)
-      return false;  // Couldn't parse bitcode, not a bitcode archive.
-    delete M;
-    return true;
-  }
-  
-  return false;
 }

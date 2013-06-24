@@ -348,7 +348,8 @@ void CompileUnit::addVariableAddress(DbgVariable *&DV, DIE *Die,
   else if (DV->isBlockByrefVariable())
     addBlockByrefAddress(DV, Die, dwarf::DW_AT_location, Location);
   else
-    addAddress(Die, dwarf::DW_AT_location, Location);
+    addAddress(Die, dwarf::DW_AT_location, Location,
+               DV->getVariable().isIndirect());
 }
 
 /// addRegisterOp - Add register operand.
@@ -384,13 +385,17 @@ void CompileUnit::addRegisterOffset(DIE *TheDie, unsigned Reg,
 /// addAddress - Add an address attribute to a die based on the location
 /// provided.
 void CompileUnit::addAddress(DIE *Die, unsigned Attribute,
-                             const MachineLocation &Location) {
+                             const MachineLocation &Location, bool Indirect) {
   DIEBlock *Block = new (DIEValueAllocator) DIEBlock();
 
-  if (Location.isReg())
+  if (Location.isReg() && !Indirect)
     addRegisterOp(Block, Location.getReg());
-  else
+  else {
     addRegisterOffset(Block, Location.getReg(), Location.getOffset());
+    if (Indirect && !Location.isReg()) {
+      addUInt(Block, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_deref);
+    }
+  }
 
   // Now attach the location information to the DIE.
   addBlock(Die, Attribute, 0, Block);
@@ -1082,7 +1087,8 @@ CompileUnit::getOrCreateTemplateTypeParameterDIE(DITemplateTypeParameter TP) {
 
   ParamDIE = new DIE(dwarf::DW_TAG_template_type_parameter);
   addType(ParamDIE, TP.getType());
-  addString(ParamDIE, dwarf::DW_AT_name, TP.getName());
+  if (!TP.getName().empty())
+    addString(ParamDIE, dwarf::DW_AT_name, TP.getName());
   return ParamDIE;
 }
 
@@ -1094,7 +1100,7 @@ CompileUnit::getOrCreateTemplateValueParameterDIE(DITemplateValueParameter TPV){
   if (ParamDIE)
     return ParamDIE;
 
-  ParamDIE = new DIE(dwarf::DW_TAG_template_value_parameter);
+  ParamDIE = new DIE(TPV.getTag());
   addType(ParamDIE, TPV.getType());
   if (!TPV.getName().empty())
     addString(ParamDIE, dwarf::DW_AT_name, TPV.getName());
@@ -1110,6 +1116,14 @@ CompileUnit::getOrCreateTemplateValueParameterDIE(DITemplateValueParameter TPV){
       // parameter, rather than a pointer to it.
       addUInt(Block, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_stack_value);
       addBlock(ParamDIE, dwarf::DW_AT_location, 0, Block);
+    } else if (TPV.getTag() == dwarf::DW_TAG_GNU_template_template_param) {
+      assert(isa<MDString>(Val));
+      addString(ParamDIE, dwarf::DW_AT_GNU_template_name,
+                cast<MDString>(Val)->getString());
+    } else if (TPV.getTag() == dwarf::DW_TAG_GNU_template_parameter_pack) {
+      assert(isa<MDNode>(Val));
+      DIArray A(cast<MDNode>(Val));
+      addTemplateParams(*ParamDIE, A);
     }
   }
 
