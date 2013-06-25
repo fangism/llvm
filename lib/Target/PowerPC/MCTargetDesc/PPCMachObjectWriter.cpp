@@ -159,11 +159,14 @@ getRelocType(
     case PPC::fixup_ppc_half16:
       switch (Modifier) {
       default: llvm_unreachable("Unsupported Modifier");
-      case MCSymbolRefExpr::VK_PPC_ADDR16_HA:
+      case MCSymbolRefExpr::VK_PPC_HA:
         Type = macho::RIT_PPC_HA16;
         break;
-      case MCSymbolRefExpr::VK_PPC_ADDR16_LO:
+      case MCSymbolRefExpr::VK_PPC_LO:
         Type = macho::RIT_PPC_LO16;
+        break;
+      case MCSymbolRefExpr::VK_PPC_HI:
+        Type = macho::RIT_PPC_HI16;
         break;
       }
       break;
@@ -207,11 +210,14 @@ getRelocType(
     case PPC::fixup_ppc_half16:
       switch (Modifier) {
       default: llvm_unreachable("Unsupported Modifier");
-      case MCSymbolRefExpr::VK_PPC_ADDR16_HA:
+      case MCSymbolRefExpr::VK_PPC_HA:
         Type = macho::RIT_PPC_HA16_SECTDIFF;
         break;
-      case MCSymbolRefExpr::VK_PPC_ADDR16_LO:
+      case MCSymbolRefExpr::VK_PPC_LO:
         Type = macho::RIT_PPC_LO16_SECTDIFF;
+        break;
+      case MCSymbolRefExpr::VK_PPC_HI:
+        Type = macho::RIT_PPC_HI16_SECTDIFF;
         break;
       }
       break;
@@ -232,10 +238,10 @@ getRelocType(
       case MCSymbolRefExpr::VK_PPC_TOC_ENTRY:
         Type = macho::RIT_PPC64_TOC16_DS;
 	break;
-      case MCSymbolRefExpr::VK_PPC_TOC16_LO:
+      case MCSymbolRefExpr::VK_PPC_TOC_LO:
         Type = macho::RIT_PPC64_TOC16_LO_DS;
         break;
-      case MCSymbolRefExpr::VK_PPC_GOT_TPREL16_LO:
+      case MCSymbolRefExpr::VK_PPC_GOT_TPREL_LO:
         Type = macho::RIT_PPC64_GOT_TPREL16_LO_DS;
         break;
       }
@@ -468,6 +474,10 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(MachObjectWriter *Writer,
     case macho::RIT_PPC_HA16_SECTDIFF:
       other_half = FixedValue & 0xffff;
       FixedValue = ((FixedValue >> 16) + ((FixedValue & 0x8000) ? 1 : 0)) & 0xffff;
+      break;
+    case macho::RIT_PPC_HI16_SECTDIFF:
+      other_half = FixedValue & 0xffff;
+      FixedValue = (FixedValue >> 16) & 0xffff;
       break;
     default:
 //      llvm_unreachable("Unhandled PPC scattered relocation type.");
