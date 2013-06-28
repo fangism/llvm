@@ -65,11 +65,6 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
 
   setOperationAction(ISD::ADD, MVT::i64, Legal);
   setOperationAction(ISD::ADD, MVT::i32, Legal);
-  setOperationAction(ISD::ADD, MVT::v4i32, Expand);
-  setOperationAction(ISD::ADD, MVT::v2i32, Expand);
-
-  setOperationAction(ISD::SUB, MVT::v2i32, Expand);
-  setOperationAction(ISD::SUB, MVT::v4i32, Expand);
 
   setOperationAction(ISD::SELECT_CC, MVT::f32, Custom);
   setOperationAction(ISD::SELECT_CC, MVT::i32, Custom);
@@ -86,6 +81,18 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
 
   setSchedulingPreference(Sched::RegPressure);
 }
+
+//===----------------------------------------------------------------------===//
+// TargetLowering queries
+//===----------------------------------------------------------------------===//
+
+bool SITargetLowering::allowsUnalignedMemoryAccesses(EVT  VT,
+                                                     bool *IsFast) const {
+  // XXX: This depends on the address space and also we may want to revist
+  // the alignment values we specify in the DataLayout.
+  return VT.bitsGT(MVT::i32);
+}
+
 
 SDValue SITargetLowering::LowerParameter(SelectionDAG &DAG, EVT VT,
                                          SDLoc DL, SDValue Chain,

@@ -465,6 +465,8 @@ Lforward:
 @ CHECK: cdp2  p7, #1, c1, c1, c1, #4    @ encoding: [0x81,0x17,0x11,0xfe]
 @ CHECK: cdp2  p10, #0, c6, c12, c0, #7   @ encoding: [0xe0,0x6a,0x0c,0xfe]
 
+        cdpne  p7, #1, c1, c1, c1, #4
+@ CHECK: cdpne  p7, #1, c1, c1, c1, #4     @ encoding: [0x81,0x17,0x11,0x1e]
 
 @------------------------------------------------------------------------------
 @ CLREX
@@ -895,17 +897,17 @@ Lforward:
         ldm r0, {r0, r2, lr}^
         ldm sp!, {r0-r3, pc}^
 
-@ CHECK: ldm   r2, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x92,0xe8]
-@ CHECK: ldm   r2, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x92,0xe8]
-@ CHECK: ldmib r2, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x92,0xe9]
-@ CHECK: ldmda r2, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x12,0xe8]
-@ CHECK: ldmdb r2, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x12,0xe9]
-@ CHECK: ldm   r2, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x92,0xe8]
+@ CHECK: ldm   r2, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x92,0xe8]
+@ CHECK: ldm   r2, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x92,0xe8]
+@ CHECK: ldmib r2, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x92,0xe9]
+@ CHECK: ldmda r2, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x12,0xe8]
+@ CHECK: ldmdb r2, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x12,0xe9]
+@ CHECK: ldm   r2, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x92,0xe8]
 
-@ CHECK: ldm   r2!, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0xb2,0xe8]
-@ CHECK: ldmib r2!, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0xb2,0xe9]
-@ CHECK: ldmda r2!, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x32,0xe8]
-@ CHECK: ldmdb r2!, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x32,0xe9]
+@ CHECK: ldm   r2!, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0xb2,0xe8]
+@ CHECK: ldmib r2!, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0xb2,0xe9]
+@ CHECK: ldmda r2!, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x32,0xe8]
+@ CHECK: ldmdb r2!, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x32,0xe9]
 @ CHECK: ldm	r0, {lr, r0, r2} ^          @ encoding: [0x05,0x40,0xd0,0xe8]
 @ CHECK: ldm	sp!, {pc, r0, r1, r2, r3} ^ @ encoding: [0x0f,0x80,0xfd,0xe8]
 
@@ -969,6 +971,9 @@ Lforward:
 @ CHECK: mcr  p7, #1, r5, c1, c1, #4    @ encoding: [0x91,0x57,0x21,0xee]
 @ CHECK: mcr2  p7, #1, r5, c1, c1, #4   @ encoding: [0x91,0x57,0x21,0xfe]
 
+        mcrls  p7, #1, r5, c1, c1, #4
+@ CHECK: mcrls  p7, #1, r5, c1, c1, #4   @ encoding: [0x91,0x57,0x21,0x9e]
+
 @------------------------------------------------------------------------------
 @ MCRR/MCRR2
 @------------------------------------------------------------------------------
@@ -978,6 +983,8 @@ Lforward:
 @ CHECK: mcrr  p7, #15, r5, r4, c1      @ encoding: [0xf1,0x57,0x44,0xec]
 @ CHECK: mcrr2  p7, #15, r5, r4, c1     @ encoding: [0xf1,0x57,0x44,0xfc]
 
+        mcrrgt  p7, #15, r5, r4, c1
+@ CHECK: mcrrgt  p7, #15, r5, r4, c1     @ encoding: [0xf1,0x57,0x44,0xcc]
 
 @------------------------------------------------------------------------------
 @ MLA
@@ -1081,6 +1088,9 @@ Lforward:
 @ CHECK: mrc2  p10, #7, apsr_nzcv, c15, c0, #1    @ encoding: [0x30,0xfa,0xff,0xfe]
 @ CHECK: mrc2  p10, #7, pc, c15, c0, #1           @ encoding: [0x30,0xfa,0xff,0xfe]
 
+        mrceq  p15, #7, pc, c15, c6, #6
+@ CHECK: mrceq  p15, #7, pc, c15, c6, #6            @ encoding: [0xd6,0xff,0xff,0x0e]
+
 @------------------------------------------------------------------------------
 @ MRRC/MRRC2
 @------------------------------------------------------------------------------
@@ -1090,6 +1100,8 @@ Lforward:
 @ CHECK: mrrc  p7, #1, r5, r4, c1       @ encoding: [0x11,0x57,0x54,0xec]
 @ CHECK: mrrc2  p7, #1, r5, r4, c1      @ encoding: [0x11,0x57,0x54,0xfc]
 
+        mrrclo  p7, #1, r5, r4, c1
+@ CHECK: mrrclo  p7, #1, r5, r4, c1      @ encoding: [0x11,0x57,0x54,0x3c]
 
 @------------------------------------------------------------------------------
 @ MRS
@@ -2320,17 +2332,17 @@ Lforward:
         stmda     sp!, {r1,r3-r6}
         stmdb     r0!, {r1,r5,r7,sp}
 
-@ CHECK: stm	r2, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x82,0xe8]
+@ CHECK: stm	r2, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x82,0xe8]
 @ CHECK: stm	r3, {lr, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x40,0x83,0xe8]
-@ CHECK: stmib	r4, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x84,0xe9]
-@ CHECK: stmda	r5, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x05,0xe8]
+@ CHECK: stmib	r4, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x84,0xe9]
+@ CHECK: stmda	r5, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x05,0xe8]
 @ CHECK: stmdb	r6, {r1, r3, r4, r5, r6, r8} @ encoding: [0x7a,0x01,0x06,0xe9]
-@ CHECK: stmdb	sp, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0x0d,0xe9]
+@ CHECK: stmdb	sp, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0x0d,0xe9]
 
-@ CHECK: stm	r8!, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0xa8,0xe8]
-@ CHECK: stmib	r9!, {r1, r3, r4, r5, r6, sp} @ encoding: [0x7a,0x20,0xa9,0xe9]
+@ CHECK: stm	r8!, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0xa8,0xe8]
+@ CHECK: stmib	r9!, {sp, r1, r3, r4, r5, r6} @ encoding: [0x7a,0x20,0xa9,0xe9]
 @ CHECK: stmda	sp!, {r1, r3, r4, r5, r6}     @ encoding: [0x7a,0x00,0x2d,0xe8]
-@ CHECK: stmdb	r0!, {r1, r5, r7, sp}         @ encoding: [0xa2,0x20,0x20,0xe9]
+@ CHECK: stmdb	r0!, {sp, r1, r5, r7}         @ encoding: [0xa2,0x20,0x20,0xe9]
 
 
 @------------------------------------------------------------------------------

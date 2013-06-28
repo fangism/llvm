@@ -45,6 +45,9 @@ def FeatureFP16   : SubtargetFeature<"fp16", "HasFP16", "true",
 def FeatureVFP4   : SubtargetFeature<"vfp4", "HasVFPv4", "true",
                                      "Enable VFP4 instructions",
                                      [FeatureVFP3, FeatureFP16]>;
+def FeatureV8FP : SubtargetFeature<"v8fp", "HasV8FP",
+                                   "true", "Enable ARMv8 FP",
+                                   [FeatureVFP4]>;
 def FeatureD16    : SubtargetFeature<"d16", "HasD16", "true",
                                      "Restrict VFP3 to 16 double registers">;
 def FeatureHWDiv  : SubtargetFeature<"hwdiv", "HasHardwareDivide", "true",
@@ -138,6 +141,9 @@ def HasV6T2Ops  : SubtargetFeature<"v6t2", "HasV6T2Ops", "true",
 def HasV7Ops    : SubtargetFeature<"v7", "HasV7Ops", "true",
                                    "Support ARM v7 instructions",
                                    [HasV6T2Ops, FeaturePerfMon]>;
+def HasV8Ops    : SubtargetFeature<"v8", "HasV8Ops", "true",
+                                   "Support ARM v8 instructions",
+                                   [HasV7Ops]>;
 
 //===----------------------------------------------------------------------===//
 // ARM Processors supported.
@@ -290,6 +296,9 @@ def : ProcessorModel<"swift",       SwiftModel,
                                     [ProcSwift, HasV7Ops, FeatureNEON,
                                      FeatureDB, FeatureDSPThumb2,
                                      FeatureHasRAS]>;
+
+// V8 Processors
+def : ProcNoItin<"cortex-a53",      [HasV8Ops]>;
 
 //===----------------------------------------------------------------------===//
 // Register File Description

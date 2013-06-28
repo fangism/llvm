@@ -749,16 +749,9 @@ void ARMAsmPrinter::emitAttributes() {
                                ARMBuildAttrs::Allowed);
     AttrEmitter->EmitAttribute(ARMBuildAttrs::THUMB_ISA_use,
                                ARMBuildAttrs::Allowed);
-  } else if (CPUString == "generic") {
-    // For a generic CPU, we assume a standard v7a architecture in Subtarget.
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v7);
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch_profile,
-                               ARMBuildAttrs::ApplicationProfile);
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::ARM_ISA_use,
-                               ARMBuildAttrs::Allowed);
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::THUMB_ISA_use,
-                               ARMBuildAttrs::AllowThumb32);
-  } else if (Subtarget->hasV7Ops()) {
+  } else if (Subtarget->hasV8Ops())
+    AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v8);
+  else if (Subtarget->hasV7Ops()) {
     AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v7);
     AttrEmitter->EmitAttribute(ARMBuildAttrs::THUMB_ISA_use,
                                ARMBuildAttrs::AllowThumb32);
@@ -772,6 +765,8 @@ void ARMAsmPrinter::emitAttributes() {
     AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v5T);
   else if (Subtarget->hasV4TOps())
     AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v4T);
+  else
+    AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v4);
 
   if (Subtarget->hasNEON() && emitFPU) {
     /* NEON is not exactly a VFP architecture, but GAS emit one of
@@ -786,8 +781,14 @@ void ARMAsmPrinter::emitAttributes() {
     emitFPU = false;
   }
 
-  /* VFPv4 + .fpu */
-  if (Subtarget->hasVFP4()) {
+  /* V8FP + .fpu */
+  if (Subtarget->hasV8FP()) {
+    AttrEmitter->EmitAttribute(ARMBuildAttrs::VFP_arch,
+                               ARMBuildAttrs::AllowV8FPA);
+    if (emitFPU)
+      AttrEmitter->EmitTextAttribute(ARMBuildAttrs::VFP_arch, "v8fp");
+    /* VFPv4 + .fpu */
+  } else if (Subtarget->hasVFP4()) {
     AttrEmitter->EmitAttribute(ARMBuildAttrs::VFP_arch,
                                ARMBuildAttrs::AllowFPv4A);
     if (emitFPU)
@@ -811,8 +812,12 @@ void ARMAsmPrinter::emitAttributes() {
   /* TODO: ARMBuildAttrs::Allowed is not completely accurate,
    * since NEON can have 1 (allowed) or 2 (MAC operations) */
   if (Subtarget->hasNEON()) {
-    AttrEmitter->EmitAttribute(ARMBuildAttrs::Advanced_SIMD_arch,
-                               ARMBuildAttrs::Allowed);
+    if (Subtarget->hasV8Ops())
+      AttrEmitter->EmitAttribute(ARMBuildAttrs::Advanced_SIMD_arch,
+                                 ARMBuildAttrs::AllowedNeonV8);
+    else
+      AttrEmitter->EmitAttribute(ARMBuildAttrs::Advanced_SIMD_arch,
+                                 ARMBuildAttrs::Allowed);
   }
 
   // Signal various FP modes.

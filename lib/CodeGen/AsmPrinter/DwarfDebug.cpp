@@ -259,10 +259,6 @@ unsigned DwarfUnits::getAddrPoolIndex(MCSymbol *Sym) {
 // Define a unique number for the abbreviation.
 //
 void DwarfUnits::assignAbbrevNumber(DIEAbbrev &Abbrev) {
-  // Profile the node so that we can make it unique.
-  FoldingSetNodeID ID;
-  Abbrev.Profile(ID);
-
   // Check the set for priors.
   DIEAbbrev *InSet = AbbreviationsSet->GetOrInsertNode(&Abbrev);
 
@@ -601,7 +597,8 @@ DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
     if (Children.empty() && Range.first == Range.second)
       return NULL;
     ScopeDIE = constructLexicalScopeDIE(TheCU, Scope);
-    for (ImportedEntityMap::const_iterator i = Range.first; i != Range.second; ++i)
+    for (ImportedEntityMap::const_iterator i = Range.first; i != Range.second;
+         ++i)
       constructImportedEntityDIE(TheCU, i->second, ScopeDIE);
   }
 
@@ -812,7 +809,8 @@ void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU,
                                         TheCU->getUniqueID());
   TheCU->addUInt(IMDie, dwarf::DW_AT_decl_file, 0, FileID);
   TheCU->addUInt(IMDie, dwarf::DW_AT_decl_line, 0, Module.getLineNumber());
-  TheCU->addDIEEntry(IMDie, dwarf::DW_AT_import, dwarf::DW_FORM_ref4, EntityDie);
+  TheCU->addDIEEntry(IMDie, dwarf::DW_AT_import, dwarf::DW_FORM_ref4,
+                     EntityDie);
   StringRef Name = Module.getName();
   if (!Name.empty())
     TheCU->addString(IMDie, dwarf::DW_AT_name, Name);

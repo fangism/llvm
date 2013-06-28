@@ -194,6 +194,8 @@ def HasV6T2          : Predicate<"Subtarget->hasV6T2Ops()">,
 def NoV6T2           : Predicate<"!Subtarget->hasV6T2Ops()">;
 def HasV7            : Predicate<"Subtarget->hasV7Ops()">,
                                  AssemblerPredicate<"HasV7Ops", "armv7">;
+def HasV8            : Predicate<"Subtarget->hasV8Ops()">,
+                                 AssemblerPredicate<"HasV8Ops", "armv8">;
 def NoVFP            : Predicate<"!Subtarget->hasVFP2()">;
 def HasVFP2          : Predicate<"Subtarget->hasVFP2()">,
                                  AssemblerPredicate<"FeatureVFP2", "VFP2">;
@@ -1730,12 +1732,13 @@ def SEL : AI<(outs GPR:$Rd), (ins GPR:$Rn, GPR:$Rm), DPFrm, NoItinerary, "sel",
 
 // The 16-bit operand $val can be used by a debugger to store more information
 // about the breakpoint.
-def BKPT : AI<(outs), (ins imm0_65535:$val), MiscFrm, NoItinerary,
-              "bkpt", "\t$val", []>, Requires<[IsARM]> {
+def BKPT : AInoP<(outs), (ins imm0_65535:$val), MiscFrm, NoItinerary,
+                 "bkpt", "\t$val", []>, Requires<[IsARM]> {
   bits<16> val;
   let Inst{3-0} = val{3-0};
   let Inst{19-8} = val{15-4};
   let Inst{27-20} = 0b00010010;
+  let Inst{31-28} = 0xe; // AL
   let Inst{7-4} = 0b0111;
 }
 

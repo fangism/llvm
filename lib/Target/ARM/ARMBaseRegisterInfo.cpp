@@ -58,13 +58,11 @@ ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     ghcCall = (F ? F->getCallingConv() == CallingConv::GHC : false);
   }
  
-  if (ghcCall) {
-      return CSR_GHC_SaveList;
-  }
-  else {
-  return (STI.isTargetIOS() && !STI.isAAPCS_ABI())
-    ? CSR_iOS_SaveList : CSR_AAPCS_SaveList;
-  }
+  if (ghcCall)
+    return CSR_GHC_SaveList;
+  else
+    return (STI.isTargetIOS() && !STI.isAAPCS_ABI())
+      ? CSR_iOS_SaveList : CSR_AAPCS_SaveList;
 }
 
 const uint32_t*
@@ -74,14 +72,21 @@ ARMBaseRegisterInfo::getCallPreservedMask(CallingConv::ID) const {
 }
 
 const uint32_t*
-ARMBaseRegisterInfo::getThisReturnPreservedMask(CallingConv::ID) const {
-  return (STI.isTargetIOS() && !STI.isAAPCS_ABI())
-    ? CSR_iOS_ThisReturn_RegMask : CSR_AAPCS_ThisReturn_RegMask;
+ARMBaseRegisterInfo::getNoPreservedMask() const {
+  return CSR_NoRegs_RegMask;
 }
 
 const uint32_t*
-ARMBaseRegisterInfo::getNoPreservedMask() const {
-  return CSR_NoRegs_RegMask;
+ARMBaseRegisterInfo::getThisReturnPreservedMask(CallingConv::ID) const {
+  // This should return a register mask that is the same as that returned by
+  // getCallPreservedMask but that additionally preserves the register used for
+  // the first i32 argument (which must also be the register used to return a
+  // single i32 return value)
+  //
+  // In case that the calling convention does not use the same register for
+  // both, the function should return NULL (does not currently apply)
+  return (STI.isTargetIOS() && !STI.isAAPCS_ABI())
+    ? CSR_iOS_ThisReturn_RegMask : CSR_AAPCS_ThisReturn_RegMask;
 }
 
 BitVector ARMBaseRegisterInfo::

@@ -434,7 +434,7 @@ def PPCS16ImmAsmOperand : AsmOperandClass {
 }
 def s16imm  : Operand<i32> {
   let PrintMethod = "printS16ImmOperand";
-  let EncoderMethod = "getS16ImmEncoding";
+  let EncoderMethod = "getImm16Encoding";
   let ParserMatchClass = PPCS16ImmAsmOperand;
 }
 def PPCU16ImmAsmOperand : AsmOperandClass {
@@ -443,7 +443,20 @@ def PPCU16ImmAsmOperand : AsmOperandClass {
 }
 def u16imm  : Operand<i32> {
   let PrintMethod = "printU16ImmOperand";
+  let EncoderMethod = "getImm16Encoding";
   let ParserMatchClass = PPCU16ImmAsmOperand;
+}
+def PPCS17ImmAsmOperand : AsmOperandClass {
+  let Name = "S17Imm"; let PredicateMethod = "isS17Imm";
+  let RenderMethod = "addImmOperands";
+}
+def s17imm  : Operand<i32> {
+  // This operand type is used for addis/lis to allow the assembler parser
+  // to accept immediates in the range -65536..65535 for compatibility with
+  // the GNU assembler.  The operand is treated as 16-bit otherwise.
+  let PrintMethod = "printS16ImmOperand";
+  let EncoderMethod = "getImm16Encoding";
+  let ParserMatchClass = PPCS17ImmAsmOperand;
 }
 def PPCDirectBrAsmOperand : AsmOperandClass {
   let Name = "DirectBr"; let PredicateMethod = "isDirectBr";
@@ -1518,7 +1531,7 @@ def ADDICo : DForm_2<13, (outs gprc:$rD), (ins gprc:$rA, s16imm:$imm),
                      "addic. $rD, $rA, $imm", IntGeneral,
                      []>, isDOT, RecFormRel;
 }
-def ADDIS  : DForm_2<15, (outs gprc:$rD), (ins gprc_nor0:$rA, s16imm:$imm),
+def ADDIS  : DForm_2<15, (outs gprc:$rD), (ins gprc_nor0:$rA, s17imm:$imm),
                      "addis $rD, $rA, $imm", IntSimple,
                      [(set i32:$rD, (add i32:$rA, imm16ShiftedSExt:$imm))]>;
 let isCodeGenOnly = 1 in
@@ -1538,7 +1551,7 @@ let isReMaterializable = 1, isAsCheapAsAMove = 1, isMoveImm = 1 in {
   def LI  : DForm_2_r0<14, (outs gprc:$rD), (ins s16imm:$imm),
                        "li $rD, $imm", IntSimple,
                        [(set i32:$rD, imm32SExt16:$imm)]>;
-  def LIS : DForm_2_r0<15, (outs gprc:$rD), (ins s16imm:$imm),
+  def LIS : DForm_2_r0<15, (outs gprc:$rD), (ins s17imm:$imm),
                        "lis $rD, $imm", IntSimple,
                        [(set i32:$rD, imm16ShiftedSExt:$imm)]>;
 }
@@ -2266,16 +2279,113 @@ class PPCAsmPseudo<string asm, dag iops>
 
 def : InstAlias<"sc", (SC 0)>;
 
-def : InstAlias<"mr $rA, $rB", (OR8 g8rc:$rA, g8rc:$rB, g8rc:$rB)>;
+def : InstAlias<"xnop", (XORI R0, R0, 0)>;
 
+def : InstAlias<"mr $rA, $rB", (OR8 g8rc:$rA, g8rc:$rB, g8rc:$rB)>;
+def : InstAlias<"mr. $rA, $rB", (OR8o g8rc:$rA, g8rc:$rB, g8rc:$rB)>;
+
+def : InstAlias<"not $rA, $rB", (NOR8 g8rc:$rA, g8rc:$rB, g8rc:$rB)>;
+def : InstAlias<"not. $rA, $rB", (NOR8o g8rc:$rA, g8rc:$rB, g8rc:$rB)>;
+
+def LAx : PPCAsmPseudo<"la $rA, $addr", (ins gprc:$rA, memri:$addr)>;
+
+def SUBI : PPCAsmPseudo<"subi $rA, $rB, $imm",
+                        (ins gprc:$rA, gprc:$rB, s16imm:$imm)>;
+def SUBIS : PPCAsmPseudo<"subis $rA, $rB, $imm",
+                         (ins gprc:$rA, gprc:$rB, s16imm:$imm)>;
+def SUBIC : PPCAsmPseudo<"subic $rA, $rB, $imm",
+                         (ins gprc:$rA, gprc:$rB, s16imm:$imm)>;
+def SUBICo : PPCAsmPseudo<"subic. $rA, $rB, $imm",
+                          (ins gprc:$rA, gprc:$rB, s16imm:$imm)>;
+
+def : InstAlias<"sub $rA, $rB, $rC", (SUBF8 g8rc:$rA, g8rc:$rC, g8rc:$rB)>;
+def : InstAlias<"sub. $rA, $rB, $rC", (SUBF8o g8rc:$rA, g8rc:$rC, g8rc:$rB)>;
+def : InstAlias<"subc $rA, $rB, $rC", (SUBFC8 g8rc:$rA, g8rc:$rC, g8rc:$rB)>;
+def : InstAlias<"subc. $rA, $rB, $rC", (SUBFC8o g8rc:$rA, g8rc:$rC, g8rc:$rB)>;
+
+def EXTLWI : PPCAsmPseudo<"extlwi $rA, $rS, $n, $b",
+                          (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;
+def EXTLWIo : PPCAsmPseudo<"extlwi. $rA, $rS, $n, $b",
+                           (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;
+def EXTRWI : PPCAsmPseudo<"extrwi $rA, $rS, $n, $b",
+                          (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;
+def EXTRWIo : PPCAsmPseudo<"extrwi. $rA, $rS, $n, $b",
+                           (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;
+def INSLWI : PPCAsmPseudo<"inslwi $rA, $rS, $n, $b",
+                          (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;
+def INSLWIo : PPCAsmPseudo<"inslwi. $rA, $rS, $n, $b",
+                           (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;
+def INSRWI : PPCAsmPseudo<"insrwi $rA, $rS, $n, $b",
+                          (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;
+def INSRWIo : PPCAsmPseudo<"insrwi. $rA, $rS, $n, $b",
+                           (ins gprc:$rA, gprc:$rS, u5imm:$n, u5imm:$b)>;
+def ROTRWI : PPCAsmPseudo<"rotrwi $rA, $rS, $n",
+                          (ins gprc:$rA, gprc:$rS, u5imm:$n)>;
+def ROTRWIo : PPCAsmPseudo<"rotrwi. $rA, $rS, $n",
+                           (ins gprc:$rA, gprc:$rS, u5imm:$n)>;
 def SLWI : PPCAsmPseudo<"slwi $rA, $rS, $n",
                         (ins gprc:$rA, gprc:$rS, u5imm:$n)>;
+def SLWIo : PPCAsmPseudo<"slwi. $rA, $rS, $n",
+                         (ins gprc:$rA, gprc:$rS, u5imm:$n)>;
 def SRWI : PPCAsmPseudo<"srwi $rA, $rS, $n",
                         (ins gprc:$rA, gprc:$rS, u5imm:$n)>;
+def SRWIo : PPCAsmPseudo<"srwi. $rA, $rS, $n",
+                         (ins gprc:$rA, gprc:$rS, u5imm:$n)>;
+def CLRRWI : PPCAsmPseudo<"clrrwi $rA, $rS, $n",
+                          (ins gprc:$rA, gprc:$rS, u5imm:$n)>;
+def CLRRWIo : PPCAsmPseudo<"clrrwi. $rA, $rS, $n",
+                           (ins gprc:$rA, gprc:$rS, u5imm:$n)>;
+def CLRLSLWI : PPCAsmPseudo<"clrlslwi $rA, $rS, $b, $n",
+                            (ins gprc:$rA, gprc:$rS, u5imm:$b, u5imm:$n)>;
+def CLRLSLWIo : PPCAsmPseudo<"clrlslwi. $rA, $rS, $b, $n",
+                             (ins gprc:$rA, gprc:$rS, u5imm:$b, u5imm:$n)>;
+
+def : InstAlias<"rotlwi $rA, $rS, $n", (RLWINM gprc:$rA, gprc:$rS, u5imm:$n, 0, 31)>;
+def : InstAlias<"rotlwi. $rA, $rS, $n", (RLWINMo gprc:$rA, gprc:$rS, u5imm:$n, 0, 31)>;
+def : InstAlias<"rotlw $rA, $rS, $rB", (RLWNM gprc:$rA, gprc:$rS, gprc:$rB, 0, 31)>;
+def : InstAlias<"rotlw. $rA, $rS, $rB", (RLWNMo gprc:$rA, gprc:$rS, gprc:$rB, 0, 31)>;
+def : InstAlias<"clrlwi $rA, $rS, $n", (RLWINM gprc:$rA, gprc:$rS, 0, u5imm:$n, 31)>;
+def : InstAlias<"clrlwi. $rA, $rS, $n", (RLWINMo gprc:$rA, gprc:$rS, 0, u5imm:$n, 31)>;
+
+def EXTLDI : PPCAsmPseudo<"extldi $rA, $rS, $n, $b",
+                          (ins g8rc:$rA, g8rc:$rS, u6imm:$n, u6imm:$b)>;
+def EXTLDIo : PPCAsmPseudo<"extldi. $rA, $rS, $n, $b",
+                           (ins g8rc:$rA, g8rc:$rS, u6imm:$n, u6imm:$b)>;
+def EXTRDI : PPCAsmPseudo<"extrdi $rA, $rS, $n, $b",
+                          (ins g8rc:$rA, g8rc:$rS, u6imm:$n, u6imm:$b)>;
+def EXTRDIo : PPCAsmPseudo<"extrdi. $rA, $rS, $n, $b",
+                           (ins g8rc:$rA, g8rc:$rS, u6imm:$n, u6imm:$b)>;
+def INSRDI : PPCAsmPseudo<"insrdi $rA, $rS, $n, $b",
+                          (ins g8rc:$rA, g8rc:$rS, u6imm:$n, u6imm:$b)>;
+def INSRDIo : PPCAsmPseudo<"insrdi. $rA, $rS, $n, $b",
+                           (ins g8rc:$rA, g8rc:$rS, u6imm:$n, u6imm:$b)>;
+def ROTRDI : PPCAsmPseudo<"rotrdi $rA, $rS, $n",
+                          (ins g8rc:$rA, g8rc:$rS, u6imm:$n)>;
+def ROTRDIo : PPCAsmPseudo<"rotrdi. $rA, $rS, $n",
+                           (ins g8rc:$rA, g8rc:$rS, u6imm:$n)>;
 def SLDI : PPCAsmPseudo<"sldi $rA, $rS, $n",
                         (ins g8rc:$rA, g8rc:$rS, u6imm:$n)>;
+def SLDIo : PPCAsmPseudo<"sldi. $rA, $rS, $n",
+                         (ins g8rc:$rA, g8rc:$rS, u6imm:$n)>;
 def SRDI : PPCAsmPseudo<"srdi $rA, $rS, $n",
                         (ins g8rc:$rA, g8rc:$rS, u6imm:$n)>;
+def SRDIo : PPCAsmPseudo<"srdi. $rA, $rS, $n",
+                         (ins g8rc:$rA, g8rc:$rS, u6imm:$n)>;
+def CLRRDI : PPCAsmPseudo<"clrrdi $rA, $rS, $n",
+                          (ins g8rc:$rA, g8rc:$rS, u6imm:$n)>;
+def CLRRDIo : PPCAsmPseudo<"clrrdi. $rA, $rS, $n",
+                           (ins g8rc:$rA, g8rc:$rS, u6imm:$n)>;
+def CLRLSLDI : PPCAsmPseudo<"clrlsldi $rA, $rS, $b, $n",
+                            (ins g8rc:$rA, g8rc:$rS, u6imm:$b, u6imm:$n)>;
+def CLRLSLDIo : PPCAsmPseudo<"clrlsldi. $rA, $rS, $b, $n",
+                             (ins g8rc:$rA, g8rc:$rS, u6imm:$b, u6imm:$n)>;
+
+def : InstAlias<"rotldi $rA, $rS, $n", (RLDICL g8rc:$rA, g8rc:$rS, u6imm:$n, 0)>;
+def : InstAlias<"rotldi. $rA, $rS, $n", (RLDICLo g8rc:$rA, g8rc:$rS, u6imm:$n, 0)>;
+def : InstAlias<"rotld $rA, $rS, $rB", (RLDCL g8rc:$rA, g8rc:$rS, gprc:$rB, 0)>;
+def : InstAlias<"rotld. $rA, $rS, $rB", (RLDCLo g8rc:$rA, g8rc:$rS, gprc:$rB, 0)>;
+def : InstAlias<"clrldi $rA, $rS, $n", (RLDICL g8rc:$rA, g8rc:$rS, 0, u6imm:$n)>;
+def : InstAlias<"clrldi. $rA, $rS, $n", (RLDICLo g8rc:$rA, g8rc:$rS, 0, u6imm:$n)>;
 
 // These generic branch instruction forms are used for the assembler parser only.
 // Defs and Uses are conservative, since we don't know the BO value.

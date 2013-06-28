@@ -267,6 +267,8 @@ public:
   bool isS16ImmX4() const { return Kind == Expression ||
                                    (Kind == Immediate && isInt<16>(getImm()) &&
                                     (getImm() & 3) == 0); }
+  bool isS17Imm() const { return Kind == Expression ||
+                                 (Kind == Immediate && isInt<17>(getImm())); }
   bool isDirectBr() const { return Kind == Expression ||
                                    (Kind == Immediate && isInt<26>(getImm()) &&
                                     (getImm() & 3) == 0); }
@@ -422,11 +424,133 @@ void PPCOperand::print(raw_ostream &OS) const {
 void PPCAsmParser::
 ProcessInstruction(MCInst &Inst,
                    const SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
-  switch (Inst.getOpcode()) {
-  case PPC::SLWI: {
+  int Opcode = Inst.getOpcode();
+  switch (Opcode) {
+  case PPC::LAx: {
+    MCInst TmpInst;
+    TmpInst.setOpcode(PPC::LA);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(2));
+    TmpInst.addOperand(Inst.getOperand(1));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::SUBI: {
     MCInst TmpInst;
     int64_t N = Inst.getOperand(2).getImm();
-    TmpInst.setOpcode(PPC::RLWINM);
+    TmpInst.setOpcode(PPC::ADDI);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(-N));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::SUBIS: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    TmpInst.setOpcode(PPC::ADDIS);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(-N));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::SUBIC: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    TmpInst.setOpcode(PPC::ADDIC);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(-N));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::SUBICo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    TmpInst.setOpcode(PPC::ADDICo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(-N));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::EXTLWI:
+  case PPC::EXTLWIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    int64_t B = Inst.getOperand(3).getImm();
+    TmpInst.setOpcode(Opcode == PPC::EXTLWI? PPC::RLWINM : PPC::RLWINMo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(B));
+    TmpInst.addOperand(MCOperand::CreateImm(0));
+    TmpInst.addOperand(MCOperand::CreateImm(N - 1));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::EXTRWI:
+  case PPC::EXTRWIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    int64_t B = Inst.getOperand(3).getImm();
+    TmpInst.setOpcode(Opcode == PPC::EXTRWI? PPC::RLWINM : PPC::RLWINMo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(B + N));
+    TmpInst.addOperand(MCOperand::CreateImm(32 - N));
+    TmpInst.addOperand(MCOperand::CreateImm(31));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::INSLWI:
+  case PPC::INSLWIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    int64_t B = Inst.getOperand(3).getImm();
+    TmpInst.setOpcode(Opcode == PPC::INSLWI? PPC::RLWIMI : PPC::RLWIMIo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(32 - B));
+    TmpInst.addOperand(MCOperand::CreateImm(B));
+    TmpInst.addOperand(MCOperand::CreateImm((B + N) - 1));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::INSRWI:
+  case PPC::INSRWIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    int64_t B = Inst.getOperand(3).getImm();
+    TmpInst.setOpcode(Opcode == PPC::INSRWI? PPC::RLWIMI : PPC::RLWIMIo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(32 - (B + N)));
+    TmpInst.addOperand(MCOperand::CreateImm(B));
+    TmpInst.addOperand(MCOperand::CreateImm((B + N) - 1));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::ROTRWI:
+  case PPC::ROTRWIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    TmpInst.setOpcode(Opcode == PPC::ROTRWI? PPC::RLWINM : PPC::RLWINMo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(32 - N));
+    TmpInst.addOperand(MCOperand::CreateImm(0));
+    TmpInst.addOperand(MCOperand::CreateImm(31));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::SLWI:
+  case PPC::SLWIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    TmpInst.setOpcode(Opcode == PPC::SLWI? PPC::RLWINM : PPC::RLWINMo);
     TmpInst.addOperand(Inst.getOperand(0));
     TmpInst.addOperand(Inst.getOperand(1));
     TmpInst.addOperand(MCOperand::CreateImm(N));
@@ -435,10 +559,11 @@ ProcessInstruction(MCInst &Inst,
     Inst = TmpInst;
     break;
   }
-  case PPC::SRWI: {
+  case PPC::SRWI:
+  case PPC::SRWIo: {
     MCInst TmpInst;
     int64_t N = Inst.getOperand(2).getImm();
-    TmpInst.setOpcode(PPC::RLWINM);
+    TmpInst.setOpcode(Opcode == PPC::SRWI? PPC::RLWINM : PPC::RLWINMo);
     TmpInst.addOperand(Inst.getOperand(0));
     TmpInst.addOperand(Inst.getOperand(1));
     TmpInst.addOperand(MCOperand::CreateImm(32 - N));
@@ -447,10 +572,90 @@ ProcessInstruction(MCInst &Inst,
     Inst = TmpInst;
     break;
   }
-  case PPC::SLDI: {
+  case PPC::CLRRWI:
+  case PPC::CLRRWIo: {
     MCInst TmpInst;
     int64_t N = Inst.getOperand(2).getImm();
-    TmpInst.setOpcode(PPC::RLDICR);
+    TmpInst.setOpcode(Opcode == PPC::CLRRWI? PPC::RLWINM : PPC::RLWINMo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(0));
+    TmpInst.addOperand(MCOperand::CreateImm(0));
+    TmpInst.addOperand(MCOperand::CreateImm(31 - N));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::CLRLSLWI:
+  case PPC::CLRLSLWIo: {
+    MCInst TmpInst;
+    int64_t B = Inst.getOperand(2).getImm();
+    int64_t N = Inst.getOperand(3).getImm();
+    TmpInst.setOpcode(Opcode == PPC::CLRLSLWI? PPC::RLWINM : PPC::RLWINMo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(N));
+    TmpInst.addOperand(MCOperand::CreateImm(B - N));
+    TmpInst.addOperand(MCOperand::CreateImm(31 - N));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::EXTLDI:
+  case PPC::EXTLDIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    int64_t B = Inst.getOperand(3).getImm();
+    TmpInst.setOpcode(Opcode == PPC::EXTLDI? PPC::RLDICR : PPC::RLDICRo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(B));
+    TmpInst.addOperand(MCOperand::CreateImm(N - 1));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::EXTRDI:
+  case PPC::EXTRDIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    int64_t B = Inst.getOperand(3).getImm();
+    TmpInst.setOpcode(Opcode == PPC::EXTRDI? PPC::RLDICL : PPC::RLDICLo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(B + N));
+    TmpInst.addOperand(MCOperand::CreateImm(64 - N));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::INSRDI:
+  case PPC::INSRDIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    int64_t B = Inst.getOperand(3).getImm();
+    TmpInst.setOpcode(Opcode == PPC::INSRDI? PPC::RLDIMI : PPC::RLDIMIo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(64 - (B + N)));
+    TmpInst.addOperand(MCOperand::CreateImm(B));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::ROTRDI:
+  case PPC::ROTRDIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    TmpInst.setOpcode(Opcode == PPC::ROTRDI? PPC::RLDICL : PPC::RLDICLo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(64 - N));
+    TmpInst.addOperand(MCOperand::CreateImm(0));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::SLDI:
+  case PPC::SLDIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    TmpInst.setOpcode(Opcode == PPC::SLDI? PPC::RLDICR : PPC::RLDICRo);
     TmpInst.addOperand(Inst.getOperand(0));
     TmpInst.addOperand(Inst.getOperand(1));
     TmpInst.addOperand(MCOperand::CreateImm(N));
@@ -458,14 +663,40 @@ ProcessInstruction(MCInst &Inst,
     Inst = TmpInst;
     break;
   }
-  case PPC::SRDI: {
+  case PPC::SRDI:
+  case PPC::SRDIo: {
     MCInst TmpInst;
     int64_t N = Inst.getOperand(2).getImm();
-    TmpInst.setOpcode(PPC::RLDICL);
+    TmpInst.setOpcode(Opcode == PPC::SRDI? PPC::RLDICL : PPC::RLDICLo);
     TmpInst.addOperand(Inst.getOperand(0));
     TmpInst.addOperand(Inst.getOperand(1));
     TmpInst.addOperand(MCOperand::CreateImm(64 - N));
     TmpInst.addOperand(MCOperand::CreateImm(N));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::CLRRDI:
+  case PPC::CLRRDIo: {
+    MCInst TmpInst;
+    int64_t N = Inst.getOperand(2).getImm();
+    TmpInst.setOpcode(Opcode == PPC::CLRRDI? PPC::RLDICR : PPC::RLDICRo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(0));
+    TmpInst.addOperand(MCOperand::CreateImm(63 - N));
+    Inst = TmpInst;
+    break;
+  }
+  case PPC::CLRLSLDI:
+  case PPC::CLRLSLDIo: {
+    MCInst TmpInst;
+    int64_t B = Inst.getOperand(2).getImm();
+    int64_t N = Inst.getOperand(3).getImm();
+    TmpInst.setOpcode(Opcode == PPC::CLRLSLDI? PPC::RLDIC : PPC::RLDICo);
+    TmpInst.addOperand(Inst.getOperand(0));
+    TmpInst.addOperand(Inst.getOperand(1));
+    TmpInst.addOperand(MCOperand::CreateImm(N));
+    TmpInst.addOperand(MCOperand::CreateImm(B - N));
     Inst = TmpInst;
     break;
   }
@@ -559,7 +790,7 @@ ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc) {
   return Error(StartLoc, "invalid register name");
 }
 
-/// Extract @l/@ha modifier from expression.  Recursively scan
+/// Extract \code @l/@ha \endcode modifier from expression.  Recursively scan
 /// the expression and check for VK_PPC_LO/HI/HA
 /// symbol variants.  If all symbols with modifier use the same
 /// variant, return the corresponding PPCMCExpr::VariantKind,
@@ -645,7 +876,7 @@ ExtractModifierFromExpr(const MCExpr *E,
 }
 
 /// Parse an expression.  This differs from the default "parseExpression"
-/// in that it handles complex @l/@ha modifiers.
+/// in that it handles complex \code @l/@ha \endcode modifiers.
 bool PPCAsmParser::
 ParseExpression(const MCExpr *&EVal) {
   if (getParser().parseExpression(EVal))

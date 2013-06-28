@@ -163,8 +163,28 @@ defm AsmJE   : IntCondExtendedMnemonic<8,  "e",  "nlh">;
 defm AsmJHE  : IntCondExtendedMnemonic<10, "he", "nl">;
 defm AsmJLE  : IntCondExtendedMnemonic<12, "le", "nh">;
 
+//===----------------------------------------------------------------------===//
+// Select instructions
+//===----------------------------------------------------------------------===//
+
 def Select32 : SelectWrapper<GR32>;
 def Select64 : SelectWrapper<GR64>;
+
+defm CondStore8_32  : CondStores<GR32, nonvolatile_truncstorei8,
+                                 nonvolatile_anyextloadi8, bdxaddr20only>;
+defm CondStore16_32 : CondStores<GR32, nonvolatile_truncstorei16,
+                                 nonvolatile_anyextloadi16, bdxaddr20only>;
+defm CondStore32_32 : CondStores<GR32, nonvolatile_store,
+                                 nonvolatile_load, bdxaddr20only>;
+
+defm CondStore8  : CondStores<GR64, nonvolatile_truncstorei8,
+                              nonvolatile_anyextloadi8, bdxaddr20only>;
+defm CondStore16 : CondStores<GR64, nonvolatile_truncstorei16,
+                              nonvolatile_anyextloadi16, bdxaddr20only>;
+defm CondStore32 : CondStores<GR64, nonvolatile_truncstorei32,
+                              nonvolatile_anyextloadi32, bdxaddr20only>;
+defm CondStore64 : CondStores<GR64, nonvolatile_store,
+                              nonvolatile_load, bdxaddr20only>;
 
 //===----------------------------------------------------------------------===//
 // Call instructions
@@ -202,7 +222,8 @@ let neverHasSideEffects = 1 in {
 }
 
 // Immediate moves.
-let neverHasSideEffects = 1, isAsCheapAsAMove = 1, isMoveImm = 1 in {
+let neverHasSideEffects = 1, isAsCheapAsAMove = 1, isMoveImm = 1,
+    isReMaterializable = 1 in {
   // 16-bit sign-extended immediates.
   def LHI  : UnaryRI<"lhi",  0xA78, bitconvert, GR32, imm32sx16>;
   def LGHI : UnaryRI<"lghi", 0xA79, bitconvert, GR64, imm64sx16>;
@@ -396,7 +417,8 @@ def STRVG : StoreRXY<"strvg", 0xE32F, storeu<bswap, nonvolatile_store>, GR64>;
 //===----------------------------------------------------------------------===//
 
 // Load BDX-style addresses.
-let neverHasSideEffects = 1, Function = "la" in {
+let neverHasSideEffects = 1, isAsCheapAsAMove = 1, isReMaterializable = 1,
+    Function = "la" in {
   let PairType = "12" in
     def LA : InstRX<0x41, (outs GR64:$R1), (ins laaddr12pair:$XBD2),
                     "la\t$R1, $XBD2",
@@ -409,7 +431,8 @@ let neverHasSideEffects = 1, Function = "la" in {
 
 // Load a PC-relative address.  There's no version of this instruction
 // with a 16-bit offset, so there's no relaxation.
-let neverHasSideEffects = 1 in {
+let neverHasSideEffects = 1, isAsCheapAsAMove = 1, isMoveImm = 1,
+    isReMaterializable = 1 in {
   def LARL : InstRIL<0xC00, (outs GR64:$R1), (ins pcrel32:$I2),
                      "larl\t$R1, $I2",
                      [(set GR64:$R1, pcrel32:$I2)]>;
@@ -456,7 +479,8 @@ def IIHH : BinaryRI<"iihh", 0xA50, inserthh, GR64, imm64hh16>;
 // full-width move.  (We use IILF rather than something like LLILF
 // for 32-bit moves because IILF leaves the upper 32 bits of the
 // GR64 unchanged.)
-let isCodeGenOnly = 1 in {
+let isCodeGenOnly = 1, isAsCheapAsAMove = 1, isMoveImm = 1,
+    isReMaterializable = 1 in {
   def IILF32 : UnaryRIL<"iilf", 0xC09, bitconvert, GR32, uimm32>;
 }
 def IILF : BinaryRIL<"iilf", 0xC09, insertlf, GR64, imm64lf32>;

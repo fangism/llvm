@@ -111,6 +111,9 @@ enum perms {
   others_write =   02, 
   others_exe   =   01, 
   others_all   = others_read | others_write | others_exe, 
+  all_read     = owner_read | group_read | others_read,
+  all_write    = owner_write | group_write | others_write,
+  all_exe      = owner_exe | group_exe | others_exe,
   all_all      = owner_all | group_all | others_all,
   set_uid_on_exe  = 04000, 
   set_gid_on_exe  = 02000, 
@@ -271,6 +274,13 @@ error_code copy_file(const Twine &from, const Twine &to,
 ///          otherwise a platform specific error_code.
 error_code create_directories(const Twine &path, bool &existed);
 
+/// @brief Convenience function for clients that don't need to know if the
+///        directory existed or not.
+inline error_code create_directories(const Twine &Path) {
+  bool Existed;
+  return create_directories(Path, Existed);
+}
+
 /// @brief Create the directory in path.
 ///
 /// @param path Directory to create.
@@ -278,6 +288,13 @@ error_code create_directories(const Twine &path, bool &existed);
 /// @returns errc::success if is_directory(path) and existed have been set,
 ///          otherwise a platform specific error_code.
 error_code create_directory(const Twine &path, bool &existed);
+
+/// @brief Convenience function for clients that don't need to know if the
+///        directory existed or not.
+inline error_code create_directory(const Twine &Path) {
+  bool Existed;
+  return create_directory(Path, Existed);
+}
 
 /// @brief Create a hard link from \a from to \a to.
 ///
@@ -326,6 +343,13 @@ inline error_code remove(const Twine &Path) {
 /// @returns errc::success if path has been removed and num_removed has been
 ///          successfully set, otherwise a platform specific error_code.
 error_code remove_all(const Twine &path, uint32_t &num_removed);
+
+/// @brief Convenience function for clients that don't need to know how many
+///        files were removed.
+inline error_code remove_all(const Twine &Path) {
+  uint32_t Removed;
+  return remove_all(Path, Removed);
+}
 
 /// @brief Rename \a from to \a to. Files are renamed as if by POSIX rename().
 ///
@@ -538,15 +562,22 @@ error_code status_known(const Twine &path, bool &result);
 /// @param result_path Set to the opened file's absolute path.
 /// @param makeAbsolute If true and \a model is not an absolute path, a temp
 ///        directory will be prepended.
+/// @param mode Set to the file open mode; since this is most often used for
+///        temporary files, mode defaults to owner_read | owner_write.
 /// @returns errc::success if result_{fd,path} have been successfully set,
 ///          otherwise a platform specific error_code.
 error_code unique_file(const Twine &model, int &result_fd,
                        SmallVectorImpl<char> &result_path,
-                       bool makeAbsolute = true, unsigned mode = 0600);
+                       bool makeAbsolute = true,
+                       unsigned mode = owner_read | owner_write);
 
 /// @brief Simpler version for clients that don't want an open file.
 error_code unique_file(const Twine &Model, SmallVectorImpl<char> &ResultPath,
-                       bool MakeAbsolute = true, unsigned Mode = 0600);
+                       bool MakeAbsolute = true,
+                       unsigned Mode = owner_read | owner_write);
+
+error_code createUniqueDirectory(const Twine &Prefix,
+                                 SmallVectorImpl<char> &ResultPath);
 
 /// @brief Canonicalize path.
 ///
@@ -665,7 +696,7 @@ public:
   char *data() const;
 
   /// Get a const view of the data. Modifying this memory has undefined
-  /// behaivor.
+  /// behavior.
   const char *const_data() const;
 
   /// \returns The minimum alignment offset must be.
@@ -696,7 +727,10 @@ error_code map_file_pages(const Twine &path, off_t file_offset, size_t size,
 ///          platform specific error_code.
 error_code unmap_file_pages(void *base, size_t size);
 
-
+/// Return the path to the main executable, given the value of argv[0] from
+/// program startup and the address of main itself. In extremis, this function
+/// may fail and return an empty path.
+std::string getMainExecutable(const char *argv0, void *MainExecAddr);
 
 /// @}
 /// @name Iterators
