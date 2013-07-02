@@ -27,6 +27,7 @@
 #include "llvm/Target/Mangler.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 
 using namespace llvm;
@@ -135,7 +136,7 @@ void CompileUnit::addString(DIE *Die, unsigned Attribute, StringRef String) {
     MCSymbol *Symb = DU->getStringPoolEntry(String);
     DIEValue *Value;
     if (Asm->needsRelocationsForDwarfStringPool())
-      Value = new (DIEValueAllocator) DIELabel(Symb);
+      Value = new (DIEValueAllocator) DIELabel(Symb, Asm->OutContext);
     else {
       MCSymbol *StringPool = DU->getStringPoolSym();
       Value = new (DIEValueAllocator) DIEDelta(Symb, StringPool);
@@ -155,7 +156,7 @@ void CompileUnit::addLocalString(DIE *Die, unsigned Attribute,
   MCSymbol *Symb = DU->getStringPoolEntry(String);
   DIEValue *Value;
   if (Asm->needsRelocationsForDwarfStringPool())
-    Value = new (DIEValueAllocator) DIELabel(Symb);
+    Value = new (DIEValueAllocator) DIELabel(Symb, Asm->OutContext);
   else {
     MCSymbol *StringPool = DU->getStringPoolSym();
     Value = new (DIEValueAllocator) DIEDelta(Symb, StringPool);
@@ -166,9 +167,14 @@ void CompileUnit::addLocalString(DIE *Die, unsigned Attribute,
 /// addLabel - Add a Dwarf label attribute data and value.
 ///
 void CompileUnit::addLabel(DIE *Die, unsigned Attribute, unsigned Form,
-                           const MCSymbol *Label) {
+                           const MCSymbolRefExpr *Label) {
   DIEValue *Value = new (DIEValueAllocator) DIELabel(Label);
   Die->addValue(Attribute, Form, Value);
+}
+
+void CompileUnit::addLabel(DIE *Die, unsigned Attribute, unsigned Form,
+                           const MCSymbol *Label) {
+  addLabel(Die, Attribute, Form, MCSymbolRefExpr::Create(Label, Asm->OutContext));
 }
 
 /// addLabelAddress - Add a dwarf label attribute data and value using
@@ -178,7 +184,7 @@ void CompileUnit::addLabelAddress(DIE *Die, unsigned Attribute,
                                   MCSymbol *Label) {
   if (!DD->useSplitDwarf()) {
     if (Label != NULL) {
-      DIEValue *Value = new (DIEValueAllocator) DIELabel(Label);
+      DIEValue *Value = new (DIEValueAllocator) DIELabel(Label, Asm->OutContext);
       Die->addValue(Attribute, dwarf::DW_FORM_addr, Value);
     } else {
       DIEValue *Value = new (DIEValueAllocator) DIEInteger(0);
@@ -194,16 +200,13 @@ void CompileUnit::addLabelAddress(DIE *Die, unsigned Attribute,
 /// addOpAddress - Add a dwarf op address data and value using the
 /// form given and an op of either DW_FORM_addr or DW_FORM_GNU_addr_index.
 ///
-void CompileUnit::addOpAddress(DIE *Die, MCSymbol *Sym) {
-
+void CompileUnit::addOpAddress(DIE *Die, const MCSymbol *Sym) {
   if (!DD->useSplitDwarf()) {
     addUInt(Die, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_addr);
     addLabel(Die, 0, dwarf::DW_FORM_udata, Sym);
   } else {
-    unsigned idx = DU->getAddrPoolIndex(Sym);
-    DIEValue *Value = new (DIEValueAllocator) DIEInteger(idx);
     addUInt(Die, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_GNU_addr_index);
-    Die->addValue(0, dwarf::DW_FORM_GNU_addr_index, Value);
+    addUInt(Die, 0, dwarf::DW_FORM_GNU_addr_index, DU->getAddrPoolIndex(Sym));
   }
 }
 
@@ -1346,7 +1349,29 @@ void CompileUnit::createGlobalVariableDIE(const MDNode *N) {
   if (isGlobalVariable) {
     addToAccelTable = true;
     DIEBlock *Block = new (DIEValueAllocator) DIEBlock();
-    addOpAddress(Block, Asm->Mang->getSymbol(GV.getGlobal()));
+    const MCSymbol *Sym = Asm->Mang->getSymbol(GV.getGlobal());
+    if (GV.getGlobal()->isThreadLocal()) {
+      // FIXME: Make this work with -gsplit-dwarf.
+      unsigned PointerSize = Asm->getDataLayout().getPointerSize();
+      assert((PointerSize == 4 || PointerSize == 8) &&
+             "Add support for other sizes if necessary");
+      const MCSymbolRefExpr *Ref =
+          Asm->getObjFileLowering().getDebugThreadLocalSymbol(Sym);
+      // Based on GCC's support for TLS:
+      if (!DD->useSplitDwarf()) {
+        // 1) Start with a constNu of the appropriate pointer size
+        addUInt(Block, 0, dwarf::DW_FORM_data1,
+                PointerSize == 4 ? dwarf::DW_OP_const4u : dwarf::DW_OP_const8u);
+        // 2) containing the (relocated) address of the TLS variable
+        addLabel(Block, 0, dwarf::DW_FORM_udata, Ref);
+      } else {
+        addUInt(Block, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_GNU_const_index);
+        addUInt(Block, 0, dwarf::DW_FORM_udata, DU->getAddrPoolIndex(Ref));
+      }
+      // 3) followed by a custom OP to tell the debugger about TLS (presumably)
+      addUInt(Block, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_lo_user);
+    } else
+      addOpAddress(Block, Sym);
     // Do not create specification DIE if context is either compile unit
     // or a subprogram.
     if (GVContext && GV.isDefinition() && !GVContext.isCompileUnit() &&
@@ -1408,8 +1433,6 @@ void CompileUnit::createGlobalVariableDIE(const MDNode *N) {
     if (GV.getLinkageName() != "" && GV.getName() != GV.getLinkageName())
       addAccelName(GV.getLinkageName(), AddrDIE);
   }
-
-  return;
 }
 
 /// constructSubrangeDIE - Construct subrange DIE from DISubrange.

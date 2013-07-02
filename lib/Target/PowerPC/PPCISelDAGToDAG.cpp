@@ -447,10 +447,10 @@ SDNode *PPCDAGToDAGISel::SelectBitfieldInsert(SDNode *N) {
         unsigned SHOpc = Op1.getOperand(0).getOpcode();
         if ((SHOpc == ISD::SHL || SHOpc == ISD::SRL) &&
             isInt32Immediate(Op1.getOperand(0).getOperand(1), Value)) {
+	  // Note that Value must be in range here (less than 32) because
+	  // otherwise there would not be any bits set in InsertMask.
           Op1 = Op1.getOperand(0).getOperand(0);
           SH  = (SHOpc == ISD::SHL) ? Value : 32 - Value;
-        } else {
-          Op1 = Op1.getOperand(0);
         }
       }
 
@@ -1530,6 +1530,14 @@ void PPCDAGToDAGISel::PostprocessISelDAG() {
       if (GlobalAddressSDNode *GA = dyn_cast<GlobalAddressSDNode>(ImmOpnd)) {
         SDLoc dl(GA);
         const GlobalValue *GV = GA->getGlobal();
+        // We can't perform this optimization for data whose alignment
+        // is insufficient for the instruction encoding.
+        if (GV->getAlignment() < 4 &&
+            (StorageOpcode == PPC::LD || StorageOpcode == PPC::STD ||
+             StorageOpcode == PPC::LWA)) {
+          DEBUG(dbgs() << "Rejected this candidate for alignment.\n\n");
+          continue;
+        }
         ImmOpnd = CurDAG->getTargetGlobalAddress(GV, dl, MVT::i64, 0, Flags);
       } else if (ConstantPoolSDNode *CP =
                  dyn_cast<ConstantPoolSDNode>(ImmOpnd)) {

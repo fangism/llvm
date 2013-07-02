@@ -30,6 +30,11 @@ namespace {
     virtual unsigned GetRelocType(const MCValue &Target, const MCFixup &Fixup,
                                   bool IsPCRel, bool IsRelocWithSymbol,
                                   int64_t Addend) const;
+    virtual const MCSymbol *ExplicitRelSym(const MCAssembler &Asm,
+                                           const MCValue &Target,
+                                           const MCFragment &F,
+                                           const MCFixup &Fixup,
+                                           bool IsPCRel) const;
     virtual const MCSymbol *undefinedExplicitRelSym(const MCValue &Target,
                                                     const MCFixup &Fixup,
                                                     bool IsPCRel) const;
@@ -307,6 +312,15 @@ unsigned PPCELFObjectWriter::getRelocTypeInner(const MCValue &Target,
       case MCSymbolRefExpr::VK_None:
         Type = ELF::R_PPC64_ADDR64;
 	break;
+      case MCSymbolRefExpr::VK_PPC_DTPMOD:
+        Type = ELF::R_PPC64_DTPMOD64;
+	break;
+      case MCSymbolRefExpr::VK_PPC_TPREL:
+        Type = ELF::R_PPC64_TPREL64;
+	break;
+      case MCSymbolRefExpr::VK_PPC_DTPREL:
+        Type = ELF::R_PPC64_DTPREL64;
+	break;
       }
       break;
     case FK_Data_4:
@@ -326,6 +340,35 @@ unsigned PPCELFObjectWriter::GetRelocType(const MCValue &Target,
                                           bool IsRelocWithSymbol,
                                           int64_t Addend) const {
   return getRelocTypeInner(Target, Fixup, IsPCRel);
+}
+
+const MCSymbol *PPCELFObjectWriter::ExplicitRelSym(const MCAssembler &Asm,
+                                                   const MCValue &Target,
+                                                   const MCFragment &F,
+                                                   const MCFixup &Fixup,
+                                                   bool IsPCRel) const {
+  assert(Target.getSymA() && "SymA cannot be 0");
+  MCSymbolRefExpr::VariantKind Modifier = Target.isAbsolute() ?
+    MCSymbolRefExpr::VK_None : Target.getSymA()->getKind();
+
+  bool EmitThisSym;
+  switch (Modifier) {
+  // GOT references always need a relocation, even if the
+  // target symbol is local.
+  case MCSymbolRefExpr::VK_GOT:
+  case MCSymbolRefExpr::VK_PPC_GOT_LO:
+  case MCSymbolRefExpr::VK_PPC_GOT_HI:
+  case MCSymbolRefExpr::VK_PPC_GOT_HA:
+    EmitThisSym = true;
+    break;
+  default:
+    EmitThisSym = false;
+    break;
+  } 
+
+  if (EmitThisSym)
+    return &Target.getSymA()->getSymbol().AliasedSymbol();
+  return NULL;
 }
 
 const MCSymbol *PPCELFObjectWriter::undefinedExplicitRelSym(const MCValue &Target,

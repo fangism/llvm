@@ -32,7 +32,7 @@ void R600SchedStrategy::initialize(ScheduleDAGMI *dag) {
   MRI = &DAG->MRI;
   CurInstKind = IDOther;
   CurEmitted = 0;
-  OccupedSlotsMask = 15;
+  OccupedSlotsMask = 31;
   InstKindLimit[IDAlu] = TII->getMaxAlusPerClause();
   InstKindLimit[IDOther] = 32;
 
@@ -160,7 +160,7 @@ void R600SchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
   if (NextInstKind != CurInstKind) {
     DEBUG(dbgs() << "Instruction Type Switch\n");
     if (NextInstKind != IDAlu)
-      OccupedSlotsMask = 15;
+      OccupedSlotsMask |= 31;
     CurEmitted = 0;
     CurInstKind = NextInstKind;
   }
@@ -251,6 +251,9 @@ bool R600SchedStrategy::regBelongsToClass(unsigned Reg,
 R600SchedStrategy::AluKind R600SchedStrategy::getAluKind(SUnit *SU) const {
   MachineInstr *MI = SU->getInstr();
 
+  if (TII->isTransOnly(MI))
+    return AluTrans;
+
     switch (MI->getOpcode()) {
     case AMDGPU::PRED_X:
       return AluPredX;
@@ -269,10 +272,18 @@ R600SchedStrategy::AluKind R600SchedStrategy::getAluKind(SUnit *SU) const {
     }
 
     // Does the instruction take a whole IG ?
+    // XXX: Is it possible to add a helper function in R600InstrInfo that can
+    // be used here and in R600PacketizerList::isSoloInstruction() ?
     if(TII->isVector(*MI) ||
         TII->isCubeOp(MI->getOpcode()) ||
-        TII->isReductionOp(MI->getOpcode()))
+        TII->isReductionOp(MI->getOpcode()) ||
+        MI->getOpcode() == AMDGPU::GROUP_BARRIER) {
       return AluT_XYZW;
+    }
+
+    if (TII->isLDSInstr(MI->getOpcode())) {
+      return AluT_X;
+    }
 
     // Is the result already assigned to a channel ?
     unsigned DestSubReg = MI->getOperand(0).getSubReg();
@@ -338,7 +349,7 @@ SUnit *R600SchedStrategy::PopInst(std::vector<SUnit *> &Q) {
       It != E; ++It) {
     SUnit *SU = *It;
     InstructionsGroupCandidate.push_back(SU->getInstr());
-    if (TII->canBundle(InstructionsGroupCandidate)) {
+    if (TII->fitsConstReadLimitations(InstructionsGroupCandidate)) {
       InstructionsGroupCandidate.pop_back();
       Q.erase((It + 1).base());
       return SU;
@@ -367,14 +378,18 @@ void R600SchedStrategy::PrepareNextSlot() {
 }
 
 void R600SchedStrategy::AssignSlot(MachineInstr* MI, unsigned Slot) {
-  unsigned DestReg = MI->getOperand(0).getReg();
+  int DstIndex = TII->getOperandIdx(MI->getOpcode(), AMDGPU::OpName::dst);
+  if (DstIndex == -1) {
+    return;
+  }
+  unsigned DestReg = MI->getOperand(DstIndex).getReg();
   // PressureRegister crashes if an operand is def and used in the same inst
   // and we try to constraint its regclass
   for (MachineInstr::mop_iterator It = MI->operands_begin(),
       E = MI->operands_end(); It != E; ++It) {
     MachineOperand &MO = *It;
     if (MO.isReg() && !MO.isDef() &&
-        MO.getReg() == MI->getOperand(0).getReg())
+        MO.getReg() == DestReg)
       return;
   }
   // Constrains the regclass of DestReg to assign it to Slot
@@ -409,7 +424,8 @@ unsigned R600SchedStrategy::AvailablesAluCount() const {
   return AvailableAlus[AluAny].size() + AvailableAlus[AluT_XYZW].size() +
       AvailableAlus[AluT_X].size() + AvailableAlus[AluT_Y].size() +
       AvailableAlus[AluT_Z].size() + AvailableAlus[AluT_W].size() +
-      AvailableAlus[AluDiscarded].size() + AvailableAlus[AluPredX].size();
+      AvailableAlus[AluTrans].size() + AvailableAlus[AluDiscarded].size() +
+      AvailableAlus[AluPredX].size();
 }
 
 SUnit* R600SchedStrategy::pickAlu() {
@@ -417,18 +433,25 @@ SUnit* R600SchedStrategy::pickAlu() {
     if (!OccupedSlotsMask) {
       // Bottom up scheduling : predX must comes first
       if (!AvailableAlus[AluPredX].empty()) {
-        OccupedSlotsMask = 15;
+        OccupedSlotsMask |= 31;
         return PopInst(AvailableAlus[AluPredX]);
       }
       // Flush physical reg copies (RA will discard them)
       if (!AvailableAlus[AluDiscarded].empty()) {
-        OccupedSlotsMask = 15;
+        OccupedSlotsMask |= 31;
         return PopInst(AvailableAlus[AluDiscarded]);
       }
       // If there is a T_XYZW alu available, use it
       if (!AvailableAlus[AluT_XYZW].empty()) {
-        OccupedSlotsMask = 15;
+        OccupedSlotsMask |= 15;
         return PopInst(AvailableAlus[AluT_XYZW]);
+      }
+    }
+    bool TransSlotOccuped = OccupedSlotsMask & 16;
+    if (!TransSlotOccuped) {
+      if (!AvailableAlus[AluTrans].empty()) {
+        OccupedSlotsMask |= 16;
+        return PopInst(AvailableAlus[AluTrans]);
       }
     }
     for (int Chan = 3; Chan > -1; --Chan) {

@@ -153,6 +153,18 @@ namespace {
   }
 } // end unnamed namespace
 
+enum FSEntity {
+  FS_Dir,
+  FS_File,
+  FS_Name
+};
+
+// Implemented in Unix/Path.inc and Windows/Path.inc.
+static llvm::error_code
+createUniqueEntity(const llvm::Twine &Model, int &ResultFD,
+                   llvm::SmallVectorImpl<char> &ResultPath,
+                   bool MakeAbsolute, unsigned Mode, FSEntity Type);
+
 namespace llvm {
 namespace sys  {
 namespace path {
@@ -628,32 +640,30 @@ bool is_relative(const Twine &path) {
 
 namespace fs {
 
-error_code unique_file(const Twine &Model, SmallVectorImpl<char> &ResultPath,
-                       bool MakeAbsolute, unsigned Mode) {
-  // FIXME: This is really inefficient. unique_path creates a path an tries to
-  // open it. We should factor the code so that we just don't create/open the
-  // file when we don't need it.
-  int FD;
-  error_code Ret = unique_file(Model, FD, ResultPath, MakeAbsolute, Mode);
-  if (Ret)
-    return Ret;
-
-  if (close(FD))
-    return error_code(errno, system_category());
-
-  StringRef P(ResultPath.begin(), ResultPath.size());
-  return fs::remove(P);
+// This is a mkostemps with a different pattern. Unfortunatelly OS X (ond *BSD)
+// don't have it. We should try using mkostemps on systems that have it.
+error_code unique_file(const Twine &Model, int &ResultFD,
+                       SmallVectorImpl<char> &ResultPath, bool MakeAbsolute,
+                       unsigned Mode) {
+  return createUniqueEntity(Model, ResultFD, ResultPath, MakeAbsolute, Mode,
+                            FS_File);
 }
 
+// This is a mktemp with a differet pattern. We use createUniqueEntity mostly
+// for consistency. We should try using mktemp.
+error_code unique_file(const Twine &Model, SmallVectorImpl<char> &ResultPath,
+                       bool MakeAbsolute) {
+  int Dummy;
+  return createUniqueEntity(Model, Dummy, ResultPath, MakeAbsolute, 0, FS_Name);
+}
+
+// This is a mkdtemp with a different pattern. We use createUniqueEntity mostly
+// for consistency. We should try using mkdtemp.
 error_code createUniqueDirectory(const Twine &Prefix,
                                  SmallVectorImpl<char> &ResultPath) {
-  // FIXME: This is double inefficient. We compute a unique file name, created
-  // it, delete it and keep only the directory.
-  error_code EC = unique_file(Prefix + "-%%%%%%/dummy", ResultPath);
-  if (EC)
-    return EC;
-  path::remove_filename(ResultPath);
-  return error_code::success();
+  int Dummy;
+  return createUniqueEntity(Prefix + "-%%%%%%", Dummy, ResultPath,
+                            true, 0, FS_Dir);
 }
 
 error_code make_absolute(SmallVectorImpl<char> &path) {

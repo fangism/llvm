@@ -1508,9 +1508,9 @@ def : Pat<(pre_store f32:$rS, iPTR:$ptrreg, iPTR:$ptroff),
 def : Pat<(pre_store f64:$rS, iPTR:$ptrreg, iPTR:$ptroff),
           (STFDUX $rS, $ptrreg, $ptroff)>;
 
-def SYNC : XForm_24_sync<31, 598, (outs), (ins),
-                        "sync", LdStSync,
-                        [(int_ppc_sync)]>;
+def SYNC : XForm_24_sync<31, 598, (outs), (ins i32imm:$L),
+                        "sync $L", LdStSync, []>;
+def : Pat<(int_ppc_sync), (SYNC 0)>;
 
 //===----------------------------------------------------------------------===//
 // PPC32 Arithmetic Instructions.
@@ -1776,15 +1776,37 @@ def MCRF   : XLForm_3<19, 0, (outs crrc:$BF), (ins crrc:$BFA),
                       "mcrf $BF, $BFA", BrMCR>,
              PPC970_DGroup_First, PPC970_Unit_CRU;
 
+def CRAND  : XLForm_1<19, 257, (outs crbitrc:$CRD),
+                               (ins crbitrc:$CRA, crbitrc:$CRB),
+                      "crand $CRD, $CRA, $CRB", BrCR, []>;
+
+def CRNAND : XLForm_1<19, 225, (outs crbitrc:$CRD),
+                               (ins crbitrc:$CRA, crbitrc:$CRB),
+                      "crnand $CRD, $CRA, $CRB", BrCR, []>;
+
+def CROR   : XLForm_1<19, 449, (outs crbitrc:$CRD),
+                               (ins crbitrc:$CRA, crbitrc:$CRB),
+                      "cror $CRD, $CRA, $CRB", BrCR, []>;
+
+def CRXOR  : XLForm_1<19, 193, (outs crbitrc:$CRD),
+                               (ins crbitrc:$CRA, crbitrc:$CRB),
+                      "crxor $CRD, $CRA, $CRB", BrCR, []>;
+
+def CRNOR  : XLForm_1<19, 33, (outs crbitrc:$CRD),
+                              (ins crbitrc:$CRA, crbitrc:$CRB),
+                      "crnor $CRD, $CRA, $CRB", BrCR, []>;
+
 def CREQV  : XLForm_1<19, 289, (outs crbitrc:$CRD),
                                (ins crbitrc:$CRA, crbitrc:$CRB),
-                      "creqv $CRD, $CRA, $CRB", BrCR,
-                      []>;
+                      "creqv $CRD, $CRA, $CRB", BrCR, []>;
 
-def CROR  : XLForm_1<19, 449, (outs crbitrc:$CRD),
+def CRANDC : XLForm_1<19, 129, (outs crbitrc:$CRD),
                                (ins crbitrc:$CRA, crbitrc:$CRB),
-                      "cror $CRD, $CRA, $CRB", BrCR,
-                      []>;
+                      "crandc $CRD, $CRA, $CRB", BrCR, []>;
+
+def CRORC  : XLForm_1<19, 417, (outs crbitrc:$CRD),
+                               (ins crbitrc:$CRA, crbitrc:$CRB),
+                      "crorc $CRD, $CRA, $CRB", BrCR, []>;
 
 let isCodeGenOnly = 1 in {
 def CRSET  : XLForm_1_ext<19, 289, (outs crbitrc:$dst), (ins),
@@ -2231,7 +2253,7 @@ def : Pat<(f64 (extloadf32 xaddr:$src)),
 def : Pat<(f64 (fextend f32:$src)),
           (COPY_TO_REGCLASS $src, F8RC)>;
 
-def : Pat<(atomic_fence (imm), (imm)), (SYNC)>;
+def : Pat<(atomic_fence (imm), (imm)), (SYNC 0)>;
 
 // Additional FNMSUB patterns: -a*c + b == -(a*c - b)
 def : Pat<(fma (fneg f64:$A), f64:$C, f64:$B),
@@ -2257,6 +2279,12 @@ def ISYNC : XLForm_2_ext<19, 150, 0, 0, 0, (outs), (ins),
 def ICBI : XForm_1a<31, 982, (outs), (ins memrr:$src),
                     "icbi $src", LdStICBI, []>;
 
+def EIEIO : XForm_24_eieio<31, 854, (outs), (ins),
+                           "eieio", LdStLoad, []>;
+
+def WAIT : XForm_24_sync<31, 62, (outs), (ins i32imm:$L),
+                         "wait $L", LdStLoad, []>;
+
 //===----------------------------------------------------------------------===//
 // PowerPC Assembler Instruction Aliases
 //
@@ -2278,6 +2306,20 @@ class PPCAsmPseudo<string asm, dag iops>
 }
 
 def : InstAlias<"sc", (SC 0)>;
+
+def : InstAlias<"sync", (SYNC 0)>;
+def : InstAlias<"msync", (SYNC 0)>;
+def : InstAlias<"lwsync", (SYNC 1)>;
+def : InstAlias<"ptesync", (SYNC 2)>;
+
+def : InstAlias<"wait", (WAIT 0)>;
+def : InstAlias<"waitrsv", (WAIT 1)>;
+def : InstAlias<"waitimpl", (WAIT 2)>;
+
+def : InstAlias<"crset $bx", (CREQV crbitrc:$bx, crbitrc:$bx, crbitrc:$bx)>;
+def : InstAlias<"crclr $bx", (CRXOR crbitrc:$bx, crbitrc:$bx, crbitrc:$bx)>;
+def : InstAlias<"crmove $bx, $by", (CROR crbitrc:$bx, crbitrc:$by, crbitrc:$by)>;
+def : InstAlias<"crnot $bx, $by", (CRNOR crbitrc:$bx, crbitrc:$by, crbitrc:$by)>;
 
 def : InstAlias<"xnop", (XORI R0, R0, 0)>;
 

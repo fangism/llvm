@@ -708,7 +708,7 @@ _func:
 @ CHECK: ldm.w	r4, {r5, r6}            @ encoding: [0x94,0xe8,0x60,0x00]
 @ CHECK: ldm.w	r5!, {r3, r8}           @ encoding: [0xb5,0xe8,0x08,0x01]
 @ CHECK: ldm.w	r5!, {r3, r8}           @ encoding: [0xb5,0xe8,0x08,0x01]
-@ CHECK: pop.w	{pc, r4, r5, r6, r7, r8, r9, r10, r11} @ encoding: [0xbd,0xe8,0xf0,0x8f]
+@ CHECK: pop.w	{r4, r5, r6, r7, r8, r9, r10, r11, pc} @ encoding: [0xbd,0xe8,0xf0,0x8f]
 
 
 @------------------------------------------------------------------------------
@@ -2349,10 +2349,10 @@ _func:
 @ CHECK: srsia	sp, #0                  @ encoding: [0x8d,0xe9,0x00,0xc0]
 @ CHECK: srsdb	sp!, #19                @ encoding: [0x2d,0xe8,0x13,0xc0]
 @ CHECK: srsia	sp!, #2                 @ encoding: [0xad,0xe9,0x02,0xc0]
-@ CHECK: srsdb	sp, #10                 @ encoding: [0x0d,0xe8,0x0a,0xc0]
-@ CHECK: srsia	sp, #9                  @ encoding: [0x8d,0xe9,0x09,0xc0]
-@ CHECK: srsdb	sp!, #5                 @ encoding: [0x2d,0xe8,0x05,0xc0]
+@ CHECK: srsia	sp, #10                 @ encoding: [0x8d,0xe9,0x0a,0xc0]
+@ CHECK: srsdb	sp, #9                  @ encoding: [0x0d,0xe8,0x09,0xc0]
 @ CHECK: srsia	sp!, #5                 @ encoding: [0xad,0xe9,0x05,0xc0]
+@ CHECK: srsdb	sp!, #5                 @ encoding: [0x2d,0xe8,0x05,0xc0]
 @ CHECK: srsia	sp, #5                  @ encoding: [0x8d,0xe9,0x05,0xc0]
 @ CHECK: srsia	sp!, #5                 @ encoding: [0xad,0xe9,0x05,0xc0]
 
@@ -2375,10 +2375,10 @@ _func:
 @ CHECK: srsia	sp, #0                  @ encoding: [0x8d,0xe9,0x00,0xc0]
 @ CHECK: srsdb	sp!, #19                @ encoding: [0x2d,0xe8,0x13,0xc0]
 @ CHECK: srsia	sp!, #2                 @ encoding: [0xad,0xe9,0x02,0xc0]
-@ CHECK: srsdb	sp, #10                 @ encoding: [0x0d,0xe8,0x0a,0xc0]
-@ CHECK: srsia	sp, #9                  @ encoding: [0x8d,0xe9,0x09,0xc0]
-@ CHECK: srsdb	sp!, #5                 @ encoding: [0x2d,0xe8,0x05,0xc0]
+@ CHECK: srsia	sp, #10                 @ encoding: [0x8d,0xe9,0x0a,0xc0]
+@ CHECK: srsdb	sp, #9                  @ encoding: [0x0d,0xe8,0x09,0xc0]
 @ CHECK: srsia	sp!, #5                 @ encoding: [0xad,0xe9,0x05,0xc0]
+@ CHECK: srsdb	sp!, #5                 @ encoding: [0x2d,0xe8,0x05,0xc0]
 @ CHECK: srsia	sp, #5                  @ encoding: [0x8d,0xe9,0x05,0xc0]
 @ CHECK: srsia	sp!, #5                 @ encoding: [0xad,0xe9,0x05,0xc0]
 

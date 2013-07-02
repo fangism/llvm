@@ -41,7 +41,10 @@ namespace R600_InstFlag {
     OP1 = (1 << 10),
     OP2 = (1 << 11),
     VTX_INST  = (1 << 12),
-    TEX_INST = (1 << 13)
+    TEX_INST = (1 << 13),
+    ALU_INST = (1 << 14),
+    LDS_1A = (1 << 15),
+    LDS_1A1D = (1 << 16)
   };
 }
 
@@ -160,5 +163,7 @@ namespace OpName {
 #define R_028860_SQ_PGM_RESOURCES_VS                 0x028860
 #define R_028878_SQ_PGM_RESOURCES_GS                 0x028878
 #define R_0288D4_SQ_PGM_RESOURCES_LS                 0x0288d4
+
+#define R_0288E8_SQ_LDS_ALLOC                        0x0288E8
 
 #endif // R600DEFINES_H_

@@ -247,13 +247,16 @@ unsigned DwarfUnits::getStringPoolIndex(StringRef Str) {
   return Entry.second;
 }
 
-unsigned DwarfUnits::getAddrPoolIndex(MCSymbol *Sym) {
-  std::pair<MCSymbol*, unsigned> &Entry = AddressPool[Sym];
-  if (Entry.first) return Entry.second;
+unsigned DwarfUnits::getAddrPoolIndex(const MCSymbol *Sym) {
+  return getAddrPoolIndex(MCSymbolRefExpr::Create(Sym, Asm->OutContext));
+}
 
-  Entry.second = NextAddrPoolNumber++;
-  Entry.first = Sym;
-  return Entry.second;
+unsigned DwarfUnits::getAddrPoolIndex(const MCSymbolRefExpr *Sym) {
+  std::pair<DenseMap<const MCSymbolRefExpr *, unsigned>::iterator, bool> P =
+      AddressPool.insert(std::make_pair(Sym, NextAddrPoolNumber));
+  if (P.second)
+    ++NextAddrPoolNumber;
+  return P.first->second;
 }
 
 // Define a unique number for the abbreviation.
@@ -1919,9 +1922,9 @@ void DwarfDebug::emitDIE(DIE *Die, std::vector<DIEAbbrev *> *Abbrevs) {
     case dwarf::DW_AT_location: {
       if (DIELabel *L = dyn_cast<DIELabel>(Values[i])) {
         if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-          Asm->EmitLabelReference(L->getValue(), 4);
+          Asm->EmitLabelReference(&L->getValue()->getSymbol(), 4);
         else
-          Asm->EmitLabelDifference(L->getValue(), DwarfDebugLocSectionSym, 4);
+          Asm->EmitLabelDifference(&L->getValue()->getSymbol(), DwarfDebugLocSectionSym, 4);
       } else {
         Values[i]->EmitValue(Asm, Form);
       }
@@ -2356,24 +2359,22 @@ void DwarfUnits::emitAddresses(const MCSection *AddrSection) {
   // Start the dwarf addr section.
   Asm->OutStreamer.SwitchSection(AddrSection);
 
-  // Get all of the string pool entries and put them in an array by their ID so
+  // Get all of the address pool entries and put them in an array by their ID so
   // we can sort them.
-  SmallVector<std::pair<unsigned,
-                        std::pair<MCSymbol*, unsigned>* >, 64> Entries;
+  SmallVector<std::pair<unsigned, const MCSymbolRefExpr *>, 64> Entries;
 
-  for (DenseMap<MCSymbol*, std::pair<MCSymbol*, unsigned> >::iterator
-         I = AddressPool.begin(), E = AddressPool.end();
+  for (DenseMap<const MCSymbolRefExpr *, unsigned>::iterator
+           I = AddressPool.begin(),
+           E = AddressPool.end();
        I != E; ++I)
-    Entries.push_back(std::make_pair(I->second.second, &(I->second)));
+    Entries.push_back(std::make_pair(I->second, I->first));
 
   array_pod_sort(Entries.begin(), Entries.end());
 
   for (unsigned i = 0, e = Entries.size(); i != e; ++i) {
     // Emit a label for reference from debug information entries.
-    MCSymbol *Sym = Entries[i].second->first;
-    if (Sym)
-      Asm->EmitLabelReference(Entries[i].second->first,
-                              Asm->getDataLayout().getPointerSize());
+    if (const MCSymbolRefExpr *Sym = Entries[i].second)
+      Asm->OutStreamer.EmitValue(Sym, Asm->getDataLayout().getPointerSize());
     else
       Asm->OutStreamer.EmitIntValue(0, Asm->getDataLayout().getPointerSize());
   }

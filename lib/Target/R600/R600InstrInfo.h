@@ -36,14 +36,14 @@ namespace llvm {
 
   int getBranchInstr(const MachineOperand &op) const;
   std::vector<std::pair<int, unsigned> >
-  ExtractSrcs(MachineInstr *MI, const DenseMap<unsigned, unsigned> &PV) const;
+  ExtractSrcs(MachineInstr *MI, const DenseMap<unsigned, unsigned> &PV, unsigned &ConstCount) const;
 
   public:
   enum BankSwizzle {
-    ALU_VEC_012 = 0,
-    ALU_VEC_021,
-    ALU_VEC_120,
-    ALU_VEC_102,
+    ALU_VEC_012_SCL_210 = 0,
+    ALU_VEC_021_SCL_122,
+    ALU_VEC_120_SCL_212,
+    ALU_VEC_102_SCL_221,
     ALU_VEC_201,
     ALU_VEC_210
   };
@@ -63,6 +63,8 @@ namespace llvm {
 
   /// \returns true if this \p Opcode represents an ALU instruction.
   bool isALUInstr(unsigned Opcode) const;
+  bool hasInstrModifiers(unsigned Opcode) const;
+  bool isLDSInstr(unsigned Opcode) const;
 
   bool isTransOnly(unsigned Opcode) const;
   bool isTransOnly(const MachineInstr *MI) const;
@@ -72,6 +74,8 @@ namespace llvm {
   bool usesTextureCache(unsigned Opcode) const;
   bool usesTextureCache(const MachineInstr *MI) const;
 
+  bool mustBeLastInClause(unsigned Opcode) const;
+
   /// \returns a pair for each src of an ALU instructions.
   /// The first member of a pair is the register id.
   /// If register is ALU_CONST, second member is SEL.
@@ -80,17 +84,38 @@ namespace llvm {
   SmallVector<std::pair<MachineOperand *, int64_t>, 3>
       getSrcs(MachineInstr *MI) const;
 
+  unsigned  isLegalUpTo(
+    const std::vector<std::vector<std::pair<int, unsigned> > > &IGSrcs,
+    const std::vector<R600InstrInfo::BankSwizzle> &Swz,
+    const std::vector<std::pair<int, unsigned> > &TransSrcs,
+    R600InstrInfo::BankSwizzle TransSwz) const;
+
+  bool FindSwizzleForVectorSlot(
+    const std::vector<std::vector<std::pair<int, unsigned> > > &IGSrcs,
+    std::vector<R600InstrInfo::BankSwizzle> &SwzCandidate,
+    const std::vector<std::pair<int, unsigned> > &TransSrcs,
+    R600InstrInfo::BankSwizzle TransSwz) const;
+
   /// Given the order VEC_012 < VEC_021 < VEC_120 < VEC_102 < VEC_201 < VEC_210
   /// returns true and the first (in lexical order) BankSwizzle affectation
   /// starting from the one already provided in the Instruction Group MIs that
   /// fits Read Port limitations in BS if available. Otherwise returns false
   /// and undefined content in BS.
+  /// isLastAluTrans should be set if the last Alu of MIs will be executed on
+  /// Trans ALU. In this case, ValidTSwizzle returns the BankSwizzle value to
+  /// apply to the last instruction.
   /// PV holds GPR to PV registers in the Instruction Group MIs.
   bool fitsReadPortLimitations(const std::vector<MachineInstr *> &MIs,
                                const DenseMap<unsigned, unsigned> &PV,
-                               std::vector<BankSwizzle> &BS) const;
+                               std::vector<BankSwizzle> &BS,
+                               bool isLastAluTrans) const;
+
+  /// An instruction group can only access 2 channel pair (either [XY] or [ZW])
+  /// from KCache bank on R700+. This function check if MI set in input meet
+  /// this limitations
+  bool fitsConstReadLimitations(const std::vector<MachineInstr *> &) const;
+  /// Same but using const index set instead of MI set.
   bool fitsConstReadLimitations(const std::vector<unsigned>&) const;
-  bool canBundle(const std::vector<MachineInstr *> &) const;
 
   /// \breif Vector instructions are instructions that must fill all
   /// instruction slots within an instruction group.
