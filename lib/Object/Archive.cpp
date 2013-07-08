@@ -38,7 +38,7 @@ static bool isInternalMember(const ArchiveMemberHeader &amh) {
 void Archive::anchor() { }
 
 error_code Archive::Child::getName(StringRef &Result) const {
-  StringRef name = ToHeader(Data.data())->getName();
+  StringRef name = getRawName();
   // Check if it's a special name.
   if (name[0] == '/') {
     if (name.size() == 1) { // Linker member.
@@ -104,7 +104,7 @@ Archive::Archive(MemoryBuffer *source, error_code &ec)
   : Binary(Binary::ID_Archive, source) {
   // Check for sufficient magic.
   if (!source || source->getBufferSize()
-                 < (8 + sizeof(ArchiveMemberHeader) + 2) // Smallest archive.
+                 < (8 + sizeof(ArchiveMemberHeader)) // Smallest archive.
               || StringRef(source->getBufferStart(), 8) != Magic) {
     ec = object_error::invalid_file_type;
     return;
@@ -114,13 +114,16 @@ Archive::Archive(MemoryBuffer *source, error_code &ec)
   child_iterator i = begin_children(false);
   child_iterator e = end_children();
 
-  StringRef name;
-  if ((ec = i->getName(name)))
+  if (i == e) {
+    ec = object_error::parse_failed;
     return;
+  }
+
+  StringRef Name = i->getRawName();
 
   // Below is the pattern that is used to figure out the archive format
   // GNU archive format
-  //  First member : / (points to the symbol table )
+  //  First member : / (may exist, if it exists, points to the symbol table )
   //  Second member : // (may exist, if it exists, points to the string table)
   //  Note : The string table is used if the filename exceeds 15 characters
   // BSD archive format
@@ -136,40 +139,57 @@ Archive::Archive(MemoryBuffer *source, error_code &ec)
   //  even if the string table is empty. However, lib.exe does not in fact
   //  seem to create the third member if there's no member whose filename
   //  exceeds 15 characters. So the third member is optional.
-  if (name == "/") {
+
+  if (Name == "__.SYMDEF") {
+    Format = K_BSD;
     SymbolTable = i;
-    StringTable = e;
-    if (i != e) ++i;
+    ec = object_error::success;
+    return;
+  }
+
+  if (Name == "/") {
+    SymbolTable = i;
+
+    ++i;
     if (i == e) {
       ec = object_error::parse_failed;
       return;
     }
-    if ((ec = i->getName(name)))
-      return;
-    if (name[0] != '/') {
-      Format = K_GNU;
-    } else if ((name.size() > 1) && (name == "//")) { 
-      Format = K_GNU;
-      StringTable = i;
-      ++i;
-    } else {
-      Format = K_COFF;
-      if (i != e) {
-        SymbolTable = i;
-        ++i;
-      }
-      if (i != e) {
-        if ((ec = i->getName(name)))
-          return;
-        if (name == "//")
-          StringTable = i;
-      }
-    }
-  } else if (name == "__.SYMDEF") {
-    Format = K_BSD;
-    SymbolTable = i;
-    StringTable = e;
-  } 
+    Name = i->getRawName();
+  }
+
+  if (Name == "//") {
+    Format = K_GNU;
+    StringTable = i;
+    ec = object_error::success;
+    return;
+  }
+
+  if (Name[0] != '/') {
+    Format = K_GNU;
+    ec = object_error::success;
+    return;
+  }
+
+  if (Name != "/") {
+    ec = object_error::parse_failed;
+    return;
+  }
+
+  Format = K_COFF;
+  SymbolTable = i;
+
+  ++i;
+  if (i == e) {
+    ec = object_error::success;
+    return;
+  }
+
+  Name = i->getRawName();
+
+  if (Name == "//")
+    StringTable = i;
+
   ec = object_error::success;
 }
 
@@ -274,7 +294,6 @@ Archive::symbol_iterator Archive::end_symbols() const {
   uint32_t symbol_count = 0;
   if (kind() == K_GNU) {
     symbol_count = *reinterpret_cast<const support::ubig32_t*>(buf);
-    buf += sizeof(uint32_t) + (symbol_count * (sizeof(uint32_t)));
   } else if (kind() == K_BSD) {
     llvm_unreachable("BSD archive format is not supported");
   } else {

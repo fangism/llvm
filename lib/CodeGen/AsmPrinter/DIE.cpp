@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DIE.h"
+#include "DwarfDebug.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/IR/DataLayout.h"
@@ -247,13 +248,39 @@ void DIEInteger::print(raw_ostream &O) const {
 #endif
 
 //===----------------------------------------------------------------------===//
+// DIEExpr Implementation
+//===----------------------------------------------------------------------===//
+
+/// EmitValue - Emit expression value.
+///
+void DIEExpr::EmitValue(AsmPrinter *AP, unsigned Form) const {
+  AP->OutStreamer.EmitValue(Expr, SizeOf(AP, Form));
+}
+
+/// SizeOf - Determine size of expression value in bytes.
+///
+unsigned DIEExpr::SizeOf(AsmPrinter *AP, unsigned Form) const {
+  if (Form == dwarf::DW_FORM_data4) return 4;
+  if (Form == dwarf::DW_FORM_sec_offset) return 4;
+  if (Form == dwarf::DW_FORM_strp) return 4;
+  return AP->getDataLayout().getPointerSize();
+}
+
+#ifndef NDEBUG
+void DIEExpr::print(raw_ostream &O) const {
+  O << "Expr: ";
+  Expr->print(O);
+}
+#endif
+
+//===----------------------------------------------------------------------===//
 // DIELabel Implementation
 //===----------------------------------------------------------------------===//
 
 /// EmitValue - Emit label value.
 ///
 void DIELabel::EmitValue(AsmPrinter *AP, unsigned Form) const {
-  AP->OutStreamer.EmitValue(Label, SizeOf(AP, Form));
+  AP->EmitLabelReference(Label, SizeOf(AP, Form));
 }
 
 /// SizeOf - Determine size of label value in bytes.
@@ -267,7 +294,7 @@ unsigned DIELabel::SizeOf(AsmPrinter *AP, unsigned Form) const {
 
 #ifndef NDEBUG
 void DIELabel::print(raw_ostream &O) const {
-  O << "Lbl: " << Label->getSymbol().getName();
+  O << "Lbl: " << Label->getName();
 }
 #endif
 
@@ -303,6 +330,16 @@ void DIEDelta::print(raw_ostream &O) const {
 ///
 void DIEEntry::EmitValue(AsmPrinter *AP, unsigned Form) const {
   AP->EmitInt32(Entry->getOffset());
+}
+
+unsigned DIEEntry::getRefAddrSize(AsmPrinter *AP) {
+  // DWARF4: References that use the attribute form DW_FORM_ref_addr are
+  // specified to be four bytes in the DWARF 32-bit format and eight bytes
+  // in the DWARF 64-bit format, while DWARF Version 2 specifies that such
+  // references have the same size as an address on the target system.
+  if (AP->getDwarfDebug()->getDwarfVersion() == 2)
+    return AP->getDataLayout().getPointerSize();
+  return sizeof(int32_t);
 }
 
 #ifndef NDEBUG

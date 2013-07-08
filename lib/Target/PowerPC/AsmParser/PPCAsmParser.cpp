@@ -107,6 +107,67 @@ static unsigned CRRegs[8] = {
   PPC::CR4, PPC::CR5, PPC::CR6, PPC::CR7
 };
 
+// Evaluate an expression containing condition register
+// or condition register field symbols.  Returns positive
+// value on success, or -1 on error.
+static int64_t
+EvaluateCRExpr(const MCExpr *E) {
+  switch (E->getKind()) {
+  case MCExpr::Target:
+    return -1;
+
+  case MCExpr::Constant: {
+    int64_t Res = cast<MCConstantExpr>(E)->getValue();
+    return Res < 0 ? -1 : Res;
+  }
+
+  case MCExpr::SymbolRef: {
+    const MCSymbolRefExpr *SRE = cast<MCSymbolRefExpr>(E);
+    StringRef Name = SRE->getSymbol().getName();
+
+    if (Name == "lt") return 0;
+    if (Name == "gt") return 1;
+    if (Name == "eq") return 2;
+    if (Name == "so") return 3;
+    if (Name == "un") return 3;
+
+    if (Name == "cr0") return 0;
+    if (Name == "cr1") return 1;
+    if (Name == "cr2") return 2;
+    if (Name == "cr3") return 3;
+    if (Name == "cr4") return 4;
+    if (Name == "cr5") return 5;
+    if (Name == "cr6") return 6;
+    if (Name == "cr7") return 7;
+
+    return -1;
+  }
+
+  case MCExpr::Unary:
+    return -1;
+
+  case MCExpr::Binary: {
+    const MCBinaryExpr *BE = cast<MCBinaryExpr>(E);
+    int64_t LHSVal = EvaluateCRExpr(BE->getLHS());
+    int64_t RHSVal = EvaluateCRExpr(BE->getRHS());
+    int64_t Res;
+
+    if (LHSVal < 0 || RHSVal < 0)
+      return -1;
+
+    switch (BE->getOpcode()) {
+    default: return -1;
+    case MCBinaryExpr::Add: Res = LHSVal + RHSVal; break;
+    case MCBinaryExpr::Mul: Res = LHSVal * RHSVal; break;
+    }
+
+    return Res < 0 ? -1 : Res;
+  }
+  }
+
+  llvm_unreachable("Invalid expression kind!");
+}
+
 struct PPCOperand;
 
 class PPCAsmParser : public MCTargetAsmParser {
@@ -168,6 +229,8 @@ public:
                                 SmallVectorImpl<MCParsedAsmOperand*> &Operands);
 
   virtual bool ParseDirective(AsmToken DirectiveID);
+
+  unsigned validateTargetOperandClass(MCParsedAsmOperand *Op, unsigned Kind);
 };
 
 /// PPCOperand - Instances of this class represent a parsed PowerPC machine
@@ -176,7 +239,8 @@ struct PPCOperand : public MCParsedAsmOperand {
   enum KindTy {
     Token,
     Immediate,
-    Expression
+    Expression,
+    TLSRegister
   } Kind;
 
   SMLoc StartLoc, EndLoc;
@@ -193,12 +257,18 @@ struct PPCOperand : public MCParsedAsmOperand {
 
   struct ExprOp {
     const MCExpr *Val;
+    int64_t CRVal;     // Cached result of EvaluateCRExpr(Val)
+  };
+
+  struct TLSRegOp {
+    const MCSymbolRefExpr *Sym;
   };
 
   union {
     struct TokOp Tok;
     struct ImmOp Imm;
     struct ExprOp Expr;
+    struct TLSRegOp TLSReg;
   };
 
   PPCOperand(KindTy K) : MCParsedAsmOperand(), Kind(K) {}
@@ -217,6 +287,9 @@ public:
       break;
     case Expression:
       Expr = o.Expr;
+      break;
+    case TLSRegister:
+      TLSReg = o.TLSReg;
       break;
     }
   }
@@ -240,6 +313,16 @@ public:
     return Expr.Val;
   }
 
+  int64_t getExprCRVal() const {
+    assert(Kind == Expression && "Invalid access!");
+    return Expr.CRVal;
+  }
+
+  const MCExpr *getTLSReg() const {
+    assert(Kind == TLSRegister && "Invalid access!");
+    return TLSReg.Sym;
+  }
+
   unsigned getReg() const {
     assert(isRegNumber() && "Invalid access!");
     return (unsigned) Imm.Val;
@@ -247,7 +330,12 @@ public:
 
   unsigned getCCReg() const {
     assert(isCCRegNumber() && "Invalid access!");
-    return (unsigned) Imm.Val;
+    return (unsigned) (Kind == Immediate ? Imm.Val : Expr.CRVal);
+  }
+
+  unsigned getCRBit() const {
+    assert(isCRBitNumber() && "Invalid access!");
+    return (unsigned) (Kind == Immediate ? Imm.Val : Expr.CRVal);
   }
 
   unsigned getCRBitMask() const {
@@ -269,6 +357,7 @@ public:
                                     (getImm() & 3) == 0); }
   bool isS17Imm() const { return Kind == Expression ||
                                  (Kind == Immediate && isInt<17>(getImm())); }
+  bool isTLSReg() const { return Kind == TLSRegister; }
   bool isDirectBr() const { return Kind == Expression ||
                                    (Kind == Immediate && isInt<26>(getImm()) &&
                                     (getImm() & 3) == 0); }
@@ -276,8 +365,14 @@ public:
                                  (Kind == Immediate && isInt<16>(getImm()) &&
                                   (getImm() & 3) == 0); }
   bool isRegNumber() const { return Kind == Immediate && isUInt<5>(getImm()); }
-  bool isCCRegNumber() const { return Kind == Immediate &&
-                                      isUInt<3>(getImm()); }
+  bool isCCRegNumber() const { return (Kind == Expression
+                                       && isUInt<3>(getExprCRVal())) ||
+                                      (Kind == Immediate
+                                       && isUInt<3>(getImm())); }
+  bool isCRBitNumber() const { return (Kind == Expression
+                                       && isUInt<5>(getExprCRVal())) ||
+                                      (Kind == Immediate
+                                       && isUInt<5>(getImm())); }
   bool isCRBitMask() const { return Kind == Immediate && isUInt<8>(getImm()) &&
                                     isPowerOf2_32(getImm()); }
   bool isMem() const { return false; }
@@ -338,7 +433,7 @@ public:
 
   void addRegCRBITRCOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
-    Inst.addOperand(MCOperand::CreateReg(CRBITRegs[getReg()]));
+    Inst.addOperand(MCOperand::CreateReg(CRBITRegs[getCRBit()]));
   }
 
   void addRegCRRCOperands(MCInst &Inst, unsigned N) const {
@@ -365,6 +460,11 @@ public:
       Inst.addOperand(MCOperand::CreateImm(getImm() / 4));
     else
       Inst.addOperand(MCOperand::CreateExpr(getExpr()));
+  }
+
+  void addTLSRegOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::CreateExpr(getTLSReg()));
   }
 
   StringRef getToken() const {
@@ -397,10 +497,33 @@ public:
                                 SMLoc S, SMLoc E, bool IsPPC64) {
     PPCOperand *Op = new PPCOperand(Expression);
     Op->Expr.Val = Val;
+    Op->Expr.CRVal = EvaluateCRExpr(Val);
     Op->StartLoc = S;
     Op->EndLoc = E;
     Op->IsPPC64 = IsPPC64;
     return Op;
+  }
+
+  static PPCOperand *CreateTLSReg(const MCSymbolRefExpr *Sym,
+                                  SMLoc S, SMLoc E, bool IsPPC64) {
+    PPCOperand *Op = new PPCOperand(TLSRegister);
+    Op->TLSReg.Sym = Sym;
+    Op->StartLoc = S;
+    Op->EndLoc = E;
+    Op->IsPPC64 = IsPPC64;
+    return Op;
+  }
+
+  static PPCOperand *CreateFromMCExpr(const MCExpr *Val,
+                                      SMLoc S, SMLoc E, bool IsPPC64) {
+    if (const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(Val))
+      return CreateImm(CE->getValue(), S, E, IsPPC64);
+
+    if (const MCSymbolRefExpr *SRE = dyn_cast<MCSymbolRefExpr>(Val))
+      if (SRE->getKind() == MCSymbolRefExpr::VK_PPC_TLS)
+        return CreateTLSReg(SRE, S, E, IsPPC64);
+
+    return CreateExpr(Val, S, E, IsPPC64);
   }
 };
 
@@ -416,6 +539,9 @@ void PPCOperand::print(raw_ostream &OS) const {
     break;
   case Expression:
     getExpr()->print(OS);
+    break;
+  case TLSRegister:
+    getTLSReg()->print(OS);
     break;
   }
 }
@@ -752,6 +878,10 @@ MatchRegisterName(const AsmToken &Tok, unsigned &RegNo, int64_t &IntVal) {
       RegNo = isPPC64()? PPC::CTR8 : PPC::CTR;
       IntVal = 9;
       return false;
+    } else if (Name.equals_lower("vrsave")) {
+      RegNo = PPC::VRSAVE;
+      IntVal = 256;
+      return false;
     } else if (Name.substr(0, 1).equals_lower("r") &&
                !Name.substr(1).getAsInteger(10, IntVal) && IntVal < 32) {
       RegNo = isPPC64()? XRegs[IntVal] : RRegs[IntVal];
@@ -928,16 +1058,33 @@ ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
     return Error(S, "unknown operand");
   }
 
-  if (const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(EVal))
-    Op = PPCOperand::CreateImm(CE->getValue(), S, E, isPPC64());
-  else
-    Op = PPCOperand::CreateExpr(EVal, S, E, isPPC64());
-
   // Push the parsed operand into the list of operands
+  Op = PPCOperand::CreateFromMCExpr(EVal, S, E, isPPC64());
   Operands.push_back(Op);
 
-  // Check for D-form memory operands
-  if (getLexer().is(AsmToken::LParen)) {
+  // Check whether this is a TLS call expression
+  bool TLSCall = false;
+  if (const MCSymbolRefExpr *Ref = dyn_cast<MCSymbolRefExpr>(EVal))
+    TLSCall = Ref->getSymbol().getName() == "__tls_get_addr";
+
+  if (TLSCall && getLexer().is(AsmToken::LParen)) {
+    const MCExpr *TLSSym;
+
+    Parser.Lex(); // Eat the '('.
+    S = Parser.getTok().getLoc();
+    if (ParseExpression(TLSSym))
+      return Error(S, "invalid TLS call expression");
+    if (getLexer().isNot(AsmToken::RParen))
+      return Error(Parser.getTok().getLoc(), "missing ')'");
+    E = Parser.getTok().getLoc();
+    Parser.Lex(); // Eat the ')'.
+
+    Op = PPCOperand::CreateFromMCExpr(TLSSym, S, E, isPPC64());
+    Operands.push_back(Op);
+  }
+
+  // Otherwise, check for D-form memory operands
+  if (!TLSCall && getLexer().is(AsmToken::LParen)) {
     Parser.Lex(); // Eat the '('.
     S = Parser.getTok().getLoc();
 
@@ -1087,3 +1234,25 @@ extern "C" void LLVMInitializePowerPCAsmParser() {
 #define GET_REGISTER_MATCHER
 #define GET_MATCHER_IMPLEMENTATION
 #include "PPCGenAsmMatcher.inc"
+
+// Define this matcher function after the auto-generated include so we
+// have the match class enum definitions.
+unsigned PPCAsmParser::validateTargetOperandClass(MCParsedAsmOperand *AsmOp,
+                                                  unsigned Kind) {
+  // If the kind is a token for a literal immediate, check if our asm
+  // operand matches. This is for InstAliases which have a fixed-value
+  // immediate in the syntax.
+  int64_t ImmVal;
+  switch (Kind) {
+    case MCK_0: ImmVal = 0; break;
+    case MCK_1: ImmVal = 1; break;
+    default: return Match_InvalidOperand;
+  }
+
+  PPCOperand *Op = static_cast<PPCOperand*>(AsmOp);
+  if (Op->isImm() && Op->getImm() == ImmVal)
+    return Match_Success;
+
+  return Match_InvalidOperand;
+}
+

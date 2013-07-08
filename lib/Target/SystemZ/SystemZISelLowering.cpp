@@ -200,11 +200,6 @@ SystemZTargetLowering::SystemZTargetLowering(SystemZTargetMachine &tm)
   setOperationAction(ISD::STACKSAVE,    MVT::Other, Custom);
   setOperationAction(ISD::STACKRESTORE, MVT::Other, Custom);
 
-  // Expand these using getExceptionSelectorRegister() and
-  // getExceptionPointerRegister().
-  setOperationAction(ISD::EXCEPTIONADDR, PtrVT, Expand);
-  setOperationAction(ISD::EHSELECTION,   PtrVT, Expand);
-
   // Handle floating-point types.
   for (unsigned I = MVT::FIRST_FP_VALUETYPE;
        I <= MVT::LAST_FP_VALUETYPE;
@@ -246,6 +241,10 @@ SystemZTargetLowering::SystemZTargetLowering(SystemZTargetMachine &tm)
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
   setOperationAction(ISD::VACOPY,  MVT::Other, Custom);
   setOperationAction(ISD::VAEND,   MVT::Other, Expand);
+
+  // We want to use MVC in preference to even a single load/store pair.
+  MaxStoresPerMemcpy = 0;
+  MaxStoresPerMemcpyOptSize = 0;
 }
 
 bool SystemZTargetLowering::isFPImmLegal(const APFloat &Imm, EVT VT) const {
@@ -1269,18 +1268,23 @@ SDValue SystemZTargetLowering::lowerSDIVREM(SDValue Op,
   SDValue Op1 = Op.getOperand(1);
   EVT VT = Op.getValueType();
   SDLoc DL(Op);
+  unsigned Opcode;
 
   // We use DSGF for 32-bit division.
   if (is32Bit(VT)) {
     Op0 = DAG.getNode(ISD::SIGN_EXTEND, DL, MVT::i64, Op0);
-    Op1 = DAG.getNode(ISD::SIGN_EXTEND, DL, MVT::i64, Op1);
-  }
+    Opcode = SystemZISD::SDIVREM32;
+  } else if (DAG.ComputeNumSignBits(Op1) > 32) {
+    Op1 = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Op1);
+    Opcode = SystemZISD::SDIVREM32;
+  } else    
+    Opcode = SystemZISD::SDIVREM64;
 
   // DSG(F) takes a 64-bit dividend, so the even register in the GR128
   // input is "don't care".  The instruction returns the remainder in
   // the even register and the quotient in the odd register.
   SDValue Ops[2];
-  lowerGR128Binary(DAG, DL, VT, SystemZ::AEXT128_64, SystemZISD::SDIVREM64,
+  lowerGR128Binary(DAG, DL, VT, SystemZ::AEXT128_64, Opcode,
                    Op0, Op1, Ops[1], Ops[0]);
   return DAG.getMergeValues(Ops, 2, DL);
 }
@@ -1579,6 +1583,7 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
     OPCODE(SDIVREM64);
     OPCODE(UDIVREM32);
     OPCODE(UDIVREM64);
+    OPCODE(MVC);
     OPCODE(ATOMIC_SWAPW);
     OPCODE(ATOMIC_LOADW_ADD);
     OPCODE(ATOMIC_LOADW_SUB);
@@ -2143,6 +2148,26 @@ SystemZTargetLowering::emitExt128(MachineInstr *MI,
   return MBB;
 }
 
+MachineBasicBlock *
+SystemZTargetLowering::emitMVCWrapper(MachineInstr *MI,
+                                      MachineBasicBlock *MBB) const {
+  const SystemZInstrInfo *TII = TM.getInstrInfo();
+  DebugLoc DL = MI->getDebugLoc();
+
+  MachineOperand DestBase = MI->getOperand(0);
+  uint64_t       DestDisp = MI->getOperand(1).getImm();
+  MachineOperand SrcBase  = MI->getOperand(2);
+  uint64_t       SrcDisp  = MI->getOperand(3).getImm();
+  uint64_t       Length   = MI->getOperand(4).getImm();
+
+  BuildMI(*MBB, MI, DL, TII->get(SystemZ::MVC))
+    .addOperand(DestBase).addImm(DestDisp).addImm(Length)
+    .addOperand(SrcBase).addImm(SrcDisp);
+
+  MI->eraseFromParent();
+  return MBB;
+}
+
 MachineBasicBlock *SystemZTargetLowering::
 EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
   switch (MI->getOpcode()) {
@@ -2376,6 +2401,8 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
                                    MI->getOperand(1).getMBB()))
       MI->eraseFromParent();
     return MBB;
+  case SystemZ::MVCWrapper:
+    return emitMVCWrapper(MI, MBB);
   default:
     llvm_unreachable("Unexpected instr type to insert");
   }

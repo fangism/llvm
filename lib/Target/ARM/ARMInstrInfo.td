@@ -203,6 +203,8 @@ def HasVFP3          : Predicate<"Subtarget->hasVFP3()">,
                                  AssemblerPredicate<"FeatureVFP3", "VFP3">;
 def HasVFP4          : Predicate<"Subtarget->hasVFP4()">,
                                  AssemblerPredicate<"FeatureVFP4", "VFP4">;
+def HasV8FP          : Predicate<"Subtarget->hasV8FP()">,
+                                 AssemblerPredicate<"FeatureV8FP", "V8FP">;
 def HasNEON          : Predicate<"Subtarget->hasNEON()">,
                                  AssemblerPredicate<"FeatureNEON", "NEON">;
 def HasFP16          : Predicate<"Subtarget->hasFP16()">,
@@ -458,7 +460,7 @@ def AdrLabelAsmOperand : AsmOperandClass { let Name = "AdrLabel"; }
 def adrlabel : Operand<i32> {
   let EncoderMethod = "getAdrLabelOpValue";
   let ParserMatchClass = AdrLabelAsmOperand;
-  let PrintMethod = "printAdrLabelOperand";
+  let PrintMethod = "printAdrLabelOperand<0>";
 }
 
 def neon_vcvt_imm32 : Operand<i32> {
@@ -4009,8 +4011,13 @@ def PKHTB : APKHI<0b01101000, 1, (outs GPRnopc:$Rd),
 
 // Alternate cases for PKHTB where identities eliminate some nodes.  Note that
 // a shift amount of 0 is *not legal* here, it is PKHBT instead.
+// We also can not replace a srl (17..31) by an arithmetic shift we would use in
+// pkhtb src1, src2, asr (17..31).
 def : ARMV6Pat<(or (and GPRnopc:$src1, 0xFFFF0000),
-                   (srl GPRnopc:$src2, imm16_31:$sh)),
+                   (srl GPRnopc:$src2, imm16:$sh)),
+               (PKHTB GPRnopc:$src1, GPRnopc:$src2, imm16:$sh)>;
+def : ARMV6Pat<(or (and GPRnopc:$src1, 0xFFFF0000),
+                   (sra GPRnopc:$src2, imm16_31:$sh)),
                (PKHTB GPRnopc:$src1, GPRnopc:$src2, imm16_31:$sh)>;
 def : ARMV6Pat<(or (and GPRnopc:$src1, 0xFFFF0000),
                    (and (srl GPRnopc:$src2, imm1_15:$sh), 0xFFFF)),

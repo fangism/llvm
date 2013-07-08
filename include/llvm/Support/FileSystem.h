@@ -96,33 +96,28 @@ struct space_info {
   uint64_t available;
 };
 
-
 enum perms {
-  no_perms     = 0,
-  owner_read   = 0400, 
-  owner_write  = 0200, 
-  owner_exe    = 0100, 
-  owner_all    = owner_read | owner_write | owner_exe,
-  group_read   =  040, 
-  group_write  =  020, 
-  group_exe    =  010, 
-  group_all    = group_read | group_write | group_exe,
-  others_read  =   04, 
-  others_write =   02, 
-  others_exe   =   01, 
-  others_all   = others_read | others_write | others_exe, 
-  all_read     = owner_read | group_read | others_read,
-  all_write    = owner_write | group_write | others_write,
-  all_exe      = owner_exe | group_exe | others_exe,
-  all_all      = owner_all | group_all | others_all,
-  set_uid_on_exe  = 04000, 
-  set_gid_on_exe  = 02000, 
-  sticky_bit      = 01000,
-  perms_mask      = all_all | set_uid_on_exe | set_gid_on_exe | sticky_bit, 
-  perms_not_known = 0xFFFF,
-  add_perms       = 0x1000,
-  remove_perms    = 0x2000, 
-  symlink_perms   = 0x4000
+  no_perms = 0,
+  owner_read = 0400,
+  owner_write = 0200,
+  owner_exe = 0100,
+  owner_all = owner_read | owner_write | owner_exe,
+  group_read = 040,
+  group_write = 020,
+  group_exe = 010,
+  group_all = group_read | group_write | group_exe,
+  others_read = 04,
+  others_write = 02,
+  others_exe = 01,
+  others_all = others_read | others_write | others_exe,
+  all_read = owner_read | group_read | others_read,
+  all_write = owner_write | group_write | others_write,
+  all_exe = owner_exe | group_exe | others_exe,
+  all_all = owner_all | group_all | others_all,
+  set_uid_on_exe = 04000,
+  set_gid_on_exe = 02000,
+  sticky_bit = 01000,
+  perms_not_known = 0xFFFF
 };
 
 // Helper functions so that you can use & and | to manipulate perms bits:
@@ -522,13 +517,6 @@ error_code is_symlink(const Twine &path, bool &result);
 ///          platform specific error_code.
 error_code status(const Twine &path, file_status &result);
 
-/// @brief Modifies permission bits on a file
-///
-/// @param path Input path.
-/// @returns errc::success if permissions have been changed, otherwise a
-///          platform specific error_code.
-error_code permissions(const Twine &path, perms prms);
-
 error_code setLastModificationAndAccessTime(int FD, TimeValue Time);
 
 /// @brief Is status available?
@@ -545,35 +533,50 @@ bool status_known(file_status s);
 ///          platform specific error_code.
 error_code status_known(const Twine &path, bool &result);
 
-/// @brief Generate a unique path and open it as a file.
+/// @brief Create a uniquely named file.
 ///
 /// Generates a unique path suitable for a temporary file and then opens it as a
 /// file. The name is based on \a model with '%' replaced by a random char in
 /// [0-9a-f]. If \a model is not an absolute path, a suitable temporary
 /// directory will be prepended.
 ///
+/// Example: clang-%%-%%-%%-%%-%%.s => clang-a0-b1-c2-d3-e4.s
+///
 /// This is an atomic operation. Either the file is created and opened, or the
 /// file system is left untouched.
 ///
-/// clang-%%-%%-%%-%%-%%.s => /tmp/clang-a0-b1-c2-d3-e4.s
+/// The intendend use is for files that are to be kept, possibly after
+/// renaming them. For example, when running 'clang -c foo.o', the file can
+/// be first created as foo-abc123.o and then renamed.
 ///
-/// @param model Name to base unique path off of.
-/// @param result_fd Set to the opened file's file descriptor.
-/// @param result_path Set to the opened file's absolute path.
-/// @param makeAbsolute If true and \a model is not an absolute path, a temp
-///        directory will be prepended.
-/// @param mode Set to the file open mode; since this is most often used for
-///        temporary files, mode defaults to owner_read | owner_write.
-/// @returns errc::success if result_{fd,path} have been successfully set,
+/// @param Model Name to base unique path off of.
+/// @param ResultFD Set to the opened file's file descriptor.
+/// @param ResultPath Set to the opened file's absolute path.
+/// @returns errc::success if Result{FD,Path} have been successfully set,
 ///          otherwise a platform specific error_code.
-error_code unique_file(const Twine &model, int &result_fd,
-                       SmallVectorImpl<char> &result_path,
-                       bool makeAbsolute = true,
-                       unsigned mode = owner_read | owner_write);
+error_code createUniqueFile(const Twine &Model, int &ResultFD,
+                            SmallVectorImpl<char> &ResultPath,
+                            unsigned Mode = all_read | all_write);
 
 /// @brief Simpler version for clients that don't want an open file.
-error_code unique_file(const Twine &Model, SmallVectorImpl<char> &ResultPath,
-                       bool MakeAbsolute = true);
+error_code createUniqueFile(const Twine &Model,
+                            SmallVectorImpl<char> &ResultPath);
+
+/// @brief Create a file in the system temporary directory.
+///
+/// The filename is of the form prefix-random_chars.suffix. Since the directory
+/// is not know to the caller, Prefix and Suffix cannot have path separators.
+/// The files are created with mode 0600.
+///
+/// This should be used for things like a temporary .s that is removed after
+/// running the assembler.
+error_code createTemporaryFile(const Twine &Prefix, StringRef Suffix,
+                               int &ResultFD,
+                               SmallVectorImpl<char> &ResultPath);
+
+/// @brief Simpler version for clients that don't want an open file.
+error_code createTemporaryFile(const Twine &Prefix, StringRef Suffix,
+                               SmallVectorImpl<char> &ResultPath);
 
 error_code createUniqueDirectory(const Twine &Prefix,
                                  SmallVectorImpl<char> &ResultPath);

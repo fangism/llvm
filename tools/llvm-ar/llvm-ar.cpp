@@ -83,7 +83,6 @@ static cl::extrahelp MoreHelp(
 // This enumeration delineates the kinds of operations on an archive
 // that are permitted.
 enum ArchiveOperation {
-  NoOperation,      ///< An operation hasn't been specified
   Print,            ///< Print the contents of the archive
   Delete,           ///< Delete the specified members
   Move,             ///< Move members to end or as given by {a,b,i} modifiers
@@ -99,7 +98,6 @@ bool AddBefore = false;          ///< 'b' modifier
 bool Create = false;             ///< 'c' modifier
 bool TruncateNames = false;      ///< 'f' modifier
 bool InsertBefore = false;       ///< 'i' modifier
-bool DontSkipBitcode = false;    ///< 'k' modifier
 bool UseCount = false;           ///< 'N' modifier
 bool OriginalDates = false;      ///< 'o' modifier
 bool FullPath = false;           ///< 'P' modifier
@@ -206,7 +204,7 @@ ArchiveOperation parseCommandLine() {
   unsigned NumPositional = 0;
 
   // Keep track of which operation was requested
-  ArchiveOperation Operation = NoOperation;
+  ArchiveOperation Operation;
 
   for(unsigned i=0; i<Options.size(); ++i) {
     switch(Options[i]) {
@@ -219,7 +217,6 @@ ArchiveOperation parseCommandLine() {
     case 'x': ++NumOperations; Operation = Extract; break;
     case 'c': Create = true; break;
     case 'f': TruncateNames = true; break;
-    case 'k': DontSkipBitcode = true; break;
     case 'l': /* accepted but unused */ break;
     case 'o': OriginalDates = true; break;
     case 's': break; // Ignore for now.
@@ -323,8 +320,7 @@ bool doPrint(std::string* ErrMsg) {
         const char* data = reinterpret_cast<const char*>(I->getData());
 
         // Skip things that don't make sense to print
-        if (I->isSVR4SymbolTable() ||
-            I->isBSD4SymbolTable() || (!DontSkipBitcode && I->isBitcode()))
+        if (I->isSVR4SymbolTable() || I->isBSD4SymbolTable())
           continue;
 
         if (Verbose)
@@ -373,10 +369,7 @@ doDisplayTable(std::string* ErrMsg) {
       if (Verbose) {
         // FIXME: Output should be this format:
         // Zrw-r--r--  500/ 500    525 Nov  8 17:42 2004 Makefile
-        if (I->isBitcode())
-          outs() << "b";
-        else
-          outs() << " ";
+        outs() << " ";
         unsigned mode = I->getMode();
         printMode((mode >> 6) & 007);
         printMode((mode >> 3) & 007);
@@ -411,7 +404,10 @@ doExtract(std::string* ErrMsg) {
       OpenFlags |= O_BINARY;
 #endif
 
-      int FD = open(I->getPath().str().c_str(), OpenFlags, 0664);
+      // Retain the original mode.
+      sys::fs::perms Mode = sys::fs::perms(I->getMode());
+
+      int FD = open(I->getPath().str().c_str(), OpenFlags, Mode);
       if (FD < 0)
         return true;
 
@@ -426,17 +422,11 @@ doExtract(std::string* ErrMsg) {
         file.write(data, len);
       }
 
-      // Retain the original mode.
-      sys::fs::perms Mode = sys::fs::perms(I->getMode());
-      // FIXME: at least on posix we should be able to reuse FD (fchmod).
-      error_code EC = sys::fs::permissions(I->getPath(), Mode);
-      if (EC)
-        fail(EC.message());
-
       // If we're supposed to retain the original modification times, etc. do so
       // now.
       if (OriginalDates) {
-        EC = sys::fs::setLastModificationAndAccessTime(FD, I->getModTime());
+        error_code EC =
+            sys::fs::setLastModificationAndAccessTime(FD, I->getModTime());
         if (EC)
           fail(EC.message());
       }
@@ -649,6 +639,23 @@ doReplaceOrInsert(std::string* ErrMsg) {
   return false;
 }
 
+bool shouldCreateArchive(ArchiveOperation Op) {
+  switch (Op) {
+  case Print:
+  case Delete:
+  case Move:
+  case DisplayTable:
+  case Extract:
+    return false;
+
+  case QuickAppend:
+  case ReplaceOrInsert:
+    return true;
+  }
+
+  llvm_unreachable("Missing entry in covered switch.");
+}
+
 // main - main program for llvm-ar .. see comments in the code
 int main(int argc, char **argv) {
   program_name = argv[0];
@@ -672,14 +679,15 @@ int main(int argc, char **argv) {
   ArchiveOperation Operation = parseCommandLine();
 
   // Create or open the archive object.
-  bool Exists;
-  if (llvm::sys::fs::exists(ArchiveName, Exists) || !Exists) {
+  if (shouldCreateArchive(Operation) && !llvm::sys::fs::exists(ArchiveName)) {
     // Produce a warning if we should and we're creating the archive
     if (!Create)
       errs() << argv[0] << ": creating " << ArchiveName << "\n";
     TheArchive = Archive::CreateEmpty(ArchiveName, Context);
     TheArchive->writeToDisk();
-  } else {
+  }
+
+  if (!TheArchive) {
     std::string Error;
     TheArchive = Archive::OpenAndLoad(ArchiveName, Context, &Error);
     if (TheArchive == 0) {
@@ -703,9 +711,6 @@ int main(int argc, char **argv) {
     case ReplaceOrInsert: haveError = doReplaceOrInsert(&ErrMsg); break;
     case DisplayTable:    haveError = doDisplayTable(&ErrMsg); break;
     case Extract:         haveError = doExtract(&ErrMsg); break;
-    case NoOperation:
-      errs() << argv[0] << ": No operation was selected.\n";
-      break;
   }
   if (haveError) {
     errs() << argv[0] << ": " << ErrMsg << "\n";

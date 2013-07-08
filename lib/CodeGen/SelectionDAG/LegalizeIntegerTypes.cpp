@@ -2305,7 +2305,7 @@ void DAGTypeLegalizer::ExpandIntRes_XMULO(SDNode *N,
   Type *RetTy = VT.getTypeForEVT(*DAG.getContext());
   EVT PtrVT = TLI.getPointerTy();
   Type *PtrTy = PtrVT.getTypeForEVT(*DAG.getContext());
-  
+
   // Replace this with a libcall that will check overflow.
   RTLIB::Libcall LC = RTLIB::UNKNOWN_LIBCALL;
   if (VT == MVT::i32)
@@ -2930,7 +2930,15 @@ SDValue DAGTypeLegalizer::PromoteIntRes_BUILD_VECTOR(SDNode *N) {
   SmallVector<SDValue, 8> Ops;
   Ops.reserve(NumElems);
   for (unsigned i = 0; i != NumElems; ++i) {
-    SDValue Op = DAG.getNode(ISD::ANY_EXTEND, dl, NOutVTElem, N->getOperand(i));
+    SDValue Op;
+    // BUILD_VECTOR integer operand types are allowed to be larger than the
+    // result's element type. This may still be true after the promotion. For
+    // example, we might be promoting (<v?i1> = BV <i32>, <i32>, ...) to
+    // (v?i16 = BV <i32>, <i32>, ...), and we can't any_extend <i32> to <i16>.
+    if (N->getOperand(i).getValueType().bitsLT(NOutVTElem))
+      Op = DAG.getNode(ISD::ANY_EXTEND, dl, NOutVTElem, N->getOperand(i));
+    else
+      Op = N->getOperand(i);
     Ops.push_back(Op);
   }
 

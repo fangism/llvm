@@ -183,13 +183,6 @@ bool Archive::addFileBefore(StringRef filePath, iterator where,
   sys::fs::file_magic type;
   if (sys::fs::identify_magic(mbr->path, type))
     type = sys::fs::file_magic::unknown;
-  switch (type) {
-    case sys::fs::file_magic::bitcode:
-      flags |= ArchiveMember::BitcodeFlag;
-      break;
-    default:
-      break;
-  }
   mbr->flags = flags;
   members.insert(where,mbr);
   return false;
@@ -267,8 +260,8 @@ bool Archive::writeToDisk(bool TruncateNames, std::string *ErrMsg) {
   // Create a temporary file to store the archive in
   int TmpArchiveFD;
   SmallString<128> TmpArchive;
-  error_code EC = sys::fs::unique_file("temp-archive-%%%%%%%.a", TmpArchiveFD,
-                                       TmpArchive, true, sys::fs::all_read | sys::fs::all_write);
+  error_code EC = sys::fs::createUniqueFile(
+      archPath + ".temp-archive-%%%%%%%.a", TmpArchiveFD, TmpArchive);
   if (EC)
     return true;
 

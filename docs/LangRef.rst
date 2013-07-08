@@ -820,7 +820,7 @@ example:
 ``builtin``
     This indicates that the callee function at a call site should be
     recognized as a built-in function, even though the function's declaration
-    uses the ``nobuiltin'' attribute. This is only valid at call sites for
+    uses the ``nobuiltin`` attribute. This is only valid at call sites for
     direct calls to functions which are declared with the ``nobuiltin``
     attribute.
 ``cold``
@@ -879,17 +879,21 @@ example:
     passes make choices that keep the code size of this function low,
     and otherwise do optimizations specifically to reduce code size.
 ``readnone``
-    This attribute indicates that the function computes its result (or
-    decides to unwind an exception) based strictly on its arguments,
+    On a function, this attribute indicates that the function computes its
+    result (or decides to unwind an exception) based strictly on its arguments,
     without dereferencing any pointer arguments or otherwise accessing
     any mutable state (e.g. memory, control registers, etc) visible to
     caller functions. It does not write through any pointer arguments
     (including ``byval`` arguments) and never changes any state visible
     to callers. This means that it cannot unwind exceptions by calling
     the ``C++`` exception throwing methods.
+    
+    On an argument, this attribute indicates that the function does not
+    dereference that pointer argument, even though it may read or write the
+    memory that the pointer points to if accessed through other pointers.
 ``readonly``
-    This attribute indicates that the function does not write through
-    any pointer arguments (including ``byval`` arguments) or otherwise
+    On a function, this attribute indicates that the function does not write
+    through any pointer arguments (including ``byval`` arguments) or otherwise
     modify any state (e.g. memory, control registers, etc) visible to
     caller functions. It may dereference pointer arguments and read
     state that may be set in the caller. A readonly function always
@@ -897,6 +901,10 @@ example:
     called with the same set of arguments and global state. It cannot
     unwind an exception by calling the ``C++`` exception throwing
     methods.
+    
+    On an argument, this attribute indicates that the function does not write
+    through this pointer argument, even though it may write to the memory that
+    the pointer points to.
 ``returns_twice``
     This attribute indicates that this function can return twice. The C
     ``setjmp`` is an example of such a function. The compiler disables

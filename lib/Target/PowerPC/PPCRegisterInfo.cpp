@@ -91,32 +91,41 @@ PPCRegisterInfo::getPointerRegClass(const MachineFunction &MF, unsigned Kind)
 const uint16_t*
 PPCRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   if (Subtarget.isDarwinABI())
-    return Subtarget.isPPC64() ? CSR_Darwin64_SaveList :
-                                 CSR_Darwin32_SaveList;
+    return Subtarget.isPPC64() ? (Subtarget.hasAltivec() ?
+                                  CSR_Darwin64_Altivec_SaveList :
+                                  CSR_Darwin64_SaveList) :
+                                 (Subtarget.hasAltivec() ?
+                                  CSR_Darwin32_Altivec_SaveList :
+                                  CSR_Darwin32_SaveList);
 
-  return Subtarget.isPPC64() ? CSR_SVR464_SaveList : CSR_SVR432_SaveList;
+  return Subtarget.isPPC64() ? (Subtarget.hasAltivec() ?
+                                CSR_SVR464_Altivec_SaveList :
+                                CSR_SVR464_SaveList) :
+                               (Subtarget.hasAltivec() ?
+                                CSR_SVR432_Altivec_SaveList :
+                                CSR_SVR432_SaveList);
 }
 
 const uint32_t*
 PPCRegisterInfo::getCallPreservedMask(CallingConv::ID CC) const {
   if (Subtarget.isDarwinABI())
-    return Subtarget.isPPC64() ? CSR_Darwin64_RegMask :
-                                 CSR_Darwin32_RegMask;
+    return Subtarget.isPPC64() ? (Subtarget.hasAltivec() ?
+                                  CSR_Darwin64_Altivec_RegMask :
+                                  CSR_Darwin64_RegMask) :
+                                 (Subtarget.hasAltivec() ?
+                                  CSR_Darwin32_Altivec_RegMask :
+                                  CSR_Darwin32_RegMask);
 
-  return Subtarget.isPPC64() ? CSR_SVR464_RegMask : CSR_SVR432_RegMask;
+  return Subtarget.isPPC64() ? (Subtarget.hasAltivec() ?
+                                CSR_SVR464_Altivec_RegMask :
+                                CSR_SVR464_RegMask) :
+                               (Subtarget.hasAltivec() ?
+                                CSR_SVR432_Altivec_RegMask :
+                                CSR_SVR432_RegMask);
 }
 
 const uint32_t*
 PPCRegisterInfo::getNoPreservedMask() const {
-  // The naming here is inverted: The CSR_NoRegs_Altivec has the
-  // Altivec registers masked so that they're not saved and restored around
-  // instructions with this preserved mask.
-
-  if (!Subtarget.hasAltivec())
-    return CSR_NoRegs_Altivec_RegMask;
-
-  if (Subtarget.isDarwin())
-    return CSR_NoRegs_Darwin_RegMask;
   return CSR_NoRegs_RegMask;
 }
 
@@ -145,6 +154,9 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(PPC::LR8);
   Reserved.set(PPC::RM);
 
+  if (!Subtarget.isDarwinABI() || !Subtarget.hasAltivec())
+    Reserved.set(PPC::VRSAVE);
+
   // The SVR4 ABI reserves r2 and r13
   if (Subtarget.isSVR4ABI()) {
     Reserved.set(PPC::R2);  // System-reserved register
@@ -169,6 +181,12 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
   if (PPCFI->needsFP(MF))
     Reserved.set(PPC::R31);
+
+  // Reserve Altivec registers when Altivec is unavailable.
+  if (!Subtarget.hasAltivec())
+    for (TargetRegisterClass::iterator I = PPC::VRRCRegClass.begin(),
+         IE = PPC::VRRCRegClass.end(); I != IE; ++I)
+      Reserved.set(*I);
 
   return Reserved;
 }
@@ -324,8 +342,8 @@ void PPCRegisterInfo::lowerCRSpilling(MachineBasicBlock::iterator II,
   unsigned SrcReg = MI.getOperand(0).getReg();
 
   // We need to store the CR in the low 4-bits of the saved value. First, issue
-  // an MFCRpsued to save all of the CRBits and, if needed, kill the SrcReg.
-  BuildMI(MBB, II, dl, TII.get(LP64 ? PPC::MFCR8pseud : PPC::MFCRpseud), Reg)
+  // an MFOCRF to save all of the CRBits and, if needed, kill the SrcReg.
+  BuildMI(MBB, II, dl, TII.get(LP64 ? PPC::MFOCRF8 : PPC::MFOCRF), Reg)
           .addReg(SrcReg, getKillRegState(MI.getOperand(0).isKill()));
     
   // If the saved register wasn't CR0, shift the bits left so that they are in
@@ -385,7 +403,7 @@ void PPCRegisterInfo::lowerCRRestore(MachineBasicBlock::iterator II,
              .addImm(31);
   }
 
-  BuildMI(MBB, II, dl, TII.get(LP64 ? PPC::MTCRF8 : PPC::MTCRF), DestReg)
+  BuildMI(MBB, II, dl, TII.get(LP64 ? PPC::MTOCRF8 : PPC::MTOCRF), DestReg)
              .addReg(Reg, RegState::Kill);
 
   // Discard the pseudo instruction.

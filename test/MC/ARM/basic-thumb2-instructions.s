@@ -79,6 +79,7 @@ _func:
         add r0, r0, #32
         adds r2, r2, #56
         adds r2, #56
+        add r1, r7, #0xcbcbcbcb
 
         adds.w r2, #-16
         adds.w r2, r2, #-16
@@ -101,6 +102,7 @@ _func:
 @ CHECK: add.w	r0, r0, #32             @ encoding: [0x00,0xf1,0x20,0x00]
 @ CHECK: adds	r2, #56                 @ encoding: [0x38,0x32]
 @ CHECK: adds	r2, #56                 @ encoding: [0x38,0x32]
+@ CHECK: add.w  r1, r7, #3419130827     @ encoding: [0x07,0xf1,0xcb,0x31]
 
 @ CHECK: subs.w	r2, r2, #16             @ encoding: [0xb2,0xf1,0x10,0x02]
 @ CHECK: subs.w	r2, r2, #16             @ encoding: [0xb2,0xf1,0x10,0x02]
@@ -134,12 +136,14 @@ _func:
 @------------------------------------------------------------------------------
 
         subw r11, pc, #3270
+        adr.w r2, #3
         adr.w r11, #-826
         adr.w r1, #-0x0
 
-@ CHECK: subw	r11, pc, #3270          @ encoding: [0xaf,0xf6,0xc6,0x4b]
-@ CHECK: adr.w	r11, #-826              @ encoding: [0xaf,0xf2,0x3a,0x3b]
-@ CHECK: adr.w	r1, #-0                 @ encoding: [0xaf,0xf2,0x00,0x01]
+@ CHECK: subw  r11, pc, #3270          @ encoding: [0xaf,0xf6,0xc6,0x4b]
+@ CHECK: adr.w r2, #3                  @ encoding: [0x0f,0xf2,0x03,0x02]
+@ CHECK: adr.w r11, #-826              @ encoding: [0xaf,0xf2,0x3a,0x3b]
+@ CHECK: adr.w r1, #-0                 @ encoding: [0xaf,0xf2,0x00,0x01]
 
 @------------------------------------------------------------------------------
 @ AND (immediate)

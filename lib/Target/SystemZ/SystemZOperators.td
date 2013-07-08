@@ -52,6 +52,10 @@ def SDT_ZAtomicCmpSwapW     : SDTypeProfile<1, 6,
                                              SDTCisVT<4, i32>,
                                              SDTCisVT<5, i32>,
                                              SDTCisVT<6, i32>]>;
+def SDT_ZCopy               : SDTypeProfile<0, 3,
+                                            [SDTCisPtrTy<0>,
+                                             SDTCisPtrTy<1>,
+                                             SDTCisVT<2, i32>]>;
 
 //===----------------------------------------------------------------------===//
 // Node definitions
@@ -81,6 +85,7 @@ def z_adjdynalloc       : SDNode<"SystemZISD::ADJDYNALLOC", SDT_ZAdjDynAlloc>;
 def z_extract_access    : SDNode<"SystemZISD::EXTRACT_ACCESS",
                                  SDT_ZExtractAccess>;
 def z_umul_lohi64       : SDNode<"SystemZISD::UMUL_LOHI64", SDT_ZGR128Binary64>;
+def z_sdivrem32         : SDNode<"SystemZISD::SDIVREM32", SDT_ZGR128Binary32>;
 def z_sdivrem64         : SDNode<"SystemZISD::SDIVREM64", SDT_ZGR128Binary64>;
 def z_udivrem32         : SDNode<"SystemZISD::UDIVREM32", SDT_ZGR128Binary32>;
 def z_udivrem64         : SDNode<"SystemZISD::UDIVREM64", SDT_ZGR128Binary64>;
@@ -101,6 +106,9 @@ def z_atomic_loadw_max  : AtomicWOp<"ATOMIC_LOADW_MAX">;
 def z_atomic_loadw_umin : AtomicWOp<"ATOMIC_LOADW_UMIN">;
 def z_atomic_loadw_umax : AtomicWOp<"ATOMIC_LOADW_UMAX">;
 def z_atomic_cmp_swapw  : AtomicWOp<"ATOMIC_CMP_SWAPW", SDT_ZAtomicCmpSwapW>;
+
+def z_mvc               : SDNode<"SystemZISD::MVC", SDT_ZCopy,
+                                 [SDNPHasChain, SDNPMayStore, SDNPMayLoad]>;
 
 //===----------------------------------------------------------------------===//
 // Pattern fragments

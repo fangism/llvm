@@ -310,6 +310,21 @@ public:
     addAttribute(n, Attribute::NoCapture);
   }
 
+  bool doesNotAccessMemory(unsigned n) const {
+    return AttributeSets.hasAttribute(n, Attribute::ReadNone);
+  }
+  void setDoesNotAccessMemory(unsigned n) {
+    addAttribute(n, Attribute::ReadNone);
+  }
+
+  bool onlyReadsMemory(unsigned n) const {
+    return doesNotAccessMemory(n) ||
+      AttributeSets.hasAttribute(n, Attribute::ReadOnly);
+  }
+  void setOnlyReadsMemory(unsigned n) {
+    addAttribute(n, Attribute::ReadOnly);
+  }
+
   /// copyAttributesFrom - copy all additional attributes (those not needed to
   /// create a Function) from the Function Src to this one.
   void copyAttributesFrom(const GlobalValue *Src);

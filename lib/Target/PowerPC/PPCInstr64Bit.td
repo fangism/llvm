@@ -36,10 +36,20 @@ def s17imm64 : Operand<i64> {
 def tocentry : Operand<iPTR> {
   let MIOperandInfo = (ops i64imm:$imm);
 }
+def PPCTLSRegOperand : AsmOperandClass {
+  let Name = "TLSReg"; let PredicateMethod = "isTLSReg";
+  let RenderMethod = "addTLSRegOperands";
+}
 def tlsreg : Operand<i64> {
   let EncoderMethod = "getTLSRegEncoding";
+  let ParserMatchClass = PPCTLSRegOperand;
 }
 def tlsgd : Operand<i64> {}
+def tlscall : Operand<i64> {
+  let PrintMethod = "printTLSCall";
+  let MIOperandInfo = (ops calltarget:$func, tlsgd:$sym);
+  let EncoderMethod = "getTLSCallEncoding";
+}
 
 //===----------------------------------------------------------------------===//
 // 64-bit transformation functions.
@@ -111,6 +121,9 @@ let isCall = 1, PPC970_Unit = 7, Defs = [LR8] in {
     def BL8  : IForm<18, 0, 1, (outs), (ins calltarget:$func),
                      "bl $func", BrB, []>;  // See Pat patterns below.
 
+    def BL8_TLS  : IForm<18, 0, 1, (outs), (ins tlscall:$func),
+                         "bl $func", BrB, []>;
+
     def BLA8 : IForm<18, 1, 1, (outs), (ins abscalltarget:$func),
                      "bla $func", BrB, [(PPCcall (i64 imm:$func))]>;
   }
@@ -119,13 +132,9 @@ let isCall = 1, PPC970_Unit = 7, Defs = [LR8] in {
                              (outs), (ins calltarget:$func),
                              "bl $func\n\tnop", BrB, []>;
 
-    def BL8_NOP_TLSGD : IForm_and_DForm_4_zero<18, 0, 1, 24,
-                                  (outs), (ins calltarget:$func, tlsgd:$sym),
-                                  "bl $func($sym)\n\tnop", BrB, []>;
-
-    def BL8_NOP_TLSLD : IForm_and_DForm_4_zero<18, 0, 1, 24,
-                                  (outs), (ins calltarget:$func, tlsgd:$sym),
-                                  "bl $func($sym)\n\tnop", BrB, []>;
+    def BL8_NOP_TLS : IForm_and_DForm_4_zero<18, 0, 1, 24,
+                                  (outs), (ins tlscall:$func),
+                                  "bl $func\n\tnop", BrB, []>;
 
     def BLA8_NOP : IForm_and_DForm_4_zero<18, 1, 1, 24,
                              (outs), (ins abscalltarget:$func),
@@ -253,20 +262,22 @@ def : Pat<(PPCtc_return CTRRC8:$dst, imm:$imm),
 // 64-bit CR instructions
 let Interpretation64Bit = 1 in {
 let neverHasSideEffects = 1 in {
-def MTCRF8 : XFXForm_5<31, 144, (outs crbitm:$FXM), (ins g8rc:$rS),
+def MTOCRF8: XFXForm_5a<31, 144, (outs crbitm:$FXM), (ins g8rc:$ST),
+                        "mtocrf $FXM, $ST", BrMCRX>,
+            PPC970_DGroup_First, PPC970_Unit_CRU;
+
+def MTCRF8 : XFXForm_5<31, 144, (outs), (ins i32imm:$FXM, g8rc:$rS),
                       "mtcrf $FXM, $rS", BrMCRX>,
             PPC970_MicroCode, PPC970_Unit_CRU;
 
-let isCodeGenOnly = 1 in
-def MFCR8pseud: XFXForm_3<31, 19, (outs g8rc:$rT), (ins crbitm:$FXM),
-                       "#MFCR8pseud", SprMFCR>,
-            PPC970_MicroCode, PPC970_Unit_CRU;
-} // neverHasSideEffects = 1
+def MFOCRF8: XFXForm_5a<31, 19, (outs g8rc:$rT), (ins crbitm:$FXM),
+                        "mfocrf $rT, $FXM", SprMFCR>,
+             PPC970_DGroup_First, PPC970_Unit_CRU;
 
-let neverHasSideEffects = 1 in
 def MFCR8 : XFXForm_3<31, 19, (outs g8rc:$rT), (ins),
                      "mfcr $rT", SprMFCR>,
                      PPC970_MicroCode, PPC970_Unit_CRU;
+} // neverHasSideEffects = 1
 
 let hasSideEffects = 1, isBarrier = 1, usesCustomInserter = 1 in {
   def EH_SjLj_SetJmp64  : Pseudo<(outs gprc:$dst), (ins memr:$buf),
@@ -300,7 +311,7 @@ def MTCTR8loop : XFXForm_7_ext<31, 467, 9, (outs), (ins g8rc:$rS),
                  PPC970_DGroup_First, PPC970_Unit_FXU;
 }
 
-let Pattern = [(set i64:$rT, readcyclecounter)] in
+let isCodeGenOnly = 1, Pattern = [(set i64:$rT, readcyclecounter)] in
 def MFTB8 : XFXForm_1_ext<31, 339, 268, (outs g8rc:$rT), (ins),
                           "mfspr $rT, 268", SprMFTB>,
             PPC970_DGroup_First, PPC970_Unit_FXU;
@@ -398,9 +409,8 @@ defm ADD8  : XOForm_1r<31, 266, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),
                        [(set i64:$rT, (add i64:$rA, i64:$rB))]>;
 // ADD8 has a special form: reg = ADD8(reg, sym@tls) for use by the
 // initial-exec thread-local storage model.
-let isCodeGenOnly = 1 in
 def ADD8TLS  : XOForm_1<31, 266, 0, (outs g8rc:$rT), (ins g8rc:$rA, tlsreg:$rB),
-                        "add $rT, $rA, $rB@tls", IntSimple,
+                        "add $rT, $rA, $rB", IntSimple,
                         [(set i64:$rT, (add i64:$rA, tglobaltlsaddr:$rB))]>;
                      
 defm ADDC8 : XOForm_1rc<31, 10, 0, (outs g8rc:$rT), (ins g8rc:$rA, g8rc:$rB),

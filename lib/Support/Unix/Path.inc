@@ -569,7 +569,7 @@ error_code status(const Twine &path, file_status &result) {
     return ec;
   }
 
-  perms prms = static_cast<perms>(status.st_mode & perms_mask);
+  perms prms = static_cast<perms>(status.st_mode);
   
   if (S_ISDIR(status.st_mode))
     result = file_status(file_type::directory_file, prms);
@@ -595,42 +595,22 @@ error_code status(const Twine &path, file_status &result) {
   return error_code::success();
 }
 
-// Modifies permissions on a file.
-error_code permissions(const Twine &path, perms prms) {
-  if ((prms & add_perms) && (prms & remove_perms))
-    llvm_unreachable("add_perms and remove_perms are mutually exclusive");
-
-  // Get current permissions
-  // FIXME: We only need this stat for add_perms and remove_perms.
-  file_status info;
-  if (error_code ec = status(path, info)) {
-    return ec;
-  }
-  
-  // Set updated permissions.
-  SmallString<128> path_storage;
-  StringRef p = path.toNullTerminatedStringRef(path_storage);
-  perms permsToSet;
-  if (prms & add_perms) {
-    permsToSet = (info.permissions() | prms) & perms_mask;
-  } else if (prms & remove_perms) {
-    permsToSet = (info.permissions() & ~prms) & perms_mask;
-  } else {
-    permsToSet = prms & perms_mask;
-  }
-  if (::chmod(p.begin(), static_cast<mode_t>(permsToSet))) {
-    return error_code(errno, system_category()); 
-  }
-
-  return error_code::success();
-}
-
 error_code setLastModificationAndAccessTime(int FD, TimeValue Time) {
+#if defined(HAVE_FUTIMENS)
+  timespec Times[2];
+  Times[0].tv_sec = Time.toPosixTime();
+  Times[0].tv_nsec = 0;
+  Times[1] = Times[0];
+  if (::futimens(FD, Times))
+#elif defined(HAVE_FUTIMES)
   timeval Times[2];
   Times[0].tv_sec = Time.toPosixTime();
   Times[0].tv_usec = 0;
   Times[1] = Times[0];
   if (::futimes(FD, Times))
+#else
+#error Missing futimes() and futimens()
+#endif
     return error_code(errno, system_category());
   return error_code::success();
 }

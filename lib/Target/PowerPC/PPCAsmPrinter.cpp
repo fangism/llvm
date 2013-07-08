@@ -566,7 +566,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   }
   case PPC::GETtlsADDR: {
     // Transform: %X3 = GETtlsADDR %X3, <ga:@sym>
-    // Into:      BL8_NOP_TLSGD __tls_get_addr(sym@tlsgd)
+    // Into:      BL8_NOP_TLS __tls_get_addr(sym@tlsgd)
     assert(Subtarget.isPPC64() && "Not supported for 32-bit PowerPC");
 
     StringRef Name = "__tls_get_addr";
@@ -577,9 +577,8 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = Mang->getSymbol(GValue);
     const MCExpr *SymVar =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_TLSGD,
-                              OutContext);
-    OutStreamer.EmitInstruction(MCInstBuilder(PPC::BL8_NOP_TLSGD)
+      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_TLSGD, OutContext);
+    OutStreamer.EmitInstruction(MCInstBuilder(PPC::BL8_NOP_TLS)
                                 .addExpr(TlsRef)
                                 .addExpr(SymVar));
     return;
@@ -618,7 +617,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   }
   case PPC::GETtlsldADDR: {
     // Transform: %X3 = GETtlsldADDR %X3, <ga:@sym>
-    // Into:      BL8_NOP_TLSLD __tls_get_addr(sym@tlsld)
+    // Into:      BL8_NOP_TLS __tls_get_addr(sym@tlsld)
     assert(Subtarget.isPPC64() && "Not supported for 32-bit PowerPC");
 
     StringRef Name = "__tls_get_addr";
@@ -629,9 +628,8 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = Mang->getSymbol(GValue);
     const MCExpr *SymVar =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_TLSLD,
-                              OutContext);
-    OutStreamer.EmitInstruction(MCInstBuilder(PPC::BL8_NOP_TLSLD)
+      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_TLSLD, OutContext);
+    OutStreamer.EmitInstruction(MCInstBuilder(PPC::BL8_NOP_TLS)
                                 .addExpr(TlsRef)
                                 .addExpr(SymVar));
     return;
@@ -668,15 +666,37 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
                                 .addExpr(SymDtprel));
     return;
   }
-  case PPC::MFCRpseud:
-  case PPC::MFCR8pseud:
-    // Transform: %R3 = MFCRpseud %CR7
-    // Into:      %R3 = MFCR      ;; cr7
-    OutStreamer.AddComment(PPCInstPrinter::
-                           getRegisterName(MI->getOperand(1).getReg()));
-    OutStreamer.EmitInstruction(MCInstBuilder(Subtarget.isPPC64() ? PPC::MFCR8 : PPC::MFCR)
-      .addReg(MI->getOperand(0).getReg()));
-    return;
+  case PPC::MFOCRF:
+  case PPC::MFOCRF8:
+    if (!Subtarget.hasMFOCRF()) {
+      // Transform: %R3 = MFOCRF %CR7
+      // Into:      %R3 = MFCR   ;; cr7
+      unsigned NewOpcode =
+        MI->getOpcode() == PPC::MFOCRF ? PPC::MFCR : PPC::MFCR8;
+      OutStreamer.AddComment(PPCInstPrinter::
+                             getRegisterName(MI->getOperand(1).getReg()));
+      OutStreamer.EmitInstruction(MCInstBuilder(NewOpcode)
+                                  .addReg(MI->getOperand(0).getReg()));
+      return;
+    }
+    break;
+  case PPC::MTOCRF:
+  case PPC::MTOCRF8:
+    if (!Subtarget.hasMFOCRF()) {
+      // Transform: %CR7 = MTOCRF %R3
+      // Into:      MTCRF mask, %R3 ;; cr7
+      unsigned NewOpcode =
+        MI->getOpcode() == PPC::MTOCRF ? PPC::MTCRF : PPC::MTCRF8;
+      unsigned Mask = 0x80 >> OutContext.getRegisterInfo()
+                              ->getEncodingValue(MI->getOperand(0).getReg());
+      OutStreamer.AddComment(PPCInstPrinter::
+                             getRegisterName(MI->getOperand(0).getReg()));
+      OutStreamer.EmitInstruction(MCInstBuilder(NewOpcode)
+                                  .addImm(Mask)
+                                  .addReg(MI->getOperand(1).getReg()));
+      return;
+    }
+    break;
   case PPC::SYNC:
     // In Book E sync is called msync, handle this special case here...
     if (Subtarget.isBookE()) {
@@ -773,7 +793,7 @@ bool PPCLinuxAsmPrinter::doFinalization(Module &M) {
       //   .long _foo
       OutStreamer.EmitValue(MCSymbolRefExpr::Create(Stubs[i].second.getPointer(),
                                                     OutContext),
-                            isPPC64 ? 8 : 4/*size*/, 0/*addrspace*/);
+                            isPPC64 ? 8 : 4/*size*/);
     }
 
     Stubs.clear();

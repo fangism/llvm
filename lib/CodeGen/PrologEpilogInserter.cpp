@@ -558,14 +558,18 @@ void PEI::calculateFrameObjectOffsets(MachineFunction &Fn) {
   unsigned MaxAlign = MFI->getMaxAlignment();
 
   // Make sure the special register scavenging spill slot is closest to the
-  // frame pointer if a frame pointer is required.
+  // incoming stack pointer if a frame pointer is required and is closer
+  // to the incoming rather than the final stack pointer.
   const TargetRegisterInfo *RegInfo = Fn.getTarget().getRegisterInfo();
-  if (RS && TFI.hasFP(Fn) && RegInfo->useFPForScavengingIndex(Fn) &&
-      !RegInfo->needsStackRealignment(Fn)) {
+  bool EarlyScavengingSlots = (TFI.hasFP(Fn) &&
+                               TFI.isFPCloseToIncomingSP() &&
+                               RegInfo->useFPForScavengingIndex(Fn) &&
+                               !RegInfo->needsStackRealignment(Fn));
+  if (RS && EarlyScavengingSlots) {
     SmallVector<int, 2> SFIs;
     RS->getScavengingFrameIndices(SFIs);
-    for (SmallVector<int, 2>::iterator I = SFIs.begin(),
-         IE = SFIs.end(); I != IE; ++I)
+    for (SmallVectorImpl<int>::iterator I = SFIs.begin(),
+           IE = SFIs.end(); I != IE; ++I)
       AdjustStackOffset(MFI, *I, StackGrowsDown, Offset, MaxAlign);
   }
 
@@ -645,12 +649,11 @@ void PEI::calculateFrameObjectOffsets(MachineFunction &Fn) {
 
   // Make sure the special register scavenging spill slot is closest to the
   // stack pointer.
-  if (RS && (!TFI.hasFP(Fn) || RegInfo->needsStackRealignment(Fn) ||
-             !RegInfo->useFPForScavengingIndex(Fn))) {
+  if (RS && !EarlyScavengingSlots) {
     SmallVector<int, 2> SFIs;
     RS->getScavengingFrameIndices(SFIs);
-    for (SmallVector<int, 2>::iterator I = SFIs.begin(),
-         IE = SFIs.end(); I != IE; ++I)
+    for (SmallVectorImpl<int>::iterator I = SFIs.begin(),
+           IE = SFIs.end(); I != IE; ++I)
       AdjustStackOffset(MFI, *I, StackGrowsDown, Offset, MaxAlign);
   }
 

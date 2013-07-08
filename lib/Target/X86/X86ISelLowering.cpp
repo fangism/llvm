@@ -563,10 +563,6 @@ void X86TargetLowering::resetOperationActions() {
     setOperationAction(ISD::EH_LABEL, MVT::Other, Expand);
   }
 
-  setOperationAction(ISD::EXCEPTIONADDR, MVT::i64, Expand);
-  setOperationAction(ISD::EHSELECTION,   MVT::i64, Expand);
-  setOperationAction(ISD::EXCEPTIONADDR, MVT::i32, Expand);
-  setOperationAction(ISD::EHSELECTION,   MVT::i32, Expand);
   if (Subtarget->is64Bit()) {
     setExceptionPointerRegister(X86::RAX);
     setExceptionSelectorRegister(X86::RDX);
@@ -8837,7 +8833,7 @@ SDValue X86TargetLowering::LowerVectorAllZeroTest(SDValue Op,
   Opnds.push_back(N->getOperand(1));
 
   for (unsigned Slot = 0, e = Opnds.size(); Slot < e; ++Slot) {
-    SmallVector<SDValue, 8>::const_iterator I = Opnds.begin() + Slot;
+    SmallVectorImpl<SDValue>::const_iterator I = Opnds.begin() + Slot;
     // BFS traverse all OR'd operands.
     if (I->getOpcode() == ISD::OR) {
       Opnds.push_back(I->getOperand(0));
@@ -14436,12 +14432,11 @@ X86TargetLowering::EmitLoweredWinAlloca(MachineInstr *MI,
     } else {
       // __chkstk(MSVCRT): does not update stack pointer.
       // Clobbers R10, R11 and EFLAGS.
-      // FIXME: RAX(allocated size) might be reused and not killed.
       BuildMI(*BB, MI, DL, TII->get(X86::W64ALLOCA))
         .addExternalSymbol("__chkstk")
         .addReg(X86::RAX, RegState::Implicit)
         .addReg(X86::EFLAGS, RegState::Define | RegState::Implicit);
-      // RAX has the offset to subtracted from RSP.
+      // RAX has the offset to be subtracted from RSP.
       BuildMI(*BB, MI, DL, TII->get(X86::SUB64rr), X86::RSP)
         .addReg(X86::RSP)
         .addReg(X86::RAX);

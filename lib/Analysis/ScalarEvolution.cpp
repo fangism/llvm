@@ -1628,7 +1628,7 @@ const SCEV *ScalarEvolution::getAddExpr(SmallVectorImpl<const SCEV *> &Ops,
       // re-generate the operands list. Group the operands by constant scale,
       // to avoid multiplying by the same constant scale multiple times.
       std::map<APInt, SmallVector<const SCEV *, 4>, APIntCompare> MulOpLists;
-      for (SmallVector<const SCEV *, 8>::const_iterator I = NewOps.begin(),
+      for (SmallVectorImpl<const SCEV *>::const_iterator I = NewOps.begin(),
            E = NewOps.end(); I != E; ++I)
         MulOpLists[M.find(*I)->second].push_back(*I);
       // Re-generate the operands list.
@@ -2715,13 +2715,51 @@ const SCEV *ScalarEvolution::getCouldNotCompute() {
   return &CouldNotCompute;
 }
 
+namespace {
+  // Helper class working with SCEVTraversal to figure out if a SCEV contains
+  // a SCEVUnknown with null value-pointer. FindInvalidSCEVUnknown::FindOne
+  // is set iff if find such SCEVUnknown.
+  //
+  struct FindInvalidSCEVUnknown {
+    bool FindOne;
+    FindInvalidSCEVUnknown() { FindOne = false; }
+    bool follow(const SCEV *S) {
+      switch (S->getSCEVType()) {
+      case scConstant:
+        return false;
+      case scUnknown:
+        if(!cast<SCEVUnknown>(S)->getValue())
+          FindOne = true;
+        return false;
+      default:
+        return true;
+      }
+    }
+    bool isDone() const { return FindOne; }
+  };
+}
+
+bool ScalarEvolution::checkValidity(const SCEV *S) const {
+  FindInvalidSCEVUnknown F;
+  SCEVTraversal<FindInvalidSCEVUnknown> ST(F);
+  ST.visitAll(S);
+
+  return !F.FindOne;
+}
+
 /// getSCEV - Return an existing SCEV if it exists, otherwise analyze the
 /// expression and create a new one.
 const SCEV *ScalarEvolution::getSCEV(Value *V) {
   assert(isSCEVable(V->getType()) && "Value is not SCEVable!");
 
-  ValueExprMapType::const_iterator I = ValueExprMap.find_as(V);
-  if (I != ValueExprMap.end()) return I->second;
+  ValueExprMapType::iterator I = ValueExprMap.find_as(V);
+  if (I != ValueExprMap.end()) {
+    const SCEV *S = I->second;
+    if(checkValidity(S))
+      return S;
+    else
+      ValueExprMap.erase(I);
+  }
   const SCEV *S = createSCEV(V);
 
   // The process of creating a SCEV for V may have caused other SCEVs

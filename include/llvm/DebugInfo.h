@@ -17,6 +17,7 @@
 #ifndef LLVM_DEBUGINFO_H
 #define LLVM_DEBUGINFO_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -44,6 +45,9 @@ namespace llvm {
   class DIVariable;
   class DIType;
   class DIObjCProperty;
+
+  /// Map from a pair <unique type name, an unsigned flag> to MDNode.
+  typedef DenseMap<std::pair<StringRef, unsigned>, MDNode*> DITypeHashMap;
 
   /// DIDescriptor - A thin wraper around MDNode to access encoded debug info.
   /// This should not be stored in a container, because the underlying MDNode
@@ -755,7 +759,7 @@ namespace llvm {
     bool addType(DIType DT);
 
   public:
-    typedef SmallVector<MDNode *, 8>::const_iterator iterator;
+    typedef SmallVectorImpl<MDNode *>::const_iterator iterator;
     iterator compile_unit_begin()    const { return CUs.begin(); }
     iterator compile_unit_end()      const { return CUs.end(); }
     iterator subprogram_begin()      const { return SPs.begin(); }

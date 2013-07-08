@@ -76,15 +76,12 @@ STATISTIC(NumFastIselDead, "Number of dead insts removed on failure");
 void FastISel::startNewBlock() {
   LocalValueMap.clear();
 
+  // Instructions are appended to FuncInfo.MBB. If the basic block already
+  // contains labels or copies, use the last instruction as the last local
+  // value.
   EmitStartPt = 0;
-
-  // Advance the emit start point past any EH_LABEL instructions.
-  MachineBasicBlock::iterator
-    I = FuncInfo.MBB->begin(), E = FuncInfo.MBB->end();
-  while (I != E && I->getOpcode() == TargetOpcode::EH_LABEL) {
-    EmitStartPt = I;
-    ++I;
-  }
+  if (!FuncInfo.MBB->empty())
+    EmitStartPt = &FuncInfo.MBB->back();
   LastLocalValue = EmitStartPt;
 }
 
@@ -93,7 +90,7 @@ bool FastISel::LowerArguments() {
     // Fallback to SDISel argument lowering code to deal with sret pointer
     // parameter.
     return false;
-  
+
   if (!FastLowerArguments())
     return false;
 
@@ -601,7 +598,7 @@ bool FastISel::SelectCall(const User *I) {
   case Intrinsic::dbg_declare: {
     const DbgDeclareInst *DI = cast<DbgDeclareInst>(Call);
     DIVariable DIVar(DI->getVariable());
-    assert((!DIVar || DIVar.isVariable()) && 
+    assert((!DIVar || DIVar.isVariable()) &&
       "Variable in DbgDeclareInst should be either null or a DIVariable.");
     if (!DIVar ||
         !FuncInfo.MF->getMMI().hasDebugInfo()) {

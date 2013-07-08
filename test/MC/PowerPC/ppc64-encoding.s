@@ -177,7 +177,12 @@
 # CHECK: stdbrx 2, 3, 4                  # encoding: [0x7c,0x43,0x25,0x28]
          stdbrx 2, 3, 4
 
-# FIXME: Fixed-point load and store multiple instructions
+# Fixed-point load and store multiple instructions
+
+# CHECK: lmw 2, 128(1)                   # encoding: [0xb8,0x41,0x00,0x80]
+         lmw 2, 128(1)
+# CHECK: stmw 2, 128(1)                  # encoding: [0xbc,0x41,0x00,0x80]
+         stmw 2, 128(1)
 
 # FIXME: Fixed-point move assist instructions
 
@@ -339,9 +344,36 @@
 # FIXME: divdeuo 2, 3, 4
 # FIXME: divdeuo. 2, 3, 4
 
-# FIXME: Fixed-point compare instructions
+# Fixed-point compare instructions
 
-# FIXME: Fixed-point trap instructions
+# CHECK: cmpdi 2, 3, 128                 # encoding: [0x2d,0x23,0x00,0x80]
+         cmpi 2, 1, 3, 128
+# CHECK: cmpd 2, 3, 4                    # encoding: [0x7d,0x23,0x20,0x00]
+         cmp 2, 1, 3, 4
+# CHECK: cmpldi 2, 3, 128                # encoding: [0x29,0x23,0x00,0x80]
+         cmpli 2, 1, 3, 128
+# CHECK: cmpld 2, 3, 4                   # encoding: [0x7d,0x23,0x20,0x40]
+         cmpl 2, 1, 3, 4
+
+# CHECK: cmpwi 2, 3, 128                 # encoding: [0x2d,0x03,0x00,0x80]
+         cmpi 2, 0, 3, 128
+# CHECK: cmpw 2, 3, 4                    # encoding: [0x7d,0x03,0x20,0x00]
+         cmp 2, 0, 3, 4
+# CHECK: cmplwi 2, 3, 128                # encoding: [0x29,0x03,0x00,0x80]
+         cmpli 2, 0, 3, 128
+# CHECK: cmplw 2, 3, 4                   # encoding: [0x7d,0x03,0x20,0x40]
+         cmpl 2, 0, 3, 4
+
+# Fixed-point trap instructions
+
+# CHECK: twi 2, 3, 4                     # encoding: [0x0c,0x43,0x00,0x04]
+         twi 2, 3, 4
+# CHECK: tw 2, 3, 4                      # encoding: [0x7c,0x43,0x20,0x08]
+         tw 2, 3, 4
+# CHECK: tdi 2, 3, 4                     # encoding: [0x08,0x43,0x00,0x04]
+         tdi 2, 3, 4
+# CHECK: td 2, 3, 4                      # encoding: [0x7c,0x43,0x20,0x88]
+         td 2, 3, 4
 
 # Fixed-point select
 
@@ -504,14 +536,16 @@
 
 # Move to/from system register instructions
 
-# FIXME: mtspr 256, 2
-# FIXME: mfspr 2, 256
-# CHECK: mtcrf 16, 2                     # encoding: [0x7c,0x41,0x01,0x20]
-         mtcrf 16, 2
+# CHECK: mtspr 600, 2                    # encoding: [0x7c,0x58,0x93,0xa6]
+         mtspr 600, 2
+# CHECK: mfspr 2, 600                    # encoding: [0x7c,0x58,0x92,0xa6]
+         mfspr 2, 600
+# CHECK: mtcrf 123, 2                    # encoding: [0x7c,0x47,0xb1,0x20]
+         mtcrf 123, 2
 # CHECK: mfcr 2                          # encoding: [0x7c,0x40,0x00,0x26]
          mfcr 2
-# FIXME: mtocrf 16, 2
+# CHECK: mtocrf 16, 2                    # encoding: [0x7c,0x51,0x01,0x20]
+         mtocrf 16, 2
 # CHECK: mfocrf 16, 8                    # encoding: [0x7e,0x10,0x80,0x26]
          mfocrf 16, 8
-# FIXME: mcrxr 2
 

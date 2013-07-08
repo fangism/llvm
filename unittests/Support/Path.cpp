@@ -165,7 +165,7 @@ TEST_F(FileSystemTest, Unique) {
   int FileDescriptor;
   SmallString<64> TempPath;
   ASSERT_NO_ERROR(
-    fs::unique_file("%%-%%-%%-%%.temp", FileDescriptor, TempPath));
+      fs::createTemporaryFile("prefix", "temp", FileDescriptor, TempPath));
 
   // The same file should return an identical unique id.
   uint64_t F1, F2;
@@ -177,8 +177,8 @@ TEST_F(FileSystemTest, Unique) {
   int FileDescriptor2;
   SmallString<64> TempPath2;
   ASSERT_NO_ERROR(
-    fs::unique_file("%%-%%-%%-%%.temp", FileDescriptor2, TempPath2));
-  
+      fs::createTemporaryFile("prefix", "temp", FileDescriptor2, TempPath2));
+
   uint64_t D;
   ASSERT_NO_ERROR(fs::getUniqueID(Twine(TempPath2), D));
   ASSERT_NE(D, F1);
@@ -201,7 +201,7 @@ TEST_F(FileSystemTest, TempFiles) {
   int FileDescriptor;
   SmallString<64> TempPath;
   ASSERT_NO_ERROR(
-    fs::unique_file("%%-%%-%%-%%.temp", FileDescriptor, TempPath));
+      fs::createTemporaryFile("prefix", "temp", FileDescriptor, TempPath));
 
   // Make sure it exists.
   bool TempFileExists;
@@ -211,7 +211,7 @@ TEST_F(FileSystemTest, TempFiles) {
   // Create another temp tile.
   int FD2;
   SmallString<64> TempPath2;
-  ASSERT_NO_ERROR(fs::unique_file("%%-%%-%%-%%.temp", FD2, TempPath2));
+  ASSERT_NO_ERROR(fs::createTemporaryFile("prefix", "temp", FD2, TempPath2));
   ASSERT_NE(TempPath.str(), TempPath2.str());
 
   fs::file_status A, B;
@@ -265,7 +265,7 @@ TEST_F(FileSystemTest, TempFiles) {
     "abcdefghijklmnopqrstuvwxyz5abcdefghijklmnopqrstuvwxyz4"
     "abcdefghijklmnopqrstuvwxyz3abcdefghijklmnopqrstuvwxyz2"
     "abcdefghijklmnopqrstuvwxyz1abcdefghijklmnopqrstuvwxyz0";
-  EXPECT_EQ(fs::unique_file(Twine(Path270), FileDescriptor, TempPath),
+  EXPECT_EQ(fs::createUniqueFile(Twine(Path270), FileDescriptor, TempPath),
             windows_error::path_not_found);
 #endif
 }
@@ -363,40 +363,12 @@ TEST_F(FileSystemTest, Magic) {
   }
 }
 
-#if !defined(_WIN32) // FIXME: Win32 has different permission schema.
-TEST_F(FileSystemTest, Permissions) {
-  // Create a temp file.
-  int FileDescriptor;
-  SmallString<64> TempPath;
-  ASSERT_NO_ERROR(
-    fs::unique_file("%%-%%-%%-%%.temp", FileDescriptor, TempPath));
-
-  // Mark file as read-only
-  const fs::perms AllWrite = fs::owner_write|fs::group_write|fs::others_write;
-  ASSERT_NO_ERROR(fs::permissions(Twine(TempPath), fs::remove_perms|AllWrite));
- 
-  // Verify file is read-only
-  fs::file_status Status;
-  ASSERT_NO_ERROR(fs::status(Twine(TempPath), Status));
-  bool AnyWriteBits = (Status.permissions() & AllWrite);
-  EXPECT_FALSE(AnyWriteBits);
-  
-  // Mark file as read-write
-  ASSERT_NO_ERROR(fs::permissions(Twine(TempPath), fs::add_perms|AllWrite));
-  
-  // Verify file is read-write
-  ASSERT_NO_ERROR(fs::status(Twine(TempPath), Status));
-  AnyWriteBits = (Status.permissions() & AllWrite);
-  EXPECT_TRUE(AnyWriteBits);
-}
-#endif
-
 TEST_F(FileSystemTest, FileMapping) {
   // Create a temp file.
   int FileDescriptor;
   SmallString<64> TempPath;
   ASSERT_NO_ERROR(
-    fs::unique_file("%%-%%-%%-%%.temp", FileDescriptor, TempPath));
+      fs::createTemporaryFile("prefix", "temp", FileDescriptor, TempPath));
   // Map in temp file and add some content
   error_code EC;
   StringRef Val("hello there");

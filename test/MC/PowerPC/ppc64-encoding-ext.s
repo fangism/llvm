@@ -1,7 +1,105 @@
 
 # RUN: llvm-mc -triple powerpc64-unknown-unknown --show-encoding %s | FileCheck %s
 
-# FIXME: Condition register bit symbols
+# Condition register bit symbols
+
+# CHECK: beqlr 0                         # encoding: [0x4d,0x82,0x00,0x20]
+         beqlr cr0
+# CHECK: beqlr 1                         # encoding: [0x4d,0x86,0x00,0x20]
+         beqlr cr1
+# CHECK: beqlr 2                         # encoding: [0x4d,0x8a,0x00,0x20]
+         beqlr cr2
+# CHECK: beqlr 3                         # encoding: [0x4d,0x8e,0x00,0x20]
+         beqlr cr3
+# CHECK: beqlr 4                         # encoding: [0x4d,0x92,0x00,0x20]
+         beqlr cr4
+# CHECK: beqlr 5                         # encoding: [0x4d,0x96,0x00,0x20]
+         beqlr cr5
+# CHECK: beqlr 6                         # encoding: [0x4d,0x9a,0x00,0x20]
+         beqlr cr6
+# CHECK: beqlr 7                         # encoding: [0x4d,0x9e,0x00,0x20]
+         beqlr cr7
+
+# CHECK: bclr 12, 0, 0                   # encoding: [0x4d,0x80,0x00,0x20]
+         btlr 4*cr0+lt
+# CHECK: bclr 12, 1, 0                   # encoding: [0x4d,0x81,0x00,0x20]
+         btlr 4*cr0+gt
+# CHECK: bclr 12, 2, 0                   # encoding: [0x4d,0x82,0x00,0x20]
+         btlr 4*cr0+eq
+# CHECK: bclr 12, 3, 0                   # encoding: [0x4d,0x83,0x00,0x20]
+         btlr 4*cr0+so
+# CHECK: bclr 12, 3, 0                   # encoding: [0x4d,0x83,0x00,0x20]
+         btlr 4*cr0+un
+# CHECK: bclr 12, 4, 0                   # encoding: [0x4d,0x84,0x00,0x20]
+         btlr 4*cr1+lt
+# CHECK: bclr 12, 5, 0                   # encoding: [0x4d,0x85,0x00,0x20]
+         btlr 4*cr1+gt
+# CHECK: bclr 12, 6, 0                   # encoding: [0x4d,0x86,0x00,0x20]
+         btlr 4*cr1+eq
+# CHECK: bclr 12, 7, 0                   # encoding: [0x4d,0x87,0x00,0x20]
+         btlr 4*cr1+so
+# CHECK: bclr 12, 7, 0                   # encoding: [0x4d,0x87,0x00,0x20]
+         btlr 4*cr1+un
+# CHECK: bclr 12, 8, 0                   # encoding: [0x4d,0x88,0x00,0x20]
+         btlr 4*cr2+lt
+# CHECK: bclr 12, 9, 0                   # encoding: [0x4d,0x89,0x00,0x20]
+         btlr 4*cr2+gt
+# CHECK: bclr 12, 10, 0                  # encoding: [0x4d,0x8a,0x00,0x20]
+         btlr 4*cr2+eq
+# CHECK: bclr 12, 11, 0                  # encoding: [0x4d,0x8b,0x00,0x20]
+         btlr 4*cr2+so
+# CHECK: bclr 12, 11, 0                  # encoding: [0x4d,0x8b,0x00,0x20]
+         btlr 4*cr2+un
+# CHECK: bclr 12, 12, 0                  # encoding: [0x4d,0x8c,0x00,0x20]
+         btlr 4*cr3+lt
+# CHECK: bclr 12, 13, 0                  # encoding: [0x4d,0x8d,0x00,0x20]
+         btlr 4*cr3+gt
+# CHECK: bclr 12, 14, 0                  # encoding: [0x4d,0x8e,0x00,0x20]
+         btlr 4*cr3+eq
+# CHECK: bclr 12, 15, 0                  # encoding: [0x4d,0x8f,0x00,0x20]
+         btlr 4*cr3+so
+# CHECK: bclr 12, 15, 0                  # encoding: [0x4d,0x8f,0x00,0x20]
+         btlr 4*cr3+un
+# CHECK: bclr 12, 16, 0                  # encoding: [0x4d,0x90,0x00,0x20]
+         btlr 4*cr4+lt
+# CHECK: bclr 12, 17, 0                  # encoding: [0x4d,0x91,0x00,0x20]
+         btlr 4*cr4+gt
+# CHECK: bclr 12, 18, 0                  # encoding: [0x4d,0x92,0x00,0x20]
+         btlr 4*cr4+eq
+# CHECK: bclr 12, 19, 0                  # encoding: [0x4d,0x93,0x00,0x20]
+         btlr 4*cr4+so
+# CHECK: bclr 12, 19, 0                  # encoding: [0x4d,0x93,0x00,0x20]
+         btlr 4*cr4+un
+# CHECK: bclr 12, 20, 0                  # encoding: [0x4d,0x94,0x00,0x20]
+         btlr 4*cr5+lt
+# CHECK: bclr 12, 21, 0                  # encoding: [0x4d,0x95,0x00,0x20]
+         btlr 4*cr5+gt
+# CHECK: bclr 12, 22, 0                  # encoding: [0x4d,0x96,0x00,0x20]
+         btlr 4*cr5+eq
+# CHECK: bclr 12, 23, 0                  # encoding: [0x4d,0x97,0x00,0x20]
+         btlr 4*cr5+so
+# CHECK: bclr 12, 23, 0                  # encoding: [0x4d,0x97,0x00,0x20]
+         btlr 4*cr5+un
+# CHECK: bclr 12, 24, 0                  # encoding: [0x4d,0x98,0x00,0x20]
+         btlr 4*cr6+lt
+# CHECK: bclr 12, 25, 0                  # encoding: [0x4d,0x99,0x00,0x20]
+         btlr 4*cr6+gt
+# CHECK: bclr 12, 26, 0                  # encoding: [0x4d,0x9a,0x00,0x20]
+         btlr 4*cr6+eq
+# CHECK: bclr 12, 27, 0                  # encoding: [0x4d,0x9b,0x00,0x20]
+         btlr 4*cr6+so
+# CHECK: bclr 12, 27, 0                  # encoding: [0x4d,0x9b,0x00,0x20]
+         btlr 4*cr6+un
+# CHECK: bclr 12, 28, 0                  # encoding: [0x4d,0x9c,0x00,0x20]
+         btlr 4*cr7+lt
+# CHECK: bclr 12, 29, 0                  # encoding: [0x4d,0x9d,0x00,0x20]
+         btlr 4*cr7+gt
+# CHECK: bclr 12, 30, 0                  # encoding: [0x4d,0x9e,0x00,0x20]
+         btlr 4*cr7+eq
+# CHECK: bclr 12, 31, 0                  # encoding: [0x4d,0x9f,0x00,0x20]
+         btlr 4*cr7+so
+# CHECK: bclr 12, 31, 0                  # encoding: [0x4d,0x9f,0x00,0x20]
+         btlr 4*cr7+un
 
 # Branch mnemonics
 
@@ -1853,7 +1951,145 @@
 # CHECK: cmplw 0, 3, 4                   # encoding: [0x7c,0x03,0x20,0x40]
          cmplw 3, 4
 
-# FIXME: Trap mnemonics
+# Trap mnemonics
+
+# CHECK: twi 16, 3, 4                    # encoding: [0x0e,0x03,0x00,0x04]
+         twlti 3, 4
+# CHECK: tw 16, 3, 4                     # encoding: [0x7e,0x03,0x20,0x08]
+         twlt 3, 4
+# CHECK: tdi 16, 3, 4                    # encoding: [0x0a,0x03,0x00,0x04]
+         tdlti 3, 4
+# CHECK: td 16, 3, 4                     # encoding: [0x7e,0x03,0x20,0x88]
+         tdlt 3, 4
+
+# CHECK: twi 20, 3, 4                    # encoding: [0x0e,0x83,0x00,0x04]
+         twlei 3, 4
+# CHECK: tw 20, 3, 4                     # encoding: [0x7e,0x83,0x20,0x08]
+         twle 3, 4
+# CHECK: tdi 20, 3, 4                    # encoding: [0x0a,0x83,0x00,0x04]
+         tdlei 3, 4
+# CHECK: td 20, 3, 4                     # encoding: [0x7e,0x83,0x20,0x88]
+         tdle 3, 4
+
+# CHECK: twi 4, 3, 4                     # encoding: [0x0c,0x83,0x00,0x04]
+         tweqi 3, 4
+# CHECK: tw 4, 3, 4                      # encoding: [0x7c,0x83,0x20,0x08]
+         tweq 3, 4
+# CHECK: tdi 4, 3, 4                     # encoding: [0x08,0x83,0x00,0x04]
+         tdeqi 3, 4
+# CHECK: td 4, 3, 4                      # encoding: [0x7c,0x83,0x20,0x88]
+         tdeq 3, 4
+
+# CHECK: twi 12, 3, 4                    # encoding: [0x0d,0x83,0x00,0x04]
+         twgei 3, 4
+# CHECK: tw 12, 3, 4                     # encoding: [0x7d,0x83,0x20,0x08]
+         twge 3, 4
+# CHECK: tdi 12, 3, 4                    # encoding: [0x09,0x83,0x00,0x04]
+         tdgei 3, 4
+# CHECK: td 12, 3, 4                     # encoding: [0x7d,0x83,0x20,0x88]
+         tdge 3, 4
+
+# CHECK: twi 8, 3, 4                     # encoding: [0x0d,0x03,0x00,0x04]
+         twgti 3, 4
+# CHECK: tw 8, 3, 4                      # encoding: [0x7d,0x03,0x20,0x08]
+         twgt 3, 4
+# CHECK: tdi 8, 3, 4                     # encoding: [0x09,0x03,0x00,0x04]
+         tdgti 3, 4
+# CHECK: td 8, 3, 4                      # encoding: [0x7d,0x03,0x20,0x88]
+         tdgt 3, 4
+
+# CHECK: twi 12, 3, 4                    # encoding: [0x0d,0x83,0x00,0x04]
+         twnli 3, 4
+# CHECK: tw 12, 3, 4                     # encoding: [0x7d,0x83,0x20,0x08]
+         twnl 3, 4
+# CHECK: tdi 12, 3, 4                    # encoding: [0x09,0x83,0x00,0x04]
+         tdnli 3, 4
+# CHECK: td 12, 3, 4                     # encoding: [0x7d,0x83,0x20,0x88]
+         tdnl 3, 4
+
+# CHECK: twi 24, 3, 4                    # encoding: [0x0f,0x03,0x00,0x04]
+         twnei 3, 4
+# CHECK: tw 24, 3, 4                     # encoding: [0x7f,0x03,0x20,0x08]
+         twne 3, 4
+# CHECK: tdi 24, 3, 4                    # encoding: [0x0b,0x03,0x00,0x04]
+         tdnei 3, 4
+# CHECK: td 24, 3, 4                     # encoding: [0x7f,0x03,0x20,0x88]
+         tdne 3, 4
+
+# CHECK: twi 20, 3, 4                    # encoding: [0x0e,0x83,0x00,0x04]
+         twngi 3, 4
+# CHECK: tw 20, 3, 4                     # encoding: [0x7e,0x83,0x20,0x08]
+         twng 3, 4
+# CHECK: tdi 20, 3, 4                    # encoding: [0x0a,0x83,0x00,0x04]
+         tdngi 3, 4
+# CHECK: td 20, 3, 4                     # encoding: [0x7e,0x83,0x20,0x88]
+         tdng 3, 4
+
+# CHECK: twi 2, 3, 4                     # encoding: [0x0c,0x43,0x00,0x04]
+         twllti 3, 4
+# CHECK: tw 2, 3, 4                      # encoding: [0x7c,0x43,0x20,0x08]
+         twllt 3, 4
+# CHECK: tdi 2, 3, 4                     # encoding: [0x08,0x43,0x00,0x04]
+         tdllti 3, 4
+# CHECK: td 2, 3, 4                      # encoding: [0x7c,0x43,0x20,0x88]
+         tdllt 3, 4
+
+# CHECK: twi 6, 3, 4                     # encoding: [0x0c,0xc3,0x00,0x04]
+         twllei 3, 4
+# CHECK: tw 6, 3, 4                      # encoding: [0x7c,0xc3,0x20,0x08]
+         twlle 3, 4
+# CHECK: tdi 6, 3, 4                     # encoding: [0x08,0xc3,0x00,0x04]
+         tdllei 3, 4
+# CHECK: td 6, 3, 4                      # encoding: [0x7c,0xc3,0x20,0x88]
+         tdlle 3, 4
+
+# CHECK: twi 5, 3, 4                     # encoding: [0x0c,0xa3,0x00,0x04]
+         twlgei 3, 4
+# CHECK: tw 5, 3, 4                      # encoding: [0x7c,0xa3,0x20,0x08]
+         twlge 3, 4
+# CHECK: tdi 5, 3, 4                     # encoding: [0x08,0xa3,0x00,0x04]
+         tdlgei 3, 4
+# CHECK: td 5, 3, 4                      # encoding: [0x7c,0xa3,0x20,0x88]
+         tdlge 3, 4
+
+# CHECK: twi 1, 3, 4                     # encoding: [0x0c,0x23,0x00,0x04]
+         twlgti 3, 4
+# CHECK: tw 1, 3, 4                      # encoding: [0x7c,0x23,0x20,0x08]
+         twlgt 3, 4
+# CHECK: tdi 1, 3, 4                     # encoding: [0x08,0x23,0x00,0x04]
+         tdlgti 3, 4
+# CHECK: td 1, 3, 4                      # encoding: [0x7c,0x23,0x20,0x88]
+         tdlgt 3, 4
+
+# CHECK: twi 5, 3, 4                     # encoding: [0x0c,0xa3,0x00,0x04]
+         twlnli 3, 4
+# CHECK: tw 5, 3, 4                      # encoding: [0x7c,0xa3,0x20,0x08]
+         twlnl 3, 4
+# CHECK: tdi 5, 3, 4                     # encoding: [0x08,0xa3,0x00,0x04]
+         tdlnli 3, 4
+# CHECK: td 5, 3, 4                      # encoding: [0x7c,0xa3,0x20,0x88]
+         tdlnl 3, 4
+
+# CHECK: twi 6, 3, 4                     # encoding: [0x0c,0xc3,0x00,0x04]
+         twlngi 3, 4
+# CHECK: tw 6, 3, 4                      # encoding: [0x7c,0xc3,0x20,0x08]
+         twlng 3, 4
+# CHECK: tdi 6, 3, 4                     # encoding: [0x08,0xc3,0x00,0x04]
+         tdlngi 3, 4
+# CHECK: td 6, 3, 4                      # encoding: [0x7c,0xc3,0x20,0x88]
+         tdlng 3, 4
+
+# CHECK: twi 31, 3, 4                    # encoding: [0x0f,0xe3,0x00,0x04]
+         twui 3, 4
+# CHECK: tw 31, 3, 4                     # encoding: [0x7f,0xe3,0x20,0x08]
+         twu 3, 4
+# CHECK: tdi 31, 3, 4                    # encoding: [0x0b,0xe3,0x00,0x04]
+         tdui 3, 4
+# CHECK: td 31, 3, 4                     # encoding: [0x7f,0xe3,0x20,0x88]
+         tdu 3, 4
+
+# CHECK: trap                            # encoding: [0x7f,0xe0,0x00,0x08]
+         trap
 
 # Rotate and shift mnemonics
 
@@ -1953,8 +2189,10 @@
 
 # Move to/from special purpose register mnemonics
 
-# FIXME: mtxer 2
-# FIXME: mfxer 2
+# CHECK: mtspr 1, 2                      # encoding: [0x7c,0x41,0x03,0xa6]
+         mtxer 2
+# CHECK: mfspr 2, 1                      # encoding: [0x7c,0x41,0x02,0xa6]
+         mfxer 2
 # CHECK: mtlr 2                          # encoding: [0x7c,0x48,0x03,0xa6]
          mtlr 2
 # CHECK: mflr 2                          # encoding: [0x7c,0x48,0x02,0xa6]
@@ -1984,4 +2222,6 @@
          not 2, 3
 # CHECK: nor. 2, 3, 3                    # encoding: [0x7c,0x62,0x18,0xf9]
          not. 2, 3
+# CHECK: mtcrf 255, 2                    # encoding: [0x7c,0x4f,0xf1,0x20]
+         mtcr 2
 

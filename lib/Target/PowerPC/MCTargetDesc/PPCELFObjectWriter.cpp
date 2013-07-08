@@ -228,8 +228,28 @@ unsigned PPCELFObjectWriter::getRelocTypeInner(const MCValue &Target,
       case MCSymbolRefExpr::VK_PPC_GOT_TLSLD_HA:
         Type = ELF::R_PPC64_GOT_TLSLD16_HA;
         break;
+      case MCSymbolRefExpr::VK_PPC_GOT_TPREL:
+        /* We don't have R_PPC64_GOT_TPREL16, but since GOT offsets
+           are always 4-aligned, we can use R_PPC64_GOT_TPREL16_DS.  */
+        Type = ELF::R_PPC64_GOT_TPREL16_DS;
+        break;
+      case MCSymbolRefExpr::VK_PPC_GOT_TPREL_LO:
+        /* We don't have R_PPC64_GOT_TPREL16_LO, but since GOT offsets
+           are always 4-aligned, we can use R_PPC64_GOT_TPREL16_LO_DS.  */
+        Type = ELF::R_PPC64_GOT_TPREL16_LO_DS;
+        break;
       case MCSymbolRefExpr::VK_PPC_GOT_TPREL_HI:
         Type = ELF::R_PPC64_GOT_TPREL16_HI;
+        break;
+      case MCSymbolRefExpr::VK_PPC_GOT_DTPREL:
+        /* We don't have R_PPC64_GOT_DTPREL16, but since GOT offsets
+           are always 4-aligned, we can use R_PPC64_GOT_DTPREL16_DS.  */
+        Type = ELF::R_PPC64_GOT_DTPREL16_DS;
+        break;
+      case MCSymbolRefExpr::VK_PPC_GOT_DTPREL_LO:
+        /* We don't have R_PPC64_GOT_DTPREL16_LO, but since GOT offsets
+           are always 4-aligned, we can use R_PPC64_GOT_DTPREL16_LO_DS.  */
+        Type = ELF::R_PPC64_GOT_DTPREL16_LO_DS;
         break;
       case MCSymbolRefExpr::VK_PPC_GOT_TPREL_HA:
         Type = ELF::R_PPC64_GOT_TPREL16_HA;
@@ -289,17 +309,17 @@ unsigned PPCELFObjectWriter::getRelocTypeInner(const MCValue &Target,
         break;
       }
       break;
-    case PPC::fixup_ppc_tlsreg:
-      Type = ELF::R_PPC64_TLS;
-      break;
     case PPC::fixup_ppc_nofixup:
       switch (Modifier) {
       default: llvm_unreachable("Unsupported Modifier");
-      case MCSymbolRefExpr::VK_PPC_TLSGD:
+      case MCSymbolRefExpr::VK_TLSGD:
         Type = ELF::R_PPC64_TLSGD;
         break;
-      case MCSymbolRefExpr::VK_PPC_TLSLD:
+      case MCSymbolRefExpr::VK_TLSLD:
         Type = ELF::R_PPC64_TLSLD;
+        break;
+      case MCSymbolRefExpr::VK_PPC_TLS:
+        Type = ELF::R_PPC64_TLS;
         break;
       }
       break;

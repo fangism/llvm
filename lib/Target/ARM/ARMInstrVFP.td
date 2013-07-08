@@ -333,6 +333,42 @@ def VNMULS : ASbI<0b11100, 0b10, 1, 0,
   let D = VFPNeonA8Domain;
 }
 
+multiclass vsel_inst<string op, bits<2> opc> {
+  let DecoderNamespace = "VFPV8", PostEncoderMethod = "" in {
+    def S : ASbInp<0b11100, opc, 0,
+                   (outs SPR:$Sd), (ins SPR:$Sn, SPR:$Sm),
+                   NoItinerary, !strconcat("vsel", op, ".f32\t$Sd, $Sn, $Sm"),
+                   []>, Requires<[HasV8FP]>;
+
+    def D : ADbInp<0b11100, opc, 0,
+                   (outs DPR:$Dd), (ins DPR:$Dn, DPR:$Dm),
+                   NoItinerary, !strconcat("vsel", op, ".f64\t$Dd, $Dn, $Dm"),
+                   []>, Requires<[HasV8FP]>;
+  }
+}
+
+defm VSELGT : vsel_inst<"gt", 0b11>;
+defm VSELGE : vsel_inst<"ge", 0b10>;
+defm VSELEQ : vsel_inst<"eq", 0b00>;
+defm VSELVS : vsel_inst<"vs", 0b01>;
+
+multiclass vmaxmin_inst<string op, bit opc> {
+  let DecoderNamespace = "VFPV8", PostEncoderMethod = "" in {
+    def S : ASbInp<0b11101, 0b00, opc,
+                   (outs SPR:$Sd), (ins SPR:$Sn, SPR:$Sm),
+                   NoItinerary, !strconcat(op, ".f32\t$Sd, $Sn, $Sm"),
+                   []>, Requires<[HasV8FP]>;
+
+    def D : ADbInp<0b11101, 0b00, opc,
+                   (outs DPR:$Dd), (ins DPR:$Dn, DPR:$Dm),
+                   NoItinerary, !strconcat(op, ".f64\t$Dd, $Dn, $Dm"),
+                   []>, Requires<[HasV8FP]>;
+  }
+}
+
+defm VMAXNM : vmaxmin_inst<"vmaxnm", 0>;
+defm VMINNM : vmaxmin_inst<"vminnm", 1>;
+
 // Match reassociated forms only if not sign dependent rounding.
 def : Pat<(fmul (fneg DPR:$a), (f64 DPR:$b)),
           (VNMULD DPR:$a, DPR:$b)>, Requires<[NoHonorSignDependentRounding]>;
@@ -468,7 +504,7 @@ def VCVTSD  : VFPAI<(outs SPR:$Sd), (ins DPR:$Dm), VFPUnaryFrm,
   let Inst{4}     = 0;
 }
 
-// Between half-precision and single-precision.  For disassembly only.
+// Between half, single and double-precision.  For disassembly only.
 
 // FIXME: Verify encoding after integrated assembler is working.
 def VCVTBHS: ASuI<0b11101, 0b11, 0b0010, 0b01, 0, (outs SPR:$Sd), (ins SPR:$Sm),
@@ -492,6 +528,60 @@ def VCVTTHS: ASuI<0b11101, 0b11, 0b0010, 0b11, 0, (outs SPR:$Sd), (ins SPR:$Sm),
 def VCVTTSH: ASuI<0b11101, 0b11, 0b0011, 0b11, 0, (outs SPR:$Sd), (ins SPR:$Sm),
                  /* FIXME */ IIC_fpCVTHS, "vcvtt", ".f16.f32\t$Sd, $Sm",
                  [/* For disassembly only; pattern left blank */]>;
+
+def VCVTBHD : ADuI<0b11101, 0b11, 0b0010, 0b01, 0,
+                   (outs DPR:$Dd), (ins SPR:$Sm),
+                   NoItinerary, "vcvtb", ".f64.f16\t$Dd, $Sm",
+                   []>, Requires<[HasV8FP]> {
+  // Instruction operands.
+  bits<5> Sm;
+
+  // Encode instruction operands.
+  let Inst{3-0} = Sm{4-1};
+  let Inst{5}   = Sm{0};
+}
+
+def VCVTBDH : ADuI<0b11101, 0b11, 0b0011, 0b01, 0,
+                   (outs SPR:$Sd), (ins DPR:$Dm),
+                   NoItinerary, "vcvtb", ".f16.f64\t$Sd, $Dm",
+                   []>, Requires<[HasV8FP]> {
+  // Instruction operands.
+  bits<5> Sd;
+  bits<5> Dm;
+
+  // Encode instruction operands.
+  let Inst{3-0}     = Dm{3-0};
+  let Inst{5}       = Dm{4};
+  let Inst{15-12}   = Sd{4-1};
+  let Inst{22}      = Sd{0};
+}
+
+def VCVTTHD : ADuI<0b11101, 0b11, 0b0010, 0b11, 0,
+                   (outs DPR:$Dd), (ins SPR:$Sm),
+                   NoItinerary, "vcvtt", ".f64.f16\t$Dd, $Sm",
+                   []>, Requires<[HasV8FP]> {
+  // Instruction operands.
+  bits<5> Sm;
+
+  // Encode instruction operands.
+  let Inst{3-0} = Sm{4-1};
+  let Inst{5}   = Sm{0};
+}
+
+def VCVTTDH : ADuI<0b11101, 0b11, 0b0011, 0b11, 0,
+                   (outs SPR:$Sd), (ins DPR:$Dm),
+                   NoItinerary, "vcvtt", ".f16.f64\t$Sd, $Dm",
+                   []>, Requires<[HasV8FP]> {
+  // Instruction operands.
+  bits<5> Sd;
+  bits<5> Dm;
+
+  // Encode instruction operands.
+  let Inst{15-12} = Sd{4-1};
+  let Inst{22}    = Sd{0};
+  let Inst{3-0}   = Dm{3-0};
+  let Inst{5}     = Dm{4};
+}
 
 def VNEGD  : ADuI<0b11101, 0b11, 0b0001, 0b01, 0,
                   (outs DPR:$Dd), (ins DPR:$Dm),
