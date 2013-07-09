@@ -14,11 +14,12 @@
 #ifndef LLVM_SUPPORT_ATOMIC_H
 #define LLVM_SUPPORT_ATOMIC_H
 
+#include "llvm/Support/Compiler.h"	// for __GNUC_PREREQ
 #include "llvm/Support/DataTypes.h"
 
 // convenience macro, to force use of darwin atomic functions
 // stage 1 with gcc-4.0 needs this, but maybe not stage 2?
-#define	USE_DARWIN_ATOMICS	(defined(__APPLE__) && defined(__GNUC__) && (__GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 2)))
+#define	USE_DARWIN_ATOMICS	(defined(__APPLE__) && !__GNUC_PREREQ(4, 2))
 
 namespace llvm {
   namespace sys {

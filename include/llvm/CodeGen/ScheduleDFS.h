@@ -69,12 +69,12 @@ class SchedDFSResult {
   friend class SchedDFSImpl;
 
 // workaround gcc-4.0 accessibility bug
-#if defined(__GNUC__) && (__GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 2))
+#if !__GNUC_PREREQ(4, 2)
 public:
 #endif
   static const unsigned InvalidSubtreeID = ~0u;
-#if defined(__GNUC__) && (__GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 2))
-public:
+#if !__GNUC_PREREQ(4, 2)
+private:
 #endif
 
   /// \brief Per-SUnit data computed during DFS for various metrics.
