@@ -4422,11 +4422,15 @@ SelectionDAGBuilder::EmitFuncArgumentDbgValue(const Value *V, MDNode *Variable,
     return false;
 
   if (Op->isReg())
-    Op->setIsDebug();
-
-  FuncInfo.ArgDbgValues.push_back(
+    FuncInfo.ArgDbgValues.push_back(BuildMI(MF, getCurDebugLoc(),
+                                            TII->get(TargetOpcode::DBG_VALUE),
+                                            /* IsIndirect */ Offset != 0,
+                                            Op->getReg(), Offset, Variable));
+  else
+    FuncInfo.ArgDbgValues.push_back(
       BuildMI(MF, getCurDebugLoc(), TII->get(TargetOpcode::DBG_VALUE))
           .addOperand(*Op).addImm(Offset).addMetadata(Variable));
+
   return true;
 }
 
@@ -4922,7 +4926,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
   case Intrinsic::fmuladd: {
     EVT VT = TLI->getValueType(I.getType());
     if (TM.Options.AllowFPOpFusion != FPOpFusion::Strict &&
-        TLI->isFMAFasterThanMulAndAdd(VT)) {
+        TLI->isFMAFasterThanFMulAndFAdd(VT)) {
       setValue(&I, DAG.getNode(ISD::FMA, sdl,
                                getValue(I.getArgOperand(0)).getValueType(),
                                getValue(I.getArgOperand(0)),

@@ -22,6 +22,44 @@
   vcvtblt.f16.f64 s4, d1
 @ CHECK: vcvtblt.f16.f64 s4, d1     @ encoding: [0x41,0x2b,0xb3,0xbe]
 
+
+@ VCVT{A,N,P,M}
+
+  vcvta.s32.f32 s2, s3
+@ CHECK: vcvta.s32.f32 s2, s3     @ encoding: [0xe1,0x1a,0xbc,0xfe]
+  vcvta.s32.f64 s2, d3
+@ CHECK: vcvta.s32.f64 s2, d3     @ encoding: [0xc3,0x1b,0xbc,0xfe]
+  vcvtn.s32.f32 s6, s23
+@ CHECK: vcvtn.s32.f32 s6, s23     @ encoding: [0xeb,0x3a,0xbd,0xfe]
+  vcvtn.s32.f64 s6, d23
+@ CHECK: vcvtn.s32.f64 s6, d23     @ encoding: [0xe7,0x3b,0xbd,0xfe]
+  vcvtp.s32.f32 s0, s4
+@ CHECK: vcvtp.s32.f32 s0, s4     @ encoding: [0xc2,0x0a,0xbe,0xfe]
+  vcvtp.s32.f64 s0, d4
+@ CHECK: vcvtp.s32.f64 s0, d4     @ encoding: [0xc4,0x0b,0xbe,0xfe]
+  vcvtm.s32.f32 s17, s8
+@ CHECK: vcvtm.s32.f32 s17, s8     @ encoding: [0xc4,0x8a,0xff,0xfe]
+  vcvtm.s32.f64 s17, d8
+@ CHECK: vcvtm.s32.f64 s17, d8     @ encoding: [0xc8,0x8b,0xff,0xfe]
+
+  vcvta.u32.f32 s2, s3
+@ CHECK: vcvta.u32.f32 s2, s3     @ encoding: [0x61,0x1a,0xbc,0xfe]
+  vcvta.u32.f64 s2, d3
+@ CHECK: vcvta.u32.f64 s2, d3     @ encoding: [0x43,0x1b,0xbc,0xfe]
+  vcvtn.u32.f32 s6, s23
+@ CHECK: vcvtn.u32.f32 s6, s23     @ encoding: [0x6b,0x3a,0xbd,0xfe]
+  vcvtn.u32.f64 s6, d23
+@ CHECK: vcvtn.u32.f64 s6, d23     @ encoding: [0x67,0x3b,0xbd,0xfe]
+  vcvtp.u32.f32 s0, s4
+@ CHECK: vcvtp.u32.f32 s0, s4     @ encoding: [0x42,0x0a,0xbe,0xfe]
+  vcvtp.u32.f64 s0, d4
+@ CHECK: vcvtp.u32.f64 s0, d4     @ encoding: [0x44,0x0b,0xbe,0xfe]
+  vcvtm.u32.f32 s17, s8
+@ CHECK: vcvtm.u32.f32 s17, s8     @ encoding: [0x44,0x8a,0xff,0xfe]
+  vcvtm.u32.f64 s17, d8
+@ CHECK: vcvtm.u32.f64 s17, d8     @ encoding: [0x48,0x8b,0xff,0xfe]
+
+
 @ VSEL
   vselge.f32 s4, s1, s23
 @ CHECK: vselge.f32 s4, s1, s23    @ encoding: [0xab,0x2a,0x20,0xfe]
@@ -50,3 +88,37 @@
 @ CHECK: vminnm.f32 s0, s0, s12    @ encoding: [0x46,0x0a,0x80,0xfe]
   vminnm.f64 d4, d6, d9
 @ CHECK: vminnm.f64 d4, d6, d9     @ encoding: [0x49,0x4b,0x86,0xfe]
+
+@ VRINT{Z,R,X}
+
+  vrintzge.f64 d3, d12
+@ CHECK: vrintzge.f64 d3, d12   @ encoding: [0xcc,0x3b,0xb6,0xae]
+  vrintz.f32 s3, s24
+@ CHECK: vrintz.f32 s3, s24     @ encoding: [0xcc,0x1a,0xf6,0xee]
+  vrintrlt.f64 d5, d0
+@ CHECK: vrintrlt.f64 d5, d0    @ encoding: [0x40,0x5b,0xb6,0xbe]
+  vrintr.f32 s0, s9
+@ CHECK: vrintr.f32 s0, s9      @ encoding: [0x64,0x0a,0xb6,0xee]
+  vrintxeq.f64 d28, d30
+@ CHECK: vrintxeq.f64 d28, d30  @ encoding: [0x6e,0xcb,0xf7,0x0e]
+  vrintxvs.f32 s10, s14
+@ CHECK: vrintxvs.f32 s10, s14  @ encoding: [0x47,0x5a,0xb7,0x6e]
+
+@ VRINT{A,N,P,M}
+
+  vrinta.f64 d3, d4
+@ CHECK: vrinta.f64 d3, d4     @ encoding: [0x44,0x3b,0xb8,0xfe]
+  vrinta.f32 s12, s1
+@ CHECK: vrinta.f32 s12, s1    @ encoding: [0x60,0x6a,0xb8,0xfe]
+  vrintn.f64 d3, d4
+@ CHECK: vrintn.f64 d3, d4     @ encoding: [0x44,0x3b,0xb9,0xfe]
+  vrintn.f32 s12, s1
+@ CHECK: vrintn.f32 s12, s1    @ encoding: [0x60,0x6a,0xb9,0xfe]
+  vrintp.f64 d3, d4
+@ CHECK: vrintp.f64 d3, d4     @ encoding: [0x44,0x3b,0xba,0xfe]
+  vrintp.f32 s12, s1
+@ CHECK: vrintp.f32 s12, s1    @ encoding: [0x60,0x6a,0xba,0xfe]
+  vrintm.f64 d3, d4
+@ CHECK: vrintm.f64 d3, d4     @ encoding: [0x44,0x3b,0xbb,0xfe]
+  vrintm.f32 s12, s1
+@ CHECK: vrintm.f32 s12, s1    @ encoding: [0x60,0x6a,0xbb,0xfe]

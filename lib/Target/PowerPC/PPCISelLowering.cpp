@@ -487,6 +487,9 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
     setCondCodeAction(ISD::SETUGE, MVT::v4f32, Expand);
     setCondCodeAction(ISD::SETULT, MVT::v4f32, Expand);
     setCondCodeAction(ISD::SETULE, MVT::v4f32, Expand);
+
+    setCondCodeAction(ISD::SETO,   MVT::v4f32, Expand);
+    setCondCodeAction(ISD::SETONE, MVT::v4f32, Expand);
   }
 
   if (Subtarget->has64BitSupport()) {
@@ -1027,6 +1030,35 @@ bool PPCTargetLowering::SelectAddressRegReg(SDValue N, SDValue &Base,
   return false;
 }
 
+// If we happen to be doing an i64 load or store into a stack slot that has
+// less than a 4-byte alignment, then the frame-index elimination may need to
+// use an indexed load or store instruction (because the offset may not be a
+// multiple of 4). The extra register needed to hold the offset comes from the
+// register scavenger, and it is possible that the scavenger will need to use
+// an emergency spill slot. As a result, we need to make sure that a spill slot
+// is allocated when doing an i64 load/store into a less-than-4-byte-aligned
+// stack slot.
+static void fixupFuncForFI(SelectionDAG &DAG, int FrameIdx, EVT VT) {
+  // FIXME: This does not handle the LWA case.
+  if (VT != MVT::i64)
+    return;
+
+  // This should not be needed for negative FIs, which come from argument
+  // lowering, because the ABI should guarentee the necessary alignment.
+  if (FrameIdx < 0)
+    return;
+
+  MachineFunction &MF = DAG.getMachineFunction();
+  MachineFrameInfo *MFI = MF.getFrameInfo();
+
+  unsigned Align = MFI->getObjectAlignment(FrameIdx);
+  if (Align >= 4)
+    return;
+
+  PPCFunctionInfo *FuncInfo = MF.getInfo<PPCFunctionInfo>();
+  FuncInfo->setHasNonRISpills();
+}
+
 /// Returns true if the address N can be represented by a base register plus
 /// a signed 16-bit displacement [r+imm], and if it is not better
 /// represented as reg+reg.  If Aligned is true, only accept displacements
@@ -1048,6 +1080,7 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
       Disp = DAG.getTargetConstant(imm, N.getValueType());
       if (FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(N.getOperand(0))) {
         Base = DAG.getTargetFrameIndex(FI->getIndex(), N.getValueType());
+        fixupFuncForFI(DAG, FI->getIndex(), N.getValueType());
       } else {
         Base = N.getOperand(0);
       }
@@ -1112,9 +1145,10 @@ bool PPCTargetLowering::SelectAddressRegImm(SDValue N, SDValue &Disp,
   }
 
   Disp = DAG.getTargetConstant(0, getPointerTy());
-  if (FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(N))
+  if (FrameIndexSDNode *FI = dyn_cast<FrameIndexSDNode>(N)) {
     Base = DAG.getTargetFrameIndex(FI->getIndex(), N.getValueType());
-  else
+    fixupFuncForFI(DAG, FI->getIndex(), N.getValueType());
+  } else
     Base = N;
   return true;      // [r+0]
 }
@@ -4687,15 +4721,6 @@ SDValue PPCTargetLowering::LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG,
                                            SDLoc dl) const {
   assert(Op.getOperand(0).getValueType().isFloatingPoint());
   SDValue Src = Op.getOperand(0);
-
-  // If we have a long double here, it must be that we have an undef of
-  // that type.  In this case return an undef of the target type.
-  if (Src.getValueType() == MVT::ppcf128) {
-    assert(Src.getOpcode() == ISD::UNDEF && "Unhandled ppcf128!");
-    return DAG.getNode(ISD::UNDEF, dl,
-                       Op.getValueType().getSimpleVT().SimpleTy);
-  }
-
   if (Src.getValueType() == MVT::f32)
     Src = DAG.getNode(ISD::FP_EXTEND, dl, MVT::f64, Src);
 
@@ -5775,6 +5800,9 @@ void PPCTargetLowering::ReplaceNodeResults(SDNode *N,
     return;
   }
   case ISD::FP_TO_SINT:
+    // LowerFP_TO_INT() can only handle f32 and f64.
+    if (N->getOperand(0).getValueType() == MVT::ppcf128)
+      return;
     Results.push_back(LowerFP_TO_INT(SDValue(N, 0), DAG, dl));
     return;
   }
@@ -7776,18 +7804,15 @@ bool PPCTargetLowering::allowsUnalignedMemoryAccesses(EVT VT,
   return true;
 }
 
-/// isFMAFasterThanMulAndAdd - Return true if an FMA operation is faster than
-/// a pair of mul and add instructions. fmuladd intrinsics will be expanded to
-/// FMAs when this method returns true (and FMAs are legal), otherwise fmuladd
-/// is expanded to mul + add.
-bool PPCTargetLowering::isFMAFasterThanMulAndAdd(EVT VT) const {
+bool PPCTargetLowering::isFMAFasterThanFMulAndFAdd(EVT VT) const {
+  VT = VT.getScalarType();
+
   if (!VT.isSimple())
     return false;
 
   switch (VT.getSimpleVT().SimpleTy) {
   case MVT::f32:
   case MVT::f64:
-  case MVT::v4f32:
     return true;
   default:
     break;

@@ -364,6 +364,14 @@ def DOT4 : SDNode<"AMDGPUISD::DOT4",
   []
 >;
 
+def COS_HW : SDNode<"AMDGPUISD::COS_HW",
+  SDTypeProfile<1, 1, [SDTCisFP<0>, SDTCisFP<1>]>
+>;
+
+def SIN_HW : SDNode<"AMDGPUISD::SIN_HW",
+  SDTypeProfile<1, 1, [SDTCisFP<0>, SDTCisFP<1>]>
+>;
+
 def TEXTURE_FETCH_Type : SDTypeProfile<1, 19, [SDTCisFP<0>]>;
 
 def TEXTURE_FETCH: SDNode<"AMDGPUISD::TEXTURE_FETCH", TEXTURE_FETCH_Type, []>;
@@ -522,9 +530,9 @@ let usesCustomInserter = 1, isNotDuplicable = 1 in {
 class ExportSwzInst : InstR600ISA<(
     outs),
     (ins R600_Reg128:$gpr, i32imm:$type, i32imm:$arraybase,
-    i32imm:$sw_x, i32imm:$sw_y, i32imm:$sw_z, i32imm:$sw_w, i32imm:$inst,
+    RSel:$sw_x, RSel:$sw_y, RSel:$sw_z, RSel:$sw_w, i32imm:$inst,
     i32imm:$eop),
-    !strconcat("EXPORT", " $gpr"),
+    !strconcat("EXPORT", " $gpr.$sw_x$sw_y$sw_z$sw_w"),
     []>, ExportWord0, ExportSwzWord1 {
   let elem_size = 3;
   let Inst{31-0} = Word0;
@@ -555,7 +563,7 @@ class ALU_CLAUSE<bits<4> inst, string OpName> : AMDGPUInst <(outs),
 (ins i32imm:$ADDR, i32imm:$KCACHE_BANK0, i32imm:$KCACHE_BANK1,
 KCACHE:$KCACHE_MODE0, KCACHE:$KCACHE_MODE1,
 i32imm:$KCACHE_ADDR0, i32imm:$KCACHE_ADDR1,
-i32imm:$COUNT),
+i32imm:$COUNT, i32imm:$Enabled),
 !strconcat(OpName, " $COUNT, @$ADDR, "
 "KC0[$KCACHE_MODE0], KC1[$KCACHE_MODE1]"),
 [] >, CF_ALU_WORD0, CF_ALU_WORD1 {
@@ -1080,14 +1088,14 @@ class RECIPSQRT_IEEE_Common <bits<11> inst> : R600_1OP <
 }
 
 class SIN_Common <bits<11> inst> : R600_1OP <
-  inst, "SIN", []>{
+  inst, "SIN", [(set f32:$dst, (SIN_HW f32:$src0))]>{
   let Trig = 1;
   let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class COS_Common <bits<11> inst> : R600_1OP <
-  inst, "COS", []> {
+  inst, "COS", [(set f32:$dst, (COS_HW f32:$src0))]> {
   let Trig = 1;
   let TransOnly = 1;
   let Itinerary = TransALU;
@@ -1228,18 +1236,6 @@ let Predicates = [isR600] in {
 
 }
 
-// Helper pattern for normalizing inputs to triginomic instructions for R700+
-// cards.
-class COS_PAT <InstR600 trig> : Pat<
-  (fcos f32:$src),
-  (trig (MUL_IEEE (MOV_IMM_I32 CONST.TWO_PI_INV), $src))
->;
-
-class SIN_PAT <InstR600 trig> : Pat<
-  (fsin f32:$src),
-  (trig (MUL_IEEE (MOV_IMM_I32 CONST.TWO_PI_INV), $src))
->;
-
 //===----------------------------------------------------------------------===//
 // R700 Only instructions
 //===----------------------------------------------------------------------===//
@@ -1247,10 +1243,6 @@ class SIN_PAT <InstR600 trig> : Pat<
 let Predicates = [isR700] in {
   def SIN_r700 : SIN_Common<0x6E>;
   def COS_r700 : COS_Common<0x6F>;
-
-  // R700 normalizes inputs to SIN/COS the same as EG
-  def : SIN_PAT <SIN_r700>;
-  def : COS_PAT <COS_r700>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1276,8 +1268,6 @@ def SIN_eg : SIN_Common<0x8D>;
 def COS_eg : COS_Common<0x8E>;
 
 def : POW_Common <LOG_IEEE_eg, EXP_IEEE_eg, MUL>;
-def : SIN_PAT <SIN_eg>;
-def : COS_PAT <COS_eg>;
 def : Pat<(fsqrt f32:$src), (MUL $src, (RECIPSQRT_CLAMPED_eg $src))>;
 
 //===----------------------------------------------------------------------===//
@@ -1726,8 +1716,6 @@ def COS_cm : COS_Common<0x8E>;
 } // End isVector = 1
 
 def : POW_Common <LOG_IEEE_cm, EXP_IEEE_cm, MUL>;
-def : SIN_PAT <SIN_cm>;
-def : COS_PAT <COS_cm>;
 
 defm DIV_cm : DIV_Common<RECIP_IEEE_cm>;
 

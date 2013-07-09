@@ -66,7 +66,7 @@ private:
   BuilderLocGuard(const BuilderLocGuard &);
   BuilderLocGuard &operator=(const BuilderLocGuard &);
   IRBuilder<> &Builder;
-  BasicBlock::iterator Loc;
+  AssertingVH<Instruction> Loc;
 };
 
 /// A helper class for numbering instructions in multible blocks.
@@ -172,7 +172,7 @@ static unsigned getSameOpcode(ArrayRef<Value *> VL) {
 static Type* getSameType(ArrayRef<Value *> VL) {
   Type *Ty = VL[0]->getType();
   for (int i = 1, e = VL.size(); i < e; i++)
-    if (VL[0]->getType() != Ty)
+    if (VL[i]->getType() != Ty)
       return 0;
 
   return Ty;
@@ -389,6 +389,8 @@ private:
 
 void BoUpSLP::buildTree(ArrayRef<Value *> Roots) {
   deleteTree();
+  if (!getSameType(Roots))
+    return;
   buildTree_rec(Roots, 0);
 }
 
@@ -1217,6 +1219,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
 }
 
 void BoUpSLP::vectorizeTree() {
+  Builder.SetInsertPoint(F->getEntryBlock().begin());
   vectorizeTree(&VectorizableTree[0]);
 
   // For each vectorized value:

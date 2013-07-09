@@ -1126,6 +1126,18 @@ Instruction *InstCombiner::visitICmpInstWithInstAndIntCst(ICmpInst &ICI,
                               Builder->getInt(RHSV ^ NotSignBit));
         }
       }
+
+      // (icmp ugt (xor X, C), ~C) -> (icmp ult X, C)
+      //   iff -C is a power of 2
+      if (ICI.getPredicate() == ICmpInst::ICMP_UGT &&
+          XorCST->getValue() == ~RHSV && (RHSV + 1).isPowerOf2())
+        return new ICmpInst(ICmpInst::ICMP_ULT, LHSI->getOperand(0), XorCST);
+
+      // (icmp ult (xor X, C), -C) -> (icmp uge X, C)
+      //   iff -C is a power of 2
+      if (ICI.getPredicate() == ICmpInst::ICMP_ULT &&
+          XorCST->getValue() == -RHSV && RHSV.isPowerOf2())
+        return new ICmpInst(ICmpInst::ICMP_UGE, LHSI->getOperand(0), XorCST);
     }
     break;
   case Instruction::And:         // (icmp pred (and X, AndCST), RHS)
@@ -1277,6 +1289,15 @@ Instruction *InstCombiner::visitICmpInstWithInstAndIntCst(ICmpInst &ICI,
               return Res;
           }
     }
+
+    // X & -C == -C -> X >  u ~C
+    // X & -C != -C -> X <= u ~C
+    //   iff C is a power of 2
+    if (ICI.isEquality() && RHS == LHSI->getOperand(1) && (-RHSV).isPowerOf2())
+      return new ICmpInst(
+          ICI.getPredicate() == ICmpInst::ICMP_EQ ? ICmpInst::ICMP_UGT
+                                                  : ICmpInst::ICMP_ULE,
+          LHSI->getOperand(0), SubOne(RHS));
     break;
 
   case Instruction::Or: {
@@ -1512,6 +1533,30 @@ Instruction *InstCombiner::visitICmpInstWithInstAndIntCst(ICmpInst &ICI,
         return R;
     break;
 
+  case Instruction::Sub: {
+    ConstantInt *LHSC = dyn_cast<ConstantInt>(LHSI->getOperand(0));
+    if (!LHSC) break;
+    const APInt &LHSV = LHSC->getValue();
+
+    // C1-X <u C2 -> (X|(C2-1)) == C1
+    //   iff C1 & (C2-1) == C2-1
+    //       C2 is a power of 2
+    if (ICI.getPredicate() == ICmpInst::ICMP_ULT && LHSI->hasOneUse() &&
+        RHSV.isPowerOf2() && (LHSV & (RHSV - 1)) == (RHSV - 1))
+      return new ICmpInst(ICmpInst::ICMP_EQ,
+                          Builder->CreateOr(LHSI->getOperand(1), RHSV - 1),
+                          LHSC);
+
+    // C1-X >u C2 -> (X|C2) != C1
+    //   iff C1 & C2 == C2
+    //       C2+1 is a power of 2
+    if (ICI.getPredicate() == ICmpInst::ICMP_UGT && LHSI->hasOneUse() &&
+        (RHSV + 1).isPowerOf2() && (LHSV & RHSV) == RHSV)
+      return new ICmpInst(ICmpInst::ICMP_NE,
+                          Builder->CreateOr(LHSI->getOperand(1), RHSV), LHSC);
+    break;
+  }
+
   case Instruction::Add:
     // Fold: icmp pred (add X, C1), C2
     if (!ICI.isEquality()) {
@@ -1540,12 +1585,22 @@ Instruction *InstCombiner::visitICmpInstWithInstAndIntCst(ICmpInst &ICI,
         }
       }
 
-      // X-C1 <u 2 -> (X & -2) == C1
-      //   iff C1 & 1 == 0
+      // X-C1 <u C2 -> (X & -C2) == C1
+      //   iff C1 & (C2-1) == 0
+      //       C2 is a power of 2
       if (ICI.getPredicate() == ICmpInst::ICMP_ULT && LHSI->hasOneUse() &&
-          LHSV[0] == 0 && RHSV == 2)
+          RHSV.isPowerOf2() && (LHSV & (RHSV - 1)) == 0)
         return new ICmpInst(ICmpInst::ICMP_EQ,
                             Builder->CreateAnd(LHSI->getOperand(0), -RHSV),
+                            ConstantExpr::getNeg(LHSC));
+
+      // X-C1 >u C2 -> (X & ~C2) != C1
+      //   iff C1 & C2 == 0
+      //       C2+1 is a power of 2
+      if (ICI.getPredicate() == ICmpInst::ICMP_UGT && LHSI->hasOneUse() &&
+          (RHSV + 1).isPowerOf2() && (LHSV & RHSV) == 0)
+        return new ICmpInst(ICmpInst::ICMP_NE,
+                            Builder->CreateAnd(LHSI->getOperand(0), ~RHSV),
                             ConstantExpr::getNeg(LHSC));
     }
     break;

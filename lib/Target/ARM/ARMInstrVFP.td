@@ -583,6 +583,57 @@ def VCVTTDH : ADuI<0b11101, 0b11, 0b0011, 0b11, 0,
   let Inst{5}     = Dm{4};
 }
 
+multiclass vcvt_inst<string opc, bits<2> rm> {
+  let PostEncoderMethod = "" in {
+    def SS : ASuInp<0b11101, 0b11, 0b1100, 0b11, 0,
+                    (outs SPR:$Sd), (ins SPR:$Sm),
+                    NoItinerary, !strconcat("vcvt", opc, ".s32.f32\t$Sd, $Sm"),
+                    []>, Requires<[HasV8FP]> {
+      let Inst{17-16} = rm;
+    }
+
+    def US : ASuInp<0b11101, 0b11, 0b1100, 0b01, 0,
+                    (outs SPR:$Sd), (ins SPR:$Sm),
+                    NoItinerary, !strconcat("vcvt", opc, ".u32.f32\t$Sd, $Sm"),
+                    []>, Requires<[HasV8FP]> {
+      let Inst{17-16} = rm;
+    }
+
+    def SD : ASuInp<0b11101, 0b11, 0b1100, 0b11, 0,
+                    (outs SPR:$Sd), (ins DPR:$Dm),
+                    NoItinerary, !strconcat("vcvt", opc, ".s32.f64\t$Sd, $Dm"),
+                    []>, Requires<[HasV8FP]> {
+      bits<5> Dm;
+
+      let Inst{17-16} = rm;
+
+      // Encode instruction operands
+      let Inst{3-0} = Dm{3-0};
+      let Inst{5}   = Dm{4};
+      let Inst{8} = 1;
+    }
+
+    def UD : ASuInp<0b11101, 0b11, 0b1100, 0b01, 0,
+                    (outs SPR:$Sd), (ins DPR:$Dm),
+                    NoItinerary, !strconcat("vcvt", opc, ".u32.f64\t$Sd, $Dm"),
+                    []>, Requires<[HasV8FP]> {
+      bits<5> Dm;
+
+      let Inst{17-16} = rm;
+
+      // Encode instruction operands
+      let Inst{3-0}  = Dm{3-0};
+      let Inst{5}    = Dm{4};
+      let Inst{8} = 1;
+    }
+  }
+}
+
+defm VCVTA : vcvt_inst<"a", 0b00>;
+defm VCVTN : vcvt_inst<"n", 0b01>;
+defm VCVTP : vcvt_inst<"p", 0b10>;
+defm VCVTM : vcvt_inst<"m", 0b11>;
+
 def VNEGD  : ADuI<0b11101, 0b11, 0b0001, 0b01, 0,
                   (outs DPR:$Dd), (ins DPR:$Dm),
                   IIC_fpUNA64, "vneg", ".f64\t$Dd, $Dm",
@@ -596,6 +647,54 @@ def VNEGS  : ASuIn<0b11101, 0b11, 0b0001, 0b01, 0,
   // VFP pipelines on A8.
   let D = VFPNeonA8Domain;
 }
+
+multiclass vrint_inst_zrx<string opc, bit op, bit op2> {
+  def S : ASuI<0b11101, 0b11, 0b0110, 0b11, 0,
+               (outs SPR:$Sd), (ins SPR:$Sm),
+               NoItinerary, !strconcat("vrint", opc), ".f32\t$Sd, $Sm",
+               []>, Requires<[HasV8FP]> {
+    let Inst{7} = op2;
+    let Inst{16} = op;
+  }
+  def D : ADuI<0b11101, 0b11, 0b0110, 0b11, 0,
+                (outs DPR:$Dd), (ins DPR:$Dm),
+                NoItinerary, !strconcat("vrint", opc), ".f64\t$Dd, $Dm",
+                []>, Requires<[HasV8FP]> {
+    let Inst{7} = op2;
+    let Inst{16} = op;
+  }
+}
+
+defm VRINTZ : vrint_inst_zrx<"z", 0, 1>;
+defm VRINTR : vrint_inst_zrx<"r", 0, 0>;
+defm VRINTX : vrint_inst_zrx<"x", 1, 0>;
+
+multiclass vrint_inst_anpm<string opc, bits<2> rm> {
+  let PostEncoderMethod = "" in {
+    def S : ASuInp<0b11101, 0b11, 0b1000, 0b01, 0,
+                   (outs SPR:$Sd), (ins SPR:$Sm),
+                   NoItinerary, !strconcat("vrint", opc, ".f32\t$Sd, $Sm"),
+                   []>, Requires<[HasV8FP]> {
+      let Inst{17-16} = rm;
+    }
+    def D : ADuInp<0b11101, 0b11, 0b1000, 0b01, 0,
+                   (outs DPR:$Dd), (ins DPR:$Dm),
+                   NoItinerary, !strconcat("vrint", opc, ".f64\t$Dd, $Dm"),
+                   []>, Requires<[HasV8FP]> {
+      let Inst{17-16} = rm;
+    }
+  }
+
+  def : InstAlias<!strconcat("vrint", opc, ".f32.f32\t$Sd, $Sm"),
+                  (!cast<Instruction>(NAME#"S") SPR:$Sd, SPR:$Sm)>;
+  def : InstAlias<!strconcat("vrint", opc, ".f64.f64\t$Dd, $Dm"),
+                  (!cast<Instruction>(NAME#"D") DPR:$Dd, DPR:$Dm)>;
+}
+
+defm VRINTA : vrint_inst_anpm<"a", 0b00>;
+defm VRINTN : vrint_inst_anpm<"n", 0b01>;
+defm VRINTP : vrint_inst_anpm<"p", 0b10>;
+defm VRINTM : vrint_inst_anpm<"m", 0b11>;
 
 def VSQRTD : ADuI<0b11101, 0b11, 0b0001, 0b11, 0,
                   (outs DPR:$Dd), (ins DPR:$Dm),

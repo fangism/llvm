@@ -356,7 +356,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   case PPC::LDtocCPT:
   case PPC::LDtoc: {
     // Transform %X3 = LDtoc <ga:@min1>, %X2
-    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this);
+    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this, Subtarget.isDarwin());
 
     // Change the opcode to LD, and the global address operand to be a
     // reference to the TOC entry we will synthesize later.
@@ -385,7 +385,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       
   case PPC::ADDIStocHA: {
     // Transform %Xd = ADDIStocHA %X2, <ga:@sym>
-    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this);
+    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this, Subtarget.isDarwin());
 
     // Change the opcode to ADDIS8.  If the global address is external,
     // has common linkage, is a function address, or is a jump table
@@ -429,7 +429,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   }
   case PPC::LDtocL: {
     // Transform %Xd = LDtocL <ga:@sym>, %Xs
-    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this);
+    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this, Subtarget.isDarwin());
 
     // Change the opcode to LD.  If the global address is external, has
     // common linkage, or is a jump table address, then reference the
@@ -466,7 +466,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   }
   case PPC::ADDItocL: {
     // Transform %Xd = ADDItocL %Xs, <ga:@sym>
-    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this);
+    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this, Subtarget.isDarwin());
 
     // Change the opcode to ADDI8.  If the global address is external, then
     // generate a TOC entry and reference that.  Otherwise reference the
@@ -518,7 +518,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   }
   case PPC::LDgotTprelL: {
     // Transform %Xd = LDgotTprelL <ga:@sym>, %Xs
-    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this);
+    LowerPPCMachineInstrToMCInst(MI, TmpInst, *this, Subtarget.isDarwin());
 
     // Change the opcode to LD.
     TmpInst.setOpcode(PPC::LD);
@@ -577,7 +577,8 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = Mang->getSymbol(GValue);
     const MCExpr *SymVar =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_TLSGD, OutContext);
+      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_TLSGD,
+                              OutContext);
     OutStreamer.EmitInstruction(MCInstBuilder(PPC::BL8_NOP_TLS)
                                 .addExpr(TlsRef)
                                 .addExpr(SymVar));
@@ -628,7 +629,8 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = Mang->getSymbol(GValue);
     const MCExpr *SymVar =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_TLSLD, OutContext);
+      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_TLSLD,
+                              OutContext);
     OutStreamer.EmitInstruction(MCInstBuilder(PPC::BL8_NOP_TLS)
                                 .addExpr(TlsRef)
                                 .addExpr(SymVar));
@@ -724,7 +726,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   }
   }
 
-  LowerPPCMachineInstrToMCInst(MI, TmpInst, *this);
+  LowerPPCMachineInstrToMCInst(MI, TmpInst, *this, Subtarget.isDarwin());
   OutStreamer.EmitInstruction(TmpInst);
 }
 
@@ -897,6 +899,7 @@ void PPCDarwinAsmPrinter::
 EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
   STACKTRACE_VERBOSE;
   bool isPPC64 = TM.getDataLayout()->getPointerSizeInBits() == 64;
+  bool isDarwin = Subtarget.isDarwin();
   
   const TargetLoweringObjectFileMachO &TLOFMacho = 
     static_cast<const TargetLoweringObjectFileMachO &>(getObjFileLowering());
@@ -940,7 +943,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
       OutStreamer.EmitInstruction(MCInstBuilder(PPC::MFLR).addReg(PPC::R11));
       // load address one half at a time
       // addis r11, r11, ha16(LazyPtr - AnonSymbol)
-      const MCExpr *SubHa16 = PPCMCExpr::CreateHa(Sub, OutContext);
+      const MCExpr *SubHa16 = PPCMCExpr::CreateHa(Sub, isDarwin, OutContext);
       OutStreamer.EmitInstruction(MCInstBuilder(PPC::ADDIS)
         .addReg(PPC::R11)
         .addReg(PPC::R11)
@@ -950,7 +953,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
 
       // ldu r12, lo16(LazyPtr - AnonSymbol)(r11)
       // lwzu r12, lo16(LazyPtr - AnonSymbol)(r11)
-      const MCExpr *SubLo16 = PPCMCExpr::CreateLo(Sub, OutContext);
+      const MCExpr *SubLo16 = PPCMCExpr::CreateLo(Sub, isDarwin, OutContext);
       OutStreamer.EmitInstruction(MCInstBuilder(isPPC64 ? PPC::LDU : PPC::LWZU)
         .addReg(PPC::R12)
         .addExpr(SubLo16).addExpr(SubLo16)
@@ -996,14 +999,16 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
     OutStreamer.EmitSymbolAttribute(RawSym, MCSA_IndirectSymbol);
 
     // lis r11, ha16(LazyPtr)
-    const MCExpr *LazyPtrHa16 = PPCMCExpr::CreateHa(LazyPtrExpr, OutContext);
+    const MCExpr *LazyPtrHa16 =
+      PPCMCExpr::CreateHa(LazyPtrExpr, isDarwin, OutContext);
     OutStreamer.EmitInstruction(MCInstBuilder(PPC::LIS)
       .addReg(PPC::R11)
       .addExpr(LazyPtrHa16));
 
     // ldu r12, lo16(LazyPtr)(r11)
     // lwzu r12, lo16(LazyPtr)(r11)
-    const MCExpr *LazyPtrLo16 = PPCMCExpr::CreateLo(LazyPtrExpr, OutContext);
+    const MCExpr *LazyPtrLo16 =
+      PPCMCExpr::CreateLo(LazyPtrExpr, isDarwin, OutContext);
     OutStreamer.EmitInstruction(MCInstBuilder(isPPC64 ? PPC::LDU : PPC::LWZU)
       .addReg(PPC::R12)
       .addExpr(LazyPtrLo16).addExpr(LazyPtrLo16)

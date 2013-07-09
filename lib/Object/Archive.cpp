@@ -13,6 +13,8 @@
 
 #include "llvm/Object/Archive.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MemoryBuffer.h"
 
@@ -36,6 +38,99 @@ static bool isInternalMember(const ArchiveMemberHeader &amh) {
 }
 
 void Archive::anchor() { }
+
+StringRef ArchiveMemberHeader::getName() const {
+  char EndCond;
+  if (Name[0] == '/' || Name[0] == '#')
+    EndCond = ' ';
+  else
+    EndCond = '/';
+  llvm::StringRef::size_type end =
+      llvm::StringRef(Name, sizeof(Name)).find(EndCond);
+  if (end == llvm::StringRef::npos)
+    end = sizeof(Name);
+  assert(end <= sizeof(Name) && end > 0);
+  // Don't include the EndCond if there is one.
+  return llvm::StringRef(Name, end);
+}
+
+uint32_t ArchiveMemberHeader::getSize() const {
+  uint32_t Ret;
+  if (llvm::StringRef(Size, sizeof(Size)).rtrim(" ").getAsInteger(10, Ret))
+    llvm_unreachable("Size is not a decimal number.");
+  return Ret;
+}
+
+sys::fs::perms ArchiveMemberHeader::getAccessMode() const {
+  unsigned Ret;
+  if (StringRef(AccessMode, sizeof(AccessMode)).rtrim(" ").getAsInteger(8, Ret))
+    llvm_unreachable("Access mode is not an octal number.");
+  return static_cast<sys::fs::perms>(Ret);
+}
+
+sys::TimeValue ArchiveMemberHeader::getLastModified() const {
+  unsigned Seconds;
+  if (StringRef(LastModified, sizeof(LastModified)).rtrim(" ")
+          .getAsInteger(10, Seconds))
+    llvm_unreachable("Last modified time not a decimal number.");
+
+  sys::TimeValue Ret;
+  Ret.fromEpochTime(Seconds);
+  return Ret;
+}
+
+unsigned ArchiveMemberHeader::getUID() const {
+  unsigned Ret;
+  if (StringRef(UID, sizeof(UID)).rtrim(" ").getAsInteger(10, Ret))
+    llvm_unreachable("UID time not a decimal number.");
+  return Ret;
+}
+
+unsigned ArchiveMemberHeader::getGID() const {
+  unsigned Ret;
+  if (StringRef(GID, sizeof(GID)).rtrim(" ").getAsInteger(10, Ret))
+    llvm_unreachable("GID time not a decimal number.");
+  return Ret;
+}
+
+static const ArchiveMemberHeader *toHeader(const char *base) {
+  return reinterpret_cast<const ArchiveMemberHeader *>(base);
+}
+
+Archive::Child::Child(const Archive *Parent, const char *Start)
+    : Parent(Parent) {
+  if (!Start)
+    return;
+
+  const ArchiveMemberHeader *Header = toHeader(Start);
+  Data = StringRef(Start, sizeof(ArchiveMemberHeader) + Header->getSize());
+
+  // Setup StartOfFile and PaddingBytes.
+  StartOfFile = sizeof(ArchiveMemberHeader);
+  // Don't include attached name.
+  StringRef Name = Header->getName();
+  if (Name.startswith("#1/")) {
+    uint64_t NameSize;
+    if (Name.substr(3).rtrim(" ").getAsInteger(10, NameSize))
+      llvm_unreachable("Long name length is not an integer");
+    StartOfFile += NameSize;
+  }
+}
+
+Archive::Child Archive::Child::getNext() const {
+  size_t SpaceToSkip = Data.size();
+  // If it's odd, add 1 to make it even.
+  if (SpaceToSkip & 1)
+    ++SpaceToSkip;
+
+  const char *NextLoc = Data.data() + SpaceToSkip;
+
+  // Check to see if this is past the end of the archive.
+  if (NextLoc >= Parent->Data->getBufferEnd())
+    return Child(Parent, NULL);
+
+  return Child(Parent, NextLoc);
+}
 
 error_code Archive::Child::getName(StringRef &Result) const {
   StringRef name = getRawName();
@@ -87,6 +182,20 @@ error_code Archive::Child::getName(StringRef &Result) const {
   else
     Result = name;
   return object_error::success;
+}
+
+error_code Archive::Child::getMemoryBuffer(OwningPtr<MemoryBuffer> &Result,
+                                           bool FullPath) const {
+  StringRef Name;
+  if (error_code ec = getName(Name))
+    return ec;
+  SmallString<128> Path;
+  Result.reset(MemoryBuffer::getMemBuffer(
+      getBuffer(), FullPath ? (Twine(Parent->getFileName()) + "(" + Name + ")")
+                                  .toStringRef(Path)
+                            : Name,
+      false));
+  return error_code::success();
 }
 
 error_code Archive::Child::getAsBinary(OwningPtr<Binary> &Result) const {
@@ -195,17 +304,15 @@ Archive::Archive(MemoryBuffer *source, error_code &ec)
 
 Archive::child_iterator Archive::begin_children(bool skip_internal) const {
   const char *Loc = Data->getBufferStart() + strlen(Magic);
-  size_t Size = sizeof(ArchiveMemberHeader) +
-    ToHeader(Loc)->getSize();
-  Child c(this, StringRef(Loc, Size));
+  Child c(this, Loc);
   // Skip internals at the beginning of an archive.
-  if (skip_internal && isInternalMember(*ToHeader(Loc)))
+  if (skip_internal && isInternalMember(*toHeader(Loc)))
     return c.getNext();
   return c;
 }
 
 Archive::child_iterator Archive::end_children() const {
-  return Child(this, StringRef(0, 0));
+  return Child(this, NULL);
 }
 
 error_code Archive::Symbol::getName(StringRef &Result) const {
@@ -253,9 +360,7 @@ error_code Archive::Symbol::getMember(child_iterator &Result) const {
   }
 
   const char *Loc = Parent->getData().begin() + Offset;
-  size_t Size = sizeof(ArchiveMemberHeader) +
-    ToHeader(Loc)->getSize();
-  Result = Child(Parent, StringRef(Loc, Size));
+  Result = Child(Parent, Loc);
 
   return object_error::success;
 }
