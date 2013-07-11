@@ -210,7 +210,7 @@ error_code Archive::Child::getAsBinary(OwningPtr<Binary> &Result) const {
 }
 
 Archive::Archive(MemoryBuffer *source, error_code &ec)
-  : Binary(Binary::ID_Archive, source) {
+  : Binary(Binary::ID_Archive, source), SymbolTable(end_children()) {
   // Check for sufficient magic.
   if (!source || source->getBufferSize()
                  < (8 + sizeof(ArchiveMemberHeader)) // Smallest archive.
@@ -236,9 +236,9 @@ Archive::Archive(MemoryBuffer *source, error_code &ec)
   //  Second member : // (may exist, if it exists, points to the string table)
   //  Note : The string table is used if the filename exceeds 15 characters
   // BSD archive format
-  //  First member : __.SYMDEF (points to the symbol table)
-  //  There is no string table, if the filename exceeds 15 characters or has a 
-  //  embedded space, the filename has #1/<size>, The size represents the size 
+  //  First member : __.SYMDEF or "__.SYMDEF SORTED" (the symbol table)
+  //  There is no string table, if the filename exceeds 15 characters or has a
+  //  embedded space, the filename has #1/<size>, The size represents the size
   //  of the filename that needs to be read after the archive header
   // COFF archive format
   //  First member : /
@@ -253,6 +253,17 @@ Archive::Archive(MemoryBuffer *source, error_code &ec)
     Format = K_BSD;
     SymbolTable = i;
     ec = object_error::success;
+    return;
+  }
+
+  if (Name.startswith("#1/")) {
+    Format = K_BSD;
+    // We know this is BSD, so getName will work since there is no string table.
+    ec = i->getName(Name);
+    if (ec)
+      return;
+    if (Name == StringRef("__.SYMDEF SORTED\0\0\0", 20))
+      SymbolTable = i;
     return;
   }
 
@@ -375,6 +386,9 @@ Archive::Symbol Archive::Symbol::getNext() const {
 }
 
 Archive::symbol_iterator Archive::begin_symbols() const {
+  if (SymbolTable == end_children())
+    return symbol_iterator(Symbol(this, 0, 0));
+
   const char *buf = SymbolTable->getBuffer().begin();
   if (kind() == K_GNU) {
     uint32_t symbol_count = 0;
@@ -395,6 +409,9 @@ Archive::symbol_iterator Archive::begin_symbols() const {
 }
 
 Archive::symbol_iterator Archive::end_symbols() const {
+  if (SymbolTable == end_children())
+    return symbol_iterator(Symbol(this, 0, 0));
+
   const char *buf = SymbolTable->getBuffer().begin();
   uint32_t symbol_count = 0;
   if (kind() == K_GNU) {

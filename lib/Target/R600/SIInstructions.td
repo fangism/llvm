@@ -391,6 +391,9 @@ defm V_CMPX_CLASS_F64 : VOPC_64 <0x000000b8, "V_CMPX_CLASS_F64">;
 
 } // End isCompare = 1
 
+def DS_WRITE_B32 : DS_Store_Helper <0x0000000d, "DS_WRITE_B32", VReg_32>;
+def DS_READ_B32 : DS_Load_Helper <0x00000036, "DS_READ_B32", VReg_32>;
+
 //def BUFFER_LOAD_FORMAT_X : MUBUF_ <0x00000000, "BUFFER_LOAD_FORMAT_X", []>;
 //def BUFFER_LOAD_FORMAT_XY : MUBUF_ <0x00000001, "BUFFER_LOAD_FORMAT_XY", []>;
 //def BUFFER_LOAD_FORMAT_XYZ : MUBUF_ <0x00000002, "BUFFER_LOAD_FORMAT_XYZ", []>;
@@ -535,7 +538,7 @@ def IMAGE_SAMPLE_B : MIMG_Sampler_Helper <0x00000025, "IMAGE_SAMPLE_B">;
 //def IMAGE_SAMPLE_LZ : MIMG_NoPattern_ <"IMAGE_SAMPLE_LZ", 0x00000027>;
 def IMAGE_SAMPLE_C : MIMG_Sampler_Helper <0x00000028, "IMAGE_SAMPLE_C">;
 //def IMAGE_SAMPLE_C_CL : MIMG_NoPattern_ <"IMAGE_SAMPLE_C_CL", 0x00000029>;
-//def IMAGE_SAMPLE_C_D : MIMG_NoPattern_ <"IMAGE_SAMPLE_C_D", 0x0000002a>;
+def IMAGE_SAMPLE_C_D : MIMG_Sampler_Helper <0x0000002a, "IMAGE_SAMPLE_C_D">;
 //def IMAGE_SAMPLE_C_D_CL : MIMG_NoPattern_ <"IMAGE_SAMPLE_C_D_CL", 0x0000002b>;
 def IMAGE_SAMPLE_C_L : MIMG_Sampler_Helper <0x0000002c, "IMAGE_SAMPLE_C_L">;
 def IMAGE_SAMPLE_C_B : MIMG_Sampler_Helper <0x0000002d, "IMAGE_SAMPLE_C_B">;
@@ -771,8 +774,17 @@ def S_CBRANCH_EXECNZ : SOPP <
 } // End isBranch = 1
 } // End isTerminator = 1
 
-//def S_BARRIER : SOPP_ <0x0000000a, "S_BARRIER", []>;
 let hasSideEffects = 1 in {
+def S_BARRIER : SOPP <0x0000000a, (ins), "S_BARRIER",
+  [(int_AMDGPU_barrier_local)]
+> {
+  let SIMM16 = 0;
+  let isBarrier = 1;
+  let hasCtrlDep = 1;
+  let mayLoad = 1;
+  let mayStore = 1;
+}
+
 def S_WAITCNT : SOPP <0x0000000c, (ins i32imm:$simm16), "S_WAITCNT $simm16",
   []
 >;
@@ -900,8 +912,8 @@ defm V_MAC_F32 : VOP2_32 <0x0000001f, "V_MAC_F32", []>;
 defm V_MADMK_F32 : VOP2_32 <0x00000020, "V_MADMK_F32", []>;
 defm V_MADAK_F32 : VOP2_32 <0x00000021, "V_MADAK_F32", []>;
 //defm V_BCNT_U32_B32 : VOP2_32 <0x00000022, "V_BCNT_U32_B32", []>;
-//defm V_MBCNT_LO_U32_B32 : VOP2_32 <0x00000023, "V_MBCNT_LO_U32_B32", []>;
-//defm V_MBCNT_HI_U32_B32 : VOP2_32 <0x00000024, "V_MBCNT_HI_U32_B32", []>;
+defm V_MBCNT_LO_U32_B32 : VOP2_32 <0x00000023, "V_MBCNT_LO_U32_B32", []>;
+defm V_MBCNT_HI_U32_B32 : VOP2_32 <0x00000024, "V_MBCNT_HI_U32_B32", []>;
 
 let isCommutable = 1, Defs = [VCC] in { // Carry-out goes to VCC
 defm V_ADD_I32 : VOP2b_32 <0x00000025, "V_ADD_I32",
@@ -1296,6 +1308,11 @@ multiclass SamplePatterns<ValueType addr_type> {
   def : SampleArrayPattern <int_SI_sampleb, IMAGE_SAMPLE_B, addr_type>;
   def : SampleShadowPattern <int_SI_sampleb, IMAGE_SAMPLE_C_B, addr_type>;
   def : SampleShadowArrayPattern <int_SI_sampleb, IMAGE_SAMPLE_C_B, addr_type>;
+
+  def : SamplePattern <int_SI_sampled, IMAGE_SAMPLE_D, addr_type>;
+  def : SampleArrayPattern <int_SI_sampled, IMAGE_SAMPLE_D, addr_type>;
+  def : SampleShadowPattern <int_SI_sampled, IMAGE_SAMPLE_C_D, addr_type>;
+  def : SampleShadowArrayPattern <int_SI_sampled, IMAGE_SAMPLE_C_D, addr_type>;
 }
 
 defm : SamplePatterns<v2i32>;
@@ -1567,6 +1584,12 @@ def : Pat <
                    (V_RCP_IFLAG_F32_e32 (V_CVT_F32_U32_e32 $src0))))
 >;
 
+def : Pat <
+  (int_SI_tid),
+  (V_MBCNT_HI_U32_B32_e32 0xffffffff,
+                          (V_MBCNT_LO_U32_B32_e64 0xffffffff, 0, 0, 0, 0, 0))
+>;
+
 /********** ================== **********/
 /**********   VOP3 Patterns    **********/
 /********** ================== **********/
@@ -1574,6 +1597,21 @@ def : Pat <
 def : Pat <
   (f32 (fadd (fmul f32:$src0, f32:$src1), f32:$src2)),
   (V_MAD_F32 $src0, $src1, $src2)
+>;
+
+/********** ======================= **********/
+/**********   Load/Store Patterns   **********/
+/********** ======================= **********/
+
+def : Pat <
+    (local_load i64:$src0),
+    (i32 (DS_READ_B32 0, (EXTRACT_SUBREG $src0, sub0),
+                      (EXTRACT_SUBREG $src0, sub0), (EXTRACT_SUBREG $src0, sub0), 0, 0))
+>;
+
+def : Pat <
+    (local_store i32:$src1, i64:$src0),
+    (DS_WRITE_B32 0, (EXTRACT_SUBREG $src0, sub0), $src1, $src1, 0, 0)
 >;
 
 /********** ================== **********/
