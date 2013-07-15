@@ -279,9 +279,9 @@ MSP430TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                                 SmallVectorImpl<SDValue> &InVals) const {
   SelectionDAG &DAG                     = CLI.DAG;
   SDLoc &dl                             = CLI.DL;
-  SmallVector<ISD::OutputArg, 32> &Outs = CLI.Outs;
-  SmallVector<SDValue, 32> &OutVals     = CLI.OutVals;
-  SmallVector<ISD::InputArg, 32> &Ins   = CLI.Ins;
+  SmallVectorImpl<ISD::OutputArg> &Outs = CLI.Outs;
+  SmallVectorImpl<SDValue> &OutVals     = CLI.OutVals;
+  SmallVectorImpl<ISD::InputArg> &Ins   = CLI.Ins;
   SDValue Chain                         = CLI.Chain;
   SDValue Callee                        = CLI.Callee;
   bool &isTailCall                      = CLI.IsTailCall;
@@ -456,7 +456,7 @@ MSP430TargetLowering::LowerReturn(SDValue Chain,
 
 /// LowerCCCCallTo - functions arguments are copied from virtual regs to
 /// (physical regs)/(stack frame), CALLSEQ_START and CALLSEQ_END are emitted.
-/// TODO: sret.
+// TODO: sret.
 SDValue
 MSP430TargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
                                      CallingConv::ID CallConv, bool isVarArg,
@@ -987,8 +987,8 @@ SDValue MSP430TargetLowering::LowerJumpTable(SDValue Op,
                                              SelectionDAG &DAG) const {
     JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
     SDValue Result = DAG.getTargetJumpTable(JT->getIndex(), getPointerTy());
-    Result.getNode()->setDebugLoc(JT->getDebugLoc());
-    return Result;
+    return DAG.getNode(MSP430ISD::Wrapper, SDLoc(JT),
+                       getPointerTy(), Result);
 }
 
 /// getPostIndexedAddressParts - returns true by value, base pointer and

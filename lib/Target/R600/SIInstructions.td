@@ -176,19 +176,19 @@ defm V_CMPX_TRU_F32 : VOPC_32 <0x0000001f, "V_CMPX_TRU_F32">;
 } // End hasSideEffects = 1, Defs = [EXEC]
 
 defm V_CMP_F_F64 : VOPC_64 <0x00000020, "V_CMP_F_F64">;
-defm V_CMP_LT_F64 : VOPC_64 <0x00000021, "V_CMP_LT_F64">;
-defm V_CMP_EQ_F64 : VOPC_64 <0x00000022, "V_CMP_EQ_F64">;
-defm V_CMP_LE_F64 : VOPC_64 <0x00000023, "V_CMP_LE_F64">;
-defm V_CMP_GT_F64 : VOPC_64 <0x00000024, "V_CMP_GT_F64">;
+defm V_CMP_LT_F64 : VOPC_64 <0x00000021, "V_CMP_LT_F64", f64, COND_LT>;
+defm V_CMP_EQ_F64 : VOPC_64 <0x00000022, "V_CMP_EQ_F64", f64, COND_EQ>;
+defm V_CMP_LE_F64 : VOPC_64 <0x00000023, "V_CMP_LE_F64", f64, COND_LE>;
+defm V_CMP_GT_F64 : VOPC_64 <0x00000024, "V_CMP_GT_F64", f64, COND_GT>;
 defm V_CMP_LG_F64 : VOPC_64 <0x00000025, "V_CMP_LG_F64">;
-defm V_CMP_GE_F64 : VOPC_64 <0x00000026, "V_CMP_GE_F64">;
+defm V_CMP_GE_F64 : VOPC_64 <0x00000026, "V_CMP_GE_F64", f64, COND_GE>;
 defm V_CMP_O_F64 : VOPC_64 <0x00000027, "V_CMP_O_F64">;
 defm V_CMP_U_F64 : VOPC_64 <0x00000028, "V_CMP_U_F64">;
 defm V_CMP_NGE_F64 : VOPC_64 <0x00000029, "V_CMP_NGE_F64">;
 defm V_CMP_NLG_F64 : VOPC_64 <0x0000002a, "V_CMP_NLG_F64">;
 defm V_CMP_NGT_F64 : VOPC_64 <0x0000002b, "V_CMP_NGT_F64">;
 defm V_CMP_NLE_F64 : VOPC_64 <0x0000002c, "V_CMP_NLE_F64">;
-defm V_CMP_NEQ_F64 : VOPC_64 <0x0000002d, "V_CMP_NEQ_F64">;
+defm V_CMP_NEQ_F64 : VOPC_64 <0x0000002d, "V_CMP_NEQ_F64", f64, COND_NE>;
 defm V_CMP_NLT_F64 : VOPC_64 <0x0000002e, "V_CMP_NLT_F64">;
 defm V_CMP_TRU_F64 : VOPC_64 <0x0000002f, "V_CMP_TRU_F64">;
 
@@ -663,12 +663,18 @@ defm V_RSQ_LEGACY_F32 : VOP1_32 <
   [(set f32:$dst, (int_AMDGPU_rsq f32:$src0))]
 >;
 defm V_RSQ_F32 : VOP1_32 <0x0000002e, "V_RSQ_F32", []>;
-defm V_RCP_F64 : VOP1_64 <0x0000002f, "V_RCP_F64", []>;
+defm V_RCP_F64 : VOP1_64 <0x0000002f, "V_RCP_F64",
+  [(set f64:$dst, (fdiv FP_ONE, f64:$src0))]
+>;
 defm V_RCP_CLAMP_F64 : VOP1_64 <0x00000030, "V_RCP_CLAMP_F64", []>;
 defm V_RSQ_F64 : VOP1_64 <0x00000031, "V_RSQ_F64", []>;
 defm V_RSQ_CLAMP_F64 : VOP1_64 <0x00000032, "V_RSQ_CLAMP_F64", []>;
-defm V_SQRT_F32 : VOP1_32 <0x00000033, "V_SQRT_F32", []>;
-defm V_SQRT_F64 : VOP1_64 <0x00000034, "V_SQRT_F64", []>;
+defm V_SQRT_F32 : VOP1_32 <0x00000033, "V_SQRT_F32",
+  [(set f32:$dst, (fsqrt f32:$src0))]
+>;
+defm V_SQRT_F64 : VOP1_64 <0x00000034, "V_SQRT_F64",
+  [(set f64:$dst, (fsqrt f64:$src0))]
+>;
 defm V_SIN_F32 : VOP1_32 <0x00000035, "V_SIN_F32", []>;
 defm V_COS_F32 : VOP1_32 <0x00000036, "V_COS_F32", []>;
 defm V_NOT_B32 : VOP1_32 <0x00000037, "V_NOT_B32", []>;
@@ -819,6 +825,18 @@ def V_CNDMASK_B32_e64 : VOP3 <0x00000100, (outs VReg_32:$dst),
 def : Pat <
   (f32 (select i1:$src2, f32:$src1, f32:$src0)),
   (V_CNDMASK_B32_e64 $src0, $src1, $src2)
+>;
+
+//use two V_CNDMASK_B32_e64 instructions for f64
+def : Pat <
+  (f64 (select i1:$src2, f64:$src1, f64:$src0)),
+  (INSERT_SUBREG (INSERT_SUBREG (f64 (IMPLICIT_DEF)),
+  (V_CNDMASK_B32_e64 (EXTRACT_SUBREG $src0, sub0),
+                     (EXTRACT_SUBREG $src1, sub0),
+                     $src2), sub0),
+  (V_CNDMASK_B32_e64 (EXTRACT_SUBREG $src0, sub1),
+                     (EXTRACT_SUBREG $src1, sub1),
+                     $src2), sub1)
 >;
 
 defm V_READLANE_B32 : VOP2_32 <0x00000001, "V_READLANE_B32", []>;
@@ -1008,10 +1026,25 @@ def V_LSHR_B64 : VOP3_64_Shift <0x00000162, "V_LSHR_B64",
 >;
 def V_ASHR_I64 : VOP3_64_Shift <0x00000163, "V_ASHR_I64", []>;
 
+let isCommutable = 1 in {
+
 def V_ADD_F64 : VOP3_64 <0x00000164, "V_ADD_F64", []>;
 def V_MUL_F64 : VOP3_64 <0x00000165, "V_MUL_F64", []>;
 def V_MIN_F64 : VOP3_64 <0x00000166, "V_MIN_F64", []>;
 def V_MAX_F64 : VOP3_64 <0x00000167, "V_MAX_F64", []>;
+
+} // isCommutable = 1
+
+def : Pat <
+  (fadd f64:$src0, f64:$src1),
+  (V_ADD_F64 $src0, $src1, (i64 0))
+>;
+
+def : Pat <
+  (fmul f64:$src0, f64:$src1),
+  (V_MUL_F64 $src0, $src1, (i64 0))
+>;
+
 def V_LDEXP_F64 : VOP3_64 <0x00000168, "V_LDEXP_F64", []>;
 
 let isCommutable = 1 in {
@@ -1215,15 +1248,21 @@ def SI_INDIRECT_DST_V16 : SI_INDIRECT_DST<VReg_512>;
 
 } // Uses = [EXEC,VCC,M0], Defs = [EXEC,VCC,M0]
 
-// This psuedo instruction takes a pointer as input and outputs a resource
-// constant that can be used with the ADDR64 MUBUF instructions.
-
 let usesCustomInserter = 1 in {
 
+// This psuedo instruction takes a pointer as input and outputs a resource
+// constant that can be used with the ADDR64 MUBUF instructions.
 def SI_ADDR64_RSRC : InstSI <
   (outs SReg_128:$srsrc),
   (ins SReg_64:$ptr),
   "", []
+>;
+
+def V_SUB_F64 : InstSI <
+  (outs VReg_64:$dst),
+  (ins VReg_64:$src0, VReg_64:$src1),
+  "V_SUB_F64 $dst, $src0, $src1",
+  []
 >;
 
 } // end usesCustomInserter
@@ -1252,6 +1291,11 @@ def : Pat <
                  f32:$src0, f32:$src1, f32:$src2, f32:$src3),
   (EXP imm:$en, imm:$tgt, imm:$compr, imm:$done, imm:$vm,
        $src0, $src1, $src2, $src3)
+>;
+
+def : Pat <
+  (f64 (fsub f64:$src0, f64:$src1)),
+  (V_SUB_F64 $src0, $src1)
 >;
 
 /********** ======================= **********/
@@ -1434,6 +1478,10 @@ def : BitConvert <i32, f32, VReg_32>;
 def : BitConvert <f32, i32, SReg_32>;
 def : BitConvert <f32, i32, VReg_32>;
 
+def : BitConvert <i64, f64, VReg_64>;
+
+def : BitConvert <f64, i64, VReg_64>;
+
 /********** =================== **********/
 /********** Src & Dst modifiers **********/
 /********** =================== **********/
@@ -1488,6 +1536,13 @@ def : Pat <
     (S_MOV_B32 (i32 (HI32 imm:$imm))), sub1)
 >;
 
+def : Pat <
+  (f64 fpimm:$imm),
+  (INSERT_SUBREG (INSERT_SUBREG (f64 (IMPLICIT_DEF)),
+    (V_MOV_B32_e32 (f32 (LO32f fpimm:$imm))), sub0),
+    (V_MOV_B32_e32 (f32 (HI32f fpimm:$imm))), sub1)
+>;
+
 /********** ===================== **********/
 /********** Interpolation Paterns **********/
 /********** ===================== **********/
@@ -1520,6 +1575,11 @@ def : Pat <
 def : Pat<
   (fdiv f32:$src0, f32:$src1),
   (V_MUL_F32_e32 $src0, (V_RCP_F32_e32 $src1))
+>;
+
+def : Pat<
+  (fdiv f64:$src0, f64:$src1),
+  (V_MUL_F64 $src0, (V_RCP_F64_e32 $src1), (i64 0))
 >;
 
 def : Pat <
@@ -1672,6 +1732,8 @@ multiclass MUBUFLoad_Pattern <MUBUF Instr_ADDR64, ValueType vt,
   >;
 }
 
+defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORDX2_ADDR64, i64,
+                          global_load, constant_load>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORD_ADDR64, i32,
                           global_load, constant_load>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_UBYTE_ADDR64, i32,

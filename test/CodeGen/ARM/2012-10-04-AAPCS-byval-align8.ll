@@ -7,7 +7,7 @@
 declare void @llvm.va_start(i8*) nounwind
 declare void @llvm.va_end(i8*) nounwind
 
-; CHECK: test_byval_8_bytes_alignment:
+; CHECK-LABEL: test_byval_8_bytes_alignment:
 define void @test_byval_8_bytes_alignment(i32 %i, ...) {
 entry:
 ; CHECK: stm     r0, {r1, r2, r3}
@@ -23,7 +23,7 @@ entry:
   ret void
 }
 
-; CHECK: main:
+; CHECK-LABEL: main:
 ; CHECK: movw [[BASE:r[0-9]+]], :lower16:static_val
 ; CHECK: movt [[BASE]], :upper16:static_val
 ; ldm is not formed when the coalescer failed to coalesce everything.
@@ -40,7 +40,7 @@ entry:
 
 declare void @f(double);
 
-; CHECK:     test_byval_8_bytes_alignment_fixed_arg:
+; CHECK-LABEL:     test_byval_8_bytes_alignment_fixed_arg:
 ; CHECK-NOT:   str     r1
 ; CHECK:       str     r3, [sp, #12]
 ; CHECK:       str     r2, [sp, #8]
@@ -53,7 +53,7 @@ entry:
   ret void
 }
 
-; CHECK: main_fixed_arg:
+; CHECK-LABEL: main_fixed_arg:
 ; CHECK: movw [[BASE:r[0-9]+]], :lower16:static_val
 ; CHECK: movt [[BASE]], :upper16:static_val
 ; ldm is not formed when the coalescer failed to coalesce everything.

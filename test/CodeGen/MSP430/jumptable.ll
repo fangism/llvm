@@ -1,4 +1,4 @@
-; RUN: llc -O0 < %s | FileCheck %s
+; RUN: llc < %s | FileCheck %s
 
 target datalayout = "e-p:16:16:16-i8:8:8-i16:16:16-i32:16:32-n8:16"
 target triple = "msp430---elf"
@@ -6,14 +6,14 @@ target triple = "msp430---elf"
 ; Function Attrs: nounwind
 define i16 @test(i16 %i) #0 {
 entry:
-; CHECK: test:
+; CHECK-LABEL: test:
   %retval = alloca i16, align 2
   %i.addr = alloca i16, align 2
   store i16 %i, i16* %i.addr, align 2
   %0 = load i16* %i.addr, align 2
-; CHECK: add.w #.LJTI0_0, [[REG1:r[0-9]+]]
-; CHECK: mov.w 0([[REG1]]), [[REG2:r[0-9]+]]
-; CHECK: mov.w [[REG2]], pc
+; CHECK: mov.w #2, r14
+; CHECK: call #__mulhi3hw_noint
+; CHECK: br .LJTI0_0(r15)
   switch i16 %0, label %sw.default [
     i16 0, label %sw.bb
     i16 1, label %sw.bb1
@@ -49,6 +49,6 @@ return:                                           ; preds = %sw.default, %sw.bb3
 
 ; CHECK: .LJTI0_0:
 ; CHECK-NEXT: .short .LBB0_2
-; CHECK-NEXT: .short .LBB0_3
 ; CHECK-NEXT: .short .LBB0_4
+; CHECK-NEXT: .short .LBB0_3
 ; CHECK-NEXT: .short .LBB0_5

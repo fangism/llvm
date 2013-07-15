@@ -39,7 +39,7 @@ using namespace llvm;
 // TargetLowering Class Implementation Begins
 //===----------------------------------------------------------------------===//
 void AMDGPUTargetLowering::InitAMDILLowering() {
-  int types[] = {
+  static const int types[] = {
     (int)MVT::i8,
     (int)MVT::i16,
     (int)MVT::i32,
@@ -58,19 +58,19 @@ void AMDGPUTargetLowering::InitAMDILLowering() {
     (int)MVT::v2i64
   };
 
-  int IntTypes[] = {
+  static const int IntTypes[] = {
     (int)MVT::i8,
     (int)MVT::i16,
     (int)MVT::i32,
     (int)MVT::i64
   };
 
-  int FloatTypes[] = {
+  static const int FloatTypes[] = {
     (int)MVT::f32,
     (int)MVT::f64
   };
 
-  int VectorTypes[] = {
+  static const int VectorTypes[] = {
     (int)MVT::v2i8,
     (int)MVT::v4i8,
     (int)MVT::v2i16,
@@ -82,10 +82,10 @@ void AMDGPUTargetLowering::InitAMDILLowering() {
     (int)MVT::v2f64,
     (int)MVT::v2i64
   };
-  size_t NumTypes = sizeof(types) / sizeof(*types);
-  size_t NumFloatTypes = sizeof(FloatTypes) / sizeof(*FloatTypes);
-  size_t NumIntTypes = sizeof(IntTypes) / sizeof(*IntTypes);
-  size_t NumVectorTypes = sizeof(VectorTypes) / sizeof(*VectorTypes);
+  const size_t NumTypes = array_lengthof(types);
+  const size_t NumFloatTypes = array_lengthof(FloatTypes);
+  const size_t NumIntTypes = array_lengthof(IntTypes);
+  const size_t NumVectorTypes = array_lengthof(VectorTypes);
 
   const AMDGPUSubtarget &STM = getTargetMachine().getSubtarget<AMDGPUSubtarget>();
   // These are the current register classes that are

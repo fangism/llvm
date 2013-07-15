@@ -45,6 +45,7 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
 
   addRegisterClass(MVT::v2i32, &AMDGPU::VReg_64RegClass);
   addRegisterClass(MVT::v2f32, &AMDGPU::VReg_64RegClass);
+  addRegisterClass(MVT::f64, &AMDGPU::VReg_64RegClass);
 
   addRegisterClass(MVT::v4i32, &AMDGPU::VReg_128RegClass);
   addRegisterClass(MVT::v4f32, &AMDGPU::VReg_128RegClass);
@@ -292,6 +293,21 @@ MachineBasicBlock * SITargetLowering::EmitInstrWithCustomInserter(
             .addImm(AMDGPU::sub0_sub1)
             .addReg(SubRegHi)
             .addImm(AMDGPU::sub2_sub3);
+    MI->eraseFromParent();
+    break;
+  }
+  case AMDGPU::V_SUB_F64: {
+    const SIInstrInfo *TII =
+      static_cast<const SIInstrInfo*>(getTargetMachine().getInstrInfo());
+    BuildMI(*BB, I, MI->getDebugLoc(), TII->get(AMDGPU::V_ADD_F64),
+            MI->getOperand(0).getReg())
+            .addReg(MI->getOperand(1).getReg())
+            .addReg(MI->getOperand(2).getReg())
+            .addImm(0)  /* src2 */
+            .addImm(0)  /* ABS */
+            .addImm(0)  /* CLAMP */
+            .addImm(0)  /* OMOD */
+            .addImm(2); /* NEG */
     MI->eraseFromParent();
     break;
   }

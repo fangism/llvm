@@ -246,13 +246,9 @@ public:
     VectorizableTree.clear();
     ScalarToTreeEntry.clear();
     MustGather.clear();
+    ExternalUses.clear();
     MemBarrierIgnoreList.clear();
   }
-
-  /// \returns the scalarization cost for this list of values. Assuming that
-  /// this subtree gets vectorized, we may need to extract the values from the
-  /// roots. This method calculates the cost of extracting the values.
-  int getGatherCost(ArrayRef<Value *> VL);
 
   /// \returns true if the memory operations A and B are consecutive.
   bool isConsecutiveAccess(Value *A, Value *B);
@@ -285,6 +281,11 @@ private:
   /// \returns the scalarization cost for this type. Scalarization in this
   /// context means the creation of vectors from a group of scalars.
   int getGatherCost(Type *Ty);
+
+  /// \returns the scalarization cost for this list of values. Assuming that
+  /// this subtree gets vectorized, we may need to extract the values from the
+  /// roots. This method calculates the cost of extracting the values.
+  int getGatherCost(ArrayRef<Value *> VL);
 
   /// \returns the AA location that is being access by the instruction.
   AliasAnalysis::Location getLocation(Instruction *I);
@@ -365,6 +366,23 @@ private:
   /// A list of scalars that we found that we need to keep as scalars.
   ValueSet MustGather;
 
+  /// This POD struct describes one external user in the vectorized tree.
+  struct ExternalUser {
+    ExternalUser (Value *S, llvm::User *U, int L) :
+      Scalar(S), User(U), Lane(L){};
+    // Which scalar in our function.
+    Value *Scalar;
+    // Which user that uses the scalar.
+    llvm::User *User;
+    // Which lane does the scalar belong to.
+    int Lane;
+  };
+  typedef SmallVector<ExternalUser, 16> UserList;
+
+  /// A list of values that need to extracted out of the tree.
+  /// This list holds pairs of (Internal Scalar : External User).
+  UserList ExternalUses;
+
   /// A list of instructions to ignore while sinking
   /// memory instructions. This map must be reset between runs of getCost.
   ValueSet MemBarrierIgnoreList;
@@ -392,6 +410,43 @@ void BoUpSLP::buildTree(ArrayRef<Value *> Roots) {
   if (!getSameType(Roots))
     return;
   buildTree_rec(Roots, 0);
+
+  // Collect the values that we need to extract from the tree.
+  for (int EIdx = 0, EE = VectorizableTree.size(); EIdx < EE; ++EIdx) {
+    TreeEntry *Entry = &VectorizableTree[EIdx];
+
+    // For each lane:
+    for (int Lane = 0, LE = Entry->Scalars.size(); Lane != LE; ++Lane) {
+      Value *Scalar = Entry->Scalars[Lane];
+
+      // No need to handle users of gathered values.
+      if (Entry->NeedToGather)
+        continue;
+
+      for (Value::use_iterator User = Scalar->use_begin(),
+           UE = Scalar->use_end(); User != UE; ++User) {
+        DEBUG(dbgs() << "SLP: Checking user:" << **User << ".\n");
+
+        bool Gathered = MustGather.count(*User);
+
+        // Skip in-tree scalars that become vectors.
+        if (ScalarToTreeEntry.count(*User) && !Gathered) {
+          DEBUG(dbgs() << "SLP: \tInternal user will be removed:" <<
+                **User << ".\n");
+          int Idx = ScalarToTreeEntry[*User]; (void) Idx;
+          assert(!VectorizableTree[Idx].NeedToGather && "Bad state");
+          continue;
+        }
+
+        if (!isa<Instruction>(*User))
+          continue;
+
+        DEBUG(dbgs() << "SLP: Need to extract:" << **User << " from lane " <<
+              Lane << " from " << *Scalar << ".\n");
+        ExternalUses.push_back(ExternalUser(Scalar, *User, Lane));
+      }
+    }
+  }
 }
 
 
@@ -843,14 +898,32 @@ int BoUpSLP::getTreeCost() {
   DEBUG(dbgs() << "SLP: Calculating cost for tree of size " <<
         VectorizableTree.size() << ".\n");
 
+  if (!VectorizableTree.size()) {
+    assert(!ExternalUses.size() && "We should not have any external users");
+    return 0;
+  }
+
+  unsigned BundleWidth = VectorizableTree[0].Scalars.size();
+
   for (unsigned i = 0, e = VectorizableTree.size(); i != e; ++i) {
     int C = getEntryCost(&VectorizableTree[i]);
     DEBUG(dbgs() << "SLP: Adding cost " << C << " for bundle that starts with "
           << *VectorizableTree[i].Scalars[0] << " .\n");
     Cost += C;
   }
-  DEBUG(dbgs() << "SLP: Total Cost " << Cost << ".\n");
-  return  Cost;
+
+  int ExtractCost = 0;
+  for (UserList::iterator I = ExternalUses.begin(), E = ExternalUses.end();
+       I != E; ++I) {
+
+    VectorType *VecTy = VectorType::get(I->Scalar->getType(), BundleWidth);
+    ExtractCost += TTI->getVectorInstrCost(Instruction::ExtractElement, VecTy,
+                                           I->Lane);
+  }
+
+
+  DEBUG(dbgs() << "SLP: Total Cost " << Cost + ExtractCost<< ".\n");
+  return  Cost + ExtractCost;
 }
 
 int BoUpSLP::getGatherCost(Type *Ty) {
@@ -1006,8 +1079,26 @@ Value *BoUpSLP::Gather(ArrayRef<Value *> VL, VectorType *Ty) {
   // Generate the 'InsertElement' instruction.
   for (unsigned i = 0; i < Ty->getNumElements(); ++i) {
     Vec = Builder.CreateInsertElement(Vec, VL[i], Builder.getInt32(i));
-    if (Instruction *I = dyn_cast<Instruction>(Vec))
-      GatherSeq.insert(I);
+    if (Instruction *Insrt = dyn_cast<Instruction>(Vec)) {
+      GatherSeq.insert(Insrt);
+
+      // Add to our 'need-to-extract' list.
+      if (ScalarToTreeEntry.count(VL[i])) {
+        int Idx = ScalarToTreeEntry[VL[i]];
+        TreeEntry *E = &VectorizableTree[Idx];
+        // Find which lane we need to extract.
+        int FoundLane = -1;
+        for (unsigned Lane = 0, LE = VL.size(); Lane != LE; ++Lane) {
+          // Is this the lane of the scalar that we are looking for ?
+          if (E->Scalars[Lane] == VL[i]) {
+            FoundLane = Lane;
+            break;
+          }
+        }
+        assert(FoundLane >= 0 && "Could not find the correct lane");
+        ExternalUses.push_back(ExternalUser(VL[i], Insrt, FoundLane));
+      }
+    }
   }
 
   return Vec;
@@ -1222,6 +1313,55 @@ void BoUpSLP::vectorizeTree() {
   Builder.SetInsertPoint(F->getEntryBlock().begin());
   vectorizeTree(&VectorizableTree[0]);
 
+  DEBUG(dbgs() << "SLP: Extracting " << ExternalUses.size() << " values .\n");
+
+  // Extract all of the elements with the external uses.
+  for (UserList::iterator it = ExternalUses.begin(), e = ExternalUses.end();
+       it != e; ++it) {
+    Value *Scalar = it->Scalar;
+    llvm::User *User = it->User;
+
+    // Skip users that we already RAUW. This happens when one instruction
+    // has multiple uses of the same value.
+    if (std::find(Scalar->use_begin(), Scalar->use_end(), User) ==
+        Scalar->use_end())
+      continue;
+    assert(ScalarToTreeEntry.count(Scalar) && "Invalid scalar");
+
+    int Idx = ScalarToTreeEntry[Scalar];
+    TreeEntry *E = &VectorizableTree[Idx];
+    assert(!E->NeedToGather && "Extracting from a gather list");
+
+    Value *Vec = E->VectorizedValue;
+    assert(Vec && "Can't find vectorizable value");
+
+    // Generate extracts for out-of-tree users.
+    // Find the insertion point for the extractelement lane.
+    Instruction *Loc = 0;
+    if (PHINode *PN = dyn_cast<PHINode>(Vec)) {
+      Loc = PN->getParent()->getFirstInsertionPt();
+    } else if (isa<Instruction>(Vec)){
+      if (PHINode *PH = dyn_cast<PHINode>(User)) {
+        for (int i = 0, e = PH->getNumIncomingValues(); i != e; ++i) {
+          if (PH->getIncomingValue(i) == Scalar) {
+            Loc = PH->getIncomingBlock(i)->getTerminator();
+            break;
+          }
+        }
+        assert(Loc && "Unable to find incoming value for the PHI");
+      } else {
+        Loc = cast<Instruction>(User);
+     }
+    } else {
+      Loc = F->getEntryBlock().begin();
+    }
+
+    Builder.SetInsertPoint(Loc);
+    Value *Ex = Builder.CreateExtractElement(Vec, Builder.getInt32(it->Lane));
+    User->replaceUsesOfWith(Scalar, Ex);
+    DEBUG(dbgs() << "SLP: Replaced:" << *User << ".\n");
+  }
+
   // For each vectorized value:
   for (int EIdx = 0, EE = VectorizableTree.size(); EIdx < EE; ++EIdx) {
     TreeEntry *Entry = &VectorizableTree[EIdx];
@@ -1234,45 +1374,7 @@ void BoUpSLP::vectorizeTree() {
       if (Entry->NeedToGather)
         continue;
 
-      Value *Vec = Entry->VectorizedValue;
-      assert(Vec && "Can't find vectorizable value");
-
-      SmallVector<User*, 16> Users(Scalar->use_begin(), Scalar->use_end());
-
-      for (SmallVector<User*, 16>::iterator User = Users.begin(),
-           UE = Users.end(); User != UE; ++User) {
-        DEBUG(dbgs() << "SLP: \tupdating user  " << **User << ".\n");
-
-        bool Gathered = MustGather.count(*User);
-
-        // Skip in-tree scalars that become vectors.
-        if (ScalarToTreeEntry.count(*User) && !Gathered) {
-          DEBUG(dbgs() << "SLP: \tUser will be removed soon:" <<
-                **User << ".\n");
-          int Idx = ScalarToTreeEntry[*User]; (void) Idx;
-          assert(!VectorizableTree[Idx].NeedToGather && "bad state ?");
-          continue;
-        }
-
-        if (!isa<Instruction>(*User))
-          continue;
-
-        // Generate extracts for out-of-tree users.
-        // Find the insertion point for the extractelement lane.
-        Instruction *Loc = 0;
-        if (PHINode *PN = dyn_cast<PHINode>(Vec)) {
-          Loc = PN->getParent()->getFirstInsertionPt();
-        } else if (Instruction *Iv = dyn_cast<Instruction>(Vec)){
-          Loc = ++((BasicBlock::iterator)*Iv);
-        } else {
-          Loc = F->getEntryBlock().begin();
-        }
-
-        Builder.SetInsertPoint(Loc);
-        Value *Ex = Builder.CreateExtractElement(Vec, Builder.getInt32(Lane));
-        (*User)->replaceUsesOfWith(Scalar, Ex);
-        DEBUG(dbgs() << "SLP: \tupdated user:" << **User << ".\n");
-      }
+      assert(Entry->VectorizedValue && "Can't find vectorizable value");
 
       Type *Ty = Scalar->getType();
       if (!Ty->isVoidTy()) {
@@ -1344,24 +1446,25 @@ void BoUpSLP::optimizeGatherSequence() {
     BasicBlock *BB = *I;
     // For all instructions in the function:
     for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; ++it) {
-      InsertElementInst *Insert = dyn_cast<InsertElementInst>(it);
-      if (!Insert || !GatherSeq.count(Insert))
+      Instruction *In = it;
+      if ((!isa<InsertElementInst>(In) && !isa<ExtractElementInst>(In)) ||
+          !GatherSeq.count(In))
         continue;
 
       // Check if we can replace this instruction with any of the
       // visited instructions.
       for (SmallPtrSet<Instruction*, 16>::iterator v = Visited.begin(),
            ve = Visited.end(); v != ve; ++v) {
-        if (Insert->isIdenticalTo(*v) &&
-            DT->dominates((*v)->getParent(), Insert->getParent())) {
-          Insert->replaceAllUsesWith(*v);
-          ToRemove.push_back(Insert);
-          Insert = 0;
+        if (In->isIdenticalTo(*v) &&
+            DT->dominates((*v)->getParent(), In->getParent())) {
+          In->replaceAllUsesWith(*v);
+          ToRemove.push_back(In);
+          In = 0;
           break;
         }
       }
-      if (Insert)
-        Visited.insert(Insert);
+      if (In)
+        Visited.insert(In);
     }
   }
 
@@ -1419,15 +1522,15 @@ struct SLPVectorizer : public FunctionPass {
          e = po_end(&F.getEntryBlock()); it != e; ++it) {
       BasicBlock *BB = *it;
 
-      // Vectorize trees that end at reductions.
-      Changed |= vectorizeChainsInBlock(BB, R);
-
       // Vectorize trees that end at stores.
       if (unsigned count = collectStores(BB, R)) {
         (void)count;
         DEBUG(dbgs() << "SLP: Found " << count << " stores to vectorize.\n");
         Changed |= vectorizeStoreChains(R);
       }
+
+      // Vectorize trees that end at reductions.
+      Changed |= vectorizeChainsInBlock(BB, R);
     }
 
     if (Changed) {
@@ -1461,10 +1564,9 @@ private:
   /// \brief Try to vectorize a chain that starts at two arithmetic instrs.
   bool tryToVectorizePair(Value *A, Value *B, BoUpSLP &R);
 
-  /// \brief Try to vectorize a list of operands. If \p NeedExtracts is true
-  /// then we calculate the cost of extracting the scalars from the vector.
+  /// \brief Try to vectorize a list of operands.
   /// \returns true if a value was vectorized.
-  bool tryToVectorizeList(ArrayRef<Value *> VL, BoUpSLP &R, bool NeedExtracts);
+  bool tryToVectorizeList(ArrayRef<Value *> VL, BoUpSLP &R);
 
   /// \brief Try to vectorize a chain that may start at the operands of \V;
   bool tryToVectorize(BinaryOperator *V, BoUpSLP &R);
@@ -1551,7 +1653,7 @@ bool SLPVectorizer::vectorizeStores(ArrayRef<StoreInst *> Stores,
   bool Changed = false;
 
   // Do a quadratic search on all of the given stores and find
-  // all of the pairs of loads that follow each other.
+  // all of the pairs of stores that follow each other.
   for (unsigned i = 0, e = Stores.size(); i < e; ++i)
     for (unsigned j = 0; j < e; ++j) {
       if (i == j)
@@ -1624,11 +1726,10 @@ bool SLPVectorizer::tryToVectorizePair(Value *A, Value *B, BoUpSLP &R) {
   if (!A || !B)
     return false;
   Value *VL[] = { A, B };
-  return tryToVectorizeList(VL, R, true);
+  return tryToVectorizeList(VL, R);
 }
 
-bool SLPVectorizer::tryToVectorizeList(ArrayRef<Value *> VL, BoUpSLP &R,
-                                       bool NeedExtracts) {
+bool SLPVectorizer::tryToVectorizeList(ArrayRef<Value *> VL, BoUpSLP &R) {
   if (VL.size() < 2)
     return false;
 
@@ -1653,12 +1754,10 @@ bool SLPVectorizer::tryToVectorizeList(ArrayRef<Value *> VL, BoUpSLP &R,
   R.buildTree(VL);
   int Cost = R.getTreeCost();
 
-  int ExtrCost = NeedExtracts ? R.getGatherCost(VL) : 0;
-  DEBUG(dbgs() << "SLP: Cost of pair:" << Cost
-               << " Cost of extract:" << ExtrCost << ".\n");
-  if ((Cost + ExtrCost) >= -SLPCostThreshold)
+  if (Cost >= -SLPCostThreshold)
     return false;
-  DEBUG(dbgs() << "SLP: Vectorizing pair.\n");
+
+  DEBUG(dbgs() << "SLP: Vectorizing pair at cost:" << Cost << ".\n");
   R.vectorizeTree();
   return true;
 }
@@ -1705,6 +1804,27 @@ bool SLPVectorizer::tryToVectorize(BinaryOperator *V, BoUpSLP &R) {
 
 bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
   bool Changed = false;
+  SmallVector<Value *, 4> Incoming;
+  // Collect the incoming values from the PHIs.
+  for (BasicBlock::iterator instr = BB->begin(), ie = BB->end(); instr != ie;
+       ++instr) {
+    PHINode *P = dyn_cast<PHINode>(instr);
+
+    if (!P)
+      break;
+
+    // Stop constructing the list when you reach a different type.
+    if (Incoming.size() && P->getType() != Incoming[0]->getType()) {
+      Changed |= tryToVectorizeList(Incoming, R);
+      Incoming.clear();
+    }
+
+    Incoming.push_back(P);
+  }
+
+  if (Incoming.size() > 1)
+    Changed |= tryToVectorizeList(Incoming, R);
+
   for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; ++it) {
     if (isa<DbgInfoIntrinsic>(it))
       continue;
@@ -1743,29 +1863,6 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
               tryToVectorizePair(BI->getOperand(0), BI->getOperand(1), R);
       continue;
     }
-  }
-
-  // Scan the PHINodes in our successors in search for pairing hints.
-  for (succ_iterator it = succ_begin(BB), e = succ_end(BB); it != e; ++it) {
-    BasicBlock *Succ = *it;
-    SmallVector<Value *, 4> Incoming;
-
-    // Collect the incoming values from the PHIs.
-    for (BasicBlock::iterator instr = Succ->begin(), ie = Succ->end();
-         instr != ie; ++instr) {
-      PHINode *P = dyn_cast<PHINode>(instr);
-
-      if (!P)
-        break;
-
-      Value *V = P->getIncomingValueForBlock(BB);
-      if (Instruction *I = dyn_cast<Instruction>(V))
-        if (I->getParent() == BB)
-          Incoming.push_back(I);
-    }
-
-    if (Incoming.size() > 1)
-      Changed |= tryToVectorizeList(Incoming, R, true);
   }
 
   return Changed;

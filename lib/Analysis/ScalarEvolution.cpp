@@ -758,7 +758,7 @@ static const SCEV *BinomialCoefficient(const SCEV *It, unsigned K,
   unsigned CalculationBits = W + T;
 
   // Calculate 2^T, at width T+W.
-  APInt DivFactor = APInt(CalculationBits, 1).shl(T);
+  APInt DivFactor = APInt::getOneBitSet(CalculationBits, T);
 
   // Calculate the multiplicative inverse of K! / 2^T;
   // this multiplication factor will perform the exact division by
@@ -1380,7 +1380,7 @@ const SCEV *ScalarEvolution::getAnyExtendExpr(const SCEV *Op,
 ///
 static bool
 CollectAddOperandsWithScales(DenseMap<const SCEV *, APInt> &M,
-                             SmallVector<const SCEV *, 8> &NewOps,
+                             SmallVectorImpl<const SCEV *> &NewOps,
                              APInt &AccumulatedConstant,
                              const SCEV *const *Ops, size_t NumOperands,
                              const APInt &Scale,
@@ -2728,7 +2728,7 @@ namespace {
       case scConstant:
         return false;
       case scUnknown:
-        if(!cast<SCEVUnknown>(S)->getValue())
+        if (!cast<SCEVUnknown>(S)->getValue())
           FindOne = true;
         return false;
       default:
@@ -2755,7 +2755,7 @@ const SCEV *ScalarEvolution::getSCEV(Value *V) {
   ValueExprMapType::iterator I = ValueExprMap.find_as(V);
   if (I != ValueExprMap.end()) {
     const SCEV *S = I->second;
-    if(checkValidity(S))
+    if (checkValidity(S))
       return S;
     else
       ValueExprMap.erase(I);
@@ -3789,7 +3789,7 @@ const SCEV *ScalarEvolution::createSCEV(Value *V) {
         break;
 
       Constant *X = ConstantInt::get(getContext(),
-        APInt(BitWidth, 1).shl(SA->getZExtValue()));
+        APInt::getOneBitSet(BitWidth, SA->getZExtValue()));
       return getMulExpr(getSCEV(U->getOperand(0)), getSCEV(X));
     }
     break;
@@ -3807,7 +3807,7 @@ const SCEV *ScalarEvolution::createSCEV(Value *V) {
         break;
 
       Constant *X = ConstantInt::get(getContext(),
-        APInt(BitWidth, 1).shl(SA->getZExtValue()));
+        APInt::getOneBitSet(BitWidth, SA->getZExtValue()));
       return getUDivExpr(getSCEV(U->getOperand(0)), getSCEV(X));
     }
     break;

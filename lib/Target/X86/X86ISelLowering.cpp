@@ -1880,13 +1880,19 @@ static bool IsTailCallConvention(CallingConv::ID CC) {
           CC == CallingConv::HiPE);
 }
 
+/// \brief Return true if the calling convention is a C calling convention.
+static bool IsCCallConvention(CallingConv::ID CC) {
+  return (CC == CallingConv::C || CC == CallingConv::X86_64_Win64 ||
+          CC == CallingConv::X86_64_SysV);
+}
+
 bool X86TargetLowering::mayBeEmittedAsTailCall(CallInst *CI) const {
   if (!CI->isTailCall() || getTargetMachine().Options.DisableTailCalls)
     return false;
 
   CallSite CS(CI);
   CallingConv::ID CalleeCC = CS.getCallingConv();
-  if (!IsTailCallConvention(CalleeCC) && CalleeCC != CallingConv::C)
+  if (!IsTailCallConvention(CalleeCC) && !IsCCallConvention(CalleeCC))
     return false;
 
   return true;
@@ -1961,7 +1967,7 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
   MachineFrameInfo *MFI = MF.getFrameInfo();
   bool Is64Bit = Subtarget->is64Bit();
   bool IsWindows = Subtarget->isTargetWindows();
-  bool IsWin64 = Subtarget->isTargetWin64();
+  bool IsWin64 = Subtarget->isCallingConvWin64(CallConv);
 
   assert(!(isVarArg && IsTailCallConvention(CallConv)) &&
          "Var args not supported with calling convention fastcc, ghc or hipe");
@@ -1972,9 +1978,8 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
                  ArgLocs, *DAG.getContext());
 
   // Allocate shadow area for Win64
-  if (IsWin64) {
+  if (IsWin64)
     CCInfo.AllocateStack(32, 8);
-  }
 
   CCInfo.AnalyzeFormalArguments(Ins, CC_X86);
 
@@ -2275,10 +2280,10 @@ SDValue
 X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                              SmallVectorImpl<SDValue> &InVals) const {
   SelectionDAG &DAG                     = CLI.DAG;
-  SDLoc &dl                          = CLI.DL;
-  SmallVector<ISD::OutputArg, 32> &Outs = CLI.Outs;
-  SmallVector<SDValue, 32> &OutVals     = CLI.OutVals;
-  SmallVector<ISD::InputArg, 32> &Ins   = CLI.Ins;
+  SDLoc &dl                             = CLI.DL;
+  SmallVectorImpl<ISD::OutputArg> &Outs = CLI.Outs;
+  SmallVectorImpl<SDValue> &OutVals     = CLI.OutVals;
+  SmallVectorImpl<ISD::InputArg> &Ins   = CLI.Ins;
   SDValue Chain                         = CLI.Chain;
   SDValue Callee                        = CLI.Callee;
   CallingConv::ID CallConv              = CLI.CallConv;
@@ -2287,7 +2292,7 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   MachineFunction &MF = DAG.getMachineFunction();
   bool Is64Bit        = Subtarget->is64Bit();
-  bool IsWin64        = Subtarget->isTargetWin64();
+  bool IsWin64        = Subtarget->isCallingConvWin64(CallConv);
   bool IsWindows      = Subtarget->isTargetWindows();
   StructReturnType SR = callIsStructReturn(Outs);
   bool IsSibcall      = false;
@@ -2320,9 +2325,8 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                  ArgLocs, *DAG.getContext());
 
   // Allocate shadow area for Win64
-  if (IsWin64) {
+  if (IsWin64)
     CCInfo.AllocateStack(32, 8);
-  }
 
   CCInfo.AnalyzeCallOperands(Outs, CC_X86);
 
@@ -2833,13 +2837,12 @@ X86TargetLowering::IsEligibleForTailCallOptimization(SDValue Callee,
                                     const SmallVectorImpl<SDValue> &OutVals,
                                     const SmallVectorImpl<ISD::InputArg> &Ins,
                                                      SelectionDAG &DAG) const {
-  if (!IsTailCallConvention(CalleeCC) &&
-      CalleeCC != CallingConv::C)
+  if (!IsTailCallConvention(CalleeCC) && !IsCCallConvention(CalleeCC))
     return false;
 
   // If -tailcallopt is specified, make fastcc functions tail-callable.
   const MachineFunction &MF = DAG.getMachineFunction();
-  const Function *CallerF = DAG.getMachineFunction().getFunction();
+  const Function *CallerF = MF.getFunction();
 
   // If the function return type is x86_fp80 and the callee return type is not,
   // then the FP_EXTEND of the call result is not a nop. It's not safe to
@@ -2849,6 +2852,8 @@ X86TargetLowering::IsEligibleForTailCallOptimization(SDValue Callee,
 
   CallingConv::ID CallerCC = CallerF->getCallingConv();
   bool CCMatch = CallerCC == CalleeCC;
+  bool IsCalleeWin64 = Subtarget->isCallingConvWin64(CalleeCC);
+  bool IsCallerWin64 = Subtarget->isCallingConvWin64(CallerCC);
 
   if (getTargetMachine().Options.GuaranteedTailCallOpt) {
     if (IsTailCallConvention(CalleeCC) && CCMatch)
@@ -2882,7 +2887,7 @@ X86TargetLowering::IsEligibleForTailCallOptimization(SDValue Callee,
 
     // Optimizing for varargs on Win64 is unlikely to be safe without
     // additional testing.
-    if (Subtarget->isTargetWin64())
+    if (IsCalleeWin64 || IsCallerWin64)
       return false;
 
     SmallVector<CCValAssign, 16> ArgLocs;
@@ -2957,9 +2962,8 @@ X86TargetLowering::IsEligibleForTailCallOptimization(SDValue Callee,
                    getTargetMachine(), ArgLocs, *DAG.getContext());
 
     // Allocate shadow area for Win64
-    if (Subtarget->isTargetWin64()) {
+    if (IsCalleeWin64)
       CCInfo.AllocateStack(32, 8);
-    }
 
     CCInfo.AnalyzeCallOperands(Outs, CC_X86);
     if (CCInfo.getNextStackOffset()) {
@@ -8096,7 +8100,7 @@ SDValue X86TargetLowering::LowerUINT_TO_FP_i64(SDValue Op,
   LLVMContext *Context = DAG.getContext();
 
   // Build some magic constants.
-  const uint32_t CV0[] = { 0x43300000, 0x45300000, 0, 0 };
+  static const uint32_t CV0[] = { 0x43300000, 0x45300000, 0, 0 };
   Constant *C0 = ConstantDataVector::get(*Context, CV0);
   SDValue CPIdx0 = DAG.getConstantPool(C0, getPointerTy(), 16);
 
@@ -9395,8 +9399,8 @@ static SDValue LowerVSETCC(SDValue Op, const X86Subtarget *Subtarget,
       SDValue EQ = DAG.getNode(X86ISD::PCMPEQ, dl, MVT::v4i32, Op0, Op1);
 
       // Create masks for only the low parts/high parts of the 64 bit integers.
-      const int MaskHi[] = { 1, 1, 3, 3 };
-      const int MaskLo[] = { 0, 0, 2, 2 };
+      static const int MaskHi[] = { 1, 1, 3, 3 };
+      static const int MaskLo[] = { 0, 0, 2, 2 };
       SDValue EQHi = DAG.getVectorShuffle(MVT::v4i32, dl, EQ, EQ, MaskHi);
       SDValue GTLo = DAG.getVectorShuffle(MVT::v4i32, dl, GT, GT, MaskLo);
       SDValue GTHi = DAG.getVectorShuffle(MVT::v4i32, dl, GT, GT, MaskHi);
@@ -9423,7 +9427,7 @@ static SDValue LowerVSETCC(SDValue Op, const X86Subtarget *Subtarget,
       SDValue Result = DAG.getNode(Opc, dl, MVT::v4i32, Op0, Op1);
 
       // Make sure the lower and upper halves are both all-ones.
-      const int Mask[] = { 1, 0, 3, 2 };
+      static const int Mask[] = { 1, 0, 3, 2 };
       SDValue Shuf = DAG.getVectorShuffle(MVT::v4i32, dl, Result, Result, Mask);
       Result = DAG.getNode(ISD::AND, dl, MVT::v4i32, Result, Shuf);
 
@@ -11488,7 +11492,7 @@ static SDValue LowerMUL(SDValue Op, const X86Subtarget *Subtarget,
            "Should not custom lower when pmuldq is available!");
 
     // Extract the odd parts.
-    const int UnpackMask[] = { 1, -1, 3, -1 };
+    static const int UnpackMask[] = { 1, -1, 3, -1 };
     SDValue Aodds = DAG.getVectorShuffle(VT, dl, A, A, UnpackMask);
     SDValue Bodds = DAG.getVectorShuffle(VT, dl, B, B, UnpackMask);
 
@@ -11502,7 +11506,7 @@ static SDValue LowerMUL(SDValue Op, const X86Subtarget *Subtarget,
 
     // Merge the two vectors back together with a shuffle. This expands into 2
     // shuffles.
-    const int ShufMask[] = { 0, 4, 2, 6 };
+    static const int ShufMask[] = { 0, 4, 2, 6 };
     return DAG.getVectorShuffle(VT, dl, Evens, Odds, ShufMask);
   }
 
@@ -16317,12 +16321,50 @@ static SDValue PerformSHLCombine(SDNode *N, SelectionDAG &DAG) {
   return SDValue();
 }
 
+/// \brief Returns a vector of 0s if the node in input is a vector logical
+/// shift by a constant amount which is known to be bigger than or equal 
+/// to the vector element size in bits.
+static SDValue performShiftToAllZeros(SDNode *N, SelectionDAG &DAG,
+                                      const X86Subtarget *Subtarget) {
+  EVT VT = N->getValueType(0);
+
+  if (VT != MVT::v2i64 && VT != MVT::v4i32 && VT != MVT::v8i16 &&
+      (!Subtarget->hasInt256() ||
+       (VT != MVT::v4i64 && VT != MVT::v8i32 && VT != MVT::v16i16)))
+    return SDValue();
+
+  SDValue Amt = N->getOperand(1);
+  SDLoc DL(N);
+  if (isSplatVector(Amt.getNode())) {
+    SDValue SclrAmt = Amt->getOperand(0);
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(SclrAmt)) {
+      APInt ShiftAmt = C->getAPIntValue();
+      unsigned MaxAmount = VT.getVectorElementType().getSizeInBits();
+
+      // SSE2/AVX2 logical shifts always return a vector of 0s
+      // if the shift amount is bigger than or equal to 
+      // the element size. The constant shift amount will be
+      // encoded as a 8-bit immediate.
+      if (ShiftAmt.trunc(8).uge(MaxAmount))
+        return getZeroVector(VT, Subtarget, DAG, DL);
+    }
+  }
+
+  return SDValue();
+}
+
 /// PerformShiftCombine - Combine shifts.
 static SDValue PerformShiftCombine(SDNode* N, SelectionDAG &DAG,
                                    TargetLowering::DAGCombinerInfo &DCI,
                                    const X86Subtarget *Subtarget) {
   if (N->getOpcode() == ISD::SHL) {
     SDValue V = PerformSHLCombine(N, DAG);
+    if (V.getNode()) return V;
+  }
+
+  if (N->getOpcode() != ISD::SRA) {
+    // Try to fold this logical shift into a zero vector.
+    SDValue V = performShiftToAllZeros(N, DAG, Subtarget);
     if (V.getNode()) return V;
   }
 
