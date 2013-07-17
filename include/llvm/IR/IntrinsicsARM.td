@@ -34,12 +34,15 @@ def int_arm_usat : GCCBuiltin<"__builtin_arm_usat">,
     Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty], [IntrNoMem]>;
 
 //===----------------------------------------------------------------------===//
-// Load and Store exclusive doubleword
+// Load, Store and Clear exclusive
+
+def int_arm_ldrex : Intrinsic<[llvm_i32_ty], [llvm_anyptr_ty]>;
+def int_arm_strex : Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_anyptr_ty]>;
+def int_arm_clrex : Intrinsic<[]>;
 
 def int_arm_strexd : Intrinsic<[llvm_i32_ty], [llvm_i32_ty, llvm_i32_ty,
-    llvm_ptr_ty], [IntrReadWriteArgMem]>;
-def int_arm_ldrexd : Intrinsic<[llvm_i32_ty, llvm_i32_ty], [llvm_ptr_ty],
-    [IntrReadArgMem]>;
+    llvm_ptr_ty]>;
+def int_arm_ldrexd : Intrinsic<[llvm_i32_ty, llvm_i32_ty], [llvm_ptr_ty]>;
 
 //===----------------------------------------------------------------------===//
 // VFP
@@ -177,10 +180,12 @@ let Properties = [IntrNoMem, Commutative] in {
   // Vector Maximum.
   def int_arm_neon_vmaxs : Neon_2Arg_Intrinsic;
   def int_arm_neon_vmaxu : Neon_2Arg_Intrinsic;
+  def int_arm_neon_vmaxnm : Neon_2Arg_Intrinsic;
 
   // Vector Minimum.
   def int_arm_neon_vmins : Neon_2Arg_Intrinsic;
   def int_arm_neon_vminu : Neon_2Arg_Intrinsic;
+  def int_arm_neon_vminnm : Neon_2Arg_Intrinsic;
 
   // Vector Reciprocal Step.
   def int_arm_neon_vrecps : Neon_2Arg_Intrinsic;

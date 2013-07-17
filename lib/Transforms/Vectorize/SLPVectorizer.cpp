@@ -703,9 +703,11 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth) {
     case Instruction::FCmp: {
       // Check that all of the compares have the same predicate.
       CmpInst::Predicate P0 = dyn_cast<CmpInst>(VL0)->getPredicate();
+      Type *ComparedTy = cast<Instruction>(VL[0])->getOperand(0)->getType();
       for (unsigned i = 1, e = VL.size(); i < e; ++i) {
         CmpInst *Cmp = cast<CmpInst>(VL[i]);
-        if (Cmp->getPredicate() != P0) {
+        if (Cmp->getPredicate() != P0 ||
+            Cmp->getOperand(0)->getType() != ComparedTy) {
           newTreeEntry(VL, false);
           DEBUG(dbgs() << "SLP: Gathering cmp with different predicate.\n");
           return;
@@ -978,25 +980,38 @@ bool BoUpSLP::isConsecutiveAccess(Value *A, Value *B) {
     return false;
 
   // Check that A and B are of the same type.
-  if (PtrA->getType() != PtrB->getType())
+  if (PtrA == PtrB || PtrA->getType() != PtrB->getType())
     return false;
+
+  // Calculate a constant offset from the base pointer without using SCEV
+  // in the supported cases. 
+  // TODO: Add support for the case where one of the pointers is a GEP that
+  // uses the other pointer.
+  GetElementPtrInst *GepA = dyn_cast<GetElementPtrInst>(PtrA);
+  GetElementPtrInst *GepB = dyn_cast<GetElementPtrInst>(PtrB);
+  if (GepA && GepB && GepA->getPointerOperand() == GepB->getPointerOperand()) {
+    unsigned BW = DL->getPointerSizeInBits(ASA);
+    APInt OffsetA(BW, 0) ,OffsetB(BW, 0);
+
+    if (GepA->accumulateConstantOffset(*DL, OffsetA) &&
+        GepB->accumulateConstantOffset(*DL, OffsetB)) {
+      Type *Ty = cast<PointerType>(PtrA->getType())->getElementType();
+      int64_t Sz = DL->getTypeStoreSize(Ty);
+      return ((OffsetB.getSExtValue() - OffsetA.getSExtValue()) == Sz);
+    }
+  }
 
   // Calculate the distance.
   const SCEV *PtrSCEVA = SE->getSCEV(PtrA);
   const SCEV *PtrSCEVB = SE->getSCEV(PtrB);
-  const SCEV *OffsetSCEV = SE->getMinusSCEV(PtrSCEVA, PtrSCEVB);
-  const SCEVConstant *ConstOffSCEV = dyn_cast<SCEVConstant>(OffsetSCEV);
-
-  // Non constant distance.
-  if (!ConstOffSCEV)
-    return false;
-
-  int64_t Offset = ConstOffSCEV->getValue()->getSExtValue();
   Type *Ty = cast<PointerType>(PtrA->getType())->getElementType();
-  // The Instructions are connsecutive if the size of the first load/store is
+  // The instructions are consecutive if the size of the first load/store is
   // the same as the offset.
   int64_t Sz = DL->getTypeStoreSize(Ty);
-  return ((-Offset) == Sz);
+
+  const SCEV *C = SE->getConstant(PtrSCEVA->getType(), Sz);
+  const SCEV *X = SE->getAddExpr(PtrSCEVA, C);
+  return X == PtrSCEVB;
 }
 
 Value *BoUpSLP::getSinkBarrier(Instruction *Src, Instruction *Dst) {
@@ -1643,7 +1658,7 @@ bool SLPVectorizer::vectorizeStoreChain(ArrayRef<Value *> Chain,
 }
 
 bool SLPVectorizer::vectorizeStores(ArrayRef<StoreInst *> Stores,
-                                      int costThreshold, BoUpSLP &R) {
+                                    int costThreshold, BoUpSLP &R) {
   SetVector<Value *> Heads, Tails;
   SmallDenseMap<Value *, Value *> ConsecutiveChain;
 
@@ -1654,9 +1669,11 @@ bool SLPVectorizer::vectorizeStores(ArrayRef<StoreInst *> Stores,
 
   // Do a quadratic search on all of the given stores and find
   // all of the pairs of stores that follow each other.
-  for (unsigned i = 0, e = Stores.size(); i < e; ++i)
+  for (unsigned i = 0, e = Stores.size(); i < e; ++i) {
+    if (Heads.count(Stores[i]))
+      continue;
     for (unsigned j = 0; j < e; ++j) {
-      if (i == j)
+      if (i == j || Tails.count(Stores[j]))
         continue;
 
       if (R.isConsecutiveAccess(Stores[i], Stores[j])) {
@@ -1665,6 +1682,7 @@ bool SLPVectorizer::vectorizeStores(ArrayRef<StoreInst *> Stores,
         ConsecutiveChain[Stores[i]] = Stores[j];
       }
     }
+  }
 
   // For stores that start but don't end a link in the chain:
   for (SetVector<Value *>::iterator it = Heads.begin(), e = Heads.end();
@@ -1877,9 +1895,14 @@ bool SLPVectorizer::vectorizeStoreChains(BoUpSLP &R) {
       continue;
 
     DEBUG(dbgs() << "SLP: Analyzing a store chain of length "
-                 << it->second.size() << ".\n");
+          << it->second.size() << ".\n");
 
-    Changed |= vectorizeStores(it->second, -SLPCostThreshold, R);
+    // Process the stores in chunks of 16.
+    for (unsigned CI = 0, CE = it->second.size(); CI < CE; CI+=16) {
+      unsigned Len = std::min<unsigned>(CE - CI, 16);
+      ArrayRef<StoreInst *> Chunk(&it->second[CI], Len);
+      Changed |= vectorizeStores(Chunk, -SLPCostThreshold, R);
+    }
   }
   return Changed;
 }

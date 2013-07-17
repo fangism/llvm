@@ -456,17 +456,8 @@ error_code rename(const Twine &from, const Twine &to) {
   StringRef f = from.toNullTerminatedStringRef(from_storage);
   StringRef t = to.toNullTerminatedStringRef(to_storage);
 
-  if (::rename(f.begin(), t.begin()) == -1) {
-    // If it's a cross device link, copy then delete, otherwise return the error
-    if (errno == EXDEV) {
-      if (error_code ec = copy_file(from, to, copy_option::overwrite_if_exists))
-        return ec;
-      bool Existed;
-      if (error_code ec = remove(from, Existed))
-        return ec;
-    } else
-      return error_code(errno, system_category());
-  }
+  if (::rename(f.begin(), t.begin()) == -1)
+    return error_code(errno, system_category());
 
   return error_code::success();
 }
@@ -541,45 +532,53 @@ error_code getUniqueID(const Twine Path, uint64_t &Result) {
   return error_code::success();
 }
 
-error_code status(const Twine &path, file_status &result) {
-  SmallString<128> path_storage;
-  StringRef p = path.toNullTerminatedStringRef(path_storage);
-
-  struct stat status;
-  if (::stat(p.begin(), &status) != 0) {
+static error_code fillStatus(int StatRet, const struct stat &Status,
+                             file_status &Result) {
+  if (StatRet != 0) {
     error_code ec(errno, system_category());
     if (ec == errc::no_such_file_or_directory)
-      result = file_status(file_type::file_not_found);
+      Result = file_status(file_type::file_not_found);
     else
-      result = file_status(file_type::status_error);
+      Result = file_status(file_type::status_error);
     return ec;
   }
 
-  perms prms = static_cast<perms>(status.st_mode);
-  
-  if (S_ISDIR(status.st_mode))
-    result = file_status(file_type::directory_file, prms);
-  else if (S_ISREG(status.st_mode))
-    result = file_status(file_type::regular_file, prms);
-  else if (S_ISBLK(status.st_mode))
-    result = file_status(file_type::block_file, prms);
-  else if (S_ISCHR(status.st_mode))
-    result = file_status(file_type::character_file, prms);
-  else if (S_ISFIFO(status.st_mode))
-    result = file_status(file_type::fifo_file, prms);
-  else if (S_ISSOCK(status.st_mode))
-    result = file_status(file_type::socket_file, prms);
-  else
-    result = file_status(file_type::type_unknown, prms);
+  file_type Type = file_type::type_unknown;
 
-  result.fs_st_dev = status.st_dev;
-  result.fs_st_ino = status.st_ino;
-  result.fs_st_mtime = status.st_mtime;
-  result.fs_st_uid = status.st_uid;
-  result.fs_st_gid = status.st_gid;
-  result.fs_st_size = status.st_size;
+  if (S_ISDIR(Status.st_mode))
+    Type = file_type::directory_file;
+  else if (S_ISREG(Status.st_mode))
+    Type = file_type::regular_file;
+  else if (S_ISBLK(Status.st_mode))
+    Type = file_type::block_file;
+  else if (S_ISCHR(Status.st_mode))
+    Type = file_type::character_file;
+  else if (S_ISFIFO(Status.st_mode))
+    Type = file_type::fifo_file;
+  else if (S_ISSOCK(Status.st_mode))
+    Type = file_type::socket_file;
+
+  perms Perms = static_cast<perms>(Status.st_mode);
+  Result =
+      file_status(Type, Perms, Status.st_dev, Status.st_ino, Status.st_mtime,
+                  Status.st_uid, Status.st_gid, Status.st_size);
 
   return error_code::success();
+}
+
+error_code status(const Twine &Path, file_status &Result) {
+  SmallString<128> PathStorage;
+  StringRef P = Path.toNullTerminatedStringRef(PathStorage);
+
+  struct stat Status;
+  int StatRet = ::stat(P.begin(), &Status);
+  return fillStatus(StatRet, Status, Result);
+}
+
+error_code status(int FD, file_status &Result) {
+  struct stat Status;
+  int StatRet = ::fstat(FD, &Status);
+  return fillStatus(StatRet, Status, Result);
 }
 
 error_code setLastModificationAndAccessTime(int FD, TimeValue Time) {
@@ -816,6 +815,15 @@ error_code unmap_file_pages(void *base, size_t size) {
   return error_code::success();
 }
 
+error_code openFileForRead(const Twine &Name, int &ResultFD) {
+  SmallString<128> Storage;
+  StringRef P = Name.toNullTerminatedStringRef(Storage);
+  while ((ResultFD = open(P.begin(), O_RDONLY)) < 0) {
+    if (errno != EINTR)
+      return error_code(errno, system_category());
+  }
+  return error_code::success();
+}
 
 } // end namespace fs
 } // end namespace sys

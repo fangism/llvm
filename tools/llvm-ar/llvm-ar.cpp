@@ -26,7 +26,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cstdlib>
-#include <fcntl.h>
 #include <memory>
 
 #if !defined(_MSC_VER) && !defined(__MINGW32__)
@@ -41,10 +40,13 @@ using namespace llvm;
 static StringRef ToolName;
 
 static const char *TemporaryOutput;
+static int TmpArchiveFD = -1;
 
 // fail - Show the error message and exit.
 LLVM_ATTRIBUTE_NORETURN static void fail(Twine Error) {
   outs() << ToolName << ": " << Error << ".\n";
+  if (TmpArchiveFD != -1)
+    close(TmpArchiveFD);
   if (TemporaryOutput)
     sys::fs::remove(TemporaryOutput);
   exit(1);
@@ -296,19 +298,14 @@ static void doDisplayTable(StringRef Name, object::Archive::child_iterator I) {
 // Implement the 'x' operation. This function extracts files back to the file
 // system.
 static void doExtract(StringRef Name, object::Archive::child_iterator I) {
-  // Open up a file stream for writing
-  // FIXME: we should abstract this, O_BINARY in particular.
-  int OpenFlags = O_TRUNC | O_WRONLY | O_CREAT;
-#ifdef O_BINARY
-  OpenFlags |= O_BINARY;
-#endif
-
   // Retain the original mode.
   sys::fs::perms Mode = I->getAccessMode();
+  SmallString<128> Storage = Name;
 
-  int FD = open(Name.str().c_str(), OpenFlags, Mode);
-  if (FD < 0)
-    fail("Could not open output file");
+  int FD;
+  failIfError(
+      sys::fs::openFileForWrite(Storage.c_str(), FD, sys::fs::F_Binary, Mode),
+      Storage.c_str());
 
   {
     raw_fd_ostream file(FD, false);
@@ -387,7 +384,7 @@ public:
   NewArchiveIterator(std::vector<std::string>::const_iterator I, Twine Name);
   bool isNewMember() const;
   object::Archive::child_iterator getOld() const;
-  StringRef getNew() const;
+  const char *getNew() const;
   StringRef getMemberName() const { return MemberName; }
 };
 }
@@ -411,9 +408,9 @@ object::Archive::child_iterator NewArchiveIterator::getOld() const {
   return OldI;
 }
 
-StringRef NewArchiveIterator::getNew() const {
+const char *NewArchiveIterator::getNew() const {
   assert(IsNewMember);
-  return *NewI;
+  return NewI->c_str();
 }
 
 template <typename T>
@@ -526,7 +523,6 @@ static void printWithSpacePadding(raw_ostream &OS, T Data, unsigned Size) {
 
 static void performWriteOperation(ArchiveOperation Operation,
                                   object::Archive *OldArchive) {
-  int TmpArchiveFD;
   SmallString<128> TmpArchive;
   failIfError(sys::fs::createUniqueFile(ArchiveName + ".temp-archive-%%%%%%%.a",
                                         TmpArchiveFD, TmpArchive));
@@ -555,13 +551,18 @@ static void performWriteOperation(ArchiveOperation Operation,
     printWithSpacePadding(Out, Name, 16);
 
     if (I->isNewMember()) {
-      // FIXME: we do a stat + open. We should do a open + fstat.
-      StringRef FileName = I->getNew();
+      const char *FileName = I->getNew();
+
+      int FD;
+      failIfError(sys::fs::openFileForRead(FileName, FD), FileName);
+
       sys::fs::file_status Status;
-      failIfError(sys::fs::status(FileName, Status), FileName);
+      failIfError(sys::fs::status(FD, Status), FileName);
 
       OwningPtr<MemoryBuffer> File;
-      failIfError(MemoryBuffer::getFile(FileName, File), FileName);
+      failIfError(
+          MemoryBuffer::getOpenFile(FD, FileName, File, Status.getSize()),
+          FileName);
 
       uint64_t secondsSinceEpoch =
           Status.getLastModificationTime().toEpochTime();

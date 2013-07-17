@@ -598,6 +598,35 @@ static bool isReservedName(StringRef path) {
   return false;
 }
 
+static error_code getStatus(HANDLE FileHandle, file_status &Result) {
+  if (FileHandle == INVALID_HANDLE_VALUE)
+    goto handle_status_error;
+
+  BY_HANDLE_FILE_INFORMATION Info;
+  if (!::GetFileInformationByHandle(FileHandle, &Info))
+    goto handle_status_error;
+
+  Result = file_status(
+        file_type::regular_file, Info.ftLastWriteTime.dwHighDateTime,
+        Info.ftLastWriteTime.dwLowDateTime, Info.dwVolumeSerialNumber,
+        Info.nFileSizeHigh, Info.nFileSizeLow, Info.nFileIndexHigh,
+        Info.nFileIndexLow);
+  return error_code::success();
+
+handle_status_error:
+  error_code EC = windows_error(::GetLastError());
+  if (EC == windows_error::file_not_found ||
+      EC == windows_error::path_not_found)
+    Result = file_status(file_type::file_not_found);
+  else if (EC == windows_error::sharing_violation)
+    Result = file_status(file_type::type_unknown);
+  else {
+    Result = file_status(file_type::status_error);
+    return EC;
+  }
+  return error_code::success();
+}
+
 error_code status(const Twine &path, file_status &result) {
   SmallString<128> path_storage;
   SmallVector<wchar_t, 128> path_utf16;
@@ -613,7 +642,7 @@ error_code status(const Twine &path, file_status &result) {
 
   DWORD attr = ::GetFileAttributesW(path_utf16.begin());
   if (attr == INVALID_FILE_ATTRIBUTES)
-    goto handle_status_error;
+    return getStatus(INVALID_HANDLE_VALUE, result);
 
   // Handle reparse points.
   if (attr & FILE_ATTRIBUTE_REPARSE_POINT) {
@@ -626,13 +655,12 @@ error_code status(const Twine &path, file_status &result) {
                     FILE_FLAG_BACKUP_SEMANTICS,
                     0));
     if (!h)
-      goto handle_status_error;
+      return getStatus(INVALID_HANDLE_VALUE, result);
   }
 
   if (attr & FILE_ATTRIBUTE_DIRECTORY)
     result = file_status(file_type::directory_file);
   else {
-    result = file_status(file_type::regular_file);
     ScopedFileHandle h(
       ::CreateFileW(path_utf16.begin(),
                     0, // Attributes only.
@@ -642,34 +670,19 @@ error_code status(const Twine &path, file_status &result) {
                     FILE_FLAG_BACKUP_SEMANTICS,
                     0));
     if (!h)
-      goto handle_status_error;
+      return getStatus(INVALID_HANDLE_VALUE, result);
     BY_HANDLE_FILE_INFORMATION Info;
     if (!::GetFileInformationByHandle(h, &Info))
-      goto handle_status_error;
-    result.FileIndexHigh      = Info.nFileIndexHigh;
-    result.FileIndexLow       = Info.nFileIndexLow;
-    result.FileSizeHigh       = Info.nFileSizeHigh;
-    result.FileSizeLow        = Info.nFileSizeLow;
-    result.LastWriteTimeHigh  = Info.ftLastWriteTime.dwHighDateTime;
-    result.LastWriteTimeLow   = Info.ftLastWriteTime.dwLowDateTime;
-    result.VolumeSerialNumber = Info.dwVolumeSerialNumber;
+      return getStatus(INVALID_HANDLE_VALUE, result);
+
+    return getStatus(h, result);
   }
-
   return error_code::success();
+}
 
-handle_status_error:
-  error_code ec = windows_error(::GetLastError());
-  if (ec == windows_error::file_not_found ||
-      ec == windows_error::path_not_found)
-    result = file_status(file_type::file_not_found);
-  else if (ec == windows_error::sharing_violation)
-    result = file_status(file_type::type_unknown);
-  else {
-    result = file_status(file_type::status_error);
-    return ec;
-  }
-
-  return error_code::success();
+error_code status(int FD, file_status &Result) {
+  HANDLE FileHandle = reinterpret_cast<HANDLE>(_get_osfhandle(FD));
+  return getStatus(FileHandle, Result);
 }
 
 error_code setLastModificationAndAccessTime(int FD, TimeValue Time) {
@@ -743,7 +756,6 @@ error_code mapped_file_region::init(int FD, bool CloseFD, uint64_t Offset) {
   case readonly:  flprotect = PAGE_READONLY; break;
   case readwrite: flprotect = PAGE_READWRITE; break;
   case priv:      flprotect = PAGE_WRITECOPY; break;
-  default: llvm_unreachable("invalid mapping mode");
   }
 
   FileMappingHandle = ::CreateFileMapping(FileHandle,
@@ -767,7 +779,6 @@ error_code mapped_file_region::init(int FD, bool CloseFD, uint64_t Offset) {
   case readonly:  dwDesiredAccess = FILE_MAP_READ; break;
   case readwrite: dwDesiredAccess = FILE_MAP_WRITE; break;
   case priv:      dwDesiredAccess = FILE_MAP_COPY; break;
-  default: llvm_unreachable("invalid mapping mode");
   }
   Mapping = ::MapViewOfFile(FileMappingHandle,
                             dwDesiredAccess,
@@ -1030,7 +1041,38 @@ error_code unmap_file_pages(void *base, size_t size) {
   return windows_error::invalid_function;
 }
 
+error_code openFileForRead(const Twine &Name, int &ResultFD) {
+  SmallString<128> PathStorage;
+  SmallVector<wchar_t, 128> PathUTF16;
 
+  if (error_code EC = UTF8ToUTF16(Name.toStringRef(PathStorage),
+                                  PathUTF16))
+    return EC;
+
+  HANDLE H = ::CreateFileW(PathUTF16.begin(), GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (H == INVALID_HANDLE_VALUE) {
+    error_code EC = windows_error(::GetLastError());
+    // Provide a better error message when trying to open directories.
+    // This only runs if we failed to open the file, so there is probably
+    // no performances issues.
+    if (EC != windows_error::access_denied)
+      return EC;
+    if (is_directory(Name))
+      return error_code(errc::is_a_directory, posix_category());
+    return EC;
+  }
+
+  int FD = ::_open_osfhandle(intptr_t(H), 0);
+  if (FD == -1) {
+    ::CloseHandle(H);
+    return windows_error::invalid_handle;
+  }
+
+  ResultFD = FD;
+  return error_code::success();
+}
 
 } // end namespace fs
 } // end namespace sys

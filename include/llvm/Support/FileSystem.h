@@ -164,14 +164,29 @@ class file_status
   uint32_t FileIndexLow;
   #endif
   friend bool equivalent(file_status A, file_status B);
-  friend error_code status(const Twine &path, file_status &result);
   friend error_code getUniqueID(const Twine Path, uint64_t &Result);
   file_type Type;
   perms Perms;
 public:
-  explicit file_status(file_type v=file_type::status_error, 
-                      perms prms=perms_not_known)
-    : Type(v), Perms(prms) {}
+  file_status() : Type(file_type::status_error) {}
+  file_status(file_type Type) : Type(Type) {}
+
+  #if defined(LLVM_ON_UNIX)
+    file_status(file_type Type, perms Perms, dev_t Dev, ino_t Ino, time_t MTime,
+                uid_t UID, gid_t GID, off_t Size)
+        : fs_st_dev(Dev), fs_st_ino(Ino), fs_st_mtime(MTime), fs_st_uid(UID),
+          fs_st_gid(GID), fs_st_size(Size), Type(Type), Perms(Perms) {}
+  #elif defined(LLVM_ON_WIN32)
+    file_status(file_type Type, uint32_t LastWriteTimeHigh,
+                uint32_t LastWriteTimeLow, uint32_t VolumeSerialNumber,
+                uint32_t FileSizeHigh, uint32_t FileSizeLow,
+                uint32_t FileIndexHigh, uint32_t FileIndexLow)
+        : LastWriteTimeHigh(LastWriteTimeHigh),
+          LastWriteTimeLow(LastWriteTimeLow),
+          VolumeSerialNumber(VolumeSerialNumber), FileSizeHigh(FileSizeHigh),
+          FileSizeLow(FileSizeLow), FileIndexHigh(FileIndexHigh),
+          FileIndexLow(FileIndexLow), Type(Type), Perms(perms_not_known) {}
+  #endif
 
   // getters
   file_type type() const { return Type; }
@@ -434,21 +449,6 @@ inline bool equivalent(const Twine &A, const Twine &B) {
   return !equivalent(A, B, result) && result;
 }
 
-/// @brief Get file size.
-///
-/// @param Path Input path.
-/// @param Result Set to the size of the file in \a Path.
-/// @returns errc::success if result has been successfully set, otherwise a
-///          platform specific error_code.
-inline error_code file_size(const Twine &Path, uint64_t &Result) {
-  file_status Status;
-  error_code EC = status(Path, Status);
-  if (EC)
-    return EC;
-  Result = Status.getSize();
-  return error_code::success();
-}
-
 /// @brief Does status represent a directory?
 ///
 /// @param status A file_status previously returned from status.
@@ -463,6 +463,13 @@ bool is_directory(file_status status);
 /// @returns errc::success if result has been successfully set, otherwise a
 ///          platform specific error_code.
 error_code is_directory(const Twine &path, bool &result);
+
+/// @brief Simpler version of is_directory for clients that don't need to
+///        differentiate between an error and false.
+inline bool is_directory(const Twine &Path) {
+  bool Result;
+  return !is_directory(Path, Result) && Result;
+}
 
 /// @brief Does status represent a regular file?
 ///
@@ -529,6 +536,24 @@ error_code is_symlink(const Twine &path, bool &result);
 ///          platform specific error_code.
 error_code status(const Twine &path, file_status &result);
 
+/// @brief A version for when a file descriptor is already available.
+error_code status(int FD, file_status &Result);
+
+/// @brief Get file size.
+///
+/// @param Path Input path.
+/// @param Result Set to the size of the file in \a Path.
+/// @returns errc::success if result has been successfully set, otherwise a
+///          platform specific error_code.
+inline error_code file_size(const Twine &Path, uint64_t &Result) {
+  file_status Status;
+  error_code EC = status(Path, Status);
+  if (EC)
+    return EC;
+  Result = Status.getSize();
+  return error_code::success();
+}
+
 error_code setLastModificationAndAccessTime(int FD, TimeValue Time);
 
 /// @brief Is status available?
@@ -592,6 +617,37 @@ error_code createTemporaryFile(const Twine &Prefix, StringRef Suffix,
 
 error_code createUniqueDirectory(const Twine &Prefix,
                                  SmallVectorImpl<char> &ResultPath);
+
+enum OpenFlags {
+  F_None = 0,
+
+  /// F_Excl - When opening a file, this flag makes raw_fd_ostream
+  /// report an error if the file already exists.
+  F_Excl = 1,
+
+  /// F_Append - When opening a file, if it already exists append to the
+  /// existing file instead of returning an error.  This may not be specified
+  /// with F_Excl.
+  F_Append = 2,
+
+  /// F_Binary - The file should be opened in binary mode on platforms that
+  /// make this distinction.
+  F_Binary = 4
+};
+
+inline OpenFlags operator|(OpenFlags A, OpenFlags B) {
+  return OpenFlags(unsigned(A) | unsigned(B));
+}
+
+inline OpenFlags &operator|=(OpenFlags &A, OpenFlags B) {
+  A = A | B;
+  return A;
+}
+
+error_code openFileForWrite(const Twine &Name, int &ResultFD, OpenFlags Flags,
+                            unsigned Mode = 0666);
+
+error_code openFileForRead(const Twine &Name, int &ResultFD);
 
 /// @brief Canonicalize path.
 ///
