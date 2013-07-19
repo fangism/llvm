@@ -54,7 +54,7 @@ namespace {
 
   // All possible address modes, plus some.
   typedef struct Address {
-    enum {
+    enum BaseTypeEnum {
       RegBase,
       FrameIndexBase
     } BaseType;

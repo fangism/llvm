@@ -88,7 +88,7 @@ void RegisterInfoEmitter::runEnums(raw_ostream &OS,
 
   if (!Namespace.empty())
     OS << "namespace " << Namespace << " {\n";
-  OS << "enum {\n  NoRegister,\n";
+  OS << "enum RegisterEnum {\n  NoRegister,\n";
 
   for (unsigned i = 0, e = Registers.size(); i != e; ++i)
     OS << "  " << Registers[i]->getName() << " = " <<
@@ -110,7 +110,7 @@ void RegisterInfoEmitter::runEnums(raw_ostream &OS,
     OS << "\n// Register classes\n";
     if (!Namespace.empty())
       OS << "namespace " << Namespace << " {\n";
-    OS << "enum {\n";
+    OS << "enum RegisterClassEnum {\n";
     for (unsigned i = 0, e = RegisterClasses.size(); i != e; ++i) {
       if (i) OS << ",\n";
       OS << "  " << RegisterClasses[i]->getName() << "RegClassID";
@@ -128,7 +128,7 @@ void RegisterInfoEmitter::runEnums(raw_ostream &OS,
     OS << "\n// Register alternate name indices\n";
     if (!Namespace.empty())
       OS << "namespace " << Namespace << " {\n";
-    OS << "enum {\n";
+    OS << "enum AltNameEnum {\n";
     for (unsigned i = 0, e = RegAltNameIndices.size(); i != e; ++i)
       OS << "  " << RegAltNameIndices[i]->getName() << ",\t// " << i << "\n";
     OS << "  NUM_TARGET_REG_ALT_NAMES = " << RegAltNameIndices.size() << "\n";
@@ -144,7 +144,7 @@ void RegisterInfoEmitter::runEnums(raw_ostream &OS,
       SubRegIndices[0]->getNamespace();
     if (!Namespace.empty())
       OS << "namespace " << Namespace << " {\n";
-    OS << "enum {\n  NoSubRegister,\n";
+    OS << "enum SubRegisterEnum {\n  NoSubRegister,\n";
     for (unsigned i = 0, e = SubRegIndices.size(); i != e; ++i)
       OS << "  " << SubRegIndices[i]->getName() << ",\t// " << i+1 << "\n";
     OS << "  NUM_TARGET_SUBREGS\n};\n";

@@ -197,7 +197,7 @@ public:
   // These are helper methods for dealing with flags in the INLINEASM SDNode
   // in the backend.
   
-  enum {
+  enum OpFields {
     // Fixed operands on an INLINEASM SDNode.
     Op_InputChain = 0,
     Op_AsmString = 1,

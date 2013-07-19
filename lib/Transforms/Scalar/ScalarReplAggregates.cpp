@@ -267,7 +267,7 @@ class ConvertToScalarInfo {
 
   /// ScalarKind - Tracks the kind of alloca being considered for promotion,
   /// computed based on the uses of the alloca rather than the LLVM type system.
-  enum {
+  enum ScalarKindEnum {
     Unknown,
 
     // Accesses via GEPs that are consistent with element access of a vector

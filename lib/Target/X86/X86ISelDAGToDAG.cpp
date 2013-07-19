@@ -47,7 +47,7 @@ namespace {
   /// SDValue's instead of register numbers for the leaves of the matched
   /// tree.
   struct X86ISelAddressMode {
-    enum {
+    enum BaseTypeEnum {
       RegBase,
       FrameIndexBase
     } BaseType;

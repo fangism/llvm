@@ -59,7 +59,7 @@ namespace llvm {
     IntrinsicSignature IS;
 
     // Memory mod/ref behavior of this intrinsic.
-    enum {
+    enum ModRefEnum {
       NoMem, ReadArgMem, ReadMem, ReadWriteArgMem, ReadWriteMem
     } ModRef;
 

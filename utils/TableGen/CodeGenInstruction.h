@@ -30,7 +30,7 @@ namespace llvm {
   class CGIOperandList {
   public:
     class ConstraintInfo {
-      enum { None, EarlyClobber, Tied } Kind;
+      enum KindEnum { None, EarlyClobber, Tied } Kind;
       unsigned OtherTiedOperand;
     public:
       ConstraintInfo() : Kind(None) {}
@@ -297,7 +297,7 @@ namespace llvm {
 
       int64_t Imm;
     public:
-      enum {
+      enum KindEnum {
         K_Record,
         K_Imm,
         K_Reg

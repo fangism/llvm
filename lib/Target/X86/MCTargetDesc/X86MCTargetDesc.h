@@ -35,7 +35,7 @@ extern Target TheX86_32Target, TheX86_64Target;
 /// DWARFFlavour - Flavour of dwarf regnumbers
 ///
 namespace DWARFFlavour {
-  enum {
+  enum DwarfFlavorEnum {
     X86_64 = 0, X86_32_DarwinEH = 1, X86_32_Generic = 2
   };
 } 
@@ -43,7 +43,7 @@ namespace DWARFFlavour {
 /// N86 namespace - Native X86 register numbers
 ///
 namespace N86 {
-  enum {
+  enum NativeRegisterEnum {
     EAX = 0, ECX = 1, EDX = 2, EBX = 3, ESP = 4, EBP = 5, ESI = 6, EDI = 7
   };
 }

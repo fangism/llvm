@@ -43,7 +43,7 @@ namespace llvm {
   /// type can depend on later context.  This may either be a numeric reference
   /// or a symbolic (%var) reference.  This is just a discriminated union.
   struct ValID {
-    enum {
+    enum KindEnum {
       t_LocalID, t_GlobalID,      // ID in UIntVal.
       t_LocalName, t_GlobalName,  // Name in StrVal.
       t_APSInt, t_APFloat,        // Value in APSIntVal/APFloatVal.

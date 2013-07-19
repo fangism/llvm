@@ -141,7 +141,7 @@ void SubtargetEmitter::Enumeration(raw_ostream &OS,
     }
   } else {
     // Open enumeration
-    OS << "enum {\n";
+    OS << "enum SubtargetEnum {\n";
 
     // For each record
     for (unsigned i = 0; i < N;) {

@@ -29,7 +29,7 @@ namespace X86 {
   // a 5 operand sequence in the form:
   //   [BaseReg, ScaleAmt, IndexReg, Disp, Segment]
   // These enums help decode this.
-  enum {
+  enum AddrOpEnum {
     AddrBaseReg = 0,
     AddrScaleAmt = 1,
     AddrIndexReg = 2,
@@ -216,7 +216,7 @@ namespace X86II {
     MO_SECREL
   };
 
-  enum {
+  enum InstrEncodingEnum {
     //===------------------------------------------------------------------===//
     // Instruction encodings.  These are the standard/most common forms for X86
     // instructions.

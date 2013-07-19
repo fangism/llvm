@@ -35,7 +35,7 @@ namespace llvm {
 /// with BP or SP and Disp being offsetted accordingly.  The displacement may
 /// also include the offset of a global value.
 struct X86AddressMode {
-  enum {
+  enum BaseTypeEnum {
     RegBase,
     FrameIndexBase
   } BaseType;

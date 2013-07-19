@@ -4647,6 +4647,13 @@ bool X86InstrInfo::shouldScheduleLoadsNear(SDNode *Load1, SDNode *Load2,
   return true;
 }
 
+// moved enum to non-local
+  enum FuseKindEnum {
+    FuseTest,
+    FuseCmp,
+    FuseInc
+  };
+
 bool X86InstrInfo::shouldScheduleAdjacent(MachineInstr* First,
                                           MachineInstr *Second) const {
   // Check if this processor supports macro-fusion. Since this is a minor
@@ -4655,11 +4662,7 @@ bool X86InstrInfo::shouldScheduleAdjacent(MachineInstr* First,
   if (!TM.getSubtarget<X86Subtarget>().hasAVX())
     return false;
 
-  enum {
-    FuseTest,
-    FuseCmp,
-    FuseInc
-  } FuseKind;
+  FuseKindEnum FuseKind;
 
   switch(Second->getOpcode()) {
   default:
