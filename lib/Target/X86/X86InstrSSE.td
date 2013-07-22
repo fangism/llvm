@@ -5477,12 +5477,12 @@ def MWAITrr   : I<0x01, MRM_C9, (outs), (ins), "mwait",
                 TB, Requires<[HasSSE3]>;
 } // SchedRW
 
-def : InstAlias<"mwait %eax, %ecx", (MWAITrr)>, Requires<[In32BitMode]>;
-def : InstAlias<"mwait %rax, %rcx", (MWAITrr)>, Requires<[In64BitMode]>;
+def : InstAlias<"mwait\t{%eax, %ecx|ECX, EAX}", (MWAITrr)>, Requires<[In32BitMode]>;
+def : InstAlias<"mwait\t{%rax, %rcx|RCX, RAX}", (MWAITrr)>, Requires<[In64BitMode]>;
 
-def : InstAlias<"monitor %eax, %ecx, %edx", (MONITORrrr)>,
+def : InstAlias<"monitor\t{%eax, %ecx, %edx|EDX, ECX, EAX}", (MONITORrrr)>,
       Requires<[In32BitMode]>;
-def : InstAlias<"monitor %rax, %rcx, %rdx", (MONITORrrr)>,
+def : InstAlias<"monitor\t{%rax, %rcx, %rdx|RDX, RCX, RAX}", (MONITORrrr)>,
       Requires<[In64BitMode]>;
 
 //===----------------------------------------------------------------------===//
@@ -7016,17 +7016,17 @@ defm PBLENDVB : SS41I_ternary_int<0x10, "pblendvb", memopv2i64, i128mem,
                                   int_x86_sse41_pblendvb>;
 
 // Aliases with the implicit xmm0 argument
-def : InstAlias<"blendvpd\t{%xmm0, $src2, $dst|$dst, $src2, %xmm0}",
+def : InstAlias<"blendvpd\t{%xmm0, $src2, $dst|$dst, $src2, XMM0}",
                 (BLENDVPDrr0 VR128:$dst, VR128:$src2)>;
-def : InstAlias<"blendvpd\t{%xmm0, $src2, $dst|$dst, $src2, %xmm0}",
+def : InstAlias<"blendvpd\t{%xmm0, $src2, $dst|$dst, $src2, XMM0}",
                 (BLENDVPDrm0 VR128:$dst, f128mem:$src2)>;
-def : InstAlias<"blendvps\t{%xmm0, $src2, $dst|$dst, $src2, %xmm0}",
+def : InstAlias<"blendvps\t{%xmm0, $src2, $dst|$dst, $src2, XMM0}",
                 (BLENDVPSrr0 VR128:$dst, VR128:$src2)>;
-def : InstAlias<"blendvps\t{%xmm0, $src2, $dst|$dst, $src2, %xmm0}",
+def : InstAlias<"blendvps\t{%xmm0, $src2, $dst|$dst, $src2, XMM0}",
                 (BLENDVPSrm0 VR128:$dst, f128mem:$src2)>;
-def : InstAlias<"pblendvb\t{%xmm0, $src2, $dst|$dst, $src2, %xmm0}",
+def : InstAlias<"pblendvb\t{%xmm0, $src2, $dst|$dst, $src2, XMM0}",
                 (PBLENDVBrr0 VR128:$dst, VR128:$src2)>;
-def : InstAlias<"pblendvb\t{%xmm0, $src2, $dst|$dst, $src2, %xmm0}",
+def : InstAlias<"pblendvb\t{%xmm0, $src2, $dst|$dst, $src2, XMM0}",
                 (PBLENDVBrm0 VR128:$dst, i128mem:$src2)>;
 
 let Predicates = [UseSSE41] in {

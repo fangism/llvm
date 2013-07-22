@@ -10,6 +10,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "gtest/gtest.h"
 
@@ -219,14 +220,8 @@ TEST_F(FileSystemTest, TempFiles) {
   ASSERT_NO_ERROR(fs::status(Twine(TempPath2), B));
   EXPECT_FALSE(fs::equivalent(A, B));
 
-  // Try to copy the first to the second.
-  EXPECT_EQ(
-    fs::copy_file(Twine(TempPath), Twine(TempPath2)), errc::file_exists);
-
   ::close(FD2);
-  // Try again with the proper options.
-  ASSERT_NO_ERROR(fs::copy_file(Twine(TempPath), Twine(TempPath2),
-                                fs::copy_option::overwrite_if_exists));
+
   // Remove Temp2.
   ASSERT_NO_ERROR(fs::remove(Twine(TempPath2), TempFileExists));
   EXPECT_TRUE(TempFileExists);
@@ -361,6 +356,36 @@ TEST_F(FileSystemTest, Magic) {
     EXPECT_EQ(i->magic, fs::identify_magic(magic));
   }
 }
+
+#ifdef LLVM_ON_WIN32
+TEST_F(FileSystemTest, CarriageReturn) {
+  SmallString<128> FilePathname(TestDirectory);
+  std::string ErrMsg;
+  path::append(FilePathname, "test");
+
+  {
+    raw_fd_ostream File(FilePathname.c_str(), ErrMsg);
+    EXPECT_EQ(ErrMsg, "");
+    File << '\n';
+  }
+  {
+    OwningPtr<MemoryBuffer> Buf;
+    MemoryBuffer::getFile(FilePathname, Buf);
+    EXPECT_EQ(Buf->getBuffer(), "\r\n");
+  }
+
+  {
+    raw_fd_ostream File(FilePathname.c_str(), ErrMsg, sys::fs::F_Binary);
+    EXPECT_EQ(ErrMsg, "");
+    File << '\n';
+  }
+  {
+    OwningPtr<MemoryBuffer> Buf;
+    MemoryBuffer::getFile(FilePathname, Buf);
+    EXPECT_EQ(Buf->getBuffer(), "\n");
+  }
+}
+#endif
 
 TEST_F(FileSystemTest, FileMapping) {
   // Create a temp file.

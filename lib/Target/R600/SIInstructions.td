@@ -1484,6 +1484,12 @@ def : BitConvert <i64, f64, VReg_64>;
 
 def : BitConvert <f64, i64, VReg_64>;
 
+def : BitConvert <v2f32, v2i32, VReg_64>;
+def : BitConvert <v2i32, v2f32, VReg_64>;
+
+def : BitConvert <v4f32, v4i32, VReg_128>;
+def : BitConvert <v4i32, v4f32, VReg_128>;
+
 /********** =================== **********/
 /********** Src & Dst modifiers **********/
 /********** =================== **********/
@@ -1704,6 +1710,7 @@ multiclass SMRD_Pattern <SMRD Instr_IMM, SMRD Instr_SGPR, ValueType vt> {
 defm : SMRD_Pattern <S_LOAD_DWORD_IMM, S_LOAD_DWORD_SGPR, f32>;
 defm : SMRD_Pattern <S_LOAD_DWORD_IMM, S_LOAD_DWORD_SGPR, i32>;
 defm : SMRD_Pattern <S_LOAD_DWORDX2_IMM, S_LOAD_DWORDX2_SGPR, i64>;
+defm : SMRD_Pattern <S_LOAD_DWORDX2_IMM, S_LOAD_DWORDX2_SGPR, v2i32>;
 defm : SMRD_Pattern <S_LOAD_DWORDX4_IMM, S_LOAD_DWORDX4_SGPR, v16i8>;
 defm : SMRD_Pattern <S_LOAD_DWORDX8_IMM, S_LOAD_DWORDX8_SGPR, v32i8>;
 

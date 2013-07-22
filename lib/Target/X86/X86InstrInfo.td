@@ -1969,7 +1969,8 @@ def : InstAlias<"aad", (AAD8i8 10)>;
 def : InstAlias<"aam", (AAM8i8 10)>;
 
 // Disambiguate the mem/imm form of bt-without-a-suffix as btl.
-def : InstAlias<"bt $imm, $mem", (BT32mi8 i32mem:$mem, i32i8imm:$imm)>;
+def : InstAlias<"bt {$imm, $mem|$mem, $imm}",
+                (BT32mi8 i32mem:$mem, i32i8imm:$imm), 0>;
 
 // clr aliases.
 def : InstAlias<"clrb $reg", (XOR8rr  GR8 :$reg, GR8 :$reg)>;
@@ -2020,9 +2021,9 @@ def : InstAlias<"fucompi",      (UCOM_FIPr   ST1)>;
 // instructions like "fadd %st(0), %st(0)" as "fadd %st(0)" for consistency with
 // gas.
 multiclass FpUnaryAlias<string Mnemonic, Instruction Inst, bit EmitAlias = 1> {
- def : InstAlias<!strconcat(Mnemonic, " $op, %st(0)"),
+ def : InstAlias<!strconcat(Mnemonic, "\t{$op, %st(0)|ST(0), $op}"),
                  (Inst RST:$op), EmitAlias>;
- def : InstAlias<!strconcat(Mnemonic, " %st(0), %st(0)"),
+ def : InstAlias<!strconcat(Mnemonic, "\t{%st(0), %st(0)|ST(0), ST(0)}"),
                  (Inst ST0), EmitAlias>;
 }
 
@@ -2047,16 +2048,16 @@ defm : FpUnaryAlias<"fucompi",  UCOM_FIPr>;
 // Handle "f{mulp,addp} st(0), $op" the same as "f{mulp,addp} $op", since they
 // commute.  We also allow fdiv[r]p/fsubrp even though they don't commute,
 // solely because gas supports it.
-def : InstAlias<"faddp %st(0), $op", (ADD_FPrST0 RST:$op), 0>;
-def : InstAlias<"fmulp %st(0), $op", (MUL_FPrST0 RST:$op)>;
-def : InstAlias<"fsubp %st(0), $op", (SUBR_FPrST0 RST:$op)>;
-def : InstAlias<"fsubrp %st(0), $op", (SUB_FPrST0 RST:$op)>;
-def : InstAlias<"fdivp %st(0), $op", (DIVR_FPrST0 RST:$op)>;
-def : InstAlias<"fdivrp %st(0), $op", (DIV_FPrST0 RST:$op)>;
+def : InstAlias<"faddp\t{%st(0), $op|$op, ST(0)}", (ADD_FPrST0 RST:$op), 0>;
+def : InstAlias<"fmulp\t{%st(0), $op|$op, ST(0)}", (MUL_FPrST0 RST:$op)>;
+def : InstAlias<"fsub{|r}p\t{%st(0), $op|$op, ST(0)}", (SUBR_FPrST0 RST:$op)>;
+def : InstAlias<"fsub{r|}p\t{%st(0), $op|$op, ST(0)}", (SUB_FPrST0 RST:$op)>;
+def : InstAlias<"fdiv{|r}p\t{%st(0), $op|$op, ST(0)}", (DIVR_FPrST0 RST:$op)>;
+def : InstAlias<"fdiv{r|}p\t{%st(0), $op|$op, ST(0)}", (DIV_FPrST0 RST:$op)>;
 
 // We accept "fnstsw %eax" even though it only writes %ax.
-def : InstAlias<"fnstsw %eax", (FNSTSW16r)>;
-def : InstAlias<"fnstsw %al" , (FNSTSW16r)>;
+def : InstAlias<"fnstsw\t{%eax|EAX}", (FNSTSW16r)>;
+def : InstAlias<"fnstsw\t{%al|AL}" , (FNSTSW16r)>;
 def : InstAlias<"fnstsw"     , (FNSTSW16r)>;
 
 // lcall and ljmp aliases.  This seems to be an odd mapping in 64-bit mode, but
@@ -2185,19 +2186,19 @@ defm : ShiftRotateByOneAlias<"ror", "ROR">;
 FIXME */
 
 // test: We accept "testX <reg>, <mem>" and "testX <mem>, <reg>" as synonyms.
-def : InstAlias<"testb $val, $mem", (TEST8rm  GR8 :$val, i8mem :$mem)>;
-def : InstAlias<"testw $val, $mem", (TEST16rm GR16:$val, i16mem:$mem)>;
-def : InstAlias<"testl $val, $mem", (TEST32rm GR32:$val, i32mem:$mem)>;
-def : InstAlias<"testq $val, $mem", (TEST64rm GR64:$val, i64mem:$mem)>;
+def : InstAlias<"test{b}\t{$val, $mem|$mem, $val}", (TEST8rm  GR8 :$val, i8mem :$mem)>;
+def : InstAlias<"test{w}\t{$val, $mem|$mem, $val}", (TEST16rm GR16:$val, i16mem:$mem)>;
+def : InstAlias<"test{l}\t{$val, $mem|$mem, $val}", (TEST32rm GR32:$val, i32mem:$mem)>;
+def : InstAlias<"test{q}\t{$val, $mem|$mem, $val}", (TEST64rm GR64:$val, i64mem:$mem)>;
 
 // xchg: We accept "xchgX <reg>, <mem>" and "xchgX <mem>, <reg>" as synonyms.
-def : InstAlias<"xchgb $mem, $val", (XCHG8rm  GR8 :$val, i8mem :$mem)>;
-def : InstAlias<"xchgw $mem, $val", (XCHG16rm GR16:$val, i16mem:$mem)>;
-def : InstAlias<"xchgl $mem, $val", (XCHG32rm GR32:$val, i32mem:$mem)>;
-def : InstAlias<"xchgq $mem, $val", (XCHG64rm GR64:$val, i64mem:$mem)>;
+def : InstAlias<"xchg{b}\t{$mem, $val|$val, $mem}", (XCHG8rm  GR8 :$val, i8mem :$mem)>;
+def : InstAlias<"xchg{w}\t{$mem, $val|$val, $mem}", (XCHG16rm GR16:$val, i16mem:$mem)>;
+def : InstAlias<"xchg{l}\t{$mem, $val|$val, $mem}", (XCHG32rm GR32:$val, i32mem:$mem)>;
+def : InstAlias<"xchg{q}\t{$mem, $val|$val, $mem}", (XCHG64rm GR64:$val, i64mem:$mem)>;
 
 // xchg: We accept "xchgX <reg>, %eax" and "xchgX %eax, <reg>" as synonyms.
-def : InstAlias<"xchgw %ax, $src", (XCHG16ar GR16:$src)>;
-def : InstAlias<"xchgl %eax, $src", (XCHG32ar GR32:$src)>, Requires<[In32BitMode]>;
-def : InstAlias<"xchgl %eax, $src", (XCHG32ar64 GR32_NOAX:$src)>, Requires<[In64BitMode]>;
-def : InstAlias<"xchgq %rax, $src", (XCHG64ar GR64:$src)>;
+def : InstAlias<"xchg{w}\t{%ax, $src|$src, AX}", (XCHG16ar GR16:$src)>;
+def : InstAlias<"xchg{l}\t{%eax, $src|$src, EAX}", (XCHG32ar GR32:$src)>, Requires<[In32BitMode]>;
+def : InstAlias<"xchg{l}\t{%eax, $src|$src, EAX}", (XCHG32ar64 GR32_NOAX:$src)>, Requires<[In64BitMode]>;
+def : InstAlias<"xchg{q}\t{%rax, $src|$src, RAX}", (XCHG64ar GR64:$src)>;

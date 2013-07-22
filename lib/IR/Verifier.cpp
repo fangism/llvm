@@ -53,6 +53,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/Dominators.h"
 #include "llvm/Assembly/Writer.h"
+#include "llvm/DebugInfo.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -66,6 +67,7 @@
 #include "llvm/PassManager.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/CallSite.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ConstantRange.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -73,6 +75,9 @@
 #include <algorithm>
 #include <cstdarg>
 using namespace llvm;
+
+static cl::opt<bool> DisableDebugInfoVerifier("disable-debug-info-verifier",
+                                              cl::init(false));
 
 namespace {  // Anonymous namespace for class
   struct PreVerifier : public FunctionPass {
@@ -93,7 +98,7 @@ namespace {  // Anonymous namespace for class
 
       for (Function::iterator I = F.begin(), E = F.end(); I != E; ++I) {
         if (I->empty() || !I->back().isTerminator()) {
-          dbgs() << "Basic Block in function '" << F.getName() 
+          dbgs() << "Basic Block in function '" << F.getName()
                  << "' does not have terminator!\n";
           WriteAsOperand(dbgs(), I, true);
           dbgs() << "\n";
@@ -110,7 +115,7 @@ namespace {  // Anonymous namespace for class
 }
 
 char PreVerifier::ID = 0;
-INITIALIZE_PASS(PreVerifier, "preverify", "Preliminary module verification", 
+INITIALIZE_PASS(PreVerifier, "preverify", "Preliminary module verification",
                 false, false)
 static char &PreVerifyID = PreVerifier::ID;
 
@@ -188,11 +193,11 @@ namespace {
         if (I->isDeclaration()) visitFunction(*I);
       }
 
-      for (Module::global_iterator I = M.global_begin(), E = M.global_end(); 
+      for (Module::global_iterator I = M.global_begin(), E = M.global_end();
            I != E; ++I)
         visitGlobalVariable(*I);
 
-      for (Module::alias_iterator I = M.alias_begin(), E = M.alias_end(); 
+      for (Module::alias_iterator I = M.alias_begin(), E = M.alias_end();
            I != E; ++I)
         visitGlobalAlias(*I);
 
@@ -201,6 +206,9 @@ namespace {
         visitNamedMDNode(*I);
 
       visitModuleFlags(M);
+
+      // Verify Debug Info.
+      verifyDebugInfo(M);
 
       // If the module is broken, abort at this time.
       return abortIfBroken();
@@ -308,6 +316,8 @@ namespace {
                               bool isReturnValue, const Value *V);
     void VerifyFunctionAttrs(FunctionType *FT, AttributeSet Attrs,
                              const Value *V);
+
+    void verifyDebugInfo(Module &M);
 
     void WriteValue(const Value *V) {
       if (!V) return;
@@ -450,7 +460,7 @@ void Verifier::visitGlobalVariable(GlobalVariable &GV) {
   }
 
   if (GV.hasName() && (GV.getName() == "llvm.used" ||
-                       GV.getName() == "llvm.compiler_used")) {
+                       GV.getName() == "llvm.compiler.used")) {
     Assert1(!GV.hasInitializer() || GV.hasAppendingLinkage(),
             "invalid linkage for intrinsic global variable", &GV);
     Type *GVType = GV.getType()->getElementType();
@@ -488,18 +498,29 @@ void Verifier::visitGlobalAlias(GlobalAlias &GA) {
           "Alias and aliasee types should match!", &GA);
   Assert1(!GA.hasUnnamedAddr(), "Alias cannot have unnamed_addr!", &GA);
 
-  if (!isa<GlobalValue>(GA.getAliasee())) {
-    const ConstantExpr *CE = dyn_cast<ConstantExpr>(GA.getAliasee());
-    Assert1(CE && 
+  Constant *Aliasee = GA.getAliasee();
+
+  if (!isa<GlobalValue>(Aliasee)) {
+    ConstantExpr *CE = dyn_cast<ConstantExpr>(Aliasee);
+    Assert1(CE &&
             (CE->getOpcode() == Instruction::BitCast ||
              CE->getOpcode() == Instruction::GetElementPtr) &&
             isa<GlobalValue>(CE->getOperand(0)),
             "Aliasee should be either GlobalValue or bitcast of GlobalValue",
             &GA);
+
+    if (CE->getOpcode() == Instruction::BitCast) {
+      unsigned SrcAS = CE->getOperand(0)->getType()->getPointerAddressSpace();
+      unsigned DstAS = CE->getType()->getPointerAddressSpace();
+
+      Assert1(SrcAS == DstAS,
+              "Alias bitcasts cannot be between different address spaces",
+              &GA);
+    }
   }
 
-  const GlobalValue* Aliasee = GA.resolveAliasedGlobal(/*stopOnWeak*/ false);
-  Assert1(Aliasee,
+  const GlobalValue* Resolved = GA.resolveAliasedGlobal(/*stopOnWeak*/ false);
+  Assert1(Resolved,
           "Aliasing chain should end with function or global variable", &GA);
 
   visitGlobalValue(GA);
@@ -850,7 +871,7 @@ bool Verifier::VerifyAttributeCount(AttributeSet Attrs, unsigned Params) {
       || (LastIndex == AttributeSet::FunctionIndex
           && (LastSlot == 0 || Attrs.getSlotIndex(LastSlot - 1) <= Params)))
     return true;
- 
+
   return false;
 }
 
@@ -869,7 +890,7 @@ void Verifier::visitFunction(Function &F) {
           "# formal arguments must match # of arguments for function type!",
           &F, FT);
   Assert1(F.getReturnType()->isFirstClassType() ||
-          F.getReturnType()->isVoidTy() || 
+          F.getReturnType()->isVoidTy() ||
           F.getReturnType()->isStructTy(),
           "Functions cannot return aggregate values!", &F);
 
@@ -936,25 +957,25 @@ void Verifier::visitFunction(Function &F) {
     // Verify that this function (which has a body) is not named "llvm.*".  It
     // is not legal to define intrinsics.
     Assert1(!isLLVMdotName, "llvm intrinsics cannot be defined!", &F);
-    
+
     // Check the entry node
     BasicBlock *Entry = &F.getEntryBlock();
     Assert1(pred_begin(Entry) == pred_end(Entry),
             "Entry block to function must not have predecessors!", Entry);
-    
+
     // The address of the entry block cannot be taken, unless it is dead.
     if (Entry->hasAddressTaken()) {
       Assert1(!BlockAddress::get(Entry)->isConstantUsed(),
               "blockaddress may not be used with the entry block!", Entry);
     }
   }
- 
+
   // If this function is actually an intrinsic, verify that it is only used in
   // direct call/invokes, never having its "address taken".
   if (F.getIntrinsicID()) {
     const User *U;
     if (F.hasAddressTaken(&U))
-      Assert1(0, "Invalid user of intrinsic instruction!", U); 
+      Assert1(0, "Invalid user of intrinsic instruction!", U);
   }
 }
 
@@ -1029,7 +1050,7 @@ void Verifier::visitBranchInst(BranchInst &BI) {
 void Verifier::visitReturnInst(ReturnInst &RI) {
   Function *F = RI.getParent()->getParent();
   unsigned N = RI.getNumOperands();
-  if (F->getReturnType()->isVoidTy()) 
+  if (F->getReturnType()->isVoidTy())
     Assert2(N == 0,
             "Found return instr that returns non-void in Function of void "
             "return type!", &RI, F->getReturnType());
@@ -1062,14 +1083,14 @@ void Verifier::visitSwitchInst(SwitchInst &SI) {
       RangeSetMap[r] = i.getCaseIndex();
     }
   }
-  
+
   IntegersSubsetToBB::RangeIterator errItem;
   if (!Mapping.verify(errItem)) {
     unsigned CaseIndex = RangeSetMap[errItem->first];
     SwitchInst::CaseIt i(&SI, CaseIndex);
     Assert2(false, "Duplicate integer as switch case", &SI, i.getCaseValueEx());
   }
-  
+
   visitTerminatorInst(SI);
 }
 
@@ -1354,7 +1375,7 @@ void Verifier::visitPHINode(PHINode &PN) {
   // This can be tested by checking whether the instruction before this is
   // either nonexistent (because this is begin()) or is a PHI node.  If not,
   // then there is some other instruction before a PHI.
-  Assert2(&PN == &PN.getParent()->front() || 
+  Assert2(&PN == &PN.getParent()->front() ||
           isa<PHINode>(--BasicBlock::iterator(&PN)),
           "PHI nodes not grouped at top of basic block!",
           &PN, PN.getParent());
@@ -1418,9 +1439,9 @@ void Verifier::VerifyCallSite(CallSite CS) {
 
     // Check attributes on the varargs part.
     for (unsigned Idx = 1 + FTy->getNumParams(); Idx <= CS.arg_size(); ++Idx) {
-      Type *Ty = CS.getArgument(Idx-1)->getType(); 
+      Type *Ty = CS.getArgument(Idx-1)->getType();
       VerifyParameterAttrs(Attrs, Idx, Ty, false, I);
-      
+
       if (Attrs.hasAttribute(Idx, Attribute::Nest)) {
         Assert1(!SawNest, "More than one parameter has attribute nest!", I);
         SawNest = true;
@@ -1741,7 +1762,7 @@ void Verifier::visitStoreInst(StoreInst &SI) {
 
 void Verifier::visitAllocaInst(AllocaInst &AI) {
   PointerType *PTy = AI.getType();
-  Assert1(PTy->getAddressSpace() == 0, 
+  Assert1(PTy->getAddressSpace() == 0,
           "Allocation instruction pointer not in the generic address space!",
           &AI);
   Assert1(PTy->getElementType()->isSized(), "Cannot allocate unsized type",
@@ -1813,7 +1834,7 @@ void Verifier::visitExtractValueInst(ExtractValueInst &EVI) {
                                            EVI.getIndices()) ==
           EVI.getType(),
           "Invalid ExtractValueInst operands!", &EVI);
-  
+
   visitInstruction(EVI);
 }
 
@@ -1822,7 +1843,7 @@ void Verifier::visitInsertValueInst(InsertValueInst &IVI) {
                                            IVI.getIndices()) ==
           IVI.getOperand(1)->getType(),
           "Invalid InsertValueInst operands!", &IVI);
-  
+
   visitInstruction(IVI);
 }
 
@@ -1909,7 +1930,7 @@ void Verifier::visitInstruction(Instruction &I) {
 
   // Check that the return value of the instruction is either void or a legal
   // value type.
-  Assert1(I.getType()->isVoidTy() || 
+  Assert1(I.getType()->isVoidTy() ||
           I.getType()->isFirstClassType(),
           "Instruction returns a non-scalar type!", &I);
 
@@ -2001,10 +2022,10 @@ bool Verifier::VerifyIntrinsicType(Type *Ty,
   using namespace Intrinsic;
 
   // If we ran out of descriptors, there are too many arguments.
-  if (Infos.empty()) return true; 
+  if (Infos.empty()) return true;
   IITDescriptor D = Infos.front();
   Infos = Infos.slice(1);
-  
+
   switch (D.Kind) {
   case IITDescriptor::Void: return !Ty->isVoidTy();
   case IITDescriptor::MMX:  return !Ty->isX86_MMXTy();
@@ -2023,29 +2044,29 @@ bool Verifier::VerifyIntrinsicType(Type *Ty,
     return PT == 0 || PT->getAddressSpace() != D.Pointer_AddressSpace ||
            VerifyIntrinsicType(PT->getElementType(), Infos, ArgTys);
   }
-      
+
   case IITDescriptor::Struct: {
     StructType *ST = dyn_cast<StructType>(Ty);
     if (ST == 0 || ST->getNumElements() != D.Struct_NumElements)
       return true;
-    
+
     for (unsigned i = 0, e = D.Struct_NumElements; i != e; ++i)
       if (VerifyIntrinsicType(ST->getElementType(i), Infos, ArgTys))
         return true;
     return false;
   }
-      
+
   case IITDescriptor::Argument:
     // Two cases here - If this is the second occurrence of an argument, verify
-    // that the later instance matches the previous instance. 
+    // that the later instance matches the previous instance.
     if (D.getArgumentNumber() < ArgTys.size())
-      return Ty != ArgTys[D.getArgumentNumber()];  
-      
+      return Ty != ArgTys[D.getArgumentNumber()];
+
     // Otherwise, if this is the first instance of an argument, record it and
     // verify the "Any" kind.
     assert(D.getArgumentNumber() == ArgTys.size() && "Table consistency error");
     ArgTys.push_back(Ty);
-      
+
     switch (D.getArgumentKind()) {
     case IITDescriptor::AK_AnyInteger: return !Ty->isIntOrIntVectorTy();
     case IITDescriptor::AK_AnyFloat:   return !Ty->isFPOrFPVectorTy();
@@ -2053,7 +2074,7 @@ bool Verifier::VerifyIntrinsicType(Type *Ty,
     case IITDescriptor::AK_AnyPointer: return !isa<PointerType>(Ty);
     }
     llvm_unreachable("all argument kinds not covered");
-      
+
   case IITDescriptor::ExtendVecArgument:
     // This may only be used when referring to a previous vector argument.
     return D.getArgumentNumber() >= ArgTys.size() ||
@@ -2082,7 +2103,7 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
   // describe.
   FunctionType *IFTy = IF->getFunctionType();
   Assert1(!IFTy->isVarArg(), "Intrinsic prototypes are not varargs", IF);
-  
+
   SmallVector<Intrinsic::IITDescriptor, 8> Table;
   getIntrinsicInfoTableEntries(ID, Table);
   ArrayRef<Intrinsic::IITDescriptor> TableRef = Table;
@@ -2101,7 +2122,7 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
   // the name.
   Assert1(Intrinsic::getName(ID, ArgTys) == IF->getName(),
           "Intrinsic name not mangled correctly for type arguments!", IF);
-  
+
   // If the intrinsic takes MDNode arguments, verify that they are either global
   // or are local to *this* function.
   for (unsigned i = 0, e = CI.getNumArgOperands(); i != e; ++i)
@@ -2182,6 +2203,31 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
     Assert1(isa<ConstantInt>(CI.getArgOperand(1)),
             "llvm.invariant.end parameter #2 must be a constant integer", &CI);
     break;
+  }
+}
+
+void Verifier::verifyDebugInfo(Module &M) {
+  // Verify Debug Info.
+  if (!DisableDebugInfoVerifier) {
+    DebugInfoFinder Finder;
+    Finder.processModule(M);
+
+    for (DebugInfoFinder::iterator I = Finder.compile_unit_begin(),
+         E = Finder.compile_unit_end(); I != E; ++I)
+      Assert1(DICompileUnit(*I).Verify(), "DICompileUnit does not Verify!", *I);
+    for (DebugInfoFinder::iterator I = Finder.subprogram_begin(),
+         E = Finder.subprogram_end(); I != E; ++I)
+      Assert1(DISubprogram(*I).Verify(), "DISubprogram does not Verify!", *I);
+    for (DebugInfoFinder::iterator I = Finder.global_variable_begin(),
+         E = Finder.global_variable_end(); I != E; ++I)
+      Assert1(DIGlobalVariable(*I).Verify(),
+              "DIGlobalVariable does not Verify!", *I);
+    for (DebugInfoFinder::iterator I = Finder.type_begin(),
+         E = Finder.type_end(); I != E; ++I)
+      Assert1(DIType(*I).Verify(), "DIType does not Verify!", *I);
+    for (DebugInfoFinder::iterator I = Finder.scope_begin(),
+         E = Finder.scope_end(); I != E; ++I)
+      Assert1(DIScope(*I).Verify(), "DIScope does not Verify!", *I);
   }
 }
 

@@ -34,6 +34,12 @@ class InstSystemZ<int size, dag outs, dag ins, string asmstr,
   string OpKey = "";
   string OpType = "none";
 
+  // Many distinct-operands instructions have older 2-operand equivalents.
+  // NumOpsKey uniquely identifies one of these 2-operand and 3-operand pairs,
+  // with NumOpsValue being "2" or "3" as appropriate.
+  string NumOpsKey = "";
+  string NumOpsValue = "none";
+
   // True if this instruction is a simple D(X,B) load of a register
   // (with no sign or zero extension).
   bit SimpleBDXLoad = 0;
@@ -86,12 +92,22 @@ def getDisp20Opcode : InstrMapping {
   let ValueCols = [["20"]];
 }
 
+// Return the memory form of a register instruction.
 def getMemOpcode : InstrMapping {
   let FilterClass = "InstSystemZ";
   let RowFields = ["OpKey"];
   let ColFields = ["OpType"];
   let KeyCol = ["reg"];
   let ValueCols = [["mem"]];
+}
+
+// Return the 3-operand form of a 2-operand instruction.
+def getThreeOperandOpcode : InstrMapping {
+  let FilterClass = "InstSystemZ";
+  let RowFields = ["NumOpsKey"];
+  let ColFields = ["NumOpsValue"];
+  let KeyCol = ["2"];
+  let ValueCols = [["3"]];
 }
 
 //===----------------------------------------------------------------------===//
@@ -162,6 +178,23 @@ class InstRIEc<bits<16> op, dag outs, dag ins, string asmstr, list<dag> pattern>
   let Inst{35-32} = M3;
   let Inst{31-16} = RI4;
   let Inst{15-8}  = I2;
+  let Inst{7-0}   = op{7-0};
+}
+
+class InstRIEd<bits<16> op, dag outs, dag ins, string asmstr, list<dag> pattern>
+  : InstSystemZ<6, outs, ins, asmstr, pattern> {
+  field bits<48> Inst;
+  field bits<48> SoftFail = 0;
+
+  bits<4> R1;
+  bits<4> R3;
+  bits<16> I2;
+
+  let Inst{47-40} = op{15-8};
+  let Inst{39-36} = R1;
+  let Inst{35-32} = R3;
+  let Inst{31-16} = I2;
+  let Inst{15-8}  = 0;
   let Inst{7-0}   = op{7-0};
 }
 
@@ -713,6 +746,36 @@ class BinaryRRF<string mnemonic, bits<16> opcode, SDPatternOperator operator,
   let OpType = "reg";
 }
 
+class BinaryRRFK<string mnemonic, bits<16> opcode, SDPatternOperator operator,
+                 RegisterOperand cls1, RegisterOperand cls2>
+  : InstRRF<opcode, (outs cls1:$R1), (ins cls1:$R2, cls2:$R3),
+            mnemonic#"rk\t$R1, $R2, $R3",
+            [(set cls1:$R1, (operator cls1:$R2, cls2:$R3))]>;
+
+multiclass BinaryRRAndK<string mnemonic, bits<8> opcode1, bits<16> opcode2,
+                        SDPatternOperator operator, RegisterOperand cls1,
+                        RegisterOperand cls2> {
+  let NumOpsKey = mnemonic in {
+    let NumOpsValue = "3" in
+      def K : BinaryRRFK<mnemonic, opcode2, null_frag, cls1, cls2>,
+              Requires<[FeatureDistinctOps]>;
+    let NumOpsValue = "2", isConvertibleToThreeAddress = 1 in
+      def "" : BinaryRR<mnemonic, opcode1, operator, cls1, cls2>;
+  }
+}
+
+multiclass BinaryRREAndK<string mnemonic, bits<16> opcode1, bits<16> opcode2,
+                         SDPatternOperator operator, RegisterOperand cls1,
+                         RegisterOperand cls2> {
+  let NumOpsKey = mnemonic in {
+    let NumOpsValue = "3" in
+      def K : BinaryRRFK<mnemonic, opcode2, null_frag, cls1, cls2>,
+              Requires<[FeatureDistinctOps]>;
+    let NumOpsValue = "2", isConvertibleToThreeAddress = 1 in
+      def "" : BinaryRRE<mnemonic, opcode1, operator, cls1, cls2>;
+  }
+}
+
 class BinaryRI<string mnemonic, bits<12> opcode, SDPatternOperator operator,
                RegisterOperand cls, Immediate imm>
   : InstRI<opcode, (outs cls:$R1), (ins cls:$R1src, imm:$I2),
@@ -720,6 +783,24 @@ class BinaryRI<string mnemonic, bits<12> opcode, SDPatternOperator operator,
            [(set cls:$R1, (operator cls:$R1src, imm:$I2))]> {
   let Constraints = "$R1 = $R1src";
   let DisableEncoding = "$R1src";
+}
+
+class BinaryRIE<string mnemonic, bits<16> opcode, SDPatternOperator operator,
+                RegisterOperand cls, Immediate imm>
+  : InstRIEd<opcode, (outs cls:$R1), (ins cls:$R3, imm:$I2),
+             mnemonic#"\t$R1, $R3, $I2",
+             [(set cls:$R1, (operator cls:$R3, imm:$I2))]>;
+
+multiclass BinaryRIAndK<string mnemonic, bits<12> opcode1, bits<16> opcode2,
+                        SDPatternOperator operator, RegisterOperand cls,
+                        Immediate imm> {
+  let NumOpsKey = mnemonic in {
+    let NumOpsValue = "3" in
+      def K : BinaryRIE<mnemonic##"k", opcode2, null_frag, cls, imm>,
+              Requires<[FeatureDistinctOps]>;
+    let NumOpsValue = "2", isConvertibleToThreeAddress = 1 in
+      def "" : BinaryRI<mnemonic, opcode1, operator, cls, imm>;
+  }
 }
 
 class BinaryRIL<string mnemonic, bits<12> opcode, SDPatternOperator operator,
@@ -816,20 +897,31 @@ multiclass BinarySIPair<string mnemonic, bits<8> siOpcode,
 }
 
 class ShiftRS<string mnemonic, bits<8> opcode, SDPatternOperator operator,
-              RegisterOperand cls, AddressingMode mode>
-  : InstRS<opcode, (outs cls:$R1), (ins cls:$R1src, mode:$BD2),
+              RegisterOperand cls>
+  : InstRS<opcode, (outs cls:$R1), (ins cls:$R1src, shift12only:$BD2),
            mnemonic#"\t$R1, $BD2",
-           [(set cls:$R1, (operator cls:$R1src, mode:$BD2))]> {
+           [(set cls:$R1, (operator cls:$R1src, shift12only:$BD2))]> {
   let R3 = 0;
   let Constraints = "$R1 = $R1src";
   let DisableEncoding = "$R1src";
 }
 
 class ShiftRSY<string mnemonic, bits<16> opcode, SDPatternOperator operator,
-               RegisterOperand cls, AddressingMode mode>
-  : InstRSY<opcode, (outs cls:$R1), (ins cls:$R3, mode:$BD2),
+               RegisterOperand cls>
+  : InstRSY<opcode, (outs cls:$R1), (ins cls:$R3, shift20only:$BD2),
             mnemonic#"\t$R1, $R3, $BD2",
-            [(set cls:$R1, (operator cls:$R3, mode:$BD2))]>;
+            [(set cls:$R1, (operator cls:$R3, shift20only:$BD2))]>;
+
+multiclass ShiftRSAndK<string mnemonic, bits<8> opcode1, bits<16> opcode2,
+                       SDPatternOperator operator, RegisterOperand cls> {
+  let NumOpsKey = mnemonic in {
+    let NumOpsValue = "3" in
+      def K  : ShiftRSY<mnemonic##"k", opcode2, null_frag, cls>,
+               Requires<[FeatureDistinctOps]>;
+    let NumOpsValue = "2", isConvertibleToThreeAddress = 1 in
+      def "" : ShiftRS<mnemonic, opcode1, operator, cls>;
+  }
+}
 
 class CompareRR<string mnemonic, bits<8> opcode, SDPatternOperator operator,
                 RegisterOperand cls1, RegisterOperand cls2>

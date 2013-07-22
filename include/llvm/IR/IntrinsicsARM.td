@@ -127,6 +127,8 @@ class Neon_CvtFxToFP_Intrinsic
   : Intrinsic<[llvm_anyfloat_ty], [llvm_anyint_ty, llvm_i32_ty], [IntrNoMem]>;
 class Neon_CvtFPToFx_Intrinsic
   : Intrinsic<[llvm_anyint_ty], [llvm_anyfloat_ty, llvm_i32_ty], [IntrNoMem]>;
+class Neon_CvtFPtoInt_1Arg_Intrinsic
+  : Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
 
 // The table operands for VTBL and VTBX consist of 1 to 4 v8i8 vectors.
 // Besides the table, VTBL has one other v8i8 argument and VTBX has two.
@@ -319,6 +321,16 @@ def int_arm_neon_vrecpe : Neon_1Arg_Intrinsic;
 // Vector Reciprocal Square Root Estimate.
 def int_arm_neon_vrsqrte : Neon_1Arg_Intrinsic;
 
+// Vector Conversions Between Floating-point and Integer
+def int_arm_neon_vcvtau : Neon_CvtFPtoInt_1Arg_Intrinsic;
+def int_arm_neon_vcvtas : Neon_CvtFPtoInt_1Arg_Intrinsic;
+def int_arm_neon_vcvtnu : Neon_CvtFPtoInt_1Arg_Intrinsic;
+def int_arm_neon_vcvtns : Neon_CvtFPtoInt_1Arg_Intrinsic;
+def int_arm_neon_vcvtpu : Neon_CvtFPtoInt_1Arg_Intrinsic;
+def int_arm_neon_vcvtps : Neon_CvtFPtoInt_1Arg_Intrinsic;
+def int_arm_neon_vcvtmu : Neon_CvtFPtoInt_1Arg_Intrinsic;
+def int_arm_neon_vcvtms : Neon_CvtFPtoInt_1Arg_Intrinsic;
+
 // Vector Conversions Between Floating-point and Fixed-point.
 def int_arm_neon_vcvtfp2fxs : Neon_CvtFPToFx_Intrinsic;
 def int_arm_neon_vcvtfp2fxu : Neon_CvtFPToFx_Intrinsic;
@@ -351,6 +363,14 @@ def int_arm_neon_vtbx1 : Neon_Tbl3Arg_Intrinsic;
 def int_arm_neon_vtbx2 : Neon_Tbl4Arg_Intrinsic;
 def int_arm_neon_vtbx3 : Neon_Tbl5Arg_Intrinsic;
 def int_arm_neon_vtbx4 : Neon_Tbl6Arg_Intrinsic;
+
+// Vector Rounding
+def int_arm_neon_vrintn : Neon_1Arg_Intrinsic;
+def int_arm_neon_vrintx : Neon_1Arg_Intrinsic;
+def int_arm_neon_vrinta : Neon_1Arg_Intrinsic;
+def int_arm_neon_vrintz : Neon_1Arg_Intrinsic;
+def int_arm_neon_vrintm : Neon_1Arg_Intrinsic;
+def int_arm_neon_vrintp : Neon_1Arg_Intrinsic;
 
 // De-interleaving vector loads from N-element structures.
 // Source operands are the address and alignment.

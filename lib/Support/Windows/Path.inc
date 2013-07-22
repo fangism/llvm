@@ -185,7 +185,7 @@ retry_random_path:
   random_path_utf16.push_back(0);
   random_path_utf16.pop_back();
 
-  HANDLE TempFileHandle;
+  HANDLE TempFileHandle = INVALID_HANDLE_VALUE;
 
   switch (Type) {
   case FS_File: {
@@ -319,29 +319,6 @@ retry_cur_dir:
                               result.data(), result.size(),
                               NULL, NULL);
   if (len == 0)
-    return windows_error(::GetLastError());
-
-  return error_code::success();
-}
-
-error_code copy_file(const Twine &from, const Twine &to, copy_option copt) {
-  // Get arguments.
-  SmallString<128> from_storage;
-  SmallString<128> to_storage;
-  StringRef f = from.toStringRef(from_storage);
-  StringRef t = to.toStringRef(to_storage);
-
-  // Convert to utf-16.
-  SmallVector<wchar_t, 128> wide_from;
-  SmallVector<wchar_t, 128> wide_to;
-  if (error_code ec = UTF8ToUTF16(f, wide_from)) return ec;
-  if (error_code ec = UTF8ToUTF16(t, wide_to)) return ec;
-
-  // Copy the file.
-  BOOL res = ::CopyFileW(wide_from.begin(), wide_to.begin(),
-                         copt != copy_option::overwrite_if_exists);
-
-  if (res == 0)
     return windows_error(::GetLastError());
 
   return error_code::success();
@@ -601,6 +578,26 @@ static bool isReservedName(StringRef path) {
 static error_code getStatus(HANDLE FileHandle, file_status &Result) {
   if (FileHandle == INVALID_HANDLE_VALUE)
     goto handle_status_error;
+
+  switch (::GetFileType(FileHandle)) {
+  default:
+    llvm_unreachable("Don't know anything about this file type");
+  case FILE_TYPE_UNKNOWN: {
+    DWORD Err = ::GetLastError();
+    if (Err != NO_ERROR)
+      return windows_error(Err);
+    Result = file_status(file_type::type_unknown);
+    return error_code::success();
+  }
+  case FILE_TYPE_DISK:
+    break;
+  case FILE_TYPE_CHAR:
+    Result = file_status(file_type::character_file);
+    return error_code::success();
+  case FILE_TYPE_PIPE:
+    Result = file_status(file_type::fifo_file);
+    return error_code::success();
+  }
 
   BY_HANDLE_FILE_INFORMATION Info;
   if (!::GetFileInformationByHandle(FileHandle, &Info))
@@ -1065,6 +1062,60 @@ error_code openFileForRead(const Twine &Name, int &ResultFD) {
   }
 
   int FD = ::_open_osfhandle(intptr_t(H), 0);
+  if (FD == -1) {
+    ::CloseHandle(H);
+    return windows_error::invalid_handle;
+  }
+
+  ResultFD = FD;
+  return error_code::success();
+}
+
+error_code openFileForWrite(const Twine &Name, int &ResultFD,
+                            sys::fs::OpenFlags Flags, unsigned Mode) {
+  // Verify that we don't have both "append" and "excl".
+  assert((!(Flags & sys::fs::F_Excl) || !(Flags & sys::fs::F_Append)) &&
+         "Cannot specify both 'excl' and 'append' file creation flags!");
+
+  SmallString<128> PathStorage;
+  SmallVector<wchar_t, 128> PathUTF16;
+
+  if (error_code EC = UTF8ToUTF16(Name.toStringRef(PathStorage),
+                                  PathUTF16))
+    return EC;
+
+  DWORD CreationDisposition;
+  if (Flags & F_Excl)
+    CreationDisposition = CREATE_NEW;
+  else if (Flags & F_Append) 
+    CreationDisposition = OPEN_ALWAYS;
+  else
+    CreationDisposition = CREATE_ALWAYS;
+
+  HANDLE H = ::CreateFileW(PathUTF16.begin(), GENERIC_WRITE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           CreationDisposition, FILE_ATTRIBUTE_NORMAL, NULL);
+
+  if (H == INVALID_HANDLE_VALUE) {
+    error_code EC = windows_error(::GetLastError());
+    // Provide a better error message when trying to open directories.
+    // This only runs if we failed to open the file, so there is probably
+    // no performances issues.
+    if (EC != windows_error::access_denied)
+      return EC;
+    if (is_directory(Name))
+      return error_code(errc::is_a_directory, posix_category());
+    return EC;
+  }
+
+  int OpenFlags = 0;
+  if (Flags & F_Append)
+    OpenFlags |= _O_APPEND;
+
+  if (!(Flags & F_Binary))
+    OpenFlags |= _O_TEXT;
+
+  int FD = ::_open_osfhandle(intptr_t(H), OpenFlags);
   if (FD == -1) {
     ::CloseHandle(H);
     return windows_error::invalid_handle;

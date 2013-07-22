@@ -115,7 +115,7 @@ private:
   /// Maps instructions to numbers and back.
   SmallDenseMap<Instruction *, int> InstrIdx;
   /// Maps integers to Instructions.
-  std::vector<Instruction *> InstrVec;
+  SmallVector<Instruction *, 32> InstrVec;
 };
 
 /// \returns the parent basic block if all of the instructions in \p VL
@@ -301,12 +301,6 @@ private:
   /// \returns the Instrucion in the bundle \p VL.
   Instruction *getLastInstruction(ArrayRef<Value *> VL);
 
-  /// \returns the Instruction at index \p Index which is in Block \p BB.
-  Instruction *getInstructionForIndex(unsigned Index, BasicBlock *BB);
-
-  /// \returns the index of the first User of \p VL.
-  int getFirstUserIndex(ArrayRef<Value *> VL);
-
   /// \returns a vector from a collection of scalars in \p VL.
   Value *Gather(ArrayRef<Value *> VL, VectorType *Ty);
 
@@ -391,7 +385,7 @@ private:
   SetVector<Instruction *> GatherSeq;
 
   /// Numbers instructions in different blocks.
-  std::map<BasicBlock *, BlockNumbering> BlocksNumbers;
+  DenseMap<BasicBlock *, BlockNumbering> BlocksNumbers;
 
   // Analysis and block reference.
   Function *F;
@@ -979,36 +973,66 @@ bool BoUpSLP::isConsecutiveAccess(Value *A, Value *B) {
   if (!PtrA || !PtrB || (ASA != ASB))
     return false;
 
-  // Check that A and B are of the same type.
+  // Make sure that A and B are different pointers of the same type.
   if (PtrA == PtrB || PtrA->getType() != PtrB->getType())
     return false;
 
   // Calculate a constant offset from the base pointer without using SCEV
-  // in the supported cases. 
+  // in the supported cases.
   // TODO: Add support for the case where one of the pointers is a GEP that
   // uses the other pointer.
   GetElementPtrInst *GepA = dyn_cast<GetElementPtrInst>(PtrA);
   GetElementPtrInst *GepB = dyn_cast<GetElementPtrInst>(PtrB);
-  if (GepA && GepB && GepA->getPointerOperand() == GepB->getPointerOperand()) {
-    unsigned BW = DL->getPointerSizeInBits(ASA);
-    APInt OffsetA(BW, 0) ,OffsetB(BW, 0);
 
-    if (GepA->accumulateConstantOffset(*DL, OffsetA) &&
-        GepB->accumulateConstantOffset(*DL, OffsetB)) {
-      Type *Ty = cast<PointerType>(PtrA->getType())->getElementType();
-      int64_t Sz = DL->getTypeStoreSize(Ty);
-      return ((OffsetB.getSExtValue() - OffsetA.getSExtValue()) == Sz);
+  unsigned BW = DL->getPointerSizeInBits(ASA);
+  Type *Ty = cast<PointerType>(PtrA->getType())->getElementType();
+  int64_t Sz = DL->getTypeStoreSize(Ty);
+
+  // Check if PtrA is the base and PtrB is a constant offset.
+  if (GepB && GepB->getPointerOperand() == PtrA) {
+    APInt Offset(BW, 0);
+    if (GepB->accumulateConstantOffset(*DL, Offset))
+      return Offset.getSExtValue() == Sz;
+    return false;
+  }
+
+  // Check if PtrB is the base and PtrA is a constant offset.
+  if (GepA && GepA->getPointerOperand() == PtrB) {
+    APInt Offset(BW, 0);
+    if (GepA->accumulateConstantOffset(*DL, Offset))
+      return Offset.getSExtValue() == -Sz;
+    return false;
+  }
+
+  // If both pointers are GEPs:
+  if (GepA && GepB) {
+    // Check that they have the same base pointer and number of indices.
+    if (GepA->getPointerOperand() != GepB->getPointerOperand() ||
+        GepA->getNumIndices() != GepB->getNumIndices())
+      return false;
+
+    // Try to strip the geps. This makes SCEV faster.
+    // Make sure that all of the indices except for the last are identical.
+    int LastIdx = GepA->getNumIndices();
+    for (int i = 0; i < LastIdx - 1; i++) {
+      if (GepA->getOperand(i+1) != GepB->getOperand(i+1))
+          return false;
     }
+
+    PtrA = GepA->getOperand(LastIdx);
+    PtrB = GepB->getOperand(LastIdx);
+    Sz = 1;
+  }
+
+  ConstantInt *CA = dyn_cast<ConstantInt>(PtrA);
+  ConstantInt *CB = dyn_cast<ConstantInt>(PtrB);
+  if (CA && CB) {
+    return (CA->getSExtValue() + Sz == CB->getSExtValue());
   }
 
   // Calculate the distance.
   const SCEV *PtrSCEVA = SE->getSCEV(PtrA);
   const SCEV *PtrSCEVB = SE->getSCEV(PtrB);
-  Type *Ty = cast<PointerType>(PtrA->getType())->getElementType();
-  // The instructions are consecutive if the size of the first load/store is
-  // the same as the offset.
-  int64_t Sz = DL->getTypeStoreSize(Ty);
-
   const SCEV *C = SE->getConstant(PtrSCEVA->getType(), Sz);
   const SCEV *X = SE->getAddExpr(PtrSCEVA, C);
   return X == PtrSCEVB;
@@ -1061,32 +1085,6 @@ Instruction *BoUpSLP::getLastInstruction(ArrayRef<Value *> VL) {
   Instruction *I = BN.getInstruction(MaxIdx);
   assert(I && "bad location");
   return I;
-}
-
-Instruction *BoUpSLP::getInstructionForIndex(unsigned Index, BasicBlock *BB) {
-  BlockNumbering &BN = BlocksNumbers[BB];
-  return BN.getInstruction(Index);
-}
-
-int BoUpSLP::getFirstUserIndex(ArrayRef<Value *> VL) {
-  BasicBlock *BB = getSameBlock(VL);
-  assert(BB && "All instructions must come from the same block");
-  BlockNumbering &BN = BlocksNumbers[BB];
-
-  // Find the first user of the values.
-  int FirstUser = BN.getIndex(BB->getTerminator());
-  for (unsigned i = 0, e = VL.size(); i < e; ++i) {
-    for (Value::use_iterator U = VL[i]->use_begin(), UE = VL[i]->use_end();
-         U != UE; ++U) {
-      Instruction *Instr = dyn_cast<Instruction>(*U);
-
-      if (!Instr || Instr->getParent() != BB)
-        continue;
-
-      FirstUser = std::min(FirstUser, BN.getIndex(Instr));
-    }
-  }
-  return FirstUser;
 }
 
 Value *BoUpSLP::Gather(ArrayRef<Value *> VL, VectorType *Ty) {
@@ -1393,8 +1391,8 @@ void BoUpSLP::vectorizeTree() {
 
       Type *Ty = Scalar->getType();
       if (!Ty->isVoidTy()) {
-        for (Value::use_iterator User = Scalar->use_begin(), UE = Scalar->use_end();
-             User != UE; ++User) {
+        for (Value::use_iterator User = Scalar->use_begin(),
+             UE = Scalar->use_end(); User != UE; ++User) {
           DEBUG(dbgs() << "SLP: \tvalidating user:" << **User << ".\n");
           assert(!MustGather.count(*User) &&
                  "Replacing gathered value with undef");
@@ -1670,10 +1668,8 @@ bool SLPVectorizer::vectorizeStores(ArrayRef<StoreInst *> Stores,
   // Do a quadratic search on all of the given stores and find
   // all of the pairs of stores that follow each other.
   for (unsigned i = 0, e = Stores.size(); i < e; ++i) {
-    if (Heads.count(Stores[i]))
-      continue;
     for (unsigned j = 0; j < e; ++j) {
-      if (i == j || Tails.count(Stores[j]))
+      if (i == j)
         continue;
 
       if (R.isConsecutiveAccess(Stores[i], Stores[j])) {

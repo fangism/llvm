@@ -535,14 +535,14 @@ def : Pat<(or (zext32 GR32:$src), imm64hf32:$imm),
 let Defs = [CC] in {
   // Addition of a register.
   let isCommutable = 1 in {
-    def AR  : BinaryRR <"a",  0x1A,   add, GR32, GR32>;
-    def AGR : BinaryRRE<"ag", 0xB908, add, GR64, GR64>;
+    defm AR : BinaryRRAndK<"a", 0x1A, 0xB9F8, add, GR32, GR32>;
+    defm AGR : BinaryRREAndK<"ag", 0xB908, 0xB9E8, add, GR64, GR64>;
   }
   def AGFR : BinaryRRE<"agf", 0xB918, null_frag, GR64, GR32>;
 
   // Addition of signed 16-bit immediates.
-  def AHI  : BinaryRI<"ahi",  0xA7A, add, GR32, imm32sx16>;
-  def AGHI : BinaryRI<"aghi", 0xA7B, add, GR64, imm64sx16>;
+  defm AHI  : BinaryRIAndK<"ahi",  0xA7A, 0xECD8, add, GR32, imm32sx16>;
+  defm AGHI : BinaryRIAndK<"aghi", 0xA7B, 0xECD9, add, GR64, imm64sx16>;
 
   // Addition of signed 32-bit immediates.
   def AFI  : BinaryRIL<"afi",  0xC29, add, GR32, simm32>;
@@ -564,10 +564,16 @@ defm : SXB<add, GR64, AGFR>;
 let Defs = [CC] in {
   // Addition of a register.
   let isCommutable = 1 in {
-    def ALR  : BinaryRR <"al",  0x1E,   addc, GR32, GR32>;
-    def ALGR : BinaryRRE<"alg", 0xB90A, addc, GR64, GR64>;
+    defm ALR : BinaryRRAndK<"al", 0x1E, 0xB9FA, addc, GR32, GR32>;
+    defm ALGR : BinaryRREAndK<"alg", 0xB90A, 0xB9EA, addc, GR64, GR64>;
   }
   def ALGFR : BinaryRRE<"algf", 0xB91A, null_frag, GR64, GR32>;
+
+  // Addition of signed 16-bit immediates.
+  def ALHSIK  : BinaryRIE<"alhsik",  0xECDA, addc, GR32, imm32sx16>,
+                Requires<[FeatureDistinctOps]>;
+  def ALGHSIK : BinaryRIE<"alghsik", 0xECDB, addc, GR64, imm64sx16>,
+                Requires<[FeatureDistinctOps]>;
 
   // Addition of unsigned 32-bit immediates.
   def ALFI  : BinaryRIL<"alfi",  0xC2B, addc, GR32, uimm32>;
@@ -599,9 +605,9 @@ let Defs = [CC], Uses = [CC] in {
 // add-immediate instruction instead.
 let Defs = [CC] in {
   // Subtraction of a register.
-  def SR   : BinaryRR <"s",   0x1B,   sub,       GR32, GR32>;
+  defm SR : BinaryRRAndK<"s", 0x1B, 0xB9F9, sub, GR32, GR32>;
   def SGFR : BinaryRRE<"sgf", 0xB919, null_frag, GR64, GR32>;
-  def SGR  : BinaryRRE<"sg",  0xB909, sub,       GR64, GR64>;
+  defm SGR : BinaryRREAndK<"sg", 0xB909, 0xB9E9, sub, GR64, GR64>;
 
   // Subtraction of memory.
   defm SH  : BinaryRXPair<"sh", 0x4B, 0xE37B, sub, GR32, sextloadi16, 2>;
@@ -614,9 +620,9 @@ defm : SXB<sub, GR64, SGFR>;
 // Subtraction producing a carry.
 let Defs = [CC] in {
   // Subtraction of a register.
-  def SLR   : BinaryRR <"sl",   0x1F,   subc,      GR32, GR32>;
+  defm SLR : BinaryRRAndK<"sl", 0x1F, 0xB9FB, subc, GR32, GR32>;
   def SLGFR : BinaryRRE<"slgf", 0xB91B, null_frag, GR64, GR32>;
-  def SLGR  : BinaryRRE<"slg",  0xB90B, subc,      GR64, GR64>;
+  defm SLGR : BinaryRREAndK<"slg", 0xB90B, 0xB9EB, subc, GR64, GR64>;
 
   // Subtraction of unsigned 32-bit immediates.  These don't match
   // subc because we prefer addc for constants.
@@ -648,8 +654,8 @@ let Defs = [CC], Uses = [CC] in {
 let Defs = [CC] in {
   // ANDs of a register.
   let isCommutable = 1 in {
-    def NR  : BinaryRR <"n",  0x14,   and, GR32, GR32>;
-    def NGR : BinaryRRE<"ng", 0xB980, and, GR64, GR64>;
+    defm NR : BinaryRRAndK<"n", 0x14, 0xB9F4, and, GR32, GR32>;
+    defm NGR : BinaryRREAndK<"ng", 0xB980, 0xB9E4, and, GR64, GR64>;
   }
 
   // ANDs of a 16-bit immediate, leaving other bits unaffected.
@@ -685,8 +691,8 @@ defm : RMWIByte<and, bdaddr20pair, NIY>;
 let Defs = [CC] in {
   // ORs of a register.
   let isCommutable = 1 in {
-    def OR  : BinaryRR <"o",  0x16,   or, GR32, GR32>;
-    def OGR : BinaryRRE<"og", 0xB981, or, GR64, GR64>;
+    defm OR : BinaryRRAndK<"o", 0x16, 0xB9F6, or, GR32, GR32>;
+    defm OGR : BinaryRREAndK<"og", 0xB981, 0xB9E6, or, GR64, GR64>;
   }
 
   // ORs of a 16-bit immediate, leaving other bits unaffected.
@@ -722,8 +728,8 @@ defm : RMWIByte<or, bdaddr20pair, OIY>;
 let Defs = [CC] in {
   // XORs of a register.
   let isCommutable = 1 in {
-    def XR  : BinaryRR <"x",  0x17,   xor, GR32, GR32>;
-    def XGR : BinaryRRE<"xg", 0xB982, xor, GR64, GR64>;
+    defm XR : BinaryRRAndK<"x", 0x17, 0xB9F7, xor, GR32, GR32>;
+    defm XGR : BinaryRREAndK<"xg", 0xB982, 0xB9E7, xor, GR64, GR64>;
   }
 
   // XORs of a 32-bit immediate, leaving other bits unaffected.
@@ -796,26 +802,26 @@ def DLG  : BinaryRXY<"dlg",  0xE387, z_udivrem64, GR128, load, 8>;
 
 // Shift left.
 let neverHasSideEffects = 1 in {
-  def SLL  : ShiftRS <"sll",  0x89,   shl, GR32, shift12only>;
-  def SLLG : ShiftRSY<"sllg", 0xEB0D, shl, GR64, shift20only>;
+  defm SLL : ShiftRSAndK<"sll", 0x89, 0xEBDF, shl, GR32>;
+  def SLLG : ShiftRSY<"sllg", 0xEB0D, shl, GR64>;
 }
 
 // Logical shift right.
 let neverHasSideEffects = 1 in {
-  def SRL  : ShiftRS <"srl",  0x88,   srl, GR32, shift12only>;
-  def SRLG : ShiftRSY<"srlg", 0xEB0C, srl, GR64, shift20only>;
+  defm SRL : ShiftRSAndK<"srl", 0x88, 0xEBDE, srl, GR32>;
+  def SRLG : ShiftRSY<"srlg", 0xEB0C, srl, GR64>;
 }
 
 // Arithmetic shift right.
 let Defs = [CC] in {
-  def SRA  : ShiftRS <"sra",  0x8A,   sra, GR32, shift12only>;
-  def SRAG : ShiftRSY<"srag", 0xEB0A, sra, GR64, shift20only>;
+  defm SRA : ShiftRSAndK<"sra", 0x8A, 0xEBDC, sra, GR32>;
+  def SRAG : ShiftRSY<"srag", 0xEB0A, sra, GR64>;
 }
 
 // Rotate left.
 let neverHasSideEffects = 1 in {
-  def RLL  : ShiftRSY<"rll",  0xEB1D, rotl, GR32, shift20only>;
-  def RLLG : ShiftRSY<"rllg", 0xEB1C, rotl, GR64, shift20only>;
+  def RLL  : ShiftRSY<"rll",  0xEB1D, rotl, GR32>;
+  def RLLG : ShiftRSY<"rllg", 0xEB1C, rotl, GR64>;
 }
 
 // Rotate second operand left and inserted selected bits into first operand.
