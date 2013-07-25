@@ -1695,34 +1695,6 @@ static MachineBasicBlock *splitBlockAfter(MachineInstr *MI,
   return NewMBB;
 }
 
-bool SystemZTargetLowering::
-convertPrevCompareToBranch(MachineBasicBlock *MBB,
-                           MachineBasicBlock::iterator MBBI,
-                           unsigned CCMask, MachineBasicBlock *Target) const {
-  MachineBasicBlock::iterator Compare = MBBI;
-  MachineBasicBlock::iterator Begin = MBB->begin();
-  do
-    {
-      if (Compare == Begin)
-        return false;
-      --Compare;
-    }
-  while (Compare->isDebugValue());
-
-  const SystemZInstrInfo *TII = TM.getInstrInfo();
-  unsigned FusedOpcode = TII->getCompareAndBranch(Compare->getOpcode(),
-                                                  Compare);
-  if (!FusedOpcode)
-    return false;
-
-  DebugLoc DL = Compare->getDebugLoc();
-  BuildMI(*MBB, MBBI, DL, TII->get(FusedOpcode))
-    .addOperand(Compare->getOperand(0)).addOperand(Compare->getOperand(1))
-    .addImm(CCMask).addMBB(Target);
-  Compare->removeFromParent();
-  return true;
-}
-
 // Implement EmitInstrWithCustomInserter for pseudo Select* instruction MI.
 MachineBasicBlock *
 SystemZTargetLowering::emitSelect(MachineInstr *MI,
@@ -1742,15 +1714,8 @@ SystemZTargetLowering::emitSelect(MachineInstr *MI,
   //  StartMBB:
   //   BRC CCMask, JoinMBB
   //   # fallthrough to FalseMBB
-  //
-  // The original DAG glues comparisons to their uses, both to ensure
-  // that no CC-clobbering instructions are inserted between them, and
-  // to ensure that comparison results are not reused.  This means that
-  // this Select is the sole user of any preceding comparison instruction
-  // and that we can try to use a fused compare and branch instead.
   MBB = StartMBB;
-  if (!convertPrevCompareToBranch(MBB, MI, CCMask, JoinMBB))
-    BuildMI(MBB, DL, TII->get(SystemZ::BRC)).addImm(CCMask).addMBB(JoinMBB);
+  BuildMI(MBB, DL, TII->get(SystemZ::BRC)).addImm(CCMask).addMBB(JoinMBB);
   MBB->addSuccessor(JoinMBB);
   MBB->addSuccessor(FalseMBB);
 
@@ -1773,21 +1738,35 @@ SystemZTargetLowering::emitSelect(MachineInstr *MI,
 
 // Implement EmitInstrWithCustomInserter for pseudo CondStore* instruction MI.
 // StoreOpcode is the store to use and Invert says whether the store should
-// happen when the condition is false rather than true.
+// happen when the condition is false rather than true.  If a STORE ON
+// CONDITION is available, STOCOpcode is its opcode, otherwise it is 0.
 MachineBasicBlock *
 SystemZTargetLowering::emitCondStore(MachineInstr *MI,
                                      MachineBasicBlock *MBB,
-                                     unsigned StoreOpcode, bool Invert) const {
+                                     unsigned StoreOpcode, unsigned STOCOpcode,
+                                     bool Invert) const {
   const SystemZInstrInfo *TII = TM.getInstrInfo();
 
-  MachineOperand Base = MI->getOperand(0);
-  int64_t Disp        = MI->getOperand(1).getImm();
-  unsigned IndexReg   = MI->getOperand(2).getReg();
-  unsigned SrcReg     = MI->getOperand(3).getReg();
+  unsigned SrcReg     = MI->getOperand(0).getReg();
+  MachineOperand Base = MI->getOperand(1);
+  int64_t Disp        = MI->getOperand(2).getImm();
+  unsigned IndexReg   = MI->getOperand(3).getReg();
   unsigned CCMask     = MI->getOperand(4).getImm();
   DebugLoc DL         = MI->getDebugLoc();
 
   StoreOpcode = TII->getOpcodeForOffset(StoreOpcode, Disp);
+
+  // Use STOCOpcode if possible.  We could use different store patterns in
+  // order to avoid matching the index register, but the performance trade-offs
+  // might be more complicated in that case.
+  if (STOCOpcode && !IndexReg && TM.getSubtargetImpl()->hasLoadStoreOnCond()) {
+    if (Invert)
+      CCMask = CCMask ^ SystemZ::CCMASK_ANY;
+    BuildMI(*MBB, MI, DL, TII->get(STOCOpcode))
+      .addReg(SrcReg).addOperand(Base).addImm(Disp).addImm(CCMask);
+    MI->eraseFromParent();
+    return MBB;
+  }
 
   // Get the condition needed to branch around the store.
   if (!Invert)
@@ -1800,15 +1779,8 @@ SystemZTargetLowering::emitCondStore(MachineInstr *MI,
   //  StartMBB:
   //   BRC CCMask, JoinMBB
   //   # fallthrough to FalseMBB
-  //
-  // The original DAG glues comparisons to their uses, both to ensure
-  // that no CC-clobbering instructions are inserted between them, and
-  // to ensure that comparison results are not reused.  This means that
-  // this CondStore is the sole user of any preceding comparison instruction
-  // and that we can try to use a fused compare and branch instead.
   MBB = StartMBB;
-  if (!convertPrevCompareToBranch(MBB, MI, CCMask, JoinMBB))
-    BuildMI(MBB, DL, TII->get(SystemZ::BRC)).addImm(CCMask).addMBB(JoinMBB);
+  BuildMI(MBB, DL, TII->get(SystemZ::BRC)).addImm(CCMask).addMBB(JoinMBB);
   MBB->addSuccessor(JoinMBB);
   MBB->addSuccessor(FalseMBB);
 
@@ -2249,41 +2221,41 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
     return emitSelect(MI, MBB);
 
   case SystemZ::CondStore8_32:
-    return emitCondStore(MI, MBB, SystemZ::STC32, false);
+    return emitCondStore(MI, MBB, SystemZ::STC32, 0, false);
   case SystemZ::CondStore8_32Inv:
-    return emitCondStore(MI, MBB, SystemZ::STC32, true);
+    return emitCondStore(MI, MBB, SystemZ::STC32, 0, true);
   case SystemZ::CondStore16_32:
-    return emitCondStore(MI, MBB, SystemZ::STH32, false);
+    return emitCondStore(MI, MBB, SystemZ::STH32, 0, false);
   case SystemZ::CondStore16_32Inv:
-    return emitCondStore(MI, MBB, SystemZ::STH32, true);
+    return emitCondStore(MI, MBB, SystemZ::STH32, 0, true);
   case SystemZ::CondStore32_32:
-    return emitCondStore(MI, MBB, SystemZ::ST32, false);
+    return emitCondStore(MI, MBB, SystemZ::ST32, SystemZ::STOC32, false);
   case SystemZ::CondStore32_32Inv:
-    return emitCondStore(MI, MBB, SystemZ::ST32, true);
+    return emitCondStore(MI, MBB, SystemZ::ST32, SystemZ::STOC32, true);
   case SystemZ::CondStore8:
-    return emitCondStore(MI, MBB, SystemZ::STC, false);
+    return emitCondStore(MI, MBB, SystemZ::STC, 0, false);
   case SystemZ::CondStore8Inv:
-    return emitCondStore(MI, MBB, SystemZ::STC, true);
+    return emitCondStore(MI, MBB, SystemZ::STC, 0, true);
   case SystemZ::CondStore16:
-    return emitCondStore(MI, MBB, SystemZ::STH, false);
+    return emitCondStore(MI, MBB, SystemZ::STH, 0, false);
   case SystemZ::CondStore16Inv:
-    return emitCondStore(MI, MBB, SystemZ::STH, true);
+    return emitCondStore(MI, MBB, SystemZ::STH, 0, true);
   case SystemZ::CondStore32:
-    return emitCondStore(MI, MBB, SystemZ::ST, false);
+    return emitCondStore(MI, MBB, SystemZ::ST, SystemZ::STOC, false);
   case SystemZ::CondStore32Inv:
-    return emitCondStore(MI, MBB, SystemZ::ST, true);
+    return emitCondStore(MI, MBB, SystemZ::ST, SystemZ::STOC, true);
   case SystemZ::CondStore64:
-    return emitCondStore(MI, MBB, SystemZ::STG, false);
+    return emitCondStore(MI, MBB, SystemZ::STG, SystemZ::STOCG, false);
   case SystemZ::CondStore64Inv:
-    return emitCondStore(MI, MBB, SystemZ::STG, true);
+    return emitCondStore(MI, MBB, SystemZ::STG, SystemZ::STOCG, true);
   case SystemZ::CondStoreF32:
-    return emitCondStore(MI, MBB, SystemZ::STE, false);
+    return emitCondStore(MI, MBB, SystemZ::STE, 0, false);
   case SystemZ::CondStoreF32Inv:
-    return emitCondStore(MI, MBB, SystemZ::STE, true);
+    return emitCondStore(MI, MBB, SystemZ::STE, 0, true);
   case SystemZ::CondStoreF64:
-    return emitCondStore(MI, MBB, SystemZ::STD, false);
+    return emitCondStore(MI, MBB, SystemZ::STD, 0, false);
   case SystemZ::CondStoreF64Inv:
-    return emitCondStore(MI, MBB, SystemZ::STD, true);
+    return emitCondStore(MI, MBB, SystemZ::STD, 0, true);
 
   case SystemZ::AEXT128_64:
     return emitExt128(MI, MBB, false, SystemZ::subreg_low);
@@ -2461,16 +2433,6 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
 
   case SystemZ::ATOMIC_CMP_SWAPW:
     return emitAtomicCmpSwapW(MI, MBB);
-  case SystemZ::BRC:
-    // The original DAG glues comparisons to their uses, both to ensure
-    // that no CC-clobbering instructions are inserted between them, and
-    // to ensure that comparison results are not reused.  This means that
-    // a BRC is the sole user of a preceding comparison and that we can
-    // try to use a fused compare and branch instead.
-    if (convertPrevCompareToBranch(MBB, MI, MI->getOperand(0).getImm(),
-                                   MI->getOperand(1).getMBB()))
-      MI->eraseFromParent();
-    return MBB;
   case SystemZ::MVCWrapper:
     return emitMVCWrapper(MI, MBB);
   default:

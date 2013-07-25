@@ -160,6 +160,8 @@ class RAGreedy : public MachineFunctionPass,
 
     EvictionCost(unsigned B = 0) : BrokenHints(B), MaxWeight(0) {}
 
+    bool isMax() const { return BrokenHints == ~0u; }
+
     bool operator<(const EvictionCost &O) const {
       if (BrokenHints != O.BrokenHints)
         return BrokenHints < O.BrokenHints;
@@ -259,6 +261,7 @@ private:
   bool calcCompactRegion(GlobalSplitCandidate&);
   void splitAroundRegion(LiveRangeEdit&, ArrayRef<unsigned>);
   void calcGapWeights(unsigned, SmallVectorImpl<float>&);
+  unsigned canReassign(LiveInterval &VirtReg, unsigned PhysReg);
   bool shouldEvict(LiveInterval &A, bool, LiveInterval &B, bool);
   bool canEvictInterference(LiveInterval&, unsigned, bool, EvictionCost&);
   void evictInterference(LiveInterval&, unsigned,
@@ -411,15 +414,28 @@ void RAGreedy::enqueue(LiveInterval *LI) {
     // everything else has been allocated.
     Prio = Size;
   } else {
-    // Everything is allocated in long->short order. Long ranges that don't fit
-    // should be spilled (or split) ASAP so they don't create interference.
-    Prio = (1u << 31) + Size;
+    if (ExtraRegInfo[Reg].Stage == RS_Assign && !LI->empty() &&
+        LIS->intervalIsInOneMBB(*LI)) {
+      // Allocate original local ranges in linear instruction order. Since they
+      // are singly defined, this produces optimal coloring in the absence of
+      // global interference and other constraints.
+      Prio = LI->beginIndex().distance(Indexes->getLastIndex());
+    }
+    else {
+      // Allocate global and split ranges in long->short order. Long ranges that
+      // don't fit should be spilled (or split) ASAP so they don't create
+      // interference.  Mark a bit to prioritize global above local ranges.
+      Prio = (1u << 29) + Size;
+    }
+    // Mark a higher bit to prioritize global and local above RS_Split.
+    Prio |= (1u << 31);
 
     // Boost ranges that have a physical register hint.
     if (VRM->hasKnownPreference(Reg))
       Prio |= (1u << 30);
   }
-
+  // The virtual register number is a tie breaker for same-sized ranges.
+  // Give lower vreg numbers higher priority to assign them first.
   Queue.push(std::make_pair(Prio, ~Reg));
 }
 
@@ -480,6 +496,31 @@ unsigned RAGreedy::tryAssign(LiveInterval &VirtReg,
 //                         Interference eviction
 //===----------------------------------------------------------------------===//
 
+unsigned RAGreedy::canReassign(LiveInterval &VirtReg, unsigned PrevReg) {
+  AllocationOrder Order(VirtReg.reg, *VRM, RegClassInfo);
+  unsigned PhysReg;
+  while ((PhysReg = Order.next())) {
+    if (PhysReg == PrevReg)
+      continue;
+
+    MCRegUnitIterator Units(PhysReg, TRI);
+    for (; Units.isValid(); ++Units) {
+      // Instantiate a "subquery", not to be confused with the Queries array.
+      LiveIntervalUnion::Query subQ(&VirtReg, &Matrix->getLiveUnions()[*Units]);
+      if (subQ.checkInterference())
+        break;
+    }
+    // If no units have interference, break out with the current PhysReg.
+    if (!Units.isValid())
+      break;
+  }
+  if (PhysReg)
+    DEBUG(dbgs() << "can reassign: " << VirtReg << " from "
+          << PrintReg(PrevReg, TRI) << " to " << PrintReg(PhysReg, TRI)
+          << '\n');
+  return PhysReg;
+}
+
 /// shouldEvict - determine if A should evict the assigned live range B. The
 /// eviction policy defined by this function together with the allocation order
 /// defined by enqueue() decides which registers ultimately end up being split
@@ -519,6 +560,8 @@ bool RAGreedy::canEvictInterference(LiveInterval &VirtReg, unsigned PhysReg,
   // It is only possible to evict virtual register interference.
   if (Matrix->checkInterference(VirtReg, PhysReg) > LiveRegMatrix::IK_VirtReg)
     return false;
+
+  bool IsLocal = LIS->intervalIsInOneMBB(VirtReg);
 
   // Find VirtReg's cascade number. This will be unassigned if VirtReg was never
   // involved in an eviction before. If a cascade number was assigned, deny
@@ -573,8 +616,17 @@ bool RAGreedy::canEvictInterference(LiveInterval &VirtReg, unsigned PhysReg,
       // Abort if this would be too expensive.
       if (!(Cost < MaxCost))
         return false;
+      if (Urgent)
+        continue;
+      // If !MaxCost.isMax(), then we're just looking for a cheap register.
+      // Evicting another local live range in this case could lead to suboptimal
+      // coloring.
+      if (!MaxCost.isMax() && IsLocal && LIS->intervalIsInOneMBB(*Intf) &&
+          !canReassign(*Intf, PhysReg)) {
+        return false;
+      }
       // Finally, apply the eviction policy for non-urgent evictions.
-      if (!Urgent && !shouldEvict(VirtReg, IsHint, *Intf, BreaksHint))
+      if (!shouldEvict(VirtReg, IsHint, *Intf, BreaksHint))
         return false;
     }
   }
@@ -1785,6 +1837,8 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   Bundles = &getAnalysis<EdgeBundles>();
   SpillPlacer = &getAnalysis<SpillPlacement>();
   DebugVars = &getAnalysis<LiveDebugVariables>();
+
+  DEBUG(LIS->dump());
 
   SA.reset(new SplitAnalysis(*VRM, *LIS, *Loops));
   SE.reset(new SplitEditor(*SA, *LIS, *VRM, *DomTree, *MBFI));

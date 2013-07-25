@@ -58,18 +58,13 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, R1 = 15 in {
 // in their raw BRC/BRCL form, with the 4-bit condition-code mask being
 // the first operand.  It seems friendlier to use mnemonic forms like
 // JE and JLH when writing out the assembly though.
-//
-// Using a custom inserter for BRC gives us a chance to convert the BRC
-// and a preceding compare into a single compare-and-branch instruction.
-// The inserter makes no change in cases where a separate branch really
-// is needed.
 multiclass CondBranches<Operand ccmask, string short, string long> {
   let isBranch = 1, isTerminator = 1, Uses = [CC] in {
     def "" : InstRI<0xA74, (outs), (ins ccmask:$R1, brtarget16:$I2), short, []>;
     def L  : InstRIL<0xC04, (outs), (ins ccmask:$R1, brtarget32:$I2), long, []>;
   }
 }
-let isCodeGenOnly = 1, usesCustomInserter = 1 in
+let isCodeGenOnly = 1 in
   defm BRC : CondBranches<cond4, "j$R1\t$I2", "jg$R1\t$I2">;
 defm AsmBRC : CondBranches<uimm8zx4, "brc\t$R1, $I2", "brcl\t$R1, $I2">;
 
@@ -107,26 +102,32 @@ defm AsmC : CompareBranches<uimm8zx4, "", "$M3, ">;
 // (integer or floating-point)
 multiclass CondExtendedMnemonic<bits<4> ccmask, string name> {
   let R1 = ccmask in {
-    def "" : InstRI<0xA74, (outs), (ins brtarget16:$I2),
-                    "j"##name##"\t$I2", []>;
-    def L  : InstRIL<0xC04, (outs), (ins brtarget32:$I2),
+    def J : InstRI<0xA74, (outs), (ins brtarget16:$I2),
+                   "j"##name##"\t$I2", []>;
+    def JG : InstRIL<0xC04, (outs), (ins brtarget32:$I2),
                      "jg"##name##"\t$I2", []>;
   }
+  def LOCR  : FixedCondUnaryRRF<"locr"##name,  0xB9F2, GR32, GR32, ccmask>;
+  def LOCGR : FixedCondUnaryRRF<"locgr"##name, 0xB9E2, GR64, GR64, ccmask>;
+  def LOC   : FixedCondUnaryRSY<"loc"##name,   0xEBF2, GR32, ccmask, 4>;
+  def LOCG  : FixedCondUnaryRSY<"locg"##name,  0xEBE2, GR64, ccmask, 8>;
+  def STOC  : FixedCondStoreRSY<"stoc"##name,  0xEBF3, GR32, ccmask, 4>;
+  def STOCG : FixedCondStoreRSY<"stocg"##name, 0xEBE3, GR64, ccmask, 8>;
 }
-defm AsmJO   : CondExtendedMnemonic<1,  "o">;
-defm AsmJH   : CondExtendedMnemonic<2,  "h">;
-defm AsmJNLE : CondExtendedMnemonic<3,  "nle">;
-defm AsmJL   : CondExtendedMnemonic<4,  "l">;
-defm AsmJNHE : CondExtendedMnemonic<5,  "nhe">;
-defm AsmJLH  : CondExtendedMnemonic<6,  "lh">;
-defm AsmJNE  : CondExtendedMnemonic<7,  "ne">;
-defm AsmJE   : CondExtendedMnemonic<8,  "e">;
-defm AsmJNLH : CondExtendedMnemonic<9,  "nlh">;
-defm AsmJHE  : CondExtendedMnemonic<10, "he">;
-defm AsmJNL  : CondExtendedMnemonic<11, "nl">;
-defm AsmJLE  : CondExtendedMnemonic<12, "le">;
-defm AsmJNH  : CondExtendedMnemonic<13, "nh">;
-defm AsmJNO  : CondExtendedMnemonic<14, "no">;
+defm AsmO   : CondExtendedMnemonic<1,  "o">;
+defm AsmH   : CondExtendedMnemonic<2,  "h">;
+defm AsmNLE : CondExtendedMnemonic<3,  "nle">;
+defm AsmL   : CondExtendedMnemonic<4,  "l">;
+defm AsmNHE : CondExtendedMnemonic<5,  "nhe">;
+defm AsmLH  : CondExtendedMnemonic<6,  "lh">;
+defm AsmNE  : CondExtendedMnemonic<7,  "ne">;
+defm AsmE   : CondExtendedMnemonic<8,  "e">;
+defm AsmNLH : CondExtendedMnemonic<9,  "nlh">;
+defm AsmHE  : CondExtendedMnemonic<10, "he">;
+defm AsmNL  : CondExtendedMnemonic<11, "nl">;
+defm AsmLE  : CondExtendedMnemonic<12, "le">;
+defm AsmNH  : CondExtendedMnemonic<13, "nh">;
+defm AsmNO  : CondExtendedMnemonic<14, "no">;
 
 // Define AsmParser mnemonics for each integer condition-code mask.
 // This is like the list above, except that condition 3 is not possible
@@ -221,6 +222,16 @@ let neverHasSideEffects = 1 in {
   def LGR : UnaryRRE<"lg", 0xB904, null_frag, GR64, GR64>;
 }
 
+// Move on condition.
+let isCodeGenOnly = 1, Uses = [CC] in {
+  def LOCR  : CondUnaryRRF<"loc",  0xB9F2, GR32, GR32>;
+  def LOCGR : CondUnaryRRF<"locg", 0xB9E2, GR64, GR64>;
+}
+let Uses = [CC] in {
+  def AsmLOCR  : AsmCondUnaryRRF<"loc",  0xB9F2, GR32, GR32>;
+  def AsmLOCGR : AsmCondUnaryRRF<"locg", 0xB9E2, GR64, GR64>;
+}
+
 // Immediate moves.
 let neverHasSideEffects = 1, isAsCheapAsAMove = 1, isMoveImm = 1,
     isReMaterializable = 1 in {
@@ -257,6 +268,18 @@ let canFoldAsLoad = 1 in {
   def LGRL : UnaryRILPC<"lgrl", 0xC48, aligned_load, GR64>;
 }
 
+// Load on condition.
+let isCodeGenOnly = 1, Uses = [CC] in {
+  def LOC  : CondUnaryRSY<"loc",  0xEBF2, GR32, 4>;
+  def LOCG : CondUnaryRSY<"locg", 0xEBE2, GR64, 8>;
+}
+let Uses = [CC] in {
+  def AsmLOC  : AsmCondUnaryRSY<"loc",  0xEBF2, GR32, 4>;
+  def AsmLOCG : AsmCondUnaryRSY<"locg", 0xEBE2, GR64, 8>;
+}
+defm : CondLoad<LOC,  GR32, nonvolatile_load>;
+defm : CondLoad<LOCG, GR64, nonvolatile_load>;
+
 // Register stores.
 let SimpleBDXStore = 1 in {
   let isCodeGenOnly = 1 in
@@ -273,6 +296,17 @@ let SimpleBDXStore = 1 in {
 let isCodeGenOnly = 1 in
   def STRL32 : StoreRILPC<"strl", 0xC4F, aligned_store, GR32>;
 def STGRL : StoreRILPC<"stgrl", 0xC4B, aligned_store, GR64>;
+
+// Store on condition.
+let isCodeGenOnly = 1, Uses = [CC] in {
+  def STOC32 : CondStoreRSY<"stoc",  0xEBF3, GR32, 4>;
+  def STOC   : CondStoreRSY<"stoc",  0xEBF3, GR64, 4>;
+  def STOCG  : CondStoreRSY<"stocg", 0xEBE3, GR64, 8>;
+}
+let Uses = [CC] in {
+  def AsmSTOC  : AsmCondStoreRSY<"stoc",  0xEBF3, GR32, 4>;
+  def AsmSTOCG : AsmCondStoreRSY<"stocg", 0xEBE3, GR64, 8>;
+}
 
 // 8-bit immediate stores to 8-bit fields.
 defm MVI : StoreSIPair<"mvi", 0x92, 0xEB52, truncstorei8, imm32zx8trunc>;

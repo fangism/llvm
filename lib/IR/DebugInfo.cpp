@@ -406,10 +406,27 @@ bool DIObjCProperty::Verify() const {
   return DbgNode->getNumOperands() == 8;
 }
 
+/// Check if a field at position Elt of a MDNode is a MDNode.
+/// We currently allow an empty string and an integer.
+/// But we don't allow a non-empty string in a MDNode field.
+static bool fieldIsMDNode(const MDNode *DbgNode, unsigned Elt) {
+  // FIXME: This function should return true, if the field is null or the field
+  // is indeed a MDNode: return !Fld || isa<MDNode>(Fld).
+  Value *Fld = getField(DbgNode, Elt);
+  if (Fld && isa<MDString>(Fld) &&
+      !cast<MDString>(Fld)->getString().empty())
+    return false;
+  return true;
+}
+
 /// Verify - Verify that a type descriptor is well formed.
 bool DIType::Verify() const {
   if (!isType())
     return false;
+  // Make sure Context @ field 2 is MDNode.
+  if (!fieldIsMDNode(DbgNode, 2))
+    return false;
+
   // FIXME: Sink this into the various subclass verifies.
   unsigned Tag = getTag();
   if (!isBasicType() && Tag != dwarf::DW_TAG_const_type &&
@@ -443,6 +460,14 @@ bool DIBasicType::Verify() const {
 
 /// Verify - Verify that a derived type descriptor is well formed.
 bool DIDerivedType::Verify() const {
+  // Make sure DerivedFrom @ field 9 is MDNode.
+  if (!fieldIsMDNode(DbgNode, 9))
+    return false;
+  if (getTag() == dwarf::DW_TAG_ptr_to_member_type)
+    // Make sure ClassType @ field 10 is MDNode.
+    if (!fieldIsMDNode(DbgNode, 10))
+      return false;
+
   return isDerivedType() && DbgNode->getNumOperands() >= 10 &&
          DbgNode->getNumOperands() <= 14;
 }
@@ -450,6 +475,12 @@ bool DIDerivedType::Verify() const {
 /// Verify - Verify that a composite type descriptor is well formed.
 bool DICompositeType::Verify() const {
   if (!isCompositeType())
+    return false;
+
+  // Make sure DerivedFrom @ field 9 and ContainingType @ field 12 are MDNodes.
+  if (!fieldIsMDNode(DbgNode, 9))
+    return false;
+  if (!fieldIsMDNode(DbgNode, 12))
     return false;
 
   return DbgNode->getNumOperands() >= 10 && DbgNode->getNumOperands() <= 14;
@@ -460,6 +491,14 @@ bool DISubprogram::Verify() const {
   if (!isSubprogram())
     return false;
 
+  // Make sure context @ field 2 and type @ field 7 are MDNodes.
+  if (!fieldIsMDNode(DbgNode, 2))
+    return false;
+  if (!fieldIsMDNode(DbgNode, 7))
+    return false;
+  // Containing type @ field 12.
+  if (!fieldIsMDNode(DbgNode, 12))
+    return false;
   return DbgNode->getNumOperands() == 20;
 }
 
@@ -470,6 +509,14 @@ bool DIGlobalVariable::Verify() const {
 
   if (getDisplayName().empty())
     return false;
+  // Make sure context @ field 2 and type @ field 8 are MDNodes.
+  if (!fieldIsMDNode(DbgNode, 2))
+    return false;
+  if (!fieldIsMDNode(DbgNode, 8))
+    return false;
+  // Make sure StaticDataMemberDeclaration @ field 12 is MDNode.
+  if (!fieldIsMDNode(DbgNode, 12))
+    return false;
 
   return DbgNode->getNumOperands() == 13;
 }
@@ -479,6 +526,11 @@ bool DIVariable::Verify() const {
   if (!isVariable())
     return false;
 
+  // Make sure context @ field 1 and type @ field 5 are MDNodes.
+  if (!fieldIsMDNode(DbgNode, 1))
+    return false;
+  if (!fieldIsMDNode(DbgNode, 5))
+    return false;
   return DbgNode->getNumOperands() >= 8;
 }
 

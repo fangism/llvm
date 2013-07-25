@@ -104,6 +104,31 @@ public:
                                 MachineBasicBlock *FBB,
                                 const SmallVectorImpl<MachineOperand> &Cond,
                                 DebugLoc DL) const LLVM_OVERRIDE;
+  virtual bool analyzeCompare(const MachineInstr *MI,
+                              unsigned &SrcReg, unsigned &SrcReg2,
+                              int &Mask, int &Value) const LLVM_OVERRIDE;
+  virtual bool optimizeCompareInstr(MachineInstr *CmpInstr,
+                                    unsigned SrcReg, unsigned SrcReg2,
+                                    int Mask, int Value,
+                                    const MachineRegisterInfo *MRI) const
+    LLVM_OVERRIDE;
+  virtual bool isPredicable(MachineInstr *MI) const LLVM_OVERRIDE;
+  virtual bool isProfitableToIfCvt(MachineBasicBlock &MBB, unsigned NumCycles,
+                                   unsigned ExtraPredCycles,
+                                   const BranchProbability &Probability) const
+    LLVM_OVERRIDE;
+  virtual bool isProfitableToIfCvt(MachineBasicBlock &TMBB,
+                                   unsigned NumCyclesT,
+                                   unsigned ExtraPredCyclesT,
+                                   MachineBasicBlock &FMBB,
+                                   unsigned NumCyclesF,
+                                   unsigned ExtraPredCyclesF,
+                                   const BranchProbability &Probability) const
+    LLVM_OVERRIDE;
+  virtual bool
+    PredicateInstruction(MachineInstr *MI,
+                         const SmallVectorImpl<MachineOperand> &Pred) const
+    LLVM_OVERRIDE;
   virtual void copyPhysReg(MachineBasicBlock &MBB,
                            MachineBasicBlock::iterator MBBI, DebugLoc DL,
                            unsigned DestReg, unsigned SrcReg,
