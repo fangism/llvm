@@ -403,9 +403,9 @@ defm BUFFER_LOAD_FORMAT_XYZW : MUBUF_Load_Helper <0x00000003, "BUFFER_LOAD_FORMA
 //def BUFFER_STORE_FORMAT_XYZ : MUBUF_ <0x00000006, "BUFFER_STORE_FORMAT_XYZ", []>;
 //def BUFFER_STORE_FORMAT_XYZW : MUBUF_ <0x00000007, "BUFFER_STORE_FORMAT_XYZW", []>;
 defm BUFFER_LOAD_UBYTE : MUBUF_Load_Helper <0x00000008, "BUFFER_LOAD_UBYTE", VReg_32>;
-//def BUFFER_LOAD_SBYTE : MUBUF_ <0x00000009, "BUFFER_LOAD_SBYTE", []>;
-//def BUFFER_LOAD_USHORT : MUBUF_ <0x0000000a, "BUFFER_LOAD_USHORT", []>;
-//def BUFFER_LOAD_SSHORT : MUBUF_ <0x0000000b, "BUFFER_LOAD_SSHORT", []>;
+defm BUFFER_LOAD_SBYTE : MUBUF_Load_Helper <0x00000009, "BUFFER_LOAD_SBYTE", VReg_32>;
+defm BUFFER_LOAD_USHORT : MUBUF_Load_Helper <0x0000000a, "BUFFER_LOAD_USHORT", VReg_32>;
+defm BUFFER_LOAD_SSHORT : MUBUF_Load_Helper <0x0000000b, "BUFFER_LOAD_SSHORT", VReg_32>;
 defm BUFFER_LOAD_DWORD : MUBUF_Load_Helper <0x0000000c, "BUFFER_LOAD_DWORD", VReg_32>;
 defm BUFFER_LOAD_DWORDX2 : MUBUF_Load_Helper <0x0000000d, "BUFFER_LOAD_DWORDX2", VReg_64>;
 defm BUFFER_LOAD_DWORDX4 : MUBUF_Load_Helper <0x0000000e, "BUFFER_LOAD_DWORDX4", VReg_128>;
@@ -866,14 +866,16 @@ defm V_MUL_F32 : VOP2_32 <0x00000008, "V_MUL_F32",
   [(set f32:$dst, (fmul f32:$src0, f32:$src1))]
 >;
 
-} // End isCommutable = 1
 
-//defm V_MUL_I32_I24 : VOP2_32 <0x00000009, "V_MUL_I32_I24", []>;
+defm V_MUL_I32_I24 : VOP2_32 <0x00000009, "V_MUL_I32_I24",
+  [(set i32:$dst, (mul I24:$src0, I24:$src1))]
+>;
 //defm V_MUL_HI_I32_I24 : VOP2_32 <0x0000000a, "V_MUL_HI_I32_I24", []>;
-//defm V_MUL_U32_U24 : VOP2_32 <0x0000000b, "V_MUL_U32_U24", []>;
+defm V_MUL_U32_U24 : VOP2_32 <0x0000000b, "V_MUL_U32_U24",
+  [(set i32:$dst, (mul U24:$src0, U24:$src1))]
+>;
 //defm V_MUL_HI_U32_U24 : VOP2_32 <0x0000000c, "V_MUL_HI_U32_U24", []>;
 
-let isCommutable = 1 in {
 
 defm V_MIN_LEGACY_F32 : VOP2_32 <0x0000000d, "V_MIN_LEGACY_F32",
   [(set f32:$dst, (AMDGPUfmin f32:$src0, f32:$src1))]
@@ -981,8 +983,12 @@ let neverHasSideEffects = 1 in {
 
 def V_MAD_LEGACY_F32 : VOP3_32 <0x00000140, "V_MAD_LEGACY_F32", []>;
 def V_MAD_F32 : VOP3_32 <0x00000141, "V_MAD_F32", []>;
-//def V_MAD_I32_I24 : VOP3_32 <0x00000142, "V_MAD_I32_I24", []>;
-//def V_MAD_U32_U24 : VOP3_32 <0x00000143, "V_MAD_U32_U24", []>;
+def V_MAD_I32_I24 : VOP3_32 <0x00000142, "V_MAD_I32_I24",
+  [(set i32:$dst, (add (mul I24:$src0, I24:$src1), i32:$src2))]
+>;
+def V_MAD_U32_U24 : VOP3_32 <0x00000143, "V_MAD_U32_U24",
+  [(set i32:$dst, (add (mul U24:$src0, U24:$src1), i32:$src2))]
+>;
 
 } // End neverHasSideEffects
 def V_CUBEID_F32 : VOP3_32 <0x00000144, "V_CUBEID_F32", []>;
@@ -1741,12 +1747,16 @@ multiclass MUBUFLoad_Pattern <MUBUF Instr_ADDR64, ValueType vt,
   >;
 }
 
-defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORDX2_ADDR64, i64,
-                          global_load, constant_load>;
+defm : MUBUFLoad_Pattern <BUFFER_LOAD_SBYTE_ADDR64, i32,
+                          sextloadi8_global, sextloadi8_constant>;
+defm : MUBUFLoad_Pattern <BUFFER_LOAD_UBYTE_ADDR64, i32,
+                          az_extloadi8_global, az_extloadi8_constant>;
+defm : MUBUFLoad_Pattern <BUFFER_LOAD_SSHORT_ADDR64, i32,
+                          sextloadi16_global, sextloadi16_constant>;
+defm : MUBUFLoad_Pattern <BUFFER_LOAD_USHORT_ADDR64, i32,
+                          az_extloadi16_global, az_extloadi16_constant>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORD_ADDR64, i32,
                           global_load, constant_load>;
-defm : MUBUFLoad_Pattern <BUFFER_LOAD_UBYTE_ADDR64, i32,
-                          zextloadi8_global, zextloadi8_constant>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORDX2_ADDR64, i64,
                           global_load, constant_load>;
 defm : MUBUFLoad_Pattern <BUFFER_LOAD_DWORDX2_ADDR64, i64,

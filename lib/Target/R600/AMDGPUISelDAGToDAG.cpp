@@ -50,7 +50,7 @@ public:
 private:
   inline SDValue getSmallIPtrImm(unsigned Imm);
   bool FoldOperand(SDValue &Src, SDValue &Sel, SDValue &Neg, SDValue &Abs,
-                   const R600InstrInfo *TII, std::vector<unsigned> Cst);
+                   const R600InstrInfo *TII);
   bool FoldOperands(unsigned, const R600InstrInfo *, std::vector<SDValue> &);
   bool FoldDotOperands(unsigned, const R600InstrInfo *, std::vector<SDValue> &);
 
@@ -58,6 +58,9 @@ private:
   bool SelectADDRParam(SDValue Addr, SDValue& R1, SDValue& R2);
   bool SelectADDR(SDValue N, SDValue &R1, SDValue &R2);
   bool SelectADDR64(SDValue N, SDValue &R1, SDValue &R2);
+  SDValue SimplifyI24(SDValue &Op);
+  bool SelectI24(SDValue Addr, SDValue &Op);
+  bool SelectU24(SDValue Addr, SDValue &Op);
 
   static bool checkType(const Value *ptr, unsigned int addrspace);
 
@@ -158,12 +161,100 @@ bool AMDGPUDAGToDAGISel::SelectADDR64(SDValue Addr, SDValue& R1, SDValue& R2) {
 }
 
 SDNode *AMDGPUDAGToDAGISel::Select(SDNode *N) {
+  const R600InstrInfo *TII =
+                      static_cast<const R600InstrInfo*>(TM.getInstrInfo());
   unsigned int Opc = N->getOpcode();
   if (N->isMachineOpcode()) {
     return NULL;   // Already selected.
   }
   switch (Opc) {
   default: break;
+  case AMDGPUISD::CONST_ADDRESS: {
+    for (SDNode::use_iterator I = N->use_begin(), Next = llvm::next(I);
+                              I != SDNode::use_end(); I = Next) {
+      Next = llvm::next(I);
+      if (!I->isMachineOpcode()) {
+        continue;
+      }
+      unsigned Opcode = I->getMachineOpcode();
+      bool HasDst = TII->getOperandIdx(Opcode, AMDGPU::OpName::dst) > -1;
+      int SrcIdx = I.getOperandNo();
+      int SelIdx;
+      // Unlike MachineInstrs, SDNodes do not have results in their operand
+      // list, so we need to increment the SrcIdx, since
+      // R600InstrInfo::getOperandIdx is based on the MachineInstr indices.
+      if (HasDst) {
+        SrcIdx++;
+      }
+
+      SelIdx = TII->getSelIdx(I->getMachineOpcode(), SrcIdx);
+      if (SelIdx < 0) {
+        continue;
+      }
+
+      SDValue CstOffset;
+      if (N->getValueType(0).isVector() ||
+          !SelectGlobalValueConstantOffset(N->getOperand(0), CstOffset))
+        continue;
+
+      // Gather constants values
+      int SrcIndices[] = {
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src0),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src1),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src2),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_X),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_Y),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_Z),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_W),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_X),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_Y),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_Z),
+        TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_W)
+      };
+      std::vector<unsigned> Consts;
+      for (unsigned i = 0; i < sizeof(SrcIndices) / sizeof(int); i++) {
+        int OtherSrcIdx = SrcIndices[i];
+        int OtherSelIdx = TII->getSelIdx(Opcode, OtherSrcIdx);
+        if (OtherSrcIdx < 0 || OtherSelIdx < 0) {
+          continue;
+        }
+        if (HasDst) {
+          OtherSrcIdx--;
+          OtherSelIdx--;
+        }
+        if (RegisterSDNode *Reg =
+                         dyn_cast<RegisterSDNode>(I->getOperand(OtherSrcIdx))) {
+          if (Reg->getReg() == AMDGPU::ALU_CONST) {
+            ConstantSDNode *Cst = dyn_cast<ConstantSDNode>(I->getOperand(OtherSelIdx));
+            Consts.push_back(Cst->getZExtValue());
+          }
+        }
+      }
+
+      ConstantSDNode *Cst = dyn_cast<ConstantSDNode>(CstOffset);
+      Consts.push_back(Cst->getZExtValue());
+      if (!TII->fitsConstReadLimitations(Consts))
+        continue;
+
+      // Convert back to SDNode indices
+      if (HasDst) {
+        SrcIdx--;
+        SelIdx--;
+      }
+      std::vector<SDValue> Ops;
+      for (int i = 0, e = I->getNumOperands(); i != e; ++i) {
+        if (i == SrcIdx) {
+          Ops.push_back(CurDAG->getRegister(AMDGPU::ALU_CONST, MVT::f32));
+        } else if (i == SelIdx) {
+          Ops.push_back(CstOffset);
+        } else {
+          Ops.push_back(I->getOperand(i));
+        }
+      }
+      CurDAG->UpdateNodeOperands(*I, Ops.data(), Ops.size());
+    }
+    break;
+  }
   case ISD::BUILD_VECTOR: {
     const AMDGPUSubtarget &ST = TM.getSubtarget<AMDGPUSubtarget>();
     if (ST.getGeneration() > AMDGPUSubtarget::NORTHERN_ISLANDS) {
@@ -224,7 +315,6 @@ SDNode *AMDGPUDAGToDAGISel::Select(SDNode *N) {
     if (ST.getGeneration() > AMDGPUSubtarget::NORTHERN_ISLANDS) {
       break;
     }
-    const R600InstrInfo *TII = static_cast<const R600InstrInfo*>(TM.getInstrInfo());
 
     uint64_t ImmValue = 0;
     unsigned ImmReg = AMDGPU::ALU_LITERAL_X;
@@ -342,7 +432,7 @@ SDNode *AMDGPUDAGToDAGISel::Select(SDNode *N) {
     if (Result && Result->isMachineOpcode() &&
         !(TII->get(Result->getMachineOpcode()).TSFlags & R600_InstFlag::VECTOR)
         && TII->hasInstrModifiers(Result->getMachineOpcode())) {
-      // Fold FNEG/FABS/CONST_ADDRESS
+      // Fold FNEG/FABS
       // TODO: Isel can generate multiple MachineInst, we need to recursively
       // parse Result
       bool IsModified = false;
@@ -382,24 +472,8 @@ SDNode *AMDGPUDAGToDAGISel::Select(SDNode *N) {
 }
 
 bool AMDGPUDAGToDAGISel::FoldOperand(SDValue &Src, SDValue &Sel, SDValue &Neg,
-                                     SDValue &Abs, const R600InstrInfo *TII,
-                                     std::vector<unsigned> Consts) {
+                                     SDValue &Abs, const R600InstrInfo *TII) {
   switch (Src.getOpcode()) {
-  case AMDGPUISD::CONST_ADDRESS: {
-    SDValue CstOffset;
-    if (Src.getValueType().isVector() ||
-        !SelectGlobalValueConstantOffset(Src.getOperand(0), CstOffset))
-      return false;
-
-    ConstantSDNode *Cst = dyn_cast<ConstantSDNode>(CstOffset);
-    Consts.push_back(Cst->getZExtValue());
-    if (!TII->fitsConstReadLimitations(Consts))
-      return false;
-
-    Src = CurDAG->getRegister(AMDGPU::ALU_CONST, MVT::f32);
-    Sel = CstOffset;
-    return true;
-    }
   case ISD::FNEG:
     Src = Src.getOperand(0);
     Neg = CurDAG->getTargetConstant(1, MVT::i32);
@@ -441,19 +515,6 @@ bool AMDGPUDAGToDAGISel::FoldOperands(unsigned Opcode,
     -1
   };
 
-  // Gather constants values
-  std::vector<unsigned> Consts;
-  for (unsigned j = 0; j < 3; j++) {
-    int SrcIdx = OperandIdx[j];
-    if (SrcIdx < 0)
-      break;
-    if (RegisterSDNode *Reg = dyn_cast<RegisterSDNode>(Ops[SrcIdx - 1])) {
-      if (Reg->getReg() == AMDGPU::ALU_CONST) {
-        ConstantSDNode *Cst = dyn_cast<ConstantSDNode>(Ops[SelIdx[j] - 1]);
-        Consts.push_back(Cst->getZExtValue());
-      }
-    }
-  }
 
   for (unsigned i = 0; i < 3; i++) {
     if (OperandIdx[i] < 0)
@@ -463,7 +524,7 @@ bool AMDGPUDAGToDAGISel::FoldOperands(unsigned Opcode,
     SDValue &Neg = Ops[NegIdx[i] - 1];
     SDValue FakeAbs;
     SDValue &Abs = (AbsIdx[i] > -1) ? Ops[AbsIdx[i] - 1] : FakeAbs;
-    if (FoldOperand(Src, Sel, Neg, Abs, TII, Consts))
+    if (FoldOperand(Src, Sel, Neg, Abs, TII))
       return true;
   }
   return false;
@@ -512,20 +573,6 @@ bool AMDGPUDAGToDAGISel::FoldDotOperands(unsigned Opcode,
     TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_abs_W)
   };
 
-  // Gather constants values
-  std::vector<unsigned> Consts;
-  for (unsigned j = 0; j < 8; j++) {
-    int SrcIdx = OperandIdx[j];
-    if (SrcIdx < 0)
-      break;
-    if (RegisterSDNode *Reg = dyn_cast<RegisterSDNode>(Ops[SrcIdx - 1])) {
-      if (Reg->getReg() == AMDGPU::ALU_CONST) {
-        ConstantSDNode *Cst = dyn_cast<ConstantSDNode>(Ops[SelIdx[j] - 1]);
-        Consts.push_back(Cst->getZExtValue());
-      }
-    }
-  }
-
   for (unsigned i = 0; i < 8; i++) {
     if (OperandIdx[i] < 0)
       return false;
@@ -533,7 +580,7 @@ bool AMDGPUDAGToDAGISel::FoldDotOperands(unsigned Opcode,
     SDValue &Sel = Ops[SelIdx[i] - 1];
     SDValue &Neg = Ops[NegIdx[i] - 1];
     SDValue &Abs = Ops[AbsIdx[i] - 1];
-    if (FoldOperand(Src, Sel, Neg, Abs, TII, Consts))
+    if (FoldOperand(Src, Sel, Neg, Abs, TII))
       return true;
   }
   return false;
@@ -565,27 +612,21 @@ bool AMDGPUDAGToDAGISel::isRegionStore(const StoreSDNode *N) {
   return checkType(N->getSrcValue(), AMDGPUAS::REGION_ADDRESS);
 }
 
-bool AMDGPUDAGToDAGISel::isConstantLoad(const LoadSDNode *N, int cbID) const {
-  if (checkType(N->getSrcValue(), AMDGPUAS::CONSTANT_ADDRESS)) {
-    return true;
+bool AMDGPUDAGToDAGISel::isConstantLoad(const LoadSDNode *N, int CbId) const {
+  if (CbId == -1) {
+    return checkType(N->getSrcValue(), AMDGPUAS::CONSTANT_ADDRESS);
   }
-
-  const DataLayout *DL = TM.getDataLayout();
-  MachineMemOperand *MMO = N->getMemOperand();
-  const Value *V = MMO->getValue();
-  const Value *BV = GetUnderlyingObject(V, DL, 0);
-  if (MMO
-      && MMO->getValue()
-      && ((V && dyn_cast<GlobalValue>(V))
-          || (BV && dyn_cast<GlobalValue>(
-                GetUnderlyingObject(MMO->getValue(), DL, 0))))) {
-    return checkType(N->getSrcValue(), AMDGPUAS::PRIVATE_ADDRESS);
-  } else {
-    return false;
-  }
+  return checkType(N->getSrcValue(), AMDGPUAS::CONSTANT_BUFFER_0 + CbId);
 }
 
 bool AMDGPUDAGToDAGISel::isGlobalLoad(const LoadSDNode *N) const {
+  if (N->getAddressSpace() == AMDGPUAS::CONSTANT_ADDRESS) {
+    const AMDGPUSubtarget &ST = TM.getSubtarget<AMDGPUSubtarget>();
+    if (ST.getGeneration() < AMDGPUSubtarget::SOUTHERN_ISLANDS ||
+        N->getMemoryVT().bitsLT(MVT::i32)) {
+      return true;
+    }
+  }
   return checkType(N->getSrcValue(), AMDGPUAS::GLOBAL_ADDRESS);
 }
 
@@ -643,7 +684,9 @@ const char *AMDGPUDAGToDAGISel::getPassName() const {
 #endif
 #undef DEBUGTMP
 
-///==== AMDGPU Functions ====///
+//===----------------------------------------------------------------------===//
+// Complex Patterns
+//===----------------------------------------------------------------------===//
 
 bool AMDGPUDAGToDAGISel::SelectGlobalValueConstantOffset(SDValue Addr,
     SDValue& IntPtr) {
@@ -708,6 +751,49 @@ bool AMDGPUDAGToDAGISel::SelectADDRIndirect(SDValue Addr, SDValue &Base,
   }
 
   return true;
+}
+
+SDValue AMDGPUDAGToDAGISel::SimplifyI24(SDValue &Op) {
+  APInt Demanded = APInt(32, 0x00FFFFFF);
+  APInt KnownZero, KnownOne;
+  TargetLowering::TargetLoweringOpt TLO(*CurDAG, true, true);
+  const TargetLowering *TLI = getTargetLowering();
+  if (TLI->SimplifyDemandedBits(Op, Demanded, KnownZero, KnownOne, TLO)) {
+    CurDAG->ReplaceAllUsesWith(Op, TLO.New);
+    CurDAG->RepositionNode(Op.getNode(), TLO.New.getNode());
+    return SimplifyI24(TLO.New);
+  } else {
+    return  Op;
+  }
+}
+
+bool AMDGPUDAGToDAGISel::SelectI24(SDValue Op, SDValue &I24) {
+
+  assert(Op.getValueType() == MVT::i32);
+
+  if (CurDAG->ComputeNumSignBits(Op) == 9) {
+    I24 = SimplifyI24(Op);
+    return true;
+  }
+  return false;
+}
+
+bool AMDGPUDAGToDAGISel::SelectU24(SDValue Op, SDValue &U24) {
+  APInt KnownZero;
+  APInt KnownOne;
+  CurDAG->ComputeMaskedBits(Op, KnownZero, KnownOne);
+
+  assert (Op.getValueType() == MVT::i32);
+
+  // ANY_EXTEND and EXTLOAD operations can only be done on types smaller than
+  // i32.  These smaller types are legal to use with the i24 instructions.
+  if ((KnownZero & APInt(KnownZero.getBitWidth(), 0xFF000000)) == 0xFF000000 ||
+       Op.getOpcode() == ISD::ANY_EXTEND ||
+       ISD::isEXTLoad(Op.getNode())) {
+    U24 = SimplifyI24(Op);
+    return true;
+  }
+  return false;
 }
 
 void AMDGPUDAGToDAGISel::PostprocessISelDAG() {

@@ -16,6 +16,7 @@
 #include "R600Defines.h"
 #include "R600InstrInfo.h"
 #include "R600MachineFunctionInfo.h"
+#include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -71,10 +72,10 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::LOAD, MVT::i32, Custom);
   setOperationAction(ISD::LOAD, MVT::v2i32, Expand);
   setOperationAction(ISD::LOAD, MVT::v4i32, Custom);
-  setLoadExtAction(ISD::EXTLOAD, MVT::v4i8, Custom);
-  setLoadExtAction(ISD::EXTLOAD, MVT::i8, Custom);
+  setLoadExtAction(ISD::SEXTLOAD, MVT::i8, Custom);
+  setLoadExtAction(ISD::SEXTLOAD, MVT::i16, Custom);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, Custom);
-  setLoadExtAction(ISD::ZEXTLOAD, MVT::v4i8, Custom);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::i16, Custom);
   setOperationAction(ISD::STORE, MVT::i8, Custom);
   setOperationAction(ISD::STORE, MVT::i32, Custom);
   setOperationAction(ISD::STORE, MVT::v2i32, Expand);
@@ -774,7 +775,7 @@ SDValue R600TargetLowering::LowerImplicitParameter(SelectionDAG &DAG, EVT VT,
                                                    unsigned DwordOffset) const {
   unsigned ByteOffset = DwordOffset * 4;
   PointerType * PtrType = PointerType::get(VT.getTypeForEVT(*DAG.getContext()),
-                                      AMDGPUAS::PARAM_I_ADDRESS);
+                                      AMDGPUAS::CONSTANT_BUFFER_0);
 
   // We shouldn't be using an offset wider than 16-bits for implicit parameters.
   assert(isInt<16>(ByteOffset));
@@ -1153,6 +1154,30 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
     return DAG.getMergeValues(MergedValues, 2, DL);
   }
 
+  // For most operations returning SDValue() will result int he node being
+  // expanded by the DAG Legalizer.  This is not the case for ISD::LOAD, so
+  // we need to manually expand loads that may be legal in some address spaces
+  // and illegal in others.  SEXT loads from CONSTANT_BUFFER_0 are supported
+  // for compute shaders, since the data is sign extended when it is uploaded
+  // to the buffer.  Howerver SEXT loads from other addresspaces are not
+  // supported, so we need to expand them here.
+  if (LoadNode->getExtensionType() == ISD::SEXTLOAD) {
+    EVT MemVT = LoadNode->getMemoryVT();
+    assert(!MemVT.isVector() && (MemVT == MVT::i16 || MemVT == MVT::i8));
+    SDValue ShiftAmount =
+          DAG.getConstant(VT.getSizeInBits() - MemVT.getSizeInBits(), MVT::i32);
+    SDValue NewLoad = DAG.getExtLoad(ISD::EXTLOAD, DL, VT, Chain, Ptr,
+                                  LoadNode->getPointerInfo(), MemVT,
+                                  LoadNode->isVolatile(),
+                                  LoadNode->isNonTemporal(),
+                                  LoadNode->getAlignment());
+    SDValue Shl = DAG.getNode(ISD::SHL, DL, VT, NewLoad, ShiftAmount);
+    SDValue Sra = DAG.getNode(ISD::SRA, DL, VT, Shl, ShiftAmount);
+
+    SDValue MergedValues[2] = { Sra, Chain };
+    return DAG.getMergeValues(MergedValues, 2, DL);
+  }
+
   if (LoadNode->getAddressSpace() != AMDGPUAS::PRIVATE_ADDRESS) {
     return SDValue();
   }
@@ -1212,31 +1237,27 @@ SDValue R600TargetLowering::LowerFormalArguments(
                                       const SmallVectorImpl<ISD::InputArg> &Ins,
                                       SDLoc DL, SelectionDAG &DAG,
                                       SmallVectorImpl<SDValue> &InVals) const {
-  unsigned ParamOffsetBytes = 36;
-  Function::const_arg_iterator FuncArg =
-                            DAG.getMachineFunction().getFunction()->arg_begin();
-  for (unsigned i = 0, e = Ins.size(); i < e; ++i, ++FuncArg) {
-    EVT VT = Ins[i].VT;
-    Type *ArgType = FuncArg->getType();
-    unsigned ArgSizeInBits = ArgType->isPointerTy() ?
-                             32 : ArgType->getPrimitiveSizeInBits();
-    unsigned ArgBytes = ArgSizeInBits >> 3;
-    EVT ArgVT;
-    if (ArgSizeInBits < VT.getSizeInBits()) {
-      assert(!ArgType->isFloatTy() &&
-             "Extending floating point arguments not supported yet");
-      ArgVT = MVT::getIntegerVT(ArgSizeInBits);
-    } else {
-      ArgVT = VT;
-    }
+  SmallVector<CCValAssign, 16> ArgLocs;
+  CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(),
+                 getTargetMachine(), ArgLocs, *DAG.getContext());
+
+  AnalyzeFormalArguments(CCInfo, Ins);
+
+  for (unsigned i = 0, e = Ins.size(); i < e; ++i) {
+    CCValAssign &VA = ArgLocs[i];
+    EVT VT = VA.getLocVT();
+
     PointerType *PtrTy = PointerType::get(VT.getTypeForEVT(*DAG.getContext()),
-                                                    AMDGPUAS::PARAM_I_ADDRESS);
-    SDValue Arg = DAG.getExtLoad(ISD::ZEXTLOAD, DL, VT, DAG.getRoot(),
-                                DAG.getConstant(ParamOffsetBytes, MVT::i32),
-                                       MachinePointerInfo(UndefValue::get(PtrTy)),
-                                       ArgVT, false, false, ArgBytes);
+                                                   AMDGPUAS::CONSTANT_BUFFER_0);
+
+    // The first 36 bytes of the input buffer contains information about
+    // thread group and global sizes.
+    SDValue Arg = DAG.getLoad(VT, DL, Chain,
+                           DAG.getConstant(36 + VA.getLocMemOffset(), MVT::i32),
+                           MachinePointerInfo(UndefValue::get(PtrTy)), false,
+                           false, false, 4); // 4 is the prefered alignment for
+                                             // the CONSTANT memory space.
     InVals.push_back(Arg);
-    ParamOffsetBytes += ArgBytes;
   }
   return Chain;
 }

@@ -1232,7 +1232,8 @@ error_code ELFObjectFile<ELFT>::getSymbolFlags(DataRefImpl Symb,
     Result |= SymbolRef::SF_Absolute;
 
   if (symb->getType() == ELF::STT_FILE ||
-      symb->getType() == ELF::STT_SECTION)
+      symb->getType() == ELF::STT_SECTION ||
+      Symb == begin_symbols()->getRawDataRefImpl())
     Result |= SymbolRef::SF_FormatSpecific;
 
   if (getSymbolTableIndex(symb) == ELF::SHN_UNDEF)
@@ -1665,6 +1666,8 @@ StringRef ELFObjectFile<ELFT>::getRelocationTypeName(uint32_t Type) const {
       LLVM_ELF_SWITCH_RELOC_TYPE_NAME(R_MIPS_PC16);
       LLVM_ELF_SWITCH_RELOC_TYPE_NAME(R_MIPS_CALL16);
       LLVM_ELF_SWITCH_RELOC_TYPE_NAME(R_MIPS_GPREL32);
+      LLVM_ELF_SWITCH_RELOC_TYPE_NAME(R_MIPS_UNUSED1);
+      LLVM_ELF_SWITCH_RELOC_TYPE_NAME(R_MIPS_UNUSED2);
       LLVM_ELF_SWITCH_RELOC_TYPE_NAME(R_MIPS_SHIFT5);
       LLVM_ELF_SWITCH_RELOC_TYPE_NAME(R_MIPS_SHIFT6);
       LLVM_ELF_SWITCH_RELOC_TYPE_NAME(R_MIPS_64);

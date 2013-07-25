@@ -313,12 +313,12 @@ class VTX_READ <string name, bits<8> buffer_id, dag outs, list<dag> pattern>
 
 class LoadParamFrag <PatFrag load_type> : PatFrag <
   (ops node:$ptr), (load_type node:$ptr),
-  [{ return isParamLoad(dyn_cast<LoadSDNode>(N)); }]
+  [{ return isConstantLoad(dyn_cast<LoadSDNode>(N), 0); }]
 >;
 
 def load_param : LoadParamFrag<load>;
-def load_param_zexti8 : LoadParamFrag<zextloadi8>;
-def load_param_zexti16 : LoadParamFrag<zextloadi16>;
+def load_param_exti8 : LoadParamFrag<az_extloadi8>;
+def load_param_exti16 : LoadParamFrag<az_extloadi16>;
 
 def isR600 : Predicate<"Subtarget.getGeneration() <= AMDGPUSubtarget::R700">;
 def isR700 : Predicate<"Subtarget.getGeneration() == AMDGPUSubtarget::R700">;
@@ -1380,11 +1380,11 @@ class VTX_READ_128_eg <bits<8> buffer_id, list<dag> pattern>
 //===----------------------------------------------------------------------===//
 
 def VTX_READ_PARAM_8_eg : VTX_READ_8_eg <0,
-  [(set i32:$dst_gpr, (load_param_zexti8 ADDRVTX_READ:$src_gpr))]
+  [(set i32:$dst_gpr, (load_param_exti8 ADDRVTX_READ:$src_gpr))]
 >;
 
 def VTX_READ_PARAM_16_eg : VTX_READ_16_eg <0,
-  [(set i32:$dst_gpr, (load_param_zexti16 ADDRVTX_READ:$src_gpr))]
+  [(set i32:$dst_gpr, (load_param_exti16 ADDRVTX_READ:$src_gpr))]
 >;
 
 def VTX_READ_PARAM_32_eg : VTX_READ_32_eg <0,
@@ -1401,7 +1401,11 @@ def VTX_READ_PARAM_128_eg : VTX_READ_128_eg <0,
 
 // 8-bit reads
 def VTX_READ_GLOBAL_8_eg : VTX_READ_8_eg <1,
-  [(set i32:$dst_gpr, (zextloadi8_global ADDRVTX_READ:$src_gpr))]
+  [(set i32:$dst_gpr, (az_extloadi8_global ADDRVTX_READ:$src_gpr))]
+>;
+
+def VTX_READ_GLOBAL_16_eg : VTX_READ_16_eg <1,
+  [(set i32:$dst_gpr, (az_extloadi16_global ADDRVTX_READ:$src_gpr))]
 >;
 
 // 32-bit reads
@@ -1413,16 +1417,6 @@ def VTX_READ_GLOBAL_32_eg : VTX_READ_32_eg <1,
 def VTX_READ_GLOBAL_128_eg : VTX_READ_128_eg <1,
   [(set v4i32:$dst_gpr, (global_load ADDRVTX_READ:$src_gpr))]
 >;
-
-//===----------------------------------------------------------------------===//
-// Constant Loads
-// XXX: We are currently storing all constants in the global address space.
-//===----------------------------------------------------------------------===//
-
-def CONSTANT_LOAD_eg : VTX_READ_32_eg <1,
-  [(set i32:$dst_gpr, (constant_load ADDRVTX_READ:$src_gpr))]
->;
-
 
 } // End Predicates = [isEG]
 
@@ -1456,6 +1450,9 @@ let Predicates = [isEGorCayman] in {
   def BFI_INT_eg : R600_3OP <0x06, "BFI_INT", [], VecALU>;
   defm : BFIPatterns <BFI_INT_eg>;
 
+  def MULADD_UINT24_eg : R600_3OP <0x10, "MULADD_UINT24",
+    [(set i32:$dst, (add (mul U24:$src0, U24:$src1), i32:$src2))], VecALU
+  >;
   def BIT_ALIGN_INT_eg : R600_3OP <0xC, "BIT_ALIGN_INT", [], VecALU>;
   def : ROTRPattern <BIT_ALIGN_INT_eg>;
 
@@ -1469,6 +1466,9 @@ let Predicates = [isEGorCayman] in {
   def CNDGE_eg : CNDGE_Common<0x1B>;
   def MUL_LIT_eg : MUL_LIT_Common<0x1F>;
   def LOG_CLAMPED_eg : LOG_CLAMPED_Common<0x82>;
+  def MUL_UINT24_eg : R600_2OP <0xB5, "MUL_UINT24",
+    [(set i32:$dst, (mul U24:$src0, U24:$src1))], VecALU
+  >;
   def DOT4_eg : DOT4_Common<0xBE>;
   defm CUBE_eg : CUBE_Common<0xC0>;
 
@@ -1699,6 +1699,13 @@ defm R600_ : RegisterLoadStore <R600_Reg32, FRAMEri, ADDRIndirect>;
 
 let Predicates = [isCayman] in {
 
+def MULADD_INT24_cm : R600_3OP <0x08, "MULADD_INT24",
+  [(set i32:$dst, (add (mul I24:$src0, I24:$src1), i32:$src2))], VecALU
+>;
+def MUL_INT24_cm : R600_2OP <0x5B, "MUL_INT24",
+  [(set i32:$dst, (mul I24:$src0, I24:$src1))], VecALU
+>;
+
 let isVector = 1 in {
 
 def RECIP_IEEE_cm : RECIP_IEEE_Common<0x86>;
@@ -1828,11 +1835,11 @@ class VTX_READ_128_cm <bits<8> buffer_id, list<dag> pattern>
 // VTX Read from parameter memory space
 //===----------------------------------------------------------------------===//
 def VTX_READ_PARAM_8_cm : VTX_READ_8_cm <0,
-  [(set i32:$dst_gpr, (load_param_zexti8 ADDRVTX_READ:$src_gpr))]
+  [(set i32:$dst_gpr, (load_param_exti8 ADDRVTX_READ:$src_gpr))]
 >;
 
 def VTX_READ_PARAM_16_cm : VTX_READ_16_cm <0,
-  [(set i32:$dst_gpr, (load_param_zexti16 ADDRVTX_READ:$src_gpr))]
+  [(set i32:$dst_gpr, (load_param_exti16 ADDRVTX_READ:$src_gpr))]
 >;
 
 def VTX_READ_PARAM_32_cm : VTX_READ_32_cm <0,
@@ -1849,7 +1856,11 @@ def VTX_READ_PARAM_128_cm : VTX_READ_128_cm <0,
 
 // 8-bit reads
 def VTX_READ_GLOBAL_8_cm : VTX_READ_8_cm <1,
-  [(set i32:$dst_gpr, (zextloadi8_global ADDRVTX_READ:$src_gpr))]
+  [(set i32:$dst_gpr, (az_extloadi8_global ADDRVTX_READ:$src_gpr))]
+>;
+
+def VTX_READ_GLOBAL_16_cm : VTX_READ_16_cm <1,
+  [(set i32:$dst_gpr, (az_extloadi16_global ADDRVTX_READ:$src_gpr))]
 >;
 
 // 32-bit reads
@@ -1860,15 +1871,6 @@ def VTX_READ_GLOBAL_32_cm : VTX_READ_32_cm <1,
 // 128-bit reads
 def VTX_READ_GLOBAL_128_cm : VTX_READ_128_cm <1,
   [(set v4i32:$dst_gpr, (global_load ADDRVTX_READ:$src_gpr))]
->;
-
-//===----------------------------------------------------------------------===//
-// Constant Loads
-// XXX: We are currently storing all constants in the global address space.
-//===----------------------------------------------------------------------===//
-
-def CONSTANT_LOAD_cm : VTX_READ_32_cm <1,
-  [(set i32:$dst_gpr, (constant_load ADDRVTX_READ:$src_gpr))]
 >;
 
 } // End isCayman
