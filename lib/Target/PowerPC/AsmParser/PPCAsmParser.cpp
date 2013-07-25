@@ -26,6 +26,8 @@
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
 
+#define	ALLOW_DARWIN_ASM_SYNTAX			1
+
 using namespace llvm;
 
 namespace {
@@ -1158,7 +1160,14 @@ ParseOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
           IntVal < 0 || IntVal > 31)
         return Error(S, "invalid register number");
       break;
-
+#if ALLOW_DARWIN_ASM_SYNTAX
+    case AsmToken::Identifier: // e.g. r31
+      unsigned RegNo2;
+      if (MatchRegisterName(Parser.getTok(), RegNo2, IntVal))
+        return Error(S, "invalid register name");
+      Parser.Lex(); // Eat the identifier token.
+      break;
+#endif
     default:
       return Error(S, "invalid memory operand");
     }
