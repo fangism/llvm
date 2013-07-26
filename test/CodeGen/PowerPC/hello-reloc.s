@@ -1,92 +1,68 @@
-; This tests mach-O/PPC relocation entries.
-; This test is paired with test/CodeGen/PowerPC/hello-reloc.s, 
-; which tests llvm-mc.
+; This test is paired with test/CodeGen/PowerPC/hello-reloc.ll, 
+; which tests llc.
+; I took the asm produced by llc -filetype=asm and syntactically translated
+; it to the supported PPCAsmParser syntax for this case.
 
-; RUN: llc -filetype=asm -relocation-model=pic -mcpu=g4 -mtriple=powerpc-apple-darwin8 %s -o - | tee %t1 | FileCheck -check-prefix=DARWIN-G4-ASM %s
-; RUN-WORKS-BUT-SKIPPING: llc -filetype=obj -relocation-model=pic -mcpu=g4 -mtriple=powerpc-apple-darwin8 %s -o - | tee %t2 | macho-dump | tee %t3 | FileCheck -check-prefix=DARWIN-G4-DUMP %s
+; RUN: llvm-mc -filetype=obj -relocation-model=pic -mcpu=g4 -triple=powerpc-apple-darwin8 %s -o - | tee %t1 | macho-dump | tee %t2 | FileCheck -check-prefix=DARWIN-G4-DUMP %s
 
-; FIXME: validating .s->.o requires darwin asm syntax support in PPCAsmParser
-; RUN-XFAIL: llvm-mc -relocation-model=pic -mcpu=g4 -triple=powerpc-apple-darwin8 %t1 -o - | tee %t4 | macho-dump | tee %t5 | FileCheck -check-prefix=DARWIN-G4-DUMP %s
-; RUN-XFAIL: diff -u %t2 %t4 || diff -u %t3 %t5
+; Ideally we'd like to combine this test with hello-reloc.ll, but automating
+; the assembly transformation would require GNU sed.
+; The asm transformation will no longer be needed once darwin-asm syntax 
+; is supported in PPCAsmParser, at which point these tests can be combined.
 
-; ModuleID = 'hello-puts.c'
-; compiled with clang (-fno-common -DPIC -femit-all-decls) from:
-; extern int puts(const char*);
-; int main(int argc, char* argv[]) { puts("Hello, world!"); return 0; }
+;	.machine ppc7400
+	.section	__TEXT,__textcoal_nt,coalesced,pure_instructions
+	.section	__TEXT,__picsymbolstub1,symbol_stubs,pure_instructions,32
+	.section	__TEXT,__text,regular,pure_instructions
+	.globl	_main
+	.align	4
+_main:                                  ; @main
+; BB#0:                                 ; %entry
+	mflr 0
+	stw 31, -4(1)
+	stw 0, 8(1)
+	stwu 1, -80(1)
+	bl L0$pb
+L0$pb:
+	mr 31, 1
+	li 5, 0
+	mflr 2
+	stw 3, 68(31)
+	stw 5, 72(31)
+	stw 4, 64(31)
+	addis 2, 2, (L_.str-L0$pb)@ha
+	la 3, (L_.str-L0$pb)@l(2)
+	bl L_puts$stub
+	li 3, 0
+	addi 1, 1, 80
+	lwz 0, 8(1)
+	lwz 31, -4(1)
+	mtlr 0
+	blr
 
-target datalayout = "E-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:32:64-f32:32:32-f64:64:64-v128:128:128-n32"
-target triple = "powerpc-apple-macosx10.4.0"
+	.section	__TEXT,__picsymbolstub1,symbol_stubs,pure_instructions,32
+	.align	4
+L_puts$stub:
+	.indirect_symbol	_puts
+	mflr 0
+	bcl 20, 31, L_puts$stub$tmp
+L_puts$stub$tmp:
+	mflr 11
+	addis 11, 11, (L_puts$lazy_ptr-L_puts$stub$tmp)@ha
+	mtlr 0
+	lwzu 12, (L_puts$lazy_ptr-L_puts$stub$tmp)@l(11)
+	mtctr 12
+	bctr
+	.section	__DATA,__la_symbol_ptr,lazy_symbol_pointers
+L_puts$lazy_ptr:
+	.indirect_symbol	_puts
+	.long	dyld_stub_binding_helper
 
-@.str = private unnamed_addr constant [14 x i8] c"Hello, world!\00", align 1
+.subsections_via_symbols
+	.section	__TEXT,__cstring,cstring_literals
+L_.str:                                 ; @.str
+	.asciz	 "Hello, world!"
 
-; Function Attrs: nounwind
-define i32 @main(i32 %argc, i8** %argv) #0 {
-entry:
-  %retval = alloca i32, align 4
-  %argc.addr = alloca i32, align 4
-  %argv.addr = alloca i8**, align 4
-  store i32 0, i32* %retval
-  store i32 %argc, i32* %argc.addr, align 4
-  store i8** %argv, i8*** %argv.addr, align 4
-  %call = call i32 @puts(i8* getelementptr inbounds ([14 x i8]* @.str, i32 0, i32 0))
-  ret i32 0
-}
-
-declare i32 @puts(i8*) #1
-
-attributes #0 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf"="true" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "ssp-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
-attributes #1 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf"="true" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "ssp-buffer-size"="8" "unsafe-fp-math"="false" "use-soft-float"="false" }
-
-; DARWIN-G4-ASM:	.machine ppc7400
-; DARWIN-G4-ASM:	.section	__TEXT,__textcoal_nt,coalesced,pure_instructions
-; DARWIN-G4-ASM:	.section	__TEXT,__picsymbolstub1,symbol_stubs,pure_instructions,32
-; DARWIN-G4-ASM:	.section	__TEXT,__text,regular,pure_instructions
-; DARWIN-G4-ASM:	.globl	_main
-; DARWIN-G4-ASM:	.align	4
-; DARWIN-G4-ASM:_main:                                  ; @main
-; DARWIN-G4-ASM:; BB#0:                                 ; %entry
-; DARWIN-G4-ASM:	mflr r0
-; DARWIN-G4-ASM:	stw r31, -4(r1)
-; DARWIN-G4-ASM:	stw r0, 8(r1)
-; DARWIN-G4-ASM:	stwu r1, -80(r1)
-; DARWIN-G4-ASM:	bl L0$pb
-; DARWIN-G4-ASM:L0$pb:
-; DARWIN-G4-ASM:	mr r31, r1
-; DARWIN-G4-ASM:	li [[REGA:r[0-9]+]], 0
-; DARWIN-G4-ASM:	mflr [[REGC:r[0-9]+]]
-; DARWIN-G4-ASM:	stw [[REGB:r[0-9]+]], 68(r31)
-; DARWIN-G4-ASM:	stw [[REGA]], 72(r31)
-; DARWIN-G4-ASM:	stw r4, 64(r31)
-; DARWIN-G4-ASM:	addis [[REGC]], [[REGC]], ha16(L_.str-L0$pb)
-; DARWIN-G4-ASM:	la [[REGB]], lo16(L_.str-L0$pb)([[REGC]])
-; DARWIN-G4-ASM:	bl L_puts$stub
-; DARWIN-G4-ASM:	li [[REGB]], 0
-; DARWIN-G4-ASM:	addi r1, r1, 80
-; DARWIN-G4-ASM:	lwz r0, 8(r1)
-; DARWIN-G4-ASM:	lwz r31, -4(r1)
-; DARWIN-G4-ASM:	mtlr r0
-; DARWIN-G4-ASM:	blr
-; DARWIN-G4-ASM:	.section	__TEXT,__picsymbolstub1,symbol_stubs,pure_instructions,32
-; DARWIN-G4-ASM:	.align	4
-; DARWIN-G4-ASM:L_puts$stub:
-; DARWIN-G4-ASM:	.indirect_symbol	_puts
-; DARWIN-G4-ASM:	mflr r0
-; DARWIN-G4-ASM:	bcl 20, 31, L_puts$stub$tmp
-; DARWIN-G4-ASM:L_puts$stub$tmp:
-; DARWIN-G4-ASM:	mflr [[REGD:r[0-9]+]]
-; DARWIN-G4-ASM:	addis [[REGD]], [[REGD]], ha16(L_puts$lazy_ptr-L_puts$stub$tmp)
-; DARWIN-G4-ASM:	mtlr r0
-; DARWIN-G4-ASM:	lwzu [[REGE:r[0-9]+]], lo16(L_puts$lazy_ptr-L_puts$stub$tmp)([[REGD]])
-; DARWIN-G4-ASM:	mtctr [[REGE]]
-; DARWIN-G4-ASM:	bctr
-; DARWIN-G4-ASM:	.section	__DATA,__la_symbol_ptr,lazy_symbol_pointers
-; DARWIN-G4-ASM:L_puts$lazy_ptr:
-; DARWIN-G4-ASM:	.indirect_symbol	_puts
-; DARWIN-G4-ASM:	.long	dyld_stub_binding_helper
-; DARWIN-G4-ASM:.subsections_via_symbols
-; DARWIN-G4-ASM:	.section	__TEXT,__cstring,cstring_literals
-; DARWIN-G4-ASM:L_.str:                                 ; @.str
-; DARWIN-G4-ASM:	.asciz	 "Hello, world!"
 
 ; DARWIN-G4-DUMP: ('cputype', 18)
 ; DARWIN-G4-DUMP: ('cpusubtype', 0)
