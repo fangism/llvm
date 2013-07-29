@@ -385,6 +385,8 @@ MipsTargetLowering(MipsTargetMachine &TM)
     setTruncStoreAction(MVT::i64, MVT::i32, Custom);
   }
 
+  setOperationAction(ISD::TRAP, MVT::Other, Legal);
+
   setTargetDAGCombine(ISD::SDIVREM);
   setTargetDAGCombine(ISD::UDIVREM);
   setTargetDAGCombine(ISD::SELECT);
@@ -519,9 +521,10 @@ static SDValue createCMovFP(SelectionDAG &DAG, SDValue Cond, SDValue True,
                             SDValue False, SDLoc DL) {
   ConstantSDNode *CC = cast<ConstantSDNode>(Cond.getOperand(2));
   bool invert = invertFPCondCodeUser((Mips::CondCode)CC->getSExtValue());
+  SDValue FCC0 = DAG.getRegister(Mips::FCC0, MVT::i32);
 
   return DAG.getNode((invert ? MipsISD::CMovFP_F : MipsISD::CMovFP_T), DL,
-                     True.getValueType(), True, False, Cond);
+                     True.getValueType(), True, FCC0, False, Cond);
 }
 
 static SDValue performSELECTCombine(SDNode *N, SelectionDAG &DAG,
@@ -1438,8 +1441,9 @@ lowerBRCOND(SDValue Op, SelectionDAG &DAG) const
     (Mips::CondCode)cast<ConstantSDNode>(CCNode)->getZExtValue();
   unsigned Opc = invertFPCondCodeUser(CC) ? Mips::BRANCH_F : Mips::BRANCH_T;
   SDValue BrCode = DAG.getConstant(Opc, MVT::i32);
+  SDValue FCC0 = DAG.getRegister(Mips::FCC0, MVT::i32);
   return DAG.getNode(MipsISD::FPBrcond, DL, Op.getValueType(), Chain, BrCode,
-                     Dest, CondRes);
+                     FCC0, Dest, CondRes);
 }
 
 SDValue MipsTargetLowering::

@@ -738,7 +738,8 @@ public:
     : LoadAndStorePromoter(Insts, S), AI(AI), DIB(DIB) {}
 
   void run(const SmallVectorImpl<Instruction*> &Insts) {
-    // Remember which alloca we're promoting (for isInstInList).
+    // Retain the debug information attached to the alloca for use when
+    // rewriting loads and stores.
     if (MDNode *DebugNode = MDNode::getIfExists(AI.getContext(), &AI)) {
       for (Value::use_iterator UI = DebugNode->use_begin(),
                                UE = DebugNode->use_end();
@@ -750,7 +751,9 @@ public:
     }
 
     LoadAndStorePromoter::run(Insts);
-    AI.eraseFromParent();
+
+    // While we have the debug information, clear it off of the alloca. The
+    // caller takes care of deleting the alloca.
     while (!DDIs.empty())
       DDIs.pop_back_val()->eraseFromParent();
     while (!DVIs.empty())
@@ -3051,10 +3054,7 @@ bool SROA::rewritePartition(AllocaInst &AI, AllocaSlices &S,
   unsigned PPWOldSize = PostPromotionWorklist.size();
   unsigned SPOldSize = SpeculatablePHIs.size();
   unsigned SSOldSize = SpeculatableSelects.size();
-
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_STATS)
   unsigned NumUses = 0;
-#endif
 
   AllocaSliceRewriter Rewriter(*DL, S, *this, AI, *NewAI, BeginOffset,
                                EndOffset, IsVectorPromotable,
@@ -3066,24 +3066,18 @@ bool SROA::rewritePartition(AllocaInst &AI, AllocaSlices &S,
     DEBUG(dbgs() << "  rewriting split ");
     DEBUG(S.printSlice(dbgs(), *SUI, ""));
     Promotable &= Rewriter.visit(*SUI);
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_STATS)
     ++NumUses;
-#endif
   }
   for (AllocaSlices::iterator I = B; I != E; ++I) {
     DEBUG(dbgs() << "  rewriting ");
     DEBUG(S.printSlice(dbgs(), I, ""));
     Promotable &= Rewriter.visit(I);
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_STATS)
     ++NumUses;
-#endif
   }
 
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_STATS)
   NumAllocaPartitionUses += NumUses;
   MaxUsesPerAllocaPartition =
       std::max<unsigned>(NumUses, MaxUsesPerAllocaPartition);
-#endif
 
   if (Promotable && !Rewriter.isUsedByRewrittenSpeculatableInstructions()) {
     DEBUG(dbgs() << "  and queuing for promotion\n");
@@ -3160,10 +3154,7 @@ bool SROA::splitAlloca(AllocaInst &AI, AllocaSlices &S) {
   if (S.begin() == S.end())
     return false;
 
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_STATS)
   unsigned NumPartitions = 0;
-#endif
-
   bool Changed = false;
   SmallVector<AllocaSlices::iterator, 4> SplitUses;
   uint64_t MaxSplitUseEndOffset = 0;
@@ -3210,9 +3201,7 @@ bool SROA::splitAlloca(AllocaInst &AI, AllocaSlices &S) {
       // Rewrite a sequence of overlapping slices.
       Changed |=
           rewritePartition(AI, S, SI, SJ, BeginOffset, MaxEndOffset, SplitUses);
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_STATS)
       ++NumPartitions;
-#endif
 
       removeFinishedSplitUses(SplitUses, MaxSplitUseEndOffset, MaxEndOffset);
     }
@@ -3252,9 +3241,7 @@ bool SROA::splitAlloca(AllocaInst &AI, AllocaSlices &S) {
 
     Changed |= rewritePartition(AI, S, SJ, SJ, MaxEndOffset, PostSplitEndOffset,
                                 SplitUses);
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_STATS)
     ++NumPartitions;
-#endif
 
     if (SJ == SE)
       break; // Skip the rest, we don't need to do any cleanup.
@@ -3266,11 +3253,9 @@ bool SROA::splitAlloca(AllocaInst &AI, AllocaSlices &S) {
     BeginOffset = SJ->beginOffset();
   }
 
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_STATS)
   NumAllocaPartitions += NumPartitions;
   MaxPartitionsPerAlloca =
       std::max<unsigned>(NumPartitions, MaxPartitionsPerAlloca);
-#endif
 
   return Changed;
 }
@@ -3378,6 +3363,15 @@ void SROA::deleteDeadInstructions(SmallPtrSet<AllocaInst*, 4> &DeletedAllocas) {
   }
 }
 
+static void enqueueUsersInWorklist(Instruction &I,
+                                   SmallVectorImpl<Use *> &UseWorklist,
+                                   SmallPtrSet<Use *, 8> &VisitedUses) {
+  for (Value::use_iterator UI = I.use_begin(), UE = I.use_end(); UI != UE;
+       ++UI)
+    if (VisitedUses.insert(&UI.getUse()))
+      UseWorklist.push_back(&UI.getUse());
+}
+
 /// \brief Promote the allocas, using the best available technique.
 ///
 /// This attempts to promote whatever allocas have been identified as viable in
@@ -3394,7 +3388,7 @@ bool SROA::promoteAllocas(Function &F) {
 
   if (DT && !ForceSSAUpdater) {
     DEBUG(dbgs() << "Promoting allocas with mem2reg...\n");
-    PromoteMemToReg(PromotableAllocas, *DT);
+    PromoteMemToReg(PromotableAllocas, *DT, DL);
     PromotableAllocas.clear();
     return true;
   }
@@ -3404,34 +3398,58 @@ bool SROA::promoteAllocas(Function &F) {
   DIBuilder DIB(*F.getParent());
   SmallVector<Instruction*, 64> Insts;
 
+  // We need a worklist to walk the uses of each alloca.
+  SmallVector<Use *, 8> UseWorklist;
+  SmallPtrSet<Use *, 8> VisitedUses;
+  SmallVector<Instruction *, 32> DeadInsts;
+
   for (unsigned Idx = 0, Size = PromotableAllocas.size(); Idx != Size; ++Idx) {
     AllocaInst *AI = PromotableAllocas[Idx];
-    for (Value::use_iterator UI = AI->use_begin(), UE = AI->use_end();
-         UI != UE;) {
-      Instruction *I = cast<Instruction>(*UI++);
+    UseWorklist.clear();
+    VisitedUses.clear();
+
+    enqueueUsersInWorklist(*AI, UseWorklist, VisitedUses);
+
+    while (!UseWorklist.empty()) {
+      Use *U = UseWorklist.pop_back_val();
+      Instruction &I = *cast<Instruction>(U->getUser());
+
       // FIXME: Currently the SSAUpdater infrastructure doesn't reason about
       // lifetime intrinsics and so we strip them (and the bitcasts+GEPs
       // leading to them) here. Eventually it should use them to optimize the
       // scalar values produced.
-      if (isa<BitCastInst>(I) || isa<GetElementPtrInst>(I)) {
-        assert(onlyUsedByLifetimeMarkers(I) &&
-               "Found a bitcast used outside of a lifetime marker.");
-        while (!I->use_empty())
-          cast<Instruction>(*I->use_begin())->eraseFromParent();
-        I->eraseFromParent();
-        continue;
-      }
-      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
+      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(&I)) {
         assert(II->getIntrinsicID() == Intrinsic::lifetime_start ||
                II->getIntrinsicID() == Intrinsic::lifetime_end);
         II->eraseFromParent();
         continue;
       }
 
-      Insts.push_back(I);
+      // Push the loads and stores we find onto the list. SROA will already
+      // have validated that all loads and stores are viable candidates for
+      // promotion.
+      if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
+        assert(LI->getType() == AI->getAllocatedType());
+        Insts.push_back(LI);
+        continue;
+      }
+      if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
+        assert(SI->getValueOperand()->getType() == AI->getAllocatedType());
+        Insts.push_back(SI);
+        continue;
+      }
+
+      // For everything else, we know that only no-op bitcasts and GEPs will
+      // make it this far, just recurse through them and recall them for later
+      // removal.
+      DeadInsts.push_back(&I);
+      enqueueUsersInWorklist(I, UseWorklist, VisitedUses);
     }
     AllocaPromoter(Insts, SSA, *AI, DIB).run(Insts);
     Insts.clear();
+    while (!DeadInsts.empty())
+      DeadInsts.pop_back_val()->eraseFromParent();
+    AI->eraseFromParent();
   }
 
   PromotableAllocas.clear();

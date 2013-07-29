@@ -181,8 +181,9 @@ let Namespace = "Mips" in {
   foreach I = 0-31 in
   def FCR#I : MipsReg<#I, ""#I>;
 
-  // fcc0 register
-  def FCC0 : MipsReg<0, "fcc0">;
+  // FP condition code registers.
+  foreach I = 0-7 in
+  def FCC#I : MipsReg<#I, "fcc"#I>;
 
   // PC register
   def PC : Register<"pc">;
@@ -292,7 +293,8 @@ def CCR : RegisterClass<"Mips", [i32], 32, (sequence "FCR%u", 0, 31)>,
           Unallocatable;
 
 // FP condition code registers.
-def FCC : RegisterClass<"Mips", [i32], 32, (add FCC0)>, Unallocatable;
+def FCC : RegisterClass<"Mips", [i32], 32, (sequence "FCC%u", 0, 7)>,
+          Unallocatable;
 
 // Hi/Lo Registers
 def LORegs : RegisterClass<"Mips", [i32], 32, (add LO)>;
@@ -356,15 +358,15 @@ def FGR32AsmOperand : MipsAsmRegOperand {
   let ParserMethod = "parseFGR32Regs";
 }
 
-def CPURegsOpnd : RegisterOperand<CPURegs, "printCPURegs"> {
+def CPURegsOpnd : RegisterOperand<CPURegs> {
   let ParserMatchClass = CPURegsAsmOperand;
 }
 
-def CPU64RegsOpnd : RegisterOperand<CPU64Regs, "printCPURegs"> {
+def CPU64RegsOpnd : RegisterOperand<CPU64Regs> {
   let ParserMatchClass = CPU64RegsAsmOperand;
 }
 
-def CCROpnd : RegisterOperand<CCR, "printCPURegs"> {
+def CCROpnd : RegisterOperand<CCR> {
   let ParserMatchClass = CCRAsmOperand;
 }
 
@@ -378,11 +380,11 @@ def HW64RegsAsmOperand : MipsAsmRegOperand {
   let ParserMethod = "parseHW64Regs";
 }
 
-def HWRegsOpnd : RegisterOperand<HWRegs, "printCPURegs"> {
+def HWRegsOpnd : RegisterOperand<HWRegs> {
   let ParserMatchClass = HWRegsAsmOperand;
 }
 
-def HW64RegsOpnd : RegisterOperand<HWRegs64, "printCPURegs"> {
+def HW64RegsOpnd : RegisterOperand<HWRegs64> {
   let ParserMatchClass = HW64RegsAsmOperand;
 }
 

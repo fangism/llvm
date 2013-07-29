@@ -24,12 +24,13 @@
 //===----------------------------------------------------------------------===//
 
 // Floating Point Compare and Branch
-def SDT_MipsFPBrcond : SDTypeProfile<0, 2, [SDTCisInt<0>,
-                                            SDTCisVT<1, OtherVT>]>;
+def SDT_MipsFPBrcond : SDTypeProfile<0, 3, [SDTCisInt<0>,
+                                            SDTCisVT<1, i32>,
+                                            SDTCisVT<2, OtherVT>]>;
 def SDT_MipsFPCmp : SDTypeProfile<0, 3, [SDTCisSameAs<0, 1>, SDTCisFP<1>,
                                          SDTCisVT<2, i32>]>;
-def SDT_MipsCMovFP : SDTypeProfile<1, 2, [SDTCisSameAs<0, 1>,
-                                          SDTCisSameAs<1, 2>]>;
+def SDT_MipsCMovFP : SDTypeProfile<1, 3, [SDTCisSameAs<0, 1>, SDTCisVT<2, i32>,
+                                          SDTCisSameAs<1, 3>]>;
 def SDT_MipsTruncIntFP : SDTypeProfile<1, 1, [SDTCisFP<0>, SDTCisFP<1>]>;
 def SDT_MipsBuildPairF64 : SDTypeProfile<1, 2, [SDTCisVT<0, f64>,
                                                 SDTCisVT<1, i32>,
@@ -188,13 +189,13 @@ class SWXC1_FT<string opstr, RegisterOperand DRC, RegisterOperand PRC,
 
 class BC1F_FT<string opstr, InstrItinClass Itin,
               SDPatternOperator Op = null_frag>  :
-  InstSE<(outs), (ins brtarget:$offset), !strconcat(opstr, "\t$offset"),
-         [(MipsFPBrcond Op, bb:$offset)], Itin, FrmFI> {
+  InstSE<(outs), (ins FCC:$fcc, brtarget:$offset),
+         !strconcat(opstr, "\t$fcc, $offset"),
+         [(MipsFPBrcond Op, FCC:$fcc, bb:$offset)], Itin, FrmFI> {
   let isBranch = 1;
   let isTerminator = 1;
   let hasDelaySlot = 1;
   let Defs = [AT];
-  let Uses = [FCR31];
 }
 
 class CEQS_FT<string typestr, RegisterClass RC, InstrItinClass Itin,
@@ -202,7 +203,7 @@ class CEQS_FT<string typestr, RegisterClass RC, InstrItinClass Itin,
   InstSE<(outs), (ins RC:$fs, RC:$ft, condcode:$cond),
          !strconcat("c.$cond.", typestr, "\t$fs, $ft"),
          [(OpNode RC:$fs, RC:$ft, imm:$cond)], Itin, FrmFR> {
-  let Defs = [FCR31];
+  let Defs = [FCC0];
   let isCodeGenOnly = 1;
 }
 
@@ -502,10 +503,9 @@ let Predicates = [HasMips32r2, IsFP64bit, NoNaNsFPMath, HasStdEnc],
 def MIPS_BRANCH_F  : PatLeaf<(i32 0)>;
 def MIPS_BRANCH_T  : PatLeaf<(i32 1)>;
 
-let DecoderMethod = "DecodeBC1" in {
 def BC1F : BC1F_FT<"bc1f", IIBranch, MIPS_BRANCH_F>, BC1F_FM<0, 0>;
 def BC1T : BC1F_FT<"bc1t", IIBranch, MIPS_BRANCH_T>, BC1F_FM<0, 1>;
-}
+
 //===----------------------------------------------------------------------===//
 // Floating Point Flag Conditions
 //===----------------------------------------------------------------------===//
@@ -556,6 +556,12 @@ def ExtractElementF64 :
   PseudoSE<(outs CPURegsOpnd:$dst), (ins AFGR64RegsOpnd:$src, i32imm:$n),
            [(set CPURegsOpnd:$dst,
             (MipsExtractElementF64 AFGR64RegsOpnd:$src, imm:$n))]>;
+
+//===----------------------------------------------------------------------===//
+// InstAliases.
+//===----------------------------------------------------------------------===//
+def : InstAlias<"bc1t $offset", (BC1T FCC0, brtarget:$offset)>;
+def : InstAlias<"bc1f $offset", (BC1F FCC0, brtarget:$offset)>;
 
 //===----------------------------------------------------------------------===//
 // Floating Point Patterns
