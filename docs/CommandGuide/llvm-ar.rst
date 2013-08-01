@@ -84,20 +84,19 @@ m[abi]
 
 
 
-p[k]
+p
 
- Print files to the standard output. The *k* modifier applies to this
- operation. This operation simply prints the *files* indicated to the
- standard output. If no *files* are specified, the entire archive is printed.
- Printing bitcode files is ill-advised as they might confuse your terminal
- settings. The *p* operation never modifies the archive.
+ Print files to the standard output. This operation simply prints the
+ *files* indicated to the standard output. If no *files* are
+ specified, the entire  archive is printed.  Printing bitcode files is
+ ill-advised as they might confuse your terminal settings. The *p*
+ operation never modifies the archive.
 
 
 
-q[Rf]
+q
 
- Quickly append files to the end of the archive. The *R*, and *f*
- modifiers apply to this operation.  This operation quickly adds the
+ Quickly append files to the end of the archive.  This operation quickly adds the
  *files* to the archive without checking for duplicates that should be
  removed first. If no *files* are specified, the archive is not modified.
  Because of the way that **llvm-ar** constructs the archive file, its dubious
@@ -105,9 +104,9 @@ q[Rf]
 
 
 
-r[Rabfu]
+r[abu]
 
- Replace or insert file members. The *R*, *a*, *b*, *f*, and *u*
+ Replace or insert file members. The *a*, *b*,  and *u*
  modifiers apply to this operation. This operation will replace existing
  *files* or insert them at the end of the archive if they do not exist. If no
  *files* are specified, the archive is not modified.
@@ -161,34 +160,9 @@ section (above) to determine which modifiers are applicable to which operations.
 
 
 
-[f]
-
- Normally, **llvm-ar** stores the full path name to a file as presented to it on
- the command line. With this option, truncated (15 characters max) names are
- used. This ensures name compatibility with older versions of ``ar`` but may also
- thwart correct extraction of the files (duplicates may overwrite). If used with
- the *R* option, the directory recursion will be performed but the file names
- will all be flattened to simple file names.
-
-
-
 [i]
 
  A synonym for the *b* option.
-
-
-
-[k]
-
- Normally, **llvm-ar** will not print the contents of bitcode files when the
- *p* operation is used. This modifier defeats the default and allows the
- bitcode members to be printed.
-
-
-
-[N]
-
- This option is ignored by **llvm-ar** but provided for compatibility.
 
 
 
@@ -196,22 +170,6 @@ section (above) to determine which modifiers are applicable to which operations.
 
  When extracting files, this option will cause **llvm-ar** to preserve the
  original modification times of the files it writes.
-
-
-
-[P]
-
- use full path names when matching
-
-
-
-[R]
-
- This modifier instructions the *r* option to recursively process directories.
- Without *R*, directories are ignored and only those *files* that refer to
- files will be added to the archive. When *R* is used, any directories specified
- with *files* will be scanned (recursively) to find files to be added to the
- archive. Any file whose name begins with a dot will not be added.
 
 
 

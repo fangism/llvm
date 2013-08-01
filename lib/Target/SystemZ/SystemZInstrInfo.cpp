@@ -23,6 +23,11 @@
 
 using namespace llvm;
 
+// Return a mask with Count low bits set.
+static uint64_t allOnes(unsigned int Count) {
+  return Count == 0 ? 0 : (uint64_t(1) << (Count - 1) << 1) - 1;
+}
+
 SystemZInstrInfo::SystemZInstrInfo(SystemZTargetMachine &tm)
   : SystemZGenInstrInfo(SystemZ::ADJCALLSTACKDOWN, SystemZ::ADJCALLSTACKUP),
     RI(tm), TM(tm) {
@@ -196,13 +201,13 @@ bool SystemZInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
       // FIXME: add X86-style branch swap
       FBB = TBB;
       TBB = Branch.Target->getMBB();
+      Cond.push_back(MachineOperand::CreateImm(Branch.CCValid));
       Cond.push_back(MachineOperand::CreateImm(Branch.CCMask));
       continue;
     }
 
     // Handle subsequent conditional branches.
-    assert(Cond.size() == 1);
-    assert(TBB);
+    assert(Cond.size() == 2 && TBB && "Should have seen a conditional branch");
 
     // Only handle the case where all conditional branches branch to the same
     // destination.
@@ -210,11 +215,13 @@ bool SystemZInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,
       return true;
 
     // If the conditions are the same, we can leave them alone.
-    unsigned OldCond = Cond[0].getImm();
-    if (OldCond == Branch.CCMask)
+    unsigned OldCCValid = Cond[0].getImm();
+    unsigned OldCCMask = Cond[1].getImm();
+    if (OldCCValid == Branch.CCValid && OldCCMask == Branch.CCMask)
       continue;
 
     // FIXME: Try combining conditions like X86 does.  Should be easy on Z!
+    return false;
   }
 
   return false;
@@ -242,6 +249,13 @@ unsigned SystemZInstrInfo::RemoveBranch(MachineBasicBlock &MBB) const {
   return Count;
 }
 
+bool SystemZInstrInfo::
+ReverseBranchCondition(SmallVectorImpl<MachineOperand> &Cond) const {
+  assert(Cond.size() == 2 && "Invalid condition");
+  Cond[1].setImm(Cond[1].getImm() ^ Cond[0].getImm());
+  return false;
+}
+
 unsigned
 SystemZInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
                                MachineBasicBlock *FBB,
@@ -253,7 +267,7 @@ SystemZInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
 
   // Shouldn't be a fall through.
   assert(TBB && "InsertBranch must not be told to insert a fallthrough");
-  assert((Cond.size() == 1 || Cond.size() == 0) &&
+  assert((Cond.size() == 2 || Cond.size() == 0) &&
          "SystemZ branch conditions have one component!");
 
   if (Cond.empty()) {
@@ -265,8 +279,10 @@ SystemZInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
 
   // Conditional branch.
   unsigned Count = 0;
-  unsigned CC = Cond[0].getImm();
-  BuildMI(&MBB, DL, get(SystemZ::BRC)).addImm(CC).addMBB(TBB);
+  unsigned CCValid = Cond[0].getImm();
+  unsigned CCMask = Cond[1].getImm();
+  BuildMI(&MBB, DL, get(SystemZ::BRC))
+    .addImm(CCValid).addImm(CCMask).addMBB(TBB);
   ++Count;
 
   if (FBB) {
@@ -275,109 +291,6 @@ SystemZInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
     ++Count;
   }
   return Count;
-}
-
-bool SystemZInstrInfo::analyzeCompare(const MachineInstr *MI,
-                                      unsigned &SrcReg, unsigned &SrcReg2,
-                                      int &Mask, int &Value) const {
-  assert(MI->isCompare() && "Caller should check that this is a compare");
-
-  // Ignore comparisons involving memory for now.
-  if (MI->getNumExplicitOperands() != 2)
-    return false;
-
-  SrcReg = MI->getOperand(0).getReg();
-  if (MI->getOperand(1).isReg()) {
-    SrcReg2 = MI->getOperand(1).getReg();
-    Value = 0;
-    Mask = ~0;
-    return true;
-  } else if (MI->getOperand(1).isImm()) {
-    SrcReg2 = 0;
-    Value = MI->getOperand(1).getImm();
-    Mask = ~0;
-    return true;
-  }
-  return false;
-}
-
-// Return true if CC is live after MBBI.  We can't rely on kill information
-// because of the way InsertBranch is used.
-static bool isCCLiveAfter(MachineBasicBlock::iterator MBBI,
-                          const TargetRegisterInfo *TRI) {
-  if (MBBI->killsRegister(SystemZ::CC, TRI))
-    return false;
-
-  MachineBasicBlock *MBB = MBBI->getParent();
-  MachineBasicBlock::iterator MBBE = MBB->end();
-  for (++MBBI; MBBI != MBBE; ++MBBI)
-    if (MBBI->readsRegister(SystemZ::CC, TRI))
-      return true;
-
-  for (MachineBasicBlock::succ_iterator SI = MBB->succ_begin(),
-         SE = MBB->succ_end(); SI != SE; ++SI)
-    if ((*SI)->isLiveIn(SystemZ::CC))
-      return true;
-
-  return false;
-}
-
-bool
-SystemZInstrInfo::optimizeCompareInstr(MachineInstr *Compare,
-                                       unsigned SrcReg, unsigned SrcReg2,
-                                       int Mask, int Value,
-                                       const MachineRegisterInfo *MRI) const {
-  MachineBasicBlock *MBB = Compare->getParent();
-  const TargetRegisterInfo *TRI = &getRegisterInfo();
-
-  // Try to fold a comparison into a following branch, if it is only used once.
-  if (unsigned FusedOpcode = getCompareAndBranch(Compare->getOpcode(),
-                                                 Compare)) {
-    MachineBasicBlock::iterator MBBI = Compare, MBBE = MBB->end();
-    for (++MBBI; MBBI != MBBE; ++MBBI) {
-      if (MBBI->getOpcode() == SystemZ::BRC && !isCCLiveAfter(MBBI, TRI)) {
-        // Read the branch mask and target.
-        MachineOperand CCMask(MBBI->getOperand(0));
-        MachineOperand Target(MBBI->getOperand(1));
-
-        // Clear out all current operands.
-        int CCUse = MBBI->findRegisterUseOperandIdx(SystemZ::CC, false, TRI);
-        assert(CCUse >= 0 && "BRC must use CC");
-        MBBI->RemoveOperand(CCUse);
-        MBBI->RemoveOperand(1);
-        MBBI->RemoveOperand(0);
-
-        // Rebuild MBBI as a fused compare and branch.
-        MBBI->setDesc(get(FusedOpcode));
-        MachineInstrBuilder(*MBB->getParent(), MBBI)
-          .addOperand(Compare->getOperand(0))
-          .addOperand(Compare->getOperand(1))
-          .addOperand(CCMask)
-          .addOperand(Target);
-
-        // Clear any intervening kills of SrcReg and SrcReg2.
-        MBBI = Compare;
-        for (++MBBI; MBBI != MBBE; ++MBBI) {
-          MBBI->clearRegisterKills(SrcReg, TRI);
-          if (SrcReg2)
-            MBBI->clearRegisterKills(SrcReg2, TRI);
-        }
-        Compare->removeFromParent();
-        return true;
-      }
-
-      // Stop if we find another reference to CC before a branch.
-      if (MBBI->readsRegister(SystemZ::CC, TRI) ||
-          MBBI->modifiesRegister(SystemZ::CC, TRI))
-        break;
-
-      // Stop if we find another assignment to the registers before the branch.
-      if (MBBI->modifiesRegister(SrcReg, TRI) ||
-          (SrcReg2 && MBBI->modifiesRegister(SrcReg2, TRI)))
-        break;
-    }
-  }
-  return false;
 }
 
 // If Opcode is a move that has a conditional variant, return that variant,
@@ -419,13 +332,17 @@ isProfitableToIfCvt(MachineBasicBlock &TMBB,
 bool SystemZInstrInfo::
 PredicateInstruction(MachineInstr *MI,
                      const SmallVectorImpl<MachineOperand> &Pred) const {
-  unsigned CCMask = Pred[0].getImm();
+  assert(Pred.size() == 2 && "Invalid condition");
+  unsigned CCValid = Pred[0].getImm();
+  unsigned CCMask = Pred[1].getImm();
   assert(CCMask > 0 && CCMask < 15 && "Invalid predicate");
   unsigned Opcode = MI->getOpcode();
   if (TM.getSubtargetImpl()->hasLoadStoreOnCond()) {
     if (unsigned CondOpcode = getConditionalMove(Opcode)) {
       MI->setDesc(get(CondOpcode));
-      MachineInstrBuilder(*MI->getParent()->getParent(), MI).addImm(CCMask);
+      MachineInstrBuilder(*MI->getParent()->getParent(), MI)
+        .addImm(CCValid).addImm(CCMask)
+        .addReg(SystemZ::CC, RegState::Implicit);;
       return true;
     }
   }
@@ -507,6 +424,49 @@ static bool isSimpleBD12Move(const MachineInstr *MI, unsigned Flag) {
           MI->getOperand(3).getReg() == 0);
 }
 
+namespace {
+  struct LogicOp {
+    LogicOp() : RegSize(0), ImmLSB(0), ImmSize(0) {}
+    LogicOp(unsigned regSize, unsigned immLSB, unsigned immSize)
+      : RegSize(regSize), ImmLSB(immLSB), ImmSize(immSize) {}
+
+    operator bool() const { return RegSize; }
+
+    unsigned RegSize, ImmLSB, ImmSize;
+  };
+}
+
+static LogicOp interpretAndImmediate(unsigned Opcode) {
+  switch (Opcode) {
+  case SystemZ::NILL32: return LogicOp(32,  0, 16);
+  case SystemZ::NILH32: return LogicOp(32, 16, 16);
+  case SystemZ::NILL:   return LogicOp(64,  0, 16);
+  case SystemZ::NILH:   return LogicOp(64, 16, 16);
+  case SystemZ::NIHL:   return LogicOp(64, 32, 16);
+  case SystemZ::NIHH:   return LogicOp(64, 48, 16);
+  case SystemZ::NILF32: return LogicOp(32,  0, 32);
+  case SystemZ::NILF:   return LogicOp(64,  0, 32);
+  case SystemZ::NIHF:   return LogicOp(64, 32, 32);
+  default:              return LogicOp();
+  }
+}
+
+// Used to return from convertToThreeAddress after replacing two-address
+// instruction OldMI with three-address instruction NewMI.
+static MachineInstr *finishConvertToThreeAddress(MachineInstr *OldMI,
+                                                 MachineInstr *NewMI,
+                                                 LiveVariables *LV) {
+  if (LV) {
+    unsigned NumOps = OldMI->getNumOperands();
+    for (unsigned I = 1; I < NumOps; ++I) {
+      MachineOperand &Op = OldMI->getOperand(I);
+      if (Op.isReg() && Op.isKill())
+        LV->replaceKillInstruction(Op.getReg(), OldMI, NewMI);
+    }
+  }
+  return NewMI;
+}
+
 MachineInstr *
 SystemZInstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
                                         MachineBasicBlock::iterator &MBBI,
@@ -524,26 +484,50 @@ SystemZInstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
   if (TM.getSubtargetImpl()->hasDistinctOps()) {
     int ThreeOperandOpcode = SystemZ::getThreeOperandOpcode(Opcode);
     if (ThreeOperandOpcode >= 0) {
-      unsigned DestReg = MI->getOperand(0).getReg();
+      MachineOperand &Dest = MI->getOperand(0);
       MachineOperand &Src = MI->getOperand(1);
-      MachineInstrBuilder MIB = BuildMI(*MBB, MBBI, MI->getDebugLoc(),
-                                        get(ThreeOperandOpcode), DestReg);
+      MachineInstrBuilder MIB =
+        BuildMI(*MBB, MBBI, MI->getDebugLoc(), get(ThreeOperandOpcode))
+        .addOperand(Dest);
       // Keep the kill state, but drop the tied flag.
-      MIB.addReg(Src.getReg(), getKillRegState(Src.isKill()));
+      MIB.addReg(Src.getReg(), getKillRegState(Src.isKill()), Src.getSubReg());
       // Keep the remaining operands as-is.
       for (unsigned I = 2; I < NumOps; ++I)
         MIB.addOperand(MI->getOperand(I));
-      MachineInstr *NewMI = MIB;
+      return finishConvertToThreeAddress(MI, MIB, LV);
+    }
+  }
 
-      // Transfer killing information to the new instruction.
-      if (LV) {
-        for (unsigned I = 1; I < NumOps; ++I) {
-          MachineOperand &Op = MI->getOperand(I);
-          if (Op.isReg() && Op.isKill())
-            LV->replaceKillInstruction(Op.getReg(), MI, NewMI);
+  // Try to convert an AND into an RISBG-type instruction.
+  if (LogicOp And = interpretAndImmediate(Opcode)) {
+    unsigned NewOpcode;
+    if (And.RegSize == 64)
+      NewOpcode = SystemZ::RISBG;
+    else if (TM.getSubtargetImpl()->hasHighWord())
+      NewOpcode = SystemZ::RISBLG32;
+    else
+      // We can't use RISBG for 32-bit operations because it clobbers the
+      // high word of the destination too.
+      NewOpcode = 0;
+    if (NewOpcode) {
+      uint64_t Imm = MI->getOperand(2).getImm() << And.ImmLSB;
+      // AND IMMEDIATE leaves the other bits of the register unchanged.
+      Imm |= allOnes(And.RegSize) & ~(allOnes(And.ImmSize) << And.ImmLSB);
+      unsigned Start, End;
+      if (isRxSBGMask(Imm, And.RegSize, Start, End)) {
+        if (NewOpcode == SystemZ::RISBLG32) {
+          Start &= 31;
+          End &= 31;
         }
+        MachineOperand &Dest = MI->getOperand(0);
+        MachineOperand &Src = MI->getOperand(1);
+        MachineInstrBuilder MIB =
+          BuildMI(*MBB, MI, MI->getDebugLoc(), get(NewOpcode))
+          .addOperand(Dest).addReg(0)
+          .addReg(Src.getReg(), getKillRegState(Src.isKill()), Src.getSubReg())
+          .addImm(Start).addImm(End + 128).addImm(0);
+        return finishConvertToThreeAddress(MI, MIB, LV);
       }
-      return MIB;
     }
   }
   return 0;
@@ -676,13 +660,6 @@ SystemZInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
   }
 }
 
-bool SystemZInstrInfo::
-ReverseBranchCondition(SmallVectorImpl<MachineOperand> &Cond) const {
-  assert(Cond.size() == 1 && "Invalid branch condition!");
-  Cond[0].setImm(Cond[0].getImm() ^ SystemZ::CCMASK_ANY);
-  return false;
-}
-
 uint64_t SystemZInstrInfo::getInstSizeInBytes(const MachineInstr *MI) const {
   if (MI->getOpcode() == TargetOpcode::INLINEASM) {
     const MachineFunction *MF = MI->getParent()->getParent();
@@ -699,22 +676,23 @@ SystemZInstrInfo::getBranchInfo(const MachineInstr *MI) const {
   case SystemZ::J:
   case SystemZ::JG:
     return SystemZII::Branch(SystemZII::BranchNormal, SystemZ::CCMASK_ANY,
-                             &MI->getOperand(0));
+                             SystemZ::CCMASK_ANY, &MI->getOperand(0));
 
   case SystemZ::BRC:
   case SystemZ::BRCL:
     return SystemZII::Branch(SystemZII::BranchNormal,
-                             MI->getOperand(0).getImm(), &MI->getOperand(1));
+                             MI->getOperand(0).getImm(),
+                             MI->getOperand(1).getImm(), &MI->getOperand(2));
 
   case SystemZ::CIJ:
   case SystemZ::CRJ:
-    return SystemZII::Branch(SystemZII::BranchC, MI->getOperand(2).getImm(),
-                             &MI->getOperand(3));
+    return SystemZII::Branch(SystemZII::BranchC, SystemZ::CCMASK_ICMP,
+                             MI->getOperand(2).getImm(), &MI->getOperand(3));
 
   case SystemZ::CGIJ:
   case SystemZ::CGRJ:
-    return SystemZII::Branch(SystemZII::BranchCG, MI->getOperand(2).getImm(),
-                             &MI->getOperand(3));
+    return SystemZII::Branch(SystemZII::BranchCG, SystemZ::CCMASK_ICMP,
+                             MI->getOperand(2).getImm(), &MI->getOperand(3));
 
   default:
     llvm_unreachable("Unrecognized branch opcode");
@@ -773,6 +751,48 @@ unsigned SystemZInstrInfo::getOpcodeForOffset(unsigned Opcode,
       return Opcode;
   }
   return 0;
+}
+
+// Return true if Mask matches the regexp 0*1+0*, given that zero masks
+// have already been filtered out.  Store the first set bit in LSB and
+// the number of set bits in Length if so.
+static bool isStringOfOnes(uint64_t Mask, unsigned &LSB, unsigned &Length) {
+  unsigned First = findFirstSet(Mask);
+  uint64_t Top = (Mask >> First) + 1;
+  if ((Top & -Top) == Top) {
+    LSB = First;
+    Length = findFirstSet(Top);
+    return true;
+  }
+  return false;
+}
+
+bool SystemZInstrInfo::isRxSBGMask(uint64_t Mask, unsigned BitSize,
+                                   unsigned &Start, unsigned &End) const {
+  // Reject trivial all-zero masks.
+  if (Mask == 0)
+    return false;
+
+  // Handle the 1+0+ or 0+1+0* cases.  Start then specifies the index of
+  // the msb and End specifies the index of the lsb.
+  unsigned LSB, Length;
+  if (isStringOfOnes(Mask, LSB, Length)) {
+    Start = 63 - (LSB + Length - 1);
+    End = 63 - LSB;
+    return true;
+  }
+
+  // Handle the wrap-around 1+0+1+ cases.  Start then specifies the msb
+  // of the low 1s and End specifies the lsb of the high 1s.
+  if (isStringOfOnes(Mask ^ allOnes(BitSize), LSB, Length)) {
+    assert(LSB > 0 && "Bottom bit must be set");
+    assert(LSB + Length < BitSize && "Top bit must be set");
+    Start = 63 - (LSB - 1);
+    End = 63 - (LSB + Length);
+    return true;
+  }
+
+  return false;
 }
 
 unsigned SystemZInstrInfo::getCompareAndBranch(unsigned Opcode,

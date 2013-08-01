@@ -33,21 +33,25 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
   addRegisterClass(MVT::f32, &AMDGPU::R600_Reg32RegClass);
   addRegisterClass(MVT::v4i32, &AMDGPU::R600_Reg128RegClass);
   addRegisterClass(MVT::i32, &AMDGPU::R600_Reg32RegClass);
+  addRegisterClass(MVT::v2f32, &AMDGPU::R600_Reg64RegClass);
+  addRegisterClass(MVT::v2i32, &AMDGPU::R600_Reg64RegClass);
+
   computeRegisterProperties();
 
   setOperationAction(ISD::FADD, MVT::v4f32, Expand);
+  setOperationAction(ISD::FADD, MVT::v2f32, Expand);
   setOperationAction(ISD::FMUL, MVT::v4f32, Expand);
+  setOperationAction(ISD::FMUL, MVT::v2f32, Expand);
   setOperationAction(ISD::FDIV, MVT::v4f32, Expand);
+  setOperationAction(ISD::FDIV, MVT::v2f32, Expand);
   setOperationAction(ISD::FSUB, MVT::v4f32, Expand);
+  setOperationAction(ISD::FSUB, MVT::v2f32, Expand);
 
   setOperationAction(ISD::FCOS, MVT::f32, Custom);
   setOperationAction(ISD::FSIN, MVT::f32, Custom);
 
-  setOperationAction(ISD::FP_TO_SINT, MVT::v4i32, Expand);
-  setOperationAction(ISD::FP_TO_UINT, MVT::v4i32, Expand);
-  setOperationAction(ISD::SINT_TO_FP, MVT::v4i32, Expand);
-  setOperationAction(ISD::UINT_TO_FP, MVT::v4i32, Expand);
   setOperationAction(ISD::SETCC, MVT::v4i32, Expand);
+  setOperationAction(ISD::SETCC, MVT::v2i32, Expand);
 
   setOperationAction(ISD::BR_CC, MVT::i32, Expand);
   setOperationAction(ISD::BR_CC, MVT::f32, Expand);
@@ -70,7 +74,7 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
 
   // Legalize loads and stores to the private address space.
   setOperationAction(ISD::LOAD, MVT::i32, Custom);
-  setOperationAction(ISD::LOAD, MVT::v2i32, Expand);
+  setOperationAction(ISD::LOAD, MVT::v2i32, Custom);
   setOperationAction(ISD::LOAD, MVT::v4i32, Custom);
   setLoadExtAction(ISD::SEXTLOAD, MVT::i8, Custom);
   setLoadExtAction(ISD::SEXTLOAD, MVT::i16, Custom);
@@ -78,7 +82,7 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i16, Custom);
   setOperationAction(ISD::STORE, MVT::i8, Custom);
   setOperationAction(ISD::STORE, MVT::i32, Custom);
-  setOperationAction(ISD::STORE, MVT::v2i32, Expand);
+  setOperationAction(ISD::STORE, MVT::v2i32, Custom);
   setOperationAction(ISD::STORE, MVT::v4i32, Custom);
 
   setOperationAction(ISD::LOAD, MVT::i32, Custom);
@@ -89,6 +93,7 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
   setTargetDAGCombine(ISD::FP_TO_SINT);
   setTargetDAGCombine(ISD::EXTRACT_VECTOR_ELT);
   setTargetDAGCombine(ISD::SELECT_CC);
+  setTargetDAGCombine(ISD::INSERT_VECTOR_ELT);
 
   setOperationAction(ISD::GlobalAddress, MVT::i32, Custom);
 
@@ -173,6 +178,7 @@ MachineBasicBlock * R600TargetLowering::EmitInstrWithCustomInserter(
   }
 
   case AMDGPU::RAT_WRITE_CACHELESS_32_eg:
+  case AMDGPU::RAT_WRITE_CACHELESS_64_eg:
   case AMDGPU::RAT_WRITE_CACHELESS_128_eg: {
     unsigned EOP = (llvm::next(I)->getOpcode() == AMDGPU::RETURN) ? 1 : 0;
 
@@ -1132,7 +1138,13 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
             DAG.getConstant(4 * i + ConstantBlock * 16, MVT::i32));
         Slots[i] = DAG.getNode(AMDGPUISD::CONST_ADDRESS, DL, MVT::i32, NewPtr);
       }
-      Result = DAG.getNode(ISD::BUILD_VECTOR, DL, MVT::v4i32, Slots, 4);
+      EVT NewVT = MVT::v4i32;
+      unsigned NumElements = 4;
+      if (VT.isVector()) {
+        NewVT = VT;
+        NumElements = VT.getVectorNumElements();
+      }
+      Result = DAG.getNode(ISD::BUILD_VECTOR, DL, NewVT, Slots, NumElements);
     } else {
       // non constant ptr cant be folded, keeps it as a v4f32 load
       Result = DAG.getNode(AMDGPUISD::CONST_ADDRESS, DL, MVT::v4i32,
@@ -1409,6 +1421,61 @@ SDValue R600TargetLowering::PerformDAGCombine(SDNode *N,
 
     break;
   }
+
+  // insert_vector_elt (build_vector elt0, …, eltN), NewEltIdx, idx
+  // => build_vector elt0, …, NewEltIdx, …, eltN
+  case ISD::INSERT_VECTOR_ELT: {
+    SDValue InVec = N->getOperand(0);
+    SDValue InVal = N->getOperand(1);
+    SDValue EltNo = N->getOperand(2);
+    SDLoc dl(N);
+
+    // If the inserted element is an UNDEF, just use the input vector.
+    if (InVal.getOpcode() == ISD::UNDEF)
+      return InVec;
+
+    EVT VT = InVec.getValueType();
+
+    // If we can't generate a legal BUILD_VECTOR, exit
+    if (!isOperationLegal(ISD::BUILD_VECTOR, VT))
+      return SDValue();
+
+    // Check that we know which element is being inserted
+    if (!isa<ConstantSDNode>(EltNo))
+      return SDValue();
+    unsigned Elt = cast<ConstantSDNode>(EltNo)->getZExtValue();
+
+    // Check that the operand is a BUILD_VECTOR (or UNDEF, which can essentially
+    // be converted to a BUILD_VECTOR).  Fill in the Ops vector with the
+    // vector elements.
+    SmallVector<SDValue, 8> Ops;
+    if (InVec.getOpcode() == ISD::BUILD_VECTOR) {
+      Ops.append(InVec.getNode()->op_begin(),
+                 InVec.getNode()->op_end());
+    } else if (InVec.getOpcode() == ISD::UNDEF) {
+      unsigned NElts = VT.getVectorNumElements();
+      Ops.append(NElts, DAG.getUNDEF(InVal.getValueType()));
+    } else {
+      return SDValue();
+    }
+
+    // Insert the element
+    if (Elt < Ops.size()) {
+      // All the operands of BUILD_VECTOR must have the same type;
+      // we enforce that here.
+      EVT OpVT = Ops[0].getValueType();
+      if (InVal.getValueType() != OpVT)
+        InVal = OpVT.bitsGT(InVal.getValueType()) ?
+          DAG.getNode(ISD::ANY_EXTEND, dl, OpVT, InVal) :
+          DAG.getNode(ISD::TRUNCATE, dl, OpVT, InVal);
+      Ops[Elt] = InVal;
+    }
+
+    // Return the new vector
+    return DAG.getNode(ISD::BUILD_VECTOR, dl,
+                       VT, &Ops[0], Ops.size());
+  }
+
   // Extract_vec (Build_vector) generated by custom lowering
   // also needs to be customly combined
   case ISD::EXTRACT_VECTOR_ELT: {

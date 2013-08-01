@@ -61,12 +61,41 @@ class InstSystemZ<int size, dag outs, dag ins, string asmstr,
   // The access size of all memory operands in bytes, or 0 if not known.
   bits<5> AccessBytes = 0;
 
-  let TSFlags{0} = SimpleBDXLoad;
-  let TSFlags{1} = SimpleBDXStore;
-  let TSFlags{2} = Has20BitOffset;
-  let TSFlags{3} = HasIndex;
-  let TSFlags{4} = Is128Bit;
-  let TSFlags{9-5} = AccessBytes;
+  // If the instruction sets CC to a useful value, this gives the mask
+  // of all possible CC results.  The mask has the same form as
+  // SystemZ::CCMASK_*.
+  bits<4> CCValues = 0;
+
+  // True if the instruction sets CC to 0 when the result is 0.
+  bit CCHasZero = 0;
+
+  // True if the instruction sets CC to 1 when the result is less than 0
+  // and to 2 when the result is greater than 0.
+  bit CCHasOrder = 0;
+
+  // True if the instruction is conditional and if the CC mask operand
+  // comes first (as for BRC, etc.).
+  bit CCMaskFirst = 0;
+
+  // Similar, but true if the CC mask operand comes last (as for LOC, etc.).
+  bit CCMaskLast = 0;
+
+  // True if the instruction is the "logical" rather than "arithmetic" form,
+  // in cases where a distinction exists.
+  bit IsLogical = 0;
+
+  let TSFlags{0}     = SimpleBDXLoad;
+  let TSFlags{1}     = SimpleBDXStore;
+  let TSFlags{2}     = Has20BitOffset;
+  let TSFlags{3}     = HasIndex;
+  let TSFlags{4}     = Is128Bit;
+  let TSFlags{9-5}   = AccessBytes;
+  let TSFlags{13-10} = CCValues;
+  let TSFlags{14}    = CCHasZero;
+  let TSFlags{15}    = CCHasOrder;
+  let TSFlags{16}    = CCMaskFirst;
+  let TSFlags{17}    = CCMaskLast;
+  let TSFlags{18}    = IsLogical;
 }
 
 //===----------------------------------------------------------------------===//
@@ -623,11 +652,12 @@ multiclass StoreSIPair<string mnemonic, bits<8> siOpcode, bits<16> siyOpcode,
 class CondStoreRSY<string mnemonic, bits<16> opcode,
                    RegisterOperand cls, bits<5> bytes,
                    AddressingMode mode = bdaddr20only>
-  : InstRSY<opcode, (outs), (ins cls:$R1, mode:$BD2, cond4:$R3),
+  : InstRSY<opcode, (outs), (ins cls:$R1, mode:$BD2, cond4:$valid, cond4:$R3),
             mnemonic#"$R3\t$R1, $BD2", []>,
     Requires<[FeatureLoadStoreOnCond]> {
   let mayStore = 1;
   let AccessBytes = bytes;
+  let CCMaskLast = 1;
 }
 
 // Like CondStoreRSY, but used for the raw assembly form.  The condition-code
@@ -684,9 +714,11 @@ class UnaryRRF<string mnemonic, bits<16> opcode, RegisterOperand cls1,
 // is added as an implicit use.
 class CondUnaryRRF<string mnemonic, bits<16> opcode, RegisterOperand cls1,
                    RegisterOperand cls2>
-  : InstRRF<opcode, (outs cls1:$R1), (ins cls2:$R2, cond4:$R3),
+  : InstRRF<opcode, (outs cls1:$R1), (ins cls2:$R2, cond4:$valid, cond4:$R3),
             mnemonic#"r$R3\t$R1, $R2", []>,
-    Requires<[FeatureLoadStoreOnCond]>;
+    Requires<[FeatureLoadStoreOnCond]> {
+  let CCMaskLast = 1;
+}
 
 // Like CondUnaryRRF, but used for the raw assembly form.  The condition-code
 // mask is the third operand rather than being part of the mnemonic.
@@ -735,15 +767,20 @@ class UnaryRILPC<string mnemonic, bits<12> opcode, SDPatternOperator operator,
 }
 
 class CondUnaryRSY<string mnemonic, bits<16> opcode,
-                   RegisterOperand cls, bits<5> bytes,
-                   AddressingMode mode = bdaddr20only>
-  : InstRSY<opcode, (outs cls:$R1), (ins cls:$R1src, mode:$BD2, cond4:$R3),
-            mnemonic#"$R3\t$R1, $BD2", []>,
+                   SDPatternOperator operator, RegisterOperand cls,
+                   bits<5> bytes, AddressingMode mode = bdaddr20only>
+  : InstRSY<opcode, (outs cls:$R1),
+            (ins cls:$R1src, mode:$BD2, cond4:$valid, cond4:$R3),
+            mnemonic#"$R3\t$R1, $BD2",
+            [(set cls:$R1,
+                  (z_select_ccmask (load bdaddr20only:$BD2), cls:$R1src,
+                                   cond4:$valid, cond4:$R3))]>,
     Requires<[FeatureLoadStoreOnCond]> {
   let Constraints = "$R1 = $R1src";
   let DisableEncoding = "$R1src";
   let mayLoad = 1;
   let AccessBytes = bytes;
+  let CCMaskLast = 1;
 }
 
 // Like CondUnaryRSY, but used for the raw assembly form.  The condition-code
@@ -1256,8 +1293,10 @@ class Pseudo<dag outs, dag ins, list<dag> pattern>
 // Implements "$dst = $cc & (8 >> CC) ? $src1 : $src2", where CC is
 // the value of the PSW's 2-bit condition code field.
 class SelectWrapper<RegisterOperand cls>
-  : Pseudo<(outs cls:$dst), (ins cls:$src1, cls:$src2, i8imm:$cc),
-           [(set cls:$dst, (z_select_ccmask cls:$src1, cls:$src2, imm:$cc))]> {
+  : Pseudo<(outs cls:$dst),
+           (ins cls:$src1, cls:$src2, uimm8zx4:$valid, uimm8zx4:$cc),
+           [(set cls:$dst, (z_select_ccmask cls:$src1, cls:$src2,
+                                            uimm8zx4:$valid, uimm8zx4:$cc))]> {
   let usesCustomInserter = 1;
   // Although the instructions used by these nodes do not in themselves
   // change CC, the insertion requires new blocks, and CC cannot be live
@@ -1270,12 +1309,16 @@ class SelectWrapper<RegisterOperand cls>
 multiclass CondStores<RegisterOperand cls, SDPatternOperator store,
                       SDPatternOperator load, AddressingMode mode> {
   let Defs = [CC], Uses = [CC], usesCustomInserter = 1 in {
-    def "" : Pseudo<(outs), (ins cls:$new, mode:$addr, uimm8zx4:$cc),
+    def "" : Pseudo<(outs),
+                    (ins cls:$new, mode:$addr, uimm8zx4:$valid, uimm8zx4:$cc),
                     [(store (z_select_ccmask cls:$new, (load mode:$addr),
-                                             uimm8zx4:$cc), mode:$addr)]>;
-    def Inv : Pseudo<(outs), (ins cls:$new, mode:$addr, uimm8zx4:$cc),
+                                             uimm8zx4:$valid, uimm8zx4:$cc),
+                            mode:$addr)]>;
+    def Inv : Pseudo<(outs),
+                     (ins cls:$new, mode:$addr, uimm8zx4:$valid, uimm8zx4:$cc),
                      [(store (z_select_ccmask (load mode:$addr), cls:$new,
-                                              uimm8zx4:$cc), mode:$addr)]>;
+                                              uimm8zx4:$valid, uimm8zx4:$cc),
+                              mode:$addr)]>;
   }
 }
 

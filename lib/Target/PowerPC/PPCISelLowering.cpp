@@ -7886,3 +7886,9 @@ Sched::Preference PPCTargetLowering::getSchedulingPreference(SDNode *N) const {
   return Sched::ILP;
 }
 
+// Create a fast isel object.
+FastISel *
+PPCTargetLowering::createFastISel(FunctionLoweringInfo &FuncInfo,
+                                  const TargetLibraryInfo *LibInfo) const {
+  return PPC::createFastISel(FuncInfo, LibInfo);
+}

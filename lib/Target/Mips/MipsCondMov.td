@@ -34,18 +34,20 @@ class CMov_I_F_FT<string opstr, RegisterOperand CRC, RegisterOperand DRC,
 // cond:float, data:int
 class CMov_F_I_FT<string opstr, RegisterOperand RC, InstrItinClass Itin,
                   SDPatternOperator OpNode = null_frag> :
-  InstSE<(outs RC:$rd), (ins RC:$rs, FCC:$fcc, RC:$F),
+  InstSE<(outs RC:$rd), (ins RC:$rs, FCCRegsOpnd:$fcc, RC:$F),
          !strconcat(opstr, "\t$rd, $rs, $fcc"),
-         [(set RC:$rd, (OpNode RC:$rs, FCC:$fcc, RC:$F))], Itin, FrmFR> {
+         [(set RC:$rd, (OpNode RC:$rs, FCCRegsOpnd:$fcc, RC:$F))],
+         Itin, FrmFR> {
   let Constraints = "$F = $rd";
 }
 
 // cond:float, data:float
-class CMov_F_F_FT<string opstr, RegisterClass RC, InstrItinClass Itin,
+class CMov_F_F_FT<string opstr, RegisterOperand RC, InstrItinClass Itin,
                   SDPatternOperator OpNode = null_frag> :
-  InstSE<(outs RC:$fd), (ins RC:$fs, FCC:$fcc, RC:$F),
+  InstSE<(outs RC:$fd), (ins RC:$fs, FCCRegsOpnd:$fcc, RC:$F),
          !strconcat(opstr, "\t$fd, $fs, $fcc"),
-         [(set RC:$fd, (OpNode RC:$fs, FCC:$fcc, RC:$F))], Itin, FrmFR> {
+         [(set RC:$fd, (OpNode RC:$fs, FCCRegsOpnd:$fcc, RC:$F))],
+         Itin, FrmFR> {
   let Constraints = "$F = $fd";
 }
 
@@ -169,36 +171,36 @@ let Predicates = [IsFP64bit, HasStdEnc],
   }
 }
 
-def MOVT_I : CMov_F_I_FT<"movt", CPURegsOpnd, IIAlu, MipsCMovFP_T>,
+def MOVT_I : CMov_F_I_FT<"movt", CPURegsOpnd, IIArith, MipsCMovFP_T>,
              CMov_F_I_FM<1>;
-def MOVT_I64 : CMov_F_I_FT<"movt", CPU64RegsOpnd, IIAlu, MipsCMovFP_T>,
+def MOVT_I64 : CMov_F_I_FT<"movt", CPU64RegsOpnd, IIArith, MipsCMovFP_T>,
                CMov_F_I_FM<1>, Requires<[HasMips64, HasStdEnc]> {
   let DecoderNamespace = "Mips64";
 }
 
-def MOVF_I : CMov_F_I_FT<"movf", CPURegsOpnd, IIAlu, MipsCMovFP_F>,
+def MOVF_I : CMov_F_I_FT<"movf", CPURegsOpnd, IIArith, MipsCMovFP_F>,
              CMov_F_I_FM<0>;
-def MOVF_I64 : CMov_F_I_FT<"movf", CPU64RegsOpnd, IIAlu, MipsCMovFP_F>,
+def MOVF_I64 : CMov_F_I_FT<"movf", CPU64RegsOpnd, IIArith, MipsCMovFP_F>,
                CMov_F_I_FM<0>, Requires<[HasMips64, HasStdEnc]> {
   let DecoderNamespace = "Mips64";
 }
 
-def MOVT_S : CMov_F_F_FT<"movt.s", FGR32, IIFmove, MipsCMovFP_T>,
+def MOVT_S : CMov_F_F_FT<"movt.s", FGR32RegsOpnd, IIFmove, MipsCMovFP_T>,
              CMov_F_F_FM<16, 1>;
-def MOVF_S : CMov_F_F_FT<"movf.s", FGR32, IIFmove, MipsCMovFP_F>,
+def MOVF_S : CMov_F_F_FT<"movf.s", FGR32RegsOpnd, IIFmove, MipsCMovFP_F>,
              CMov_F_F_FM<16, 0>;
 
 let Predicates = [NotFP64bit, HasStdEnc] in {
-  def MOVT_D32 : CMov_F_F_FT<"movt.d", AFGR64, IIFmove, MipsCMovFP_T>,
+  def MOVT_D32 : CMov_F_F_FT<"movt.d", AFGR64RegsOpnd, IIFmove, MipsCMovFP_T>,
                  CMov_F_F_FM<17, 1>;
-  def MOVF_D32 : CMov_F_F_FT<"movf.d", AFGR64, IIFmove, MipsCMovFP_F>,
+  def MOVF_D32 : CMov_F_F_FT<"movf.d", AFGR64RegsOpnd, IIFmove, MipsCMovFP_F>,
                  CMov_F_F_FM<17, 0>;
 }
 let Predicates = [IsFP64bit, HasStdEnc],
     DecoderNamespace = "Mips64" in {
-  def MOVT_D64 : CMov_F_F_FT<"movt.d", FGR64, IIFmove, MipsCMovFP_T>,
+  def MOVT_D64 : CMov_F_F_FT<"movt.d", FGR64RegsOpnd, IIFmove, MipsCMovFP_T>,
                  CMov_F_F_FM<17, 1>;
-  def MOVF_D64 : CMov_F_F_FT<"movf.d", FGR64, IIFmove, MipsCMovFP_F>,
+  def MOVF_D64 : CMov_F_F_FT<"movf.d", FGR64RegsOpnd, IIFmove, MipsCMovFP_F>,
                  CMov_F_F_FM<17, 0>;
 }
 

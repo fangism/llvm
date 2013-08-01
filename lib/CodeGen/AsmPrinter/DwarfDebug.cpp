@@ -1074,8 +1074,8 @@ static bool isContainedInAnonNamespace(DIE *Die) {
   DIE *Parent = Die->getParent();
 
   while (Parent) {
-    if (Die->getTag() == dwarf::DW_TAG_namespace &&
-        getDIEStringAttr(Die, dwarf::DW_AT_name) == "")
+    if (Parent->getTag() == dwarf::DW_TAG_namespace &&
+        getDIEStringAttr(Parent, dwarf::DW_AT_name) == "")
       return true;
     Parent = Parent->getParent();
   }
@@ -1098,16 +1098,18 @@ void DwarfDebug::finalizeModuleInfo() {
     TheCU->constructContainingTypeDIEs();
   }
 
-  // For types that we'd like to move to type units or ODR check go ahead
-  // and either move the types out or add the ODR attribute now.
+  // Split out type units and conditionally add an ODR tag to the split
+  // out type.
   // FIXME: Do type splitting.
   for (unsigned i = 0, e = TypeUnits.size(); i != e; ++i) {
     MD5 Hash;
     DIE *Die = TypeUnits[i];
-    // If we're in C++ and we want to generate the hash then go ahead and do
-    // that now.
+    // If we've requested ODR hashes, the current language is C++, the type is
+    // named, and the type isn't located inside a C++ anonymous namespace then
+    // add the ODR signature attribute now.
     if (GenerateODRHash &&
         CUMap.begin()->second->getLanguage() == dwarf::DW_LANG_C_plus_plus &&
+        (getDIEStringAttr(Die, dwarf::DW_AT_name) != "") &&
         !isContainedInAnonNamespace(Die))
       addDIEODRSignature(Hash, CUMap.begin()->second, Die);
   }

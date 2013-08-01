@@ -79,6 +79,9 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::LOAD, MVT::f64, Promote);
   AddPromotedToType(ISD::LOAD, MVT::f64, MVT::i64);
 
+  setOperationAction(ISD::EXTRACT_SUBVECTOR, MVT::v2i32, Expand);
+  setOperationAction(ISD::EXTRACT_SUBVECTOR, MVT::v2f32, Expand);
+
   setOperationAction(ISD::FNEG, MVT::v2f32, Expand);
   setOperationAction(ISD::FNEG, MVT::v4f32, Expand);
 
@@ -101,13 +104,17 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     //Expand the following operations for the current type by default
     setOperationAction(ISD::ADD,  VT, Expand);
     setOperationAction(ISD::AND,  VT, Expand);
+    setOperationAction(ISD::FP_TO_SINT, VT, Expand);
+    setOperationAction(ISD::FP_TO_UINT, VT, Expand);
     setOperationAction(ISD::MUL,  VT, Expand);
     setOperationAction(ISD::OR,   VT, Expand);
     setOperationAction(ISD::SHL,  VT, Expand);
+    setOperationAction(ISD::SINT_TO_FP, VT, Expand);
     setOperationAction(ISD::SRL,  VT, Expand);
     setOperationAction(ISD::SRA,  VT, Expand);
     setOperationAction(ISD::SUB,  VT, Expand);
     setOperationAction(ISD::UDIV, VT, Expand);
+    setOperationAction(ISD::UINT_TO_FP, VT, Expand);
     setOperationAction(ISD::UREM, VT, Expand);
     setOperationAction(ISD::VSELECT, VT, Expand);
     setOperationAction(ISD::XOR,  VT, Expand);

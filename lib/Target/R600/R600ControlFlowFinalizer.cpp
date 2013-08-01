@@ -378,8 +378,10 @@ public:
         case AMDGPU::R600_ExportBuf:
         case AMDGPU::R600_ExportSwz:
         case AMDGPU::RAT_WRITE_CACHELESS_32_eg:
+        case AMDGPU::RAT_WRITE_CACHELESS_64_eg:
         case AMDGPU::RAT_WRITE_CACHELESS_128_eg:
-        case AMDGPU::RAT_STORE_DWORD_cm:
+        case AMDGPU::RAT_STORE_DWORD32_cm:
+        case AMDGPU::RAT_STORE_DWORD64_cm:
           DEBUG(dbgs() << CfCount << ":"; MI->dump(););
           CfCount++;
           break;
@@ -457,18 +459,11 @@ public:
           MI->eraseFromParent();
           break;
         }
-        case AMDGPU::PREDICATED_BREAK: {
-          CurrentStack--;
-          CfCount += 3;
-          BuildMI(MBB, MI, MBB.findDebugLoc(MI), getHWInstrDesc(CF_JUMP))
-              .addImm(CfCount)
-              .addImm(1);
+        case AMDGPU::BREAK: {
+          CfCount ++;
           MachineInstr *MIb = BuildMI(MBB, MI, MBB.findDebugLoc(MI),
               getHWInstrDesc(CF_LOOP_BREAK))
               .addImm(0);
-          BuildMI(MBB, MI, MBB.findDebugLoc(MI), getHWInstrDesc(CF_POP))
-              .addImm(CfCount)
-              .addImm(1);
           LoopStack.back().second.insert(MIb);
           MI->eraseFromParent();
           break;
