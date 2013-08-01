@@ -536,13 +536,14 @@ static size_t parseBackslash(StringRef Src, size_t I, SmallString<128> &Token) {
   return I - 1;
 }
 
+enum StateEnum { INIT, UNQUOTED, QUOTED };
 void cl::TokenizeWindowsCommandLine(StringRef Src, StringSaver &Saver,
                                     SmallVectorImpl<const char *> &NewArgv) {
   SmallString<128> Token;
 
   // This is a small state machine to consume characters until it reaches the
   // end of the source string.
-  enum { INIT, UNQUOTED, QUOTED } State = INIT;
+  StateEnum State = INIT;
   for (size_t I = 0, E = Src.size(); I != E; ++I) {
     // INIT state indicates that the current input index is at the start of
     // the string or between tokens.
