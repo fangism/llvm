@@ -425,50 +425,22 @@ namespace macho {
 
   };
 
-/**
- * PPC relocation types from <mach-o/ppc/reloc.h>
- * (renamed, following conventions in this header)
- *
- * Relocation types used in the ppc implementation.  Relocation entries for
- * things other than instructions use the same generic relocation as discribed
- * above and their r_type is RELOC_VANILLA.  The rest of the relocation types
- * are for instructions.  Since they are for instructions the r_address field
- * indicates the 32 bit instruction that the relocation is to be preformed on.
- * The fields r_pcrel and r_length are ignored for non-RELOC_VANILLA r_types
- * except for PPC_RELOC_BR14.
- *
- * For PPC_RELOC_BR14 if the r_length is the unused value 3, then the branch was
- * statically predicted setting or clearing the Y-bit based on the sign of the
- * displacement or the opcode.  If this is the case the static linker must flip
- * the value of the Y-bit if the sign of the displacement changes for non-branch
- * always conditions.
- */
+  /// PPC relocation types from <mach-o/ppc/reloc.h>
   enum RelocationInfoTypePPC {
-    RIT_PPC_VANILLA,  /* generic relocation as discribed above */
-    RIT_PPC_PAIR,     /* the second relocation entry of a pair */
-    RIT_PPC_BR14,     /* 14 bit branch displacement (to a word address) */
-    RIT_PPC_BR24,     /* 24 bit branch displacement (to a word address) */
-    RIT_PPC_HI16,     /* a PAIR follows with the low half */
-    RIT_PPC_LO16,     /* a PAIR follows with the high half */
-    RIT_PPC_HA16,     /* Same as the RELOC_HI16 except the low 16 bits and the
-                         * high 16 bits are added together with the low 16 bits
-                         * sign extened first.  This means if bit 15 of the low
-                         * 16 bits is set the high 16 bits stored in the
-                         * instruction will be adjusted.
-                         */
-    RIT_PPC_LO14,     /* Same as the LO16 except that the low 2 bits are not
-                         * stored in the instruction and are always zero.  This
-                         * is used in double word load/store instructions.
-                         */
-    RIT_PPC_SECTDIFF, /* a PAIR follows with subtract symbol value */
-    RIT_PPC_PB_LA_PTR,/* prebound lazy pointer */
-    RIT_PPC_HI16_SECTDIFF, /* section difference forms of above.  a PAIR */
-    RIT_PPC_LO16_SECTDIFF, /* follows these with subtract symbol value */
+    RIT_PPC_BR14 = RIT_Pair +1,
+    RIT_PPC_BR24,
+    RIT_PPC_HI16,
+    RIT_PPC_LO16,
+    RIT_PPC_HA16,
+    RIT_PPC_LO14,
+    RIT_PPC_SECTDIFF,
+    RIT_PPC_PB_LA_PTR,
+    RIT_PPC_HI16_SECTDIFF,
+    RIT_PPC_LO16_SECTDIFF,
     RIT_PPC_HA16_SECTDIFF,
     RIT_PPC_JBSR,
     RIT_PPC_LO14_SECTDIFF,
-    RIT_PPC_LOCAL_SECTDIFF,  /* like PPC_SECTDIFF, but the symbol
-                                 referenced was local.  */
+    RIT_PPC_LOCAL_SECTDIFF,
     RIT_PPC_TLV
   };
 
