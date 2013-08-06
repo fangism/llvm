@@ -156,6 +156,13 @@ public:
 
   EVT getShiftAmountTy(EVT LHSTy) const;
 
+  /// Returns the type to be used for the index operand of:
+  /// ISD::INSERT_VECTOR_ELT, ISD::EXTRACT_VECTOR_ELT,
+  /// ISD::INSERT_SUBVECTOR, and ISD::EXTRACT_SUBVECTOR
+  virtual MVT getVectorIdxTy() const {
+    return getPointerTy();
+  }
+
   /// Return true if the select operation is expensive for this target.
   bool isSelectExpensive() const { return SelectIsExpensive; }
 
@@ -1142,6 +1149,15 @@ public:
   /// Ty2. e.g. On x86 it's free to truncate a i32 value in register EAX to i16
   /// by referencing its sub-register AX.
   virtual bool isTruncateFree(Type * /*Ty1*/, Type * /*Ty2*/) const {
+    return false;
+  }
+
+  /// Return true if a truncation from Ty1 to Ty2 is permitted when deciding
+  /// whether a call is in tail position. Typically this means that both results
+  /// would be assigned to the same register or stack slot, but it could mean
+  /// the target performs adequate checks of its own before proceeding with the
+  /// tail call.
+  virtual bool allowTruncateForTailCall(Type * /*Ty1*/, Type * /*Ty2*/) const {
     return false;
   }
 

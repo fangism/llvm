@@ -1604,33 +1604,33 @@ multiclass T2Ipl<bits<1> write, bits<1> instr, string opc> {
 
     let DecoderMethod = "DecodeT2LoadShift";
   }
-
-  // pci variant is very similar to i12, but supports negative offsets
-  // from the PC.
-  def pci : T2Iso<(outs), (ins t2ldrlabel:$addr), IIC_Preload, opc,
-                 "\t$addr",
-                 [(ARMPreload (ARMWrapper tconstpool:$addr),
-                              (i32 write), (i32 instr))]>,
-                 Sched<[WritePreLd]> {
-    let Inst{31-25} = 0b1111100;
-    let Inst{24} = instr;
-    let Inst{22} = 0;
-    let Inst{21} = write;
-    let Inst{20} = 1;
-    let Inst{19-16} = 0b1111;
-    let Inst{15-12} = 0b1111;
-
-    bits<13> addr;
-    let Inst{23}   = addr{12};   // add = (U == '1')
-    let Inst{11-0} = addr{11-0}; // imm12
-
-    let DecoderMethod = "DecodeT2LoadLabel";
-  }
 }
 
-defm t2PLD  : T2Ipl<0, 0, "pld">,  Requires<[IsThumb2]>;
-defm t2PLDW : T2Ipl<1, 0, "pldw">, Requires<[IsThumb2,HasV7,HasMP]>;
-defm t2PLI  : T2Ipl<0, 1, "pli">,  Requires<[IsThumb2,HasV7]>;
+defm t2PLD    : T2Ipl<0, 0, "pld">,  Requires<[IsThumb2]>;
+defm t2PLDW   : T2Ipl<1, 0, "pldw">, Requires<[IsThumb2,HasV7,HasMP]>;
+defm t2PLI    : T2Ipl<0, 1, "pli">,  Requires<[IsThumb2,HasV7]>;
+
+// pci variant is very similar to i12, but supports negative offsets
+// from the PC. Only PLD and PLI have pci variants (not PLDW)
+class T2Iplpci<bits<1> inst, string opc> : T2Iso<(outs), (ins t2ldrlabel:$addr),
+               IIC_Preload, opc, "\t$addr", 
+               [(ARMPreload (ARMWrapper tconstpool:$addr),
+                (i32 0), (i32 inst))]>, Sched<[WritePreLd]> {
+  let Inst{31-25} = 0b1111100;
+  let Inst{24} = inst;
+  let Inst{22-20} = 0b001;
+  let Inst{19-16} = 0b1111;
+  let Inst{15-12} = 0b1111;
+
+  bits<13> addr;
+  let Inst{23}   = addr{12};   // add = (U == '1')
+  let Inst{11-0} = addr{11-0}; // imm12
+
+  let DecoderMethod = "DecodeT2LoadLabel";
+}
+
+def t2PLDpci : T2Iplpci<0, "pld">,  Requires<[IsThumb2]>;
+def t2PLIpci : T2Iplpci<1, "pli">,  Requires<[IsThumb2,HasV7]>;
 
 //===----------------------------------------------------------------------===//
 //  Load / store multiple Instructions.
@@ -3907,17 +3907,17 @@ def : t2InstAlias<"mcr2${p} $cop, $opc1, $Rt, $CRn, $CRm",
 
 /* from coprocessor to ARM core register */
 def t2MRC : t2MovRCopro<0b1110, "mrc", 1,
-             (outs GPR:$Rt), (ins p_imm:$cop, imm0_7:$opc1, c_imm:$CRn,
+             (outs GPRwithAPSR:$Rt), (ins p_imm:$cop, imm0_7:$opc1, c_imm:$CRn,
                                   c_imm:$CRm, imm0_7:$opc2), []>;
 def : t2InstAlias<"mrc${p} $cop, $opc1, $Rt, $CRn, $CRm",
-                  (t2MRC GPR:$Rt, p_imm:$cop, imm0_7:$opc1, c_imm:$CRn,
+                  (t2MRC GPRwithAPSR:$Rt, p_imm:$cop, imm0_7:$opc1, c_imm:$CRn,
                          c_imm:$CRm, 0, pred:$p)>;
 
 def t2MRC2 : t2MovRCopro<0b1111, "mrc2", 1,
-             (outs GPR:$Rt), (ins p_imm:$cop, imm0_7:$opc1, c_imm:$CRn,
+             (outs GPRwithAPSR:$Rt), (ins p_imm:$cop, imm0_7:$opc1, c_imm:$CRn,
                                   c_imm:$CRm, imm0_7:$opc2), []>;
 def : t2InstAlias<"mrc2${p} $cop, $opc1, $Rt, $CRn, $CRm",
-                  (t2MRC2 GPR:$Rt, p_imm:$cop, imm0_7:$opc1, c_imm:$CRn,
+                  (t2MRC2 GPRwithAPSR:$Rt, p_imm:$cop, imm0_7:$opc1, c_imm:$CRn,
                           c_imm:$CRm, 0, pred:$p)>;
 
 def : T2v6Pat<(int_arm_mrc  imm:$cop, imm:$opc1, imm:$CRn, imm:$CRm, imm:$opc2),
@@ -4425,9 +4425,6 @@ def : t2InstAlias<"add${p} $Rd, pc, $imm",
 // PLD/PLDW/PLI with alternate literal form.
 def : t2InstAlias<"pld${p} $addr",
                   (t2PLDpci t2ldr_pcrel_imm12:$addr, pred:$p)>;
-def : InstAlias<"pldw${p} $addr",
-                 (t2PLDWpci  t2ldr_pcrel_imm12:$addr, pred:$p)>,
-      Requires<[IsThumb2,HasV7,HasMP]>;
 def : InstAlias<"pli${p} $addr",
                  (t2PLIpci  t2ldr_pcrel_imm12:$addr, pred:$p)>,
       Requires<[IsThumb2,HasV7]>;

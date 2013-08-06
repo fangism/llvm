@@ -217,7 +217,7 @@ void PassManagerBuilder::populateModulePassManager(PassManagerBase &MPM) {
   addExtensionsToPM(EP_ScalarOptimizerLate, MPM);
 
   if (!LateVectorize) {
-    if (SLPVectorize && OptLevel > 2)
+    if (SLPVectorize)
       MPM.add(createSLPVectorizerPass());   // Vectorize parallel scalar chains.
 
     if (BBVectorize) {
@@ -235,7 +235,7 @@ void PassManagerBuilder::populateModulePassManager(PassManagerBase &MPM) {
   }
 
   MPM.add(createAggressiveDCEPass());         // Delete dead instructions
-  MPM.add(createCFGSimplificationPass(true)); // Merge & remove BBs
+  MPM.add(createCFGSimplificationPass()); // Merge & remove BBs
   MPM.add(createInstructionCombiningPass());  // Clean up after everything.
 
   // As an experimental mode, run any vectorization passes in a separate
@@ -371,7 +371,7 @@ void PassManagerBuilder::populateLTOPassManager(PassManagerBase &PM,
   PM.add(createJumpThreadingPass());
 
   // Delete basic blocks, which optimization passes may have killed.
-  PM.add(createCFGSimplificationPass(true));
+  PM.add(createCFGSimplificationPass());
 
   // Now that we have optimized the program, discard unreachable functions.
   PM.add(createGlobalDCEPass());

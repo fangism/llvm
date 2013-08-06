@@ -21,13 +21,13 @@ def addr16 :
 // Address operand
 def mem16 : Operand<i32> {
   let PrintMethod = "printMemOperand";
-  let MIOperandInfo = (ops CPU16Regs, simm16, CPU16Regs);
+  let MIOperandInfo = (ops CPU16Regs, simm16, CPU16RegsPlusSP);
   let EncoderMethod = "getMemEncoding";
 }
 
 def mem16_ea : Operand<i32> {
   let PrintMethod = "printMemOperandEA";
-  let MIOperandInfo = (ops CPU16Regs, simm16);
+  let MIOperandInfo = (ops CPU16RegsPlusSP, simm16);
   let EncoderMethod = "getMemEncoding";
 }
 
@@ -185,6 +185,11 @@ class FEXT_2RI16_ins<bits<5> _op, string asmstr,
 class FEXT_RI16_SP_explicit_ins<bits<5> _op, string asmstr,
                                 InstrItinClass itin>:
   FEXT_RI16<_op, (outs CPU16Regs:$rx), (ins CPUSPReg:$ry, simm16:$imm),
+            !strconcat(asmstr, "\t$rx, $imm ( $ry ); "), [], itin>;
+
+class FEXT_RI16_SP_Store_explicit_ins<bits<5> _op, string asmstr,
+                                InstrItinClass itin>:
+  FEXT_RI16<_op, (outs), (ins  CPU16Regs:$rx, CPUSPReg:$ry, simm16:$imm),
             !strconcat(asmstr, "\t$rx, $imm ( $ry ); "), [], itin>;
 
 //
@@ -437,7 +442,7 @@ def Constant32:
   MipsPseudo16<(outs), (ins imm32:$imm), "\t.word $imm", []>;
 
 def LwConstant32:
-  MipsPseudo16<(outs), (ins CPU16Regs:$rx, imm32:$imm),
+  MipsPseudo16<(outs CPU16Regs:$rx), (ins imm32:$imm),
     "lw\t$rx, 1f\n\tb\t2f\n\t.align\t2\n1: \t.word\t$imm\n2:", []>;
 
 
@@ -879,9 +884,9 @@ def OrRxRxRy16: FRxRxRy16_ins<0b01101, "or", IIAlu>, ArithLogic16Defs<1>;
 let ra=1, s=0,s0=1,s1=1 in
 def RestoreRaF16:
   FI8_SVRS16<0b1, (outs), (ins uimm16:$frame_size),
-             "restore\t$$ra,  $$s0, $$s1, $frame_size", [], IILoad >, MayLoad {
+             "restore\t$$ra,  $$s0, $$s1, $$s2, $frame_size", [], IILoad >, MayLoad {
   let isCodeGenOnly = 1;
-  let Defs = [S0, S1, RA, SP];
+  let Defs = [S0, S1, S2, RA, SP];
   let Uses = [SP];
 }
 
@@ -907,9 +912,9 @@ def RestoreIncSpF16:
 let ra=1, s=1,s0=1,s1=1 in
 def SaveRaF16:
   FI8_SVRS16<0b1, (outs), (ins uimm16:$frame_size),
-             "save\t$$ra, $$s0, $$s1, $frame_size", [], IIStore >, MayStore {
+             "save\t$$ra, $$s0, $$s1, $$s2, $frame_size", [], IIStore >, MayStore {
   let isCodeGenOnly = 1;
-  let Uses = [RA, SP, S0, S1];
+  let Uses = [RA, SP, S0, S1, S2];
   let Defs = [SP];
 }
 
@@ -1196,7 +1201,8 @@ def SwRxRyOffMemX16:
 // Purpose: Store Word rx (SP-Relative)
 // To store an SP-relative word to memory.
 //
-def SwRxSpImmX16: FEXT_RI16_SP_explicit_ins<0b11010, "sw", IIStore>, MayStore;
+def SwRxSpImmX16: FEXT_RI16_SP_Store_explicit_ins
+  <0b11010, "sw", IIStore>, MayStore;
 
 //
 //

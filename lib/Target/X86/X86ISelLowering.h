@@ -53,6 +53,10 @@ namespace llvm {
       /// to X86::XORPS or X86::XORPD.
       FXOR,
 
+      /// FAND - Bitwise logical ANDNOT of floating point values. This
+      /// corresponds to X86::ANDNPS or X86::ANDNPD.
+      FANDN,
+
       /// FSRL - Bitwise logical right shift of floating point values. These
       /// corresponds to X86::PSRLDQ.
       FSRL,
@@ -289,6 +293,10 @@ namespace llvm {
 
       // TESTP - Vector packed fp sign bitwise comparisons
       TESTP,
+
+      // OR/AND test for masks
+      KORTEST,
+      KTEST,
 
       // Several flavors of instructions with vector shuffle behaviors.
       PALIGNR,
@@ -654,6 +662,8 @@ namespace llvm {
     virtual bool isTruncateFree(Type *Ty1, Type *Ty2) const;
     virtual bool isTruncateFree(EVT VT1, EVT VT2) const;
 
+    virtual bool allowTruncateForTailCall(Type *Ty1, Type *Ty2) const;
+
     /// isZExtFree - Return true if any actual instruction that defines a
     /// value of type Ty1 implicit zero-extends the value to Ty2 in the result
     /// register. This does not necessarily include registers defined in
@@ -822,6 +832,7 @@ namespace llvm {
     SDValue LowerAsSplatVectorLoad(SDValue SrcOp, EVT VT, SDLoc dl,
                                    SelectionDAG &DAG) const;
     SDValue LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerBUILD_VECTORvXi1(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINSERT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const;

@@ -229,6 +229,7 @@ class ARMAsmParser : public MCTargetAsmParser {
                               SmallVectorImpl<MCParsedAsmOperand*> &Operands);
   bool shouldOmitPredicateOperand(StringRef Mnemonic,
                               SmallVectorImpl<MCParsedAsmOperand*> &Operands);
+  bool isDeprecated(MCInst &Inst, StringRef &Info);
 
 public:
   enum ARMMatchResultTy {
@@ -4876,6 +4877,14 @@ bool ARMAsmParser::shouldOmitPredicateOperand(
   return false;
 }
 
+bool ARMAsmParser::isDeprecated(MCInst &Inst, StringRef &Info) {
+  if (hasV8Ops() && Inst.getOpcode() == ARM::SETEND) {
+    Info = "armv8";
+    return true;
+  }
+  return false;
+}
+
 static bool isDataTypeToken(StringRef Tok) {
   return Tok == ".8" || Tok == ".16" || Tok == ".32" || Tok == ".64" ||
     Tok == ".i8" || Tok == ".i16" || Tok == ".i32" || Tok == ".i64" ||
@@ -5375,6 +5384,10 @@ validateInstruction(MCInst &Inst,
     break;
   }
   }
+
+  StringRef DepInfo;
+  if (isDeprecated(Inst, DepInfo))
+    Warning(Loc, "deprecated on " + DepInfo);
 
   return false;
 }
@@ -7996,11 +8009,19 @@ bool ARMAsmParser::parseDirectiveRegSave(SMLoc L, bool IsVector) {
   if (HandlerDataLoc.isValid())
     return Error(L, ".save or .vsave must precede .handlerdata directive");
 
+  // RAII object to make sure parsed operands are deleted.
+  struct CleanupObject {
+    SmallVector<MCParsedAsmOperand *, 1> Operands;
+    ~CleanupObject() {
+      for (unsigned I = 0, E = Operands.size(); I != E; ++I)
+        delete Operands[I];
+    }
+  } CO;
+
   // Parse the register list
-  SmallVector<MCParsedAsmOperand*, 1> Operands;
-  if (parseRegisterList(Operands))
+  if (parseRegisterList(CO.Operands))
     return true;
-  ARMOperand *Op = (ARMOperand*)Operands[0];
+  ARMOperand *Op = (ARMOperand*)CO.Operands[0];
   if (!IsVector && !Op->isRegList())
     return Error(L, ".save expects GPR registers");
   if (IsVector && !Op->isDPRRegList())

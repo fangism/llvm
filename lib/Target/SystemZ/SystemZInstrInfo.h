@@ -69,7 +69,15 @@ namespace SystemZII {
 
     // An instruction that peforms a 64-bit signed comparison and branches
     // on the result.
-    BranchCG
+    BranchCG,
+
+    // An instruction that decrements a 32-bit register and branches if
+    // the result is nonzero.
+    BranchCT,
+
+    // An instruction that decrements a 64-bit register and branches if
+    // the result is nonzero.
+    BranchCTG
   };
   // Information about a branch instruction.
   struct Branch {
@@ -192,6 +200,10 @@ public:
   // instruction (which might be Opcode itself) or 0 if no such instruction
   // exists.
   unsigned getOpcodeForOffset(unsigned Opcode, int64_t Offset) const;
+
+  // If Opcode is a load instruction that has a LOAD AND TEST form,
+  // return the opcode for the testing form, otherwise return 0.
+  unsigned getLoadAndTest(unsigned Opcode) const;
 
   // Return true if ROTATE AND ... SELECTED BITS can be used to select bits
   // Mask of the R2 operand, given that only the low BitSize bits of Mask are

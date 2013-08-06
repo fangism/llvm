@@ -2843,8 +2843,8 @@ defm FsOR   : sse12_fp_alias_pack_logical<0x56, "or", X86for,
 defm FsXOR  : sse12_fp_alias_pack_logical<0x57, "xor", X86fxor,
               SSE_BIT_ITINS_P>;
 
-let neverHasSideEffects = 1, Pattern = []<dag>, isCommutable = 0 in
-  defm FsANDN : sse12_fp_alias_pack_logical<0x55, "andn", undef,
+let isCommutable = 0 in
+  defm FsANDN : sse12_fp_alias_pack_logical<0x55, "andn", X86fandn,
                 SSE_BIT_ITINS_P>;
 
 /// sse12_fp_packed_logical - SSE 1 & 2 packed FP logical ops
@@ -6139,7 +6139,7 @@ multiclass SS41I_extractf32<bits<8> opc, string OpcodeStr> {
 }
 
 let ExeDomain = SSEPackedSingle in {
-  let Predicates = [HasAVX] in {
+  let Predicates = [UseAVX] in {
     defm VEXTRACTPS : SS41I_extractf32<0x17, "vextractps">, VEX;
     def VEXTRACTPSrr64 : SS4AIi8<0x17, MRMDestReg, (outs GR64:$dst),
                     (ins VR128:$src1, i32i8imm:$src2),

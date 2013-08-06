@@ -684,6 +684,14 @@ SystemZInstrInfo::getBranchInfo(const MachineInstr *MI) const {
                              MI->getOperand(0).getImm(),
                              MI->getOperand(1).getImm(), &MI->getOperand(2));
 
+  case SystemZ::BRCT:
+    return SystemZII::Branch(SystemZII::BranchCT, SystemZ::CCMASK_ICMP,
+                             SystemZ::CCMASK_CMP_NE, &MI->getOperand(2));
+
+  case SystemZ::BRCTG:
+    return SystemZII::Branch(SystemZII::BranchCTG, SystemZ::CCMASK_ICMP,
+                             SystemZ::CCMASK_CMP_NE, &MI->getOperand(2));
+
   case SystemZ::CIJ:
   case SystemZ::CRJ:
     return SystemZII::Branch(SystemZII::BranchC, SystemZ::CCMASK_ICMP,
@@ -751,6 +759,19 @@ unsigned SystemZInstrInfo::getOpcodeForOffset(unsigned Opcode,
       return Opcode;
   }
   return 0;
+}
+
+unsigned SystemZInstrInfo::getLoadAndTest(unsigned Opcode) const {
+  switch (Opcode) {
+  case SystemZ::L:    return SystemZ::LT;
+  case SystemZ::LY:   return SystemZ::LT;
+  case SystemZ::LG:   return SystemZ::LTG;
+  case SystemZ::LGF:  return SystemZ::LTGF;
+  case SystemZ::LR:   return SystemZ::LTR;
+  case SystemZ::LGFR: return SystemZ::LTGFR;
+  case SystemZ::LGR:  return SystemZ::LTGR;
+  default:            return 0;
+  }
 }
 
 // Return true if Mask matches the regexp 0*1+0*, given that zero masks
