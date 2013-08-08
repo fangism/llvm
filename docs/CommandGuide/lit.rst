@@ -149,12 +149,11 @@ ADDITIONAL OPTIONS
 
 .. option:: --show-suites
 
- List the discovered test suites as part of the standard output.
+ List the discovered test suites and exit.
 
-.. option:: --repeat=N
+.. option:: --show-tests
 
- Run each test ``N`` times.  Currently this is primarily useful for timing
- tests, other results are not collated in any reasonable fashion.
+ List all of the the discovered tests and exit.
 
 EXIT STATUS
 -----------

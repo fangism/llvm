@@ -161,7 +161,6 @@ def main(builtinParameters = {}):
     # blocking operation (hopefully exec) than to try and unblock other threads.
     #
     # FIXME: This is a hack.
-    import sys
     sys.setcheckinterval(1000)
 
     global options
@@ -243,9 +242,6 @@ def main(builtinParameters = {}):
     group.add_option("", "--show-tests", dest="showTests",
                       help="Show all discovered tests",
                       action="store_true", default=False)
-    group.add_option("", "--repeat", dest="repeatTests", metavar="N",
-                      help="Repeat tests N times (for timing)",
-                      action="store", default=None, type=int)
     parser.add_option_group(group)
 
     (opts, args) = parser.parse_args()
@@ -315,7 +311,10 @@ def main(builtinParameters = {}):
                 ts_tests.sort(key = lambda test: test.path_in_suite)
                 for test in ts_tests:
                     print('  %s' % (test.getFullName(),))
-        
+
+        # Exit.
+        sys.exit(0)
+
     # Select and order the tests.
     numTotalTests = len(tests)
 
@@ -347,11 +346,6 @@ def main(builtinParameters = {}):
         extra = ' of %d' % numTotalTests
     header = '-- Testing: %d%s tests, %d threads --'%(len(tests),extra,
                                                       opts.numThreads)
-
-    if opts.repeatTests:
-        tests = [t.copyWithIndex(i)
-                 for t in tests
-                 for i in range(opts.repeatTests)]
 
     progressBar = None
     if not opts.quiet:
