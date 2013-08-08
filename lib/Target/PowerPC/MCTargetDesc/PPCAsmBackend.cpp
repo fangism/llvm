@@ -166,11 +166,11 @@ namespace {
     MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
       STACKTRACE_VERBOSE;
       bool is64 = getPointerSize() == 8;
-      return createPPCMachObjectWriter(OS, 
-                                      /*Is64Bit=*/is64,
-                                      (is64 ? object::mach::CTM_PowerPC64 :
-                                       object::mach::CTM_PowerPC),
-                                      object::mach::CSPPC_ALL);
+      return createPPCMachObjectWriter(
+          OS,
+          /*Is64Bit=*/is64,
+          (is64 ? object::mach::CTM_PowerPC64 : object::mach::CTM_PowerPC),
+          object::mach::CSPPC_ALL);
     }
 
     virtual bool doesSectionRequireSymbols(const MCSection &Section) const {

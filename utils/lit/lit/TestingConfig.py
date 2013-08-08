@@ -1,6 +1,8 @@
 import os
 import sys
 
+PY2 = sys.version_info[0] < 3
+
 class TestingConfig:
     """"
     TestingConfig - Information on the tests inside a suite.
@@ -59,14 +61,24 @@ class TestingConfig:
             cfg_globals['lit'] = litConfig
             cfg_globals['__file__'] = path
             try:
-                exec f in cfg_globals
+                data = f.read()
+                if PY2:
+                    exec("exec data in cfg_globals")
+                else:
+                    exec(data, cfg_globals)
                 if litConfig.debug:
                     litConfig.note('... loaded config %r' % path)
-            except SystemExit,status:
+            except SystemExit:
+                e = sys.exc_info()[1]
                 # We allow normal system exit inside a config file to just
                 # return control without error.
-                if status.args:
+                if e.args:
                     raise
+            except:
+                import traceback
+                litConfig.fatal(
+                    'unable to parse config file %r, traceback: %s' % (
+                        path, traceback.format_exc()))
             f.close()
         else:
             if mustExist:

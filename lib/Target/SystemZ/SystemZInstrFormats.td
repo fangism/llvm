@@ -66,12 +66,9 @@ class InstSystemZ<int size, dag outs, dag ins, string asmstr,
   // SystemZ::CCMASK_*.
   bits<4> CCValues = 0;
 
-  // True if the instruction sets CC to 0 when the result is 0.
-  bit CCHasZero = 0;
-
-  // True if the instruction sets CC to 1 when the result is less than 0
-  // and to 2 when the result is greater than 0.
-  bit CCHasOrder = 0;
+  // The subset of CCValues that have the same meaning as they would after
+  // a comparison of the first operand against zero.
+  bits<4> CompareZeroCCMask = 0;
 
   // True if the instruction is conditional and if the CC mask operand
   // comes first (as for BRC, etc.).
@@ -91,11 +88,10 @@ class InstSystemZ<int size, dag outs, dag ins, string asmstr,
   let TSFlags{4}     = Is128Bit;
   let TSFlags{9-5}   = AccessBytes;
   let TSFlags{13-10} = CCValues;
-  let TSFlags{14}    = CCHasZero;
-  let TSFlags{15}    = CCHasOrder;
-  let TSFlags{16}    = CCMaskFirst;
-  let TSFlags{17}    = CCMaskLast;
-  let TSFlags{18}    = IsLogical;
+  let TSFlags{17-14} = CompareZeroCCMask;
+  let TSFlags{18}    = CCMaskFirst;
+  let TSFlags{19}    = CCMaskLast;
+  let TSFlags{20}    = IsLogical;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1287,6 +1283,15 @@ class RotateSelectRIEf<string mnemonic, bits<16> opcode, RegisterOperand cls1,
              mnemonic#"\t$R1, $R2, $I3, $I4, $I5", []> {
   let Constraints = "$R1 = $R1src";
   let DisableEncoding = "$R1src";
+}
+
+// A floating-point load-and test operation.  Create both a normal unary
+// operation and one that acts as a comparison against zero.
+multiclass LoadAndTestRRE<string mnemonic, bits<16> opcode,
+                          RegisterOperand cls> {
+  def "" : UnaryRRE<mnemonic, opcode, null_frag, cls, cls>;
+  let isCodeGenOnly = 1 in
+    def Compare : CompareRRE<mnemonic, opcode, null_frag, cls, cls>;
 }
 
 //===----------------------------------------------------------------------===//

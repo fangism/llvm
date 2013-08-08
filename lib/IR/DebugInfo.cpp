@@ -428,7 +428,7 @@ bool DIType::Verify() const {
     return false;
 
   // FIXME: Sink this into the various subclass verifies.
-  unsigned Tag = getTag();
+  uint16_t Tag = getTag();
   if (!isBasicType() && Tag != dwarf::DW_TAG_const_type &&
       Tag != dwarf::DW_TAG_volatile_type && Tag != dwarf::DW_TAG_pointer_type &&
       Tag != dwarf::DW_TAG_ptr_to_member_type &&
@@ -482,6 +482,12 @@ bool DICompositeType::Verify() const {
     return false;
   if (!fieldIsMDNode(DbgNode, 12))
     return false;
+
+  // If this is an array type verify that we have a DIType in the derived type
+  // field as that's the type of our element.
+  if (getTag() == dwarf::DW_TAG_array_type)
+    if (!DIType(getTypeDerivedFrom()))
+      return false;
 
   return DbgNode->getNumOperands() >= 10 && DbgNode->getNumOperands() <= 14;
 }
@@ -598,7 +604,7 @@ bool DIImportedEntity::Verify() const {
 /// getOriginalTypeSize - If this type is derived from a base type then
 /// return base type size.
 uint64_t DIDerivedType::getOriginalTypeSize() const {
-  unsigned Tag = getTag();
+  uint16_t Tag = getTag();
 
   if (Tag != dwarf::DW_TAG_member && Tag != dwarf::DW_TAG_typedef &&
       Tag != dwarf::DW_TAG_const_type && Tag != dwarf::DW_TAG_volatile_type &&
@@ -908,26 +914,12 @@ void DebugInfoFinder::processModule(const Module &M) {
       return;
     }
   }
-  if (NamedMDNode *SP_Nodes = M.getNamedMetadata("llvm.dbg.sp")) {
-    for (unsigned i = 0, e = SP_Nodes->getNumOperands(); i != e; ++i)
-      processSubprogram(DISubprogram(SP_Nodes->getOperand(i)));
-  }
 }
 
 /// processLocation - Process DILocation.
 void DebugInfoFinder::processLocation(DILocation Loc) {
-  if (!Loc.Verify()) return;
-  DIDescriptor S(Loc.getScope());
-  if (S.isCompileUnit())
-    addCompileUnit(DICompileUnit(S));
-  else if (S.isSubprogram())
-    processSubprogram(DISubprogram(S));
-  else if (S.isLexicalBlock())
-    processLexicalBlock(DILexicalBlock(S));
-  else if (S.isLexicalBlockFile()) {
-    DILexicalBlockFile DBF = DILexicalBlockFile(S);
-    processLexicalBlock(DILexicalBlock(DBF.getScope()));
-  }
+  if (!Loc) return;
+  processScope(Loc.getScope());
   processLocation(Loc.getOrigLocation());
 }
 
@@ -1080,6 +1072,10 @@ bool DebugInfoFinder::addSubprogram(DISubprogram SP) {
 
 bool DebugInfoFinder::addScope(DIScope Scope) {
   if (!Scope)
+    return false;
+  // FIXME: Ocaml binding generates a scope with no content, we treat it
+  // as null for now.
+  if (Scope->getNumOperands() == 0)
     return false;
   if (!NodesSeen.insert(Scope))
     return false;

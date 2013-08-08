@@ -1059,7 +1059,8 @@ MachOObjectFile::getRelocationValueString(DataRefImpl Rel,
         break;
     }
   // X86 and ARM share some relocation types in common.
-  } else if (Arch == Triple::x86 || Arch == Triple::arm || Arch == Triple::ppc) {
+  } else if (Arch == Triple::x86 || Arch == Triple::arm ||
+             Arch == Triple::ppc) {
     // Generic relocation types...
     switch (Type) {
       case macho::RIT_Pair: // GENERIC_RELOC_PAIR - prints no info

@@ -1,14 +1,16 @@
+from __future__ import absolute_import
 import os, signal, subprocess, sys
-import StringIO
-
-import ShUtil
-import Test
-import Util
-
+import re
 import platform
 import tempfile
+try:
+    from io import StringIO
+except ImportError:
+    from StringIO import StringIO
 
-import re
+import lit.ShUtil as ShUtil
+import lit.Test as Test
+import lit.Util as Util
 
 class InternalShellError(Exception):
     def __init__(self, command, message):
@@ -66,7 +68,7 @@ def executeShCmd(cmd, cfg, cwd, results):
                 res = executeShCmd(cmd.rhs, cfg, cwd, results)
             return res
 
-        raise ValueError,'Unknown shell command: %r' % cmd.op
+        raise ValueError('Unknown shell command: %r' % cmd.op)
 
     assert isinstance(cmd, ShUtil.Pipeline)
     procs = []
@@ -222,7 +224,9 @@ def executeShCmd(cmd, cfg, cwd, results):
         results.append((cmd.commands[i], out, err, res))
         if cmd.pipe_err:
             # Python treats the exit code as a signed char.
-            if res < 0:
+            if exitCode is None:
+                exitCode = res
+            elif res < 0:
                 exitCode = min(exitCode, res)
             else:
                 exitCode = max(exitCode, res)
@@ -257,7 +261,8 @@ def executeScriptInternal(test, litConfig, tmpBase, commands, cwd):
     results = []
     try:
         exitCode = executeShCmd(cmd, test.config, cwd, results)
-    except InternalShellError,e:
+    except InternalShellError:
+        e = sys.exc_info()[1]
         exitCode = 127
         results.append((e.command, '', e.message, exitCode))
 
@@ -413,7 +418,8 @@ def parseIntegratedTestScript(test, normalize_slashes=False,
 
         # Strip the trailing newline and any extra whitespace.
         return ln.strip()
-    script = map(processLine, script)
+    script = [processLine(ln)
+              for ln in script]
 
     # Verify the script contains a run line.
     if not script:
@@ -435,23 +441,22 @@ def parseIntegratedTestScript(test, normalize_slashes=False,
     return script,isXFail,tmpBase,execdir
 
 def formatTestOutput(status, out, err, exitCode, script):
-    output = StringIO.StringIO()
-    print >>output, "Script:"
-    print >>output, "--"
-    print >>output, '\n'.join(script)
-    print >>output, "--"
-    print >>output, "Exit Code: %r" % exitCode,
-    print >>output
+    output = StringIO()
+    output.write(u"Script:\n")
+    output.write(u"--\n")
+    output.write(u'\n'.join(script))
+    output.write(u"\n--\n")
+    output.write(u"Exit Code: %r\n\n" % exitCode)
     if out:
-        print >>output, "Command Output (stdout):"
-        print >>output, "--"
-        output.write(out)
-        print >>output, "--"
+        output.write(u"Command Output (stdout):\n")
+        output.write(u"--\n")
+        output.write(unicode(out))
+        output.write(u"--\n")
     if err:
-        print >>output, "Command Output (stderr):"
-        print >>output, "--"
-        output.write(err)
-        print >>output, "--"
+        output.write(u"Command Output (stderr):\n")
+        output.write(u"--\n")
+        output.write(unicode(err))
+        output.write(u"--\n")
     return (status, output.getvalue())
 
 def executeShTest(test, litConfig, useExternalSh,

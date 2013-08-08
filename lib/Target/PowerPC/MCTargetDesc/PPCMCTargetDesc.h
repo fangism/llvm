@@ -47,8 +47,7 @@ MCObjectWriter *createPPCELFObjectWriter(raw_ostream &OS,
                                          bool Is64Bit,
                                          uint8_t OSABI);
 /// createPPCELFObjectWriter - Construct a PPC Mach-O object writer.
-MCObjectWriter *createPPCMachObjectWriter(raw_ostream &OS,
-                                          bool Is64Bit,
+MCObjectWriter *createPPCMachObjectWriter(raw_ostream &OS, bool Is64Bit,
                                           uint32_t CPUType,
                                           uint32_t CPUSubtype);
 } // End llvm namespace

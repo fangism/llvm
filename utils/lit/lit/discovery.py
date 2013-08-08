@@ -215,7 +215,7 @@ def find_tests_for_inputs(lit_config, inputs):
 
     # If there were any errors during test discovery, exit now.
     if lit_config.numErrors:
-        print >>sys.stderr, '%d errors, exiting.' % lit_config.numErrors
+        sys.stderr.write('%d errors, exiting.\n' % lit_config.numErrors)
         sys.exit(2)
 
     return tests
@@ -233,7 +233,6 @@ def load_test_suite(inputs):
                                     valgrindLeakCheck = False,
                                     valgrindArgs = [],
                                     noExecute = False,
-                                    ignoreStdErr = False,
                                     debug = False,
                                     isWindows = (platform.system()=='Windows'),
                                     params = {})
@@ -242,4 +241,3 @@ def load_test_suite(inputs):
 
     # Return a unittest test suite which just runs the tests in order.
     return unittest.TestSuite([LitTestCase(test, litConfig) for test in tests])
-

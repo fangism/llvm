@@ -603,8 +603,12 @@ defm V_MOV_B32 : VOP1_32 <0x00000001, "V_MOV_B32", []>;
 } // End neverHasSideEffects = 1, isMoveImm = 1
 
 defm V_READFIRSTLANE_B32 : VOP1_32 <0x00000002, "V_READFIRSTLANE_B32", []>;
-//defm V_CVT_I32_F64 : VOP1_32 <0x00000003, "V_CVT_I32_F64", []>;
-//defm V_CVT_F64_I32 : VOP1_64 <0x00000004, "V_CVT_F64_I32", []>;
+defm V_CVT_I32_F64 : VOP1_32_64 <0x00000003, "V_CVT_I32_F64",
+  [(set i32:$dst, (fp_to_sint f64:$src0))]
+>;
+defm V_CVT_F64_I32 : VOP1_64_32 <0x00000004, "V_CVT_F64_I32",
+  [(set f64:$dst, (sint_to_fp i32:$src0))]
+>;
 defm V_CVT_F32_I32 : VOP1_32 <0x00000005, "V_CVT_F32_I32",
   [(set f32:$dst, (sint_to_fp i32:$src0))]
 >;
@@ -621,8 +625,12 @@ defm V_MOV_FED_B32 : VOP1_32 <0x00000009, "V_MOV_FED_B32", []>;
 //defm V_CVT_RPI_I32_F32 : VOP1_32 <0x0000000c, "V_CVT_RPI_I32_F32", []>;
 //defm V_CVT_FLR_I32_F32 : VOP1_32 <0x0000000d, "V_CVT_FLR_I32_F32", []>;
 //defm V_CVT_OFF_F32_I4 : VOP1_32 <0x0000000e, "V_CVT_OFF_F32_I4", []>;
-//defm V_CVT_F32_F64 : VOP1_32 <0x0000000f, "V_CVT_F32_F64", []>;
-//defm V_CVT_F64_F32 : VOP1_64 <0x00000010, "V_CVT_F64_F32", []>;
+defm V_CVT_F32_F64 : VOP1_32_64 <0x0000000f, "V_CVT_F32_F64",
+  [(set f32:$dst, (fround f64:$src0))]
+>;
+defm V_CVT_F64_F32 : VOP1_64_32 <0x00000010, "V_CVT_F64_F32",
+  [(set f64:$dst, (fextend f32:$src0))]
+>;
 //defm V_CVT_F32_UBYTE0 : VOP1_32 <0x00000011, "V_CVT_F32_UBYTE0", []>;
 //defm V_CVT_F32_UBYTE1 : VOP1_32 <0x00000012, "V_CVT_F32_UBYTE1", []>;
 //defm V_CVT_F32_UBYTE2 : VOP1_32 <0x00000013, "V_CVT_F32_UBYTE2", []>;

@@ -828,10 +828,6 @@ example:
     computing edge weights, basic blocks post-dominated by a cold
     function call are also considered to be cold; and, thus, given low
     weight.
-``nonlazybind``
-    This attribute suppresses lazy symbol binding for the function. This
-    may make calls to the function faster, at the cost of extra program
-    startup time if the function is not called during program startup.
 ``inlinehint``
     This attribute indicates that the source code contained a hint that
     inlining this function is desirable (such as the "inline" keyword in
@@ -863,6 +859,10 @@ example:
     This attribute indicates that the inliner should never inline this
     function in any situation. This attribute may not be used together
     with the ``alwaysinline`` attribute.
+``nonlazybind``
+    This attribute suppresses lazy symbol binding for the function. This
+    may make calls to the function faster, at the cost of extra program
+    startup time if the function is not called during program startup.
 ``noredzone``
     This attribute indicates that the code generator should not use a
     red zone, even if the target-specific ABI normally permits it.
@@ -7524,6 +7524,42 @@ Semantics:
 """"""""""
 
 This function returns the same values as the libm ``nearbyint``
+functions would, and handles error conditions in the same way.
+
+'``llvm.round.*``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+This is an overloaded intrinsic. You can use ``llvm.round`` on any
+floating point or vector of floating point type. Not all targets support
+all types however.
+
+::
+
+      declare float     @llvm.round.f32(float  %Val)
+      declare double    @llvm.round.f64(double %Val)
+      declare x86_fp80  @llvm.round.f80(x86_fp80  %Val)
+      declare fp128     @llvm.round.f128(fp128 %Val)
+      declare ppc_fp128 @llvm.round.ppcf128(ppc_fp128  %Val)
+
+Overview:
+"""""""""
+
+The '``llvm.round.*``' intrinsics returns the operand rounded to the
+nearest integer.
+
+Arguments:
+""""""""""
+
+The argument and return value are floating point numbers of the same
+type.
+
+Semantics:
+""""""""""
+
+This function returns the same values as the libm ``round``
 functions would, and handles error conditions in the same way.
 
 Bit Manipulation Intrinsics
