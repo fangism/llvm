@@ -3336,13 +3336,14 @@ def t2B   : T2I<(outs), (ins uncondbrtarget:$target), IIC_Br,
   let Inst{12} = 1;
 
   bits<24> target;
-  let Inst{26} = target{19};
-  let Inst{11} = target{18};
-  let Inst{13} = target{17};
+  let Inst{26} = target{23};
+  let Inst{13} = target{22};
+  let Inst{11} = target{21};
   let Inst{25-16} = target{20-11};
   let Inst{10-0} = target{10-0};
   let DecoderMethod = "DecodeT2BInstruction";
-}
+  let AsmMatchConverter = "cvtThumbBranches"; 
+} 
 
 let isNotDuplicable = 1, isIndirectBranch = 1 in {
 def t2BR_JT : t2PseudoInst<(outs),
@@ -3410,6 +3411,7 @@ def t2Bcc : T2I<(outs), (ins brtarget:$target), IIC_Br,
   let Inst{10-0} = target{11-1};
 
   let DecoderMethod = "DecodeThumb2BCCInstruction";
+  let AsmMatchConverter = "cvtThumbBranches";
 }
 
 // Tail calls. The IOS version of thumb tail calls uses a t2 branch, so
@@ -3502,12 +3504,16 @@ class t2CPS<dag iops, string asm_op> : T2XI<(outs), iops, NoItinerary,
 
 let M = 1 in
   def t2CPS3p : t2CPS<(ins imod_op:$imod, iflags_op:$iflags, i32imm:$mode),
-                      "$imod.w\t$iflags, $mode">;
+                      "$imod\t$iflags, $mode">;
 let mode = 0, M = 0 in
   def t2CPS2p : t2CPS<(ins imod_op:$imod, iflags_op:$iflags),
                       "$imod.w\t$iflags">;
 let imod = 0, iflags = 0, M = 1 in
   def t2CPS1p : t2CPS<(ins imm0_31:$mode), "\t$mode">;
+
+def : t2InstAlias<"cps$imod.w $iflags, $mode",
+                   (t2CPS3p imod_op:$imod, iflags_op:$iflags, i32imm:$mode), 0>;
+def : t2InstAlias<"cps.w $mode", (t2CPS1p imm0_31:$mode), 0>;
 
 // A6.3.4 Branches and miscellaneous control
 // Table A6-14 Change Processor State, and hint instructions

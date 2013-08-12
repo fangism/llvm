@@ -334,15 +334,7 @@ def MVGHI : StoreSIL<"mvghi", 0xE548, store,         imm64sx16>;
 
 // Memory-to-memory moves.
 let mayLoad = 1, mayStore = 1 in
-  def MVC : InstSS<0xD2, (outs), (ins bdladdr12onlylen8:$BDL1,
-                                      bdaddr12only:$BD2),
-                   "mvc\t$BDL1, $BD2", []>;
-
-let mayLoad = 1, mayStore = 1, usesCustomInserter = 1 in
-  def MVCWrapper : Pseudo<(outs), (ins bdaddr12only:$dest, bdaddr12only:$src,
-                                       imm32len8:$length),
-                          [(z_mvc bdaddr12only:$dest, bdaddr12only:$src,
-                                  imm32len8:$length)]>;
+  defm MVC : MemorySS<"mvc", 0xD2, z_mvc>;
 
 defm LoadStore8_32  : MVCLoadStore<anyextloadi8, truncstorei8, i32,
                                    MVCWrapper, 1>;
@@ -1000,6 +992,10 @@ let Defs = [CC], CCValues = 0xE, IsLogical = 1 in {
 }
 defm : ZXB<z_ucmp, GR64, CLGFR>;
 
+// Memory-to-memory comparison.
+let mayLoad = 1, Defs = [CC] in
+  defm CLC : MemorySS<"clc", 0xD5, z_clc>;
+
 //===----------------------------------------------------------------------===//
 // Atomic operations
 //===----------------------------------------------------------------------===//
@@ -1118,6 +1114,10 @@ let Defs = [CC] in {
 //===----------------------------------------------------------------------===//
 // Miscellaneous Instructions.
 //===----------------------------------------------------------------------===//
+
+// Extract CC into bits 29 and 28 of a register.
+let Uses = [CC] in
+  def IPM : InherentRRE<"ipm", 0xB222, GR32, (z_ipm)>;
 
 // Read a 32-bit access register into a GR32.  As with all GR32 operations,
 // the upper 32 bits of the enclosing GR64 remain unchanged, which is useful

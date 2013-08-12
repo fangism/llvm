@@ -80,6 +80,13 @@ namespace SystemZISD {
     // MachineMemOperands rather than one.
     MVC,
 
+    // Use CLC to compare two blocks of memory, with the same comments
+    // as for MVC.
+    CLC,
+
+    // Store the CC value in bits 29 and 28 of an integer.
+    IPM,
+
     // Wrappers around the inner loop of an 8- or 16-bit ATOMIC_SWAP or
     // ATOMIC_LOAD_<op>.
     //
@@ -230,8 +237,9 @@ private:
                                           unsigned BitSize) const;
   MachineBasicBlock *emitAtomicCmpSwapW(MachineInstr *MI,
                                         MachineBasicBlock *BB) const;
-  MachineBasicBlock *emitMVCWrapper(MachineInstr *MI,
-                                    MachineBasicBlock *BB) const;
+  MachineBasicBlock *emitMemMemWrapper(MachineInstr *MI,
+                                       MachineBasicBlock *BB,
+                                       unsigned Opcode) const;
 };
 } // end namespace llvm
 

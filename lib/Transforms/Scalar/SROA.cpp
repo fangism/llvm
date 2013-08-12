@@ -197,6 +197,18 @@ public:
   /// \brief Construct the slices of a particular alloca.
   AllocaSlices(const DataLayout &DL, AllocaInst &AI);
 
+  /// \brief Whether we determined during the trivial analysis of the alloca
+  /// that it was immediately promotable with mem2reg.
+  bool isAllocaPromotable() const { return IsAllocaPromotable; }
+
+  /// \brief A list of directly stored values when \c isAllocaPromotable is
+  /// true.
+  ///
+  /// The contents are undefined if the alloca is not trivially promotable.
+  /// This is used to detect other allocas which should be iterated on when
+  /// doing direct promotion.
+  ArrayRef<Value *> getStoredValues() const { return StoredValues; }
+
   /// \brief Test whether a pointer to the allocation escapes our analysis.
   ///
   /// If this is true, the slices are never fully built and should be
@@ -253,10 +265,20 @@ private:
   class SliceBuilder;
   friend class AllocaSlices::SliceBuilder;
 
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   /// \brief Handle to alloca instruction to simplify method interfaces.
   AllocaInst &AI;
-#endif
+
+  /// \brief A flag indicating if the alloca is trivially promotable.
+  ///
+  /// While walking the alloca's uses we track when the uses exceed what
+  /// mem2reg can trivially handle. This essentially should match the logic in
+  /// \c isAllocaPromotable but re-using the existing walk of the pointer uses.
+  bool IsAllocaPromotable;
+
+  /// \brief Storage for stored values.
+  ///
+  /// Only used while the alloca is trivially promotable.
+  SmallVector<Value *, 8> StoredValues;
 
   /// \brief The instruction responsible for this alloca not having a known set
   /// of slices.
@@ -325,9 +347,9 @@ class AllocaSlices::SliceBuilder : public PtrUseVisitor<SliceBuilder> {
   SmallPtrSet<Instruction *, 4> VisitedDeadInsts;
 
 public:
-  SliceBuilder(const DataLayout &DL, AllocaInst &AI, AllocaSlices &S)
+  SliceBuilder(const DataLayout &DL, AllocaSlices &S)
       : PtrUseVisitor<SliceBuilder>(DL),
-        AllocSize(DL.getTypeAllocSize(AI.getAllocatedType())), S(S) {}
+        AllocSize(DL.getTypeAllocSize(S.AI.getAllocatedType())), S(S) {}
 
 private:
   void markAsDead(Instruction &I) {
@@ -380,6 +402,15 @@ private:
     if (GEPI.use_empty())
       return markAsDead(GEPI);
 
+    // FIXME: mem2reg shouldn't care about the nature of the GEP, but instead
+    // the offsets of the loads. Until then, we short-circuit here for the
+    // promotable case.
+    if (GEPI.hasAllZeroIndices())
+      return Base::enqueueUsers(GEPI);
+
+    // Otherwise, there is something in the GEP, so we disable mem2reg and
+    // accumulate it.
+    S.IsAllocaPromotable = false;
     return Base::visitGetElementPtrInst(GEPI);
   }
 
@@ -395,6 +426,13 @@ private:
     // merge adjacent loads and stores that survive mem2reg.
     bool IsSplittable =
         Ty->isIntegerTy() && !IsVolatile && Offset == 0 && Size >= AllocSize;
+
+    // mem2reg can only promote non-volatile loads and stores which exactly
+    // load the alloca (no offset and the right type).
+    if (IsVolatile || Offset != 0 || Ty != S.AI.getAllocatedType())
+      S.IsAllocaPromotable = false;
+    if (S.IsAllocaPromotable)
+      assert(Offset == 0);
 
     insertUse(I, Offset, Size, IsSplittable);
   }
@@ -436,6 +474,9 @@ private:
       return markAsDead(SI);
     }
 
+    if (S.IsAllocaPromotable)
+      S.StoredValues.push_back(ValOp);
+
     assert((!SI.isSimple() || ValOp->getType()->isSingleValueType()) &&
            "All simple FCA stores should have been pre-split");
     handleLoadOrStore(ValOp->getType(), SI, Offset, Size, SI.isVolatile());
@@ -453,6 +494,8 @@ private:
     if (!IsOffsetKnown)
       return PI.setAborted(&II);
 
+    S.IsAllocaPromotable = false;
+
     insertUse(II, Offset,
               Length ? Length->getLimitedValue()
                      : AllocSize - Offset.getLimitedValue(),
@@ -468,6 +511,8 @@ private:
 
     if (!IsOffsetKnown)
       return PI.setAborted(&II);
+
+    S.IsAllocaPromotable = false;
 
     uint64_t RawOffset = Offset.getLimitedValue();
     uint64_t Size = Length ? Length->getLimitedValue()
@@ -528,6 +573,8 @@ private:
       insertUse(II, Offset, Size, true);
       return;
     }
+
+    S.IsAllocaPromotable = false;
 
     Base::visitIntrinsicInst(II);
   }
@@ -603,6 +650,8 @@ private:
       return;
     }
 
+    S.IsAllocaPromotable = false;
+
     insertUse(PN, Offset, PHISize);
   }
 
@@ -610,14 +659,18 @@ private:
     if (SI.use_empty())
       return markAsDead(SI);
     if (Value *Result = foldSelectInst(SI)) {
-      if (Result == *U)
+      if (Result == *U) {
         // If the result of the constant fold will be the pointer, recurse
         // through the select as if we had RAUW'ed it.
         enqueueUsers(SI);
-      else
+
+        // FIXME: mem2reg should support this pattern, but it doesn't.
+        S.IsAllocaPromotable = false;
+      } else {
         // Otherwise the operand to the select is dead, and we can replace it
         // with undef.
         S.DeadOperands.push_back(U);
+      }
 
       return;
     }
@@ -644,6 +697,8 @@ private:
       return;
     }
 
+    S.IsAllocaPromotable = false;
+
     insertUse(SI, Offset, SelectSize);
   }
 
@@ -654,12 +709,8 @@ private:
 };
 
 AllocaSlices::AllocaSlices(const DataLayout &DL, AllocaInst &AI)
-    :
-#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
-      AI(AI),
-#endif
-      PointerEscapingInstr(0) {
-  SliceBuilder PB(DL, AI, *this);
+    : AI(AI), IsAllocaPromotable(true), PointerEscapingInstr(0) {
+  SliceBuilder PB(DL, *this);
   SliceBuilder::PtrInfo PtrI = PB.visitPtr(AI);
   if (PtrI.isEscaped() || PtrI.isAborted()) {
     // FIXME: We should sink the escape vs. abort info into the caller nicely,
@@ -733,9 +784,9 @@ class AllocaPromoter : public LoadAndStorePromoter {
   SmallVector<DbgValueInst *, 4> DVIs;
 
 public:
-  AllocaPromoter(const SmallVectorImpl<Instruction*> &Insts, SSAUpdater &S,
+  AllocaPromoter(const SmallVectorImpl<Instruction *> &Insts, SSAUpdater &S,
                  AllocaInst &AI, DIBuilder &DIB)
-    : LoadAndStorePromoter(Insts, S), AI(AI), DIB(DIB) {}
+      : LoadAndStorePromoter(Insts, S), AI(AI), DIB(DIB) {}
 
   void run(const SmallVectorImpl<Instruction*> &Insts) {
     // Retain the debug information attached to the alloca for use when
@@ -762,9 +813,30 @@ public:
 
   virtual bool isInstInList(Instruction *I,
                             const SmallVectorImpl<Instruction*> &Insts) const {
+    Value *Ptr;
     if (LoadInst *LI = dyn_cast<LoadInst>(I))
-      return LI->getOperand(0) == &AI;
-    return cast<StoreInst>(I)->getPointerOperand() == &AI;
+      Ptr = LI->getOperand(0);
+    else
+      Ptr = cast<StoreInst>(I)->getPointerOperand();
+
+    // Only used to detect cycles, which will be rare and quickly found as
+    // we're walking up a chain of defs rather than down through uses.
+    SmallPtrSet<Value *, 4> Visited;
+
+    do {
+      if (Ptr == &AI)
+        return true;
+
+      if (BitCastInst *BCI = dyn_cast<BitCastInst>(Ptr))
+        Ptr = BCI->getOperand(0);
+      else if (GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(Ptr))
+        Ptr = GEPI->getPointerOperand();
+      else
+        return false;
+
+    } while (Visited.insert(Ptr));
+
+    return false;
   }
 
   virtual void updateDebugInfo(Instruction *Inst) const {
@@ -3318,6 +3390,24 @@ bool SROA::runOnAlloca(AllocaInst &AI) {
   if (S.begin() == S.end())
     return Changed;
 
+  // Trivially promotable, don't go through the splitting and rewriting.
+  if (S.isAllocaPromotable()) {
+    DEBUG(dbgs() << "  Directly promoting alloca: " << AI << "\n");
+    PromotableAllocas.push_back(&AI);
+
+    // Walk through the stored values quickly here to handle directly
+    // promotable allocas that require iterating on other allocas.
+    ArrayRef<Value *> StoredValues = S.getStoredValues();
+    for (ArrayRef<Value *>::iterator SVI = StoredValues.begin(),
+                                     SVE = StoredValues.end();
+         SVI != SVE; ++SVI)
+      if ((*SVI)->getType()->isPointerTy())
+        if (AllocaInst *SAI =
+                dyn_cast<AllocaInst>((*SVI)->stripInBoundsOffsets()))
+          PostPromotionWorklist.insert(SAI);
+    return true;
+  }
+
   Changed |= splitAlloca(AI, S);
 
   DEBUG(dbgs() << "  Speculating PHIs\n");
@@ -3364,12 +3454,12 @@ void SROA::deleteDeadInstructions(SmallPtrSet<AllocaInst*, 4> &DeletedAllocas) {
 }
 
 static void enqueueUsersInWorklist(Instruction &I,
-                                   SmallVectorImpl<Use *> &UseWorklist,
-                                   SmallPtrSet<Use *, 8> &VisitedUses) {
+                                   SmallVectorImpl<Instruction *> &Worklist,
+                                   SmallPtrSet<Instruction *, 8> &Visited) {
   for (Value::use_iterator UI = I.use_begin(), UE = I.use_end(); UI != UE;
        ++UI)
-    if (VisitedUses.insert(&UI.getUse()))
-      UseWorklist.push_back(&UI.getUse());
+    if (Visited.insert(cast<Instruction>(*UI)))
+      Worklist.push_back(cast<Instruction>(*UI));
 }
 
 /// \brief Promote the allocas, using the best available technique.
@@ -3396,29 +3486,29 @@ bool SROA::promoteAllocas(Function &F) {
   DEBUG(dbgs() << "Promoting allocas with SSAUpdater...\n");
   SSAUpdater SSA;
   DIBuilder DIB(*F.getParent());
-  SmallVector<Instruction*, 64> Insts;
+  SmallVector<Instruction *, 64> Insts;
 
   // We need a worklist to walk the uses of each alloca.
-  SmallVector<Use *, 8> UseWorklist;
-  SmallPtrSet<Use *, 8> VisitedUses;
+  SmallVector<Instruction *, 8> Worklist;
+  SmallPtrSet<Instruction *, 8> Visited;
   SmallVector<Instruction *, 32> DeadInsts;
 
   for (unsigned Idx = 0, Size = PromotableAllocas.size(); Idx != Size; ++Idx) {
     AllocaInst *AI = PromotableAllocas[Idx];
-    UseWorklist.clear();
-    VisitedUses.clear();
+    Insts.clear();
+    Worklist.clear();
+    Visited.clear();
 
-    enqueueUsersInWorklist(*AI, UseWorklist, VisitedUses);
+    enqueueUsersInWorklist(*AI, Worklist, Visited);
 
-    while (!UseWorklist.empty()) {
-      Use *U = UseWorklist.pop_back_val();
-      Instruction &I = *cast<Instruction>(U->getUser());
+    while (!Worklist.empty()) {
+      Instruction *I = Worklist.pop_back_val();
 
       // FIXME: Currently the SSAUpdater infrastructure doesn't reason about
       // lifetime intrinsics and so we strip them (and the bitcasts+GEPs
       // leading to them) here. Eventually it should use them to optimize the
       // scalar values produced.
-      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(&I)) {
+      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(I)) {
         assert(II->getIntrinsicID() == Intrinsic::lifetime_start ||
                II->getIntrinsicID() == Intrinsic::lifetime_end);
         II->eraseFromParent();
@@ -3428,12 +3518,12 @@ bool SROA::promoteAllocas(Function &F) {
       // Push the loads and stores we find onto the list. SROA will already
       // have validated that all loads and stores are viable candidates for
       // promotion.
-      if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
+      if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
         assert(LI->getType() == AI->getAllocatedType());
         Insts.push_back(LI);
         continue;
       }
-      if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
+      if (StoreInst *SI = dyn_cast<StoreInst>(I)) {
         assert(SI->getValueOperand()->getType() == AI->getAllocatedType());
         Insts.push_back(SI);
         continue;
@@ -3442,11 +3532,10 @@ bool SROA::promoteAllocas(Function &F) {
       // For everything else, we know that only no-op bitcasts and GEPs will
       // make it this far, just recurse through them and recall them for later
       // removal.
-      DeadInsts.push_back(&I);
-      enqueueUsersInWorklist(I, UseWorklist, VisitedUses);
+      DeadInsts.push_back(I);
+      enqueueUsersInWorklist(*I, Worklist, Visited);
     }
     AllocaPromoter(Insts, SSA, *AI, DIB).run(Insts);
-    Insts.clear();
     while (!DeadInsts.empty())
       DeadInsts.pop_back_val()->eraseFromParent();
     AI->eraseFromParent();

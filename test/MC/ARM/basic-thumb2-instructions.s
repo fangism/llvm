@@ -221,12 +221,12 @@ _func:
         beq.w _bar
         bmi.w   #-183396
 
-@ CHECK: b.w	_bar                    @ encoding: [A,0xf0'A',A,0x90'A']
+@ CHECK: b.w	_bar                    @ encoding: [A,0xf0'A',A,0xb8'A']
           @   fixup A - offset: 0, value: _bar, kind: fixup_t2_uncondbranch
 @ CHECK: beq.w	_bar                    @ encoding: [A,0xf0'A',A,0x80'A']
           @   fixup A - offset: 0, value: _bar, kind: fixup_t2_condbranch
 @ CHECK: it	eq                      @ encoding: [0x08,0xbf]
-@ CHECK: beq.w	_bar                    @ encoding: [A,0xf0'A',A,0x90'A']
+@ CHECK: beq.w	_bar                    @ encoding: [A,0xf0'A',A,0xb8'A']
           @   fixup A - offset: 0, value: _bar, kind: fixup_t2_uncondbranch
 @ CHECK: bmi.w   #-183396                @ encoding: [0x13,0xf5,0xce,0xa9]
 
@@ -405,6 +405,31 @@ _func:
 @ CHECK: cmn.w	r2, #2                  @ encoding: [0x12,0xf1,0x02,0x0f]
 @ CHECK: cmp.w	r9, #1                  @ encoding: [0xb9,0xf1,0x01,0x0f]
 
+@------------------------------------------------------------------------------
+@ CPS
+@------------------------------------------------------------------------------
+
+        cpsie f
+        cpsid a
+        cpsie.w f
+        cpsid.w a
+        cpsie i, #3
+        cpsie.w i, #3
+        cpsid f, #9
+        cpsid.w f, #9
+        cps #0
+        cps.w #0
+
+@ CHECK: cpsie f                        @ encoding: [0x61,0xb6]
+@ CHECK: cpsid a                        @ encoding: [0x74,0xb6]
+@ CHECK: cpsie.w f                      @ encoding: [0xaf,0xf3,0x20,0x84]
+@ CHECK: cpsid.w a                      @ encoding: [0xaf,0xf3,0x80,0x86]
+@ CHECK: cpsie i, #3                    @ encoding: [0xaf,0xf3,0x43,0x85]
+@ CHECK: cpsie i, #3                    @ encoding: [0xaf,0xf3,0x43,0x85]
+@ CHECK: cpsid f, #9                    @ encoding: [0xaf,0xf3,0x29,0x87]
+@ CHECK: cpsid f, #9                    @ encoding: [0xaf,0xf3,0x29,0x87]
+@ CHECK: cps   #0                       @ encoding: [0xaf,0xf3,0x00,0x81]
+@ CHECK: cps   #0                       @ encoding: [0xaf,0xf3,0x00,0x81]
 
 @------------------------------------------------------------------------------
 @ DBG

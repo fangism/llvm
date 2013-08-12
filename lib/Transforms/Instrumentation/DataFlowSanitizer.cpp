@@ -59,6 +59,7 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SpecialCaseList.h"
 #include <iterator>
 
@@ -128,7 +129,7 @@ class DataFlowSanitizer : public ModulePass {
   Constant *DFSanUnionFn;
   Constant *DFSanUnionLoadFn;
   MDNode *ColdCallWeights;
-  SpecialCaseList Greylist;
+  OwningPtr<SpecialCaseList> Greylist;
   DenseMap<Value *, Function *> UnwrappedFnMap;
 
   Value *getShadowAddress(Value *Addr, Instruction *Pos);
@@ -210,7 +211,7 @@ ModulePass *llvm::createDataFlowSanitizerPass(void *(*getArgTLS)(),
 DataFlowSanitizer::DataFlowSanitizer(void *(*getArgTLS)(),
                                      void *(*getRetValTLS)())
     : ModulePass(ID), GetArgTLSPtr(getArgTLS), GetRetvalTLSPtr(getRetValTLS),
-      Greylist(ClGreylistFile) {}
+      Greylist(SpecialCaseList::createOrDie(ClGreylistFile)) {}
 
 FunctionType *DataFlowSanitizer::getInstrumentedFunctionType(FunctionType *T) {
   llvm::SmallVector<Type *, 4> ArgTypes;
@@ -268,7 +269,7 @@ bool DataFlowSanitizer::doInitialization(Module &M) {
 
 DataFlowSanitizer::InstrumentedABI
 DataFlowSanitizer::getInstrumentedABI(Function *F) {
-  if (Greylist.isIn(*F))
+  if (Greylist->isIn(*F))
     return IA_MemOnly;
   else
     return getDefaultInstrumentedABI();
@@ -401,6 +402,8 @@ bool DataFlowSanitizer::runOnModule(Module &M) {
        i != e; ++i) {
     if ((*i)->isDeclaration())
       continue;
+
+    removeUnreachableBlocks(**i);
 
     DFSanFunction DFSF(*this, *i);
 
