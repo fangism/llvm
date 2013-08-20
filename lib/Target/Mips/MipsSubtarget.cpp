@@ -65,7 +65,7 @@ MipsSubtarget::MipsSubtarget(const std::string &TT, const std::string &CPU,
   HasBitCount(false), HasFPIdx(false),
   InMips16Mode(false), InMips16HardFloat(Mips16HardFloat),
   InMicroMipsMode(false), HasDSP(false), HasDSPR2(false),
-  AllowMixed16_32(Mixed16_32 | Mips_Os16), Os16(Mips_Os16),
+  AllowMixed16_32(Mixed16_32 | Mips_Os16), Os16(Mips_Os16), HasMSA(false),
   RM(_RM), OverrideMode(NoOverride), TM(_TM)
 {
   std::string CPUName = CPU;
@@ -95,6 +95,9 @@ MipsSubtarget::MipsSubtarget(const std::string &TT, const std::string &CPU,
 
   // Set UseSmallSection.
   UseSmallSection = !IsLinux && (RM == Reloc::Static);
+  // set some subtarget specific features
+  if (inMips16Mode())
+    HasBitCount=false;
 }
 
 bool

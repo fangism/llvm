@@ -10,7 +10,7 @@
 // This file contains the Mips16 implementation of the TargetInstrInfo class.
 //
 //===----------------------------------------------------------------------===//
-#include <stdio.h>
+
 #include "Mips16InstrInfo.h"
 #include "InstPrinter/MipsInstPrinter.h"
 #include "MipsMachineFunction.h"
@@ -77,11 +77,11 @@ void Mips16InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   else if (Mips::GPR32RegClass.contains(DestReg) &&
            Mips::CPU16RegsRegClass.contains(SrcReg))
     Opc = Mips::Move32R16;
-  else if ((SrcReg == Mips::HI) &&
+  else if ((SrcReg == Mips::HI0) &&
            (Mips::CPU16RegsRegClass.contains(DestReg)))
     Opc = Mips::Mfhi16, SrcReg = 0;
 
-  else if ((SrcReg == Mips::LO) &&
+  else if ((SrcReg == Mips::LO0) &&
            (Mips::CPU16RegsRegClass.contains(DestReg)))
     Opc = Mips::Mflo16, SrcReg = 0;
 
@@ -473,7 +473,6 @@ const MipsInstrInfo *llvm::createMips16InstrInfo(MipsTargetMachine &TM) {
   return new Mips16InstrInfo(TM);
 }
 
-#include <stdio.h>
 bool Mips16InstrInfo::validImmediate(unsigned Opcode, unsigned Reg,
                                      int64_t Amount) {
   switch (Opcode) {
@@ -493,6 +492,5 @@ bool Mips16InstrInfo::validImmediate(unsigned Opcode, unsigned Reg,
       return isInt<16>(Amount);
     return isInt<15>(Amount);
   }
-  printf("Unexpected opcode %i \n", Opcode);
   llvm_unreachable("unexpected Opcode in validImmediate");
 }

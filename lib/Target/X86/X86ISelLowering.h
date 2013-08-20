@@ -274,6 +274,13 @@ namespace llvm {
 
       // PCMP* - Vector integer comparisons.
       PCMPEQ, PCMPGT,
+      // PCMP*M - Vector integer comparisons, the result is in a mask vector
+      PCMPEQM, PCMPGTM,
+
+      /// CMPM, CMPMU - Vector comparison generating mask bits for fp and
+      /// integer signed and unsigned data types.
+      CMPM,
+      CMPMU,
 
       // ADD, SUB, SMUL, etc. - Arithmetic operations with FLAGS results.
       ADD, SUB, ADC, SBB, SMUL,
@@ -832,8 +839,6 @@ namespace llvm {
                                                bool isSigned,
                                                bool isReplace) const;
 
-    SDValue LowerAsSplatVectorLoad(SDValue SrcOp, EVT VT, SDLoc dl,
-                                   SelectionDAG &DAG) const;
     SDValue LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerBUILD_VECTORvXi1(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const;
@@ -847,18 +852,12 @@ namespace llvm {
     SDValue LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerExternalSymbol(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerShiftParts(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerBITCAST(SDValue op, SelectionDAG &DAG) const;
     SDValue LowerSINT_TO_FP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerUINT_TO_FP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerUINT_TO_FP_i64(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerUINT_TO_FP_i32(SDValue Op, SelectionDAG &DAG) const;
     SDValue lowerUINT_TO_FP_vec(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerTRUNCATE(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerZERO_EXTEND(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerZERO_EXTEND_AVX512(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerSIGN_EXTEND(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerSIGN_EXTEND_AVX512(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerANY_EXTEND(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFP_TO_SINT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFP_TO_UINT(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFABS(SDValue Op, SelectionDAG &DAG) const;
@@ -882,19 +881,7 @@ namespace llvm {
     SDValue lowerEH_SJLJ_LONGJMP(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINIT_TRAMPOLINE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFLT_ROUNDS_(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerShift(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerSDIV(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerSIGN_EXTEND_INREG(SDValue Op, SelectionDAG &DAG) const;
-    SDValue LowerFSINCOS(SDValue Op, SelectionDAG &DAG) const;
-
-    // Utility functions to help LowerVECTOR_SHUFFLE & LowerBUILD_VECTOR
-    SDValue LowerVectorBroadcast(SDValue Op, SelectionDAG &DAG) const;
-    SDValue NormalizeVectorShuffle(SDValue Op, SelectionDAG &DAG) const;
-    SDValue buildFromShuffleMostly(SDValue Op, SelectionDAG &DAG) const;
-
-    SDValue LowerVectorAllZeroTest(SDValue Op, SelectionDAG &DAG) const;
-
-    SDValue LowerVectorIntExtend(SDValue Op, SelectionDAG &DAG) const;
 
     virtual SDValue
       LowerFormalArguments(SDValue Chain,

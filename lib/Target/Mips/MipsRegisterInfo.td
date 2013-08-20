@@ -14,6 +14,7 @@ let Namespace = "Mips" in {
 def sub_fpeven : SubRegIndex<32>;
 def sub_fpodd  : SubRegIndex<32, 32>;
 def sub_32     : SubRegIndex<32>;
+def sub_64     : SubRegIndex<64>;
 def sub_lo     : SubRegIndex<32>;
 def sub_hi     : SubRegIndex<32, 32>;
 def sub_dsp16_19 : SubRegIndex<4, 16>;
@@ -61,6 +62,12 @@ class AFPR<bits<16> Enc, string n, list<Register> subregs>
 class AFPR64<bits<16> Enc, string n, list<Register> subregs>
   : MipsRegWithSubRegs<Enc, n, subregs> {
   let SubRegIndices = [sub_32];
+}
+
+// Mips 128-bit (aliased) MSA Registers
+class AFPR128<bits<16> Enc, string n, list<Register> subregs>
+  : MipsRegWithSubRegs<Enc, n, subregs> {
+  let SubRegIndices = [sub_64];
 }
 
 // Accumulator Registers
@@ -162,19 +169,54 @@ let Namespace = "Mips" in {
   def D#I#_64 : AFPR64<I, "f"#I, [!cast<FPR>("F"#I)]>,
                 DwarfRegNum<[!add(I, 32)]>;
 
+  /// Mips MSA registers
+  /// MSA and FPU cannot both be present unless the FPU has 64-bit registers
+  def W0  : AFPR128<0, "w0", [D0_64]>, DwarfRegNum<[32]>;
+  def W1  : AFPR128<1, "w1", [D1_64]>, DwarfRegNum<[33]>;
+  def W2  : AFPR128<2, "w2", [D2_64]>, DwarfRegNum<[34]>;
+  def W3  : AFPR128<3, "w3", [D3_64]>, DwarfRegNum<[35]>;
+  def W4  : AFPR128<4, "w4", [D4_64]>, DwarfRegNum<[36]>;
+  def W5  : AFPR128<5, "w5", [D5_64]>, DwarfRegNum<[37]>;
+  def W6  : AFPR128<6, "w6", [D6_64]>, DwarfRegNum<[38]>;
+  def W7  : AFPR128<7, "w7", [D7_64]>, DwarfRegNum<[39]>;
+  def W8  : AFPR128<8, "w8", [D8_64]>, DwarfRegNum<[40]>;
+  def W9  : AFPR128<9, "w9", [D9_64]>, DwarfRegNum<[41]>;
+  def W10 : AFPR128<10, "w10", [D10_64]>, DwarfRegNum<[42]>;
+  def W11 : AFPR128<11, "w11", [D11_64]>, DwarfRegNum<[43]>;
+  def W12 : AFPR128<12, "w12", [D12_64]>, DwarfRegNum<[44]>;
+  def W13 : AFPR128<13, "w13", [D13_64]>, DwarfRegNum<[45]>;
+  def W14 : AFPR128<14, "w14", [D14_64]>, DwarfRegNum<[46]>;
+  def W15 : AFPR128<15, "w15", [D15_64]>, DwarfRegNum<[47]>;
+  def W16 : AFPR128<16, "w16", [D16_64]>, DwarfRegNum<[48]>;
+  def W17 : AFPR128<17, "w17", [D17_64]>, DwarfRegNum<[49]>;
+  def W18 : AFPR128<18, "w18", [D18_64]>, DwarfRegNum<[50]>;
+  def W19 : AFPR128<19, "w19", [D19_64]>, DwarfRegNum<[51]>;
+  def W20 : AFPR128<20, "w20", [D20_64]>, DwarfRegNum<[52]>;
+  def W21 : AFPR128<21, "w21", [D21_64]>, DwarfRegNum<[53]>;
+  def W22 : AFPR128<22, "w22", [D22_64]>, DwarfRegNum<[54]>;
+  def W23 : AFPR128<23, "w23", [D23_64]>, DwarfRegNum<[55]>;
+  def W24 : AFPR128<24, "w24", [D24_64]>, DwarfRegNum<[56]>;
+  def W25 : AFPR128<25, "w25", [D25_64]>, DwarfRegNum<[57]>;
+  def W26 : AFPR128<26, "w26", [D26_64]>, DwarfRegNum<[58]>;
+  def W27 : AFPR128<27, "w27", [D27_64]>, DwarfRegNum<[59]>;
+  def W28 : AFPR128<28, "w28", [D28_64]>, DwarfRegNum<[60]>;
+  def W29 : AFPR128<29, "w29", [D29_64]>, DwarfRegNum<[61]>;
+  def W30 : AFPR128<30, "w30", [D30_64]>, DwarfRegNum<[62]>;
+  def W31 : AFPR128<31, "w31", [D31_64]>, DwarfRegNum<[63]>;
+
   // Hi/Lo registers
-  def HI  : Register<"ac0">, DwarfRegNum<[64]>;
+  def HI0 : Register<"ac0">, DwarfRegNum<[64]>;
   def HI1 : Register<"ac1">, DwarfRegNum<[176]>;
   def HI2 : Register<"ac2">, DwarfRegNum<[178]>;
   def HI3 : Register<"ac3">, DwarfRegNum<[180]>;
-  def LO  : Register<"ac0">, DwarfRegNum<[65]>;
+  def LO0 : Register<"ac0">, DwarfRegNum<[65]>;
   def LO1 : Register<"ac1">, DwarfRegNum<[177]>;
   def LO2 : Register<"ac2">, DwarfRegNum<[179]>;
   def LO3 : Register<"ac3">, DwarfRegNum<[181]>;
 
   let SubRegIndices = [sub_32] in {
-  def HI64  : RegisterWithSubRegs<"hi", [HI]>;
-  def LO64  : RegisterWithSubRegs<"lo", [LO]>;
+  def HI0_64  : RegisterWithSubRegs<"hi", [HI0]>;
+  def LO0_64  : RegisterWithSubRegs<"lo", [LO0]>;
   }
 
   // FP control registers.
@@ -192,12 +234,11 @@ let Namespace = "Mips" in {
   def HWR29 : MipsReg<29, "29">;
 
   // Accum registers
-  def AC0 : ACCReg<0, "ac0", [LO, HI]>;
-  def AC1 : ACCReg<1, "ac1", [LO1, HI1]>;
-  def AC2 : ACCReg<2, "ac2", [LO2, HI2]>;
-  def AC3 : ACCReg<3, "ac3", [LO3, HI3]>;
+  foreach I = 0-3 in
+  def AC#I : ACCReg<#I, "ac"#I,
+                    [!cast<Register>("LO"#I), !cast<Register>("HI"#I)]>;
 
-  def AC0_64 : ACCReg<0, "ac0", [LO64, HI64]>;
+  def AC0_64 : ACCReg<0, "ac0", [LO0_64, HI0_64]>;
 
   // DSP-ASE control register fields.
   def DSPPos : Register<"">;
@@ -238,7 +279,7 @@ class GPR32Class<list<ValueType> regTypes> :
   K0, K1, GP, SP, FP, RA)>;
 
 def GPR32 : GPR32Class<[i32]>;
-def DSPRegs : GPR32Class<[v4i8, v2i16]>;
+def DSPR  : GPR32Class<[v4i8, v2i16]>;
 
 def GPR64 : RegisterClass<"Mips", [i64], 64, (add
 // Reserved
@@ -302,13 +343,17 @@ def CCR : RegisterClass<"Mips", [i32], 32, (sequence "FCR%u", 0, 31)>,
 def FCC : RegisterClass<"Mips", [i32], 32, (sequence "FCC%u", 0, 7)>,
           Unallocatable;
 
+def MSA128: RegisterClass<"Mips",
+                          [v16i8, v8i16, v4i32, v2i64, v8f16, v4f32, v2f64],
+                          128, (sequence "W%u", 0, 31)>;
+
 // Hi/Lo Registers
-def LORegs : RegisterClass<"Mips", [i32], 32, (add LO)>;
-def HIRegs : RegisterClass<"Mips", [i32], 32, (add HI)>;
-def LORegsDSP : RegisterClass<"Mips", [i32], 32, (add LO, LO1, LO2, LO3)>;
-def HIRegsDSP : RegisterClass<"Mips", [i32], 32, (add HI, HI1, HI2, HI3)>;
-def LORegs64 : RegisterClass<"Mips", [i64], 64, (add LO64)>;
-def HIRegs64 : RegisterClass<"Mips", [i64], 64, (add HI64)>;
+def LO32 : RegisterClass<"Mips", [i32], 32, (add LO0)>;
+def HI32 : RegisterClass<"Mips", [i32], 32, (add HI0)>;
+def LO32DSP : RegisterClass<"Mips", [i32], 32, (sequence "LO%u", 0, 3)>;
+def HI32DSP : RegisterClass<"Mips", [i32], 32, (sequence "HI%u", 0, 3)>;
+def LO64 : RegisterClass<"Mips", [i64], 64, (add LO0_64)>;
+def HI64 : RegisterClass<"Mips", [i64], 64, (add HI0_64)>;
 
 // Hardware registers
 def HWRegs : RegisterClass<"Mips", [i32], 32, (add HWR29)>, Unallocatable;
@@ -348,6 +393,16 @@ def ACC64DSPAsmOperand : MipsAsmRegOperand {
   let ParserMethod = "parseACC64DSP";
 }
 
+def LO32DSPAsmOperand : MipsAsmRegOperand {
+  let Name = "LO32DSPAsm";
+  let ParserMethod = "parseLO32DSP";
+}
+
+def HI32DSPAsmOperand : MipsAsmRegOperand {
+  let Name = "HI32DSPAsm";
+  let ParserMethod = "parseHI32DSP";
+}
+
 def CCRAsmOperand : MipsAsmRegOperand {
   let Name = "CCRAsm";
   let ParserMethod = "parseCCRRegs";
@@ -381,6 +436,10 @@ def GPR64Opnd : RegisterOperand<GPR64> {
   let ParserMatchClass = GPR64AsmOperand;
 }
 
+def DSPROpnd : RegisterOperand<DSPR> {
+  let ParserMatchClass = GPR32AsmOperand;
+}
+
 def CCROpnd : RegisterOperand<CCR> {
   let ParserMatchClass = CCRAsmOperand;
 }
@@ -408,6 +467,14 @@ def FGR32Opnd : RegisterOperand<FGR32> {
 
 def FCCRegsOpnd : RegisterOperand<FCC> {
   let ParserMatchClass = FCCRegsAsmOperand;
+}
+
+def LO32DSPOpnd : RegisterOperand<LO32DSP> {
+  let ParserMatchClass = LO32DSPAsmOperand;
+}
+
+def HI32DSPOpnd : RegisterOperand<HI32DSP> {
+  let ParserMatchClass = HI32DSPAsmOperand;
 }
 
 def ACC64DSPOpnd : RegisterOperand<ACC64DSP> {

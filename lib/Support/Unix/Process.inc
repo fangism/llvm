@@ -140,14 +140,6 @@ void Process::GetTimeUsage(TimeValue &elapsed, TimeValue &user_time,
   llvm::tie(user_time, sys_time) = getRUsageTimes();
 }
 
-int Process::GetCurrentUserId() {
-  return getuid();
-}
-
-int Process::GetCurrentGroupId() {
-  return getgid();
-}
-
 #if defined(HAVE_MACH_MACH_H) && !defined(__GNU__)
 #include <mach/mach.h>
 #endif
@@ -248,10 +240,12 @@ unsigned Process::StandardErrColumns() {
 }
 
 #ifdef HAVE_TERMINFO
-// We manually declare these two extern functions because finding the correct
+// We manually declare these extern functions because finding the correct
 // headers from various terminfo, curses, or other sources is harder than
 // writing their specs down.
 extern "C" int setupterm(char *term, int filedes, int *errret);
+extern "C" struct term *set_curterm(struct term *termp);
+extern "C" int del_curterm(struct term *termp);
 extern "C" int tigetnum(char *capname);
 #endif
 
@@ -280,7 +274,15 @@ static bool terminalHasColors(int fd) {
   //
   // The 'tigetnum' routine returns -2 or -1 on errors, and might return 0 if
   // the terminfo says that no colors are supported.
-  if (tigetnum((char *)"colors") > 0)
+  bool HasColors = tigetnum(const_cast<char *>("colors")) > 0;
+
+  // Now extract the structure allocated by setupterm and free its memory
+  // through a really silly dance.
+  struct term *termp = set_curterm((struct term *)0);
+  (void)del_curterm(termp); // Drop any errors here.
+
+  // Return true if we found a color capabilities for the current terminal.
+  if (HasColors)
     return true;
 #endif
 

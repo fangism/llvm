@@ -719,7 +719,7 @@ public:
   }
 
 #if LLVM_HAS_RVALUE_REFERENCES
-  SmallDenseMap(SmallDenseMap &&other) {
+  SmallDenseMap(SmallDenseMap &&other) : BaseT() {
     init(0);
     swap(other);
   }

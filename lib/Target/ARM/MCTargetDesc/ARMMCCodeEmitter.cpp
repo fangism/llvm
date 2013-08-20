@@ -671,7 +671,7 @@ getAdrLabelOpValue(const MCInst &MI, unsigned OpIdx,
   if (MO.isExpr())
     return ::getBranchTargetOpValue(MI, OpIdx, ARM::fixup_arm_adr_pcrel_12,
                                     Fixups);
-  int32_t offset = MO.getImm();
+  int64_t offset = MO.getImm();
   uint32_t Val = 0x2000;
 
   int SoImmVal;
@@ -778,8 +778,10 @@ getAddrModeImm12OpValue(const MCInst &MI, unsigned OpIdx,
     } else {
       Reg = ARM::PC;
       int32_t Offset = MO.getImm();
-      // FIXME: Handle #-0.
-      if (Offset < 0) {
+      if (Offset == INT32_MIN) {
+        Offset = 0;
+        isAdd = false;
+      } else if (Offset < 0) {
         Offset *= -1;
         isAdd = false;
       }

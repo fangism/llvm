@@ -259,20 +259,6 @@ InputArgList *OptTable::ParseArgs(const char *const *ArgBegin,
       continue;
     }
 
-    if (Str == "--") {
-      // Everything after -- is a filename.
-      ++Index;
-
-      assert(TheInputOptionID != 0 && "Invalid input option ID.");
-      while (Index < End) {
-        Args->append(new Arg(getOption(TheInputOptionID),
-                             Args->getArgString(Index), Index,
-                             Args->getArgString(Index)));
-        ++Index;
-      }
-      break;
-    }
-
     unsigned Prev = Index;
     Arg *A = ParseOneArg(*Args, Index, FlagsToInclude, FlagsToExclude);
     assert(Index > Prev && "Parser failed to consume argument.");
@@ -308,6 +294,7 @@ static std::string getOptionHelpName(const OptTable &Opts, OptSpecifier Id) {
     break;
 
   case Option::SeparateClass: case Option::JoinedOrSeparateClass:
+  case Option::RemainingArgsClass:
     Name += ' ';
     // FALLTHROUGH
   case Option::JoinedClass: case Option::CommaJoinedClass:

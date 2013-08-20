@@ -75,8 +75,8 @@ private:
   DebugLoc DbgLoc;
 };
 
-/// A helper class for numbering instructions in multible blocks.
-/// Numbers starts at zero for each basic block.
+/// A helper class for numbering instructions in multiple blocks.
+/// Numbers start at zero for each basic block.
 struct BlockNumbering {
 
   BlockNumbering(BasicBlock *Bb) : BB(Bb), Valid(false) {}
@@ -1895,12 +1895,14 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
   if (Incoming.size() > 1)
     Changed |= tryToVectorizeList(Incoming, R);
 
-  for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; ++it) {
-    if (isa<DbgInfoIntrinsic>(it))
+  llvm::Instruction *I;
+  for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e;) {
+    I = it++;
+    if (isa<DbgInfoIntrinsic>(I))
       continue;
 
     // Try to vectorize reductions that use PHINodes.
-    if (PHINode *P = dyn_cast<PHINode>(it)) {
+    if (PHINode *P = dyn_cast<PHINode>(I)) {
       // Check that the PHI is a reduction PHI.
       if (P->getNumIncomingValues() != 2)
         return Changed;
@@ -1922,7 +1924,7 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
     }
 
     // Try to vectorize trees that start at compare instructions.
-    if (CmpInst *CI = dyn_cast<CmpInst>(it)) {
+    if (CmpInst *CI = dyn_cast<CmpInst>(I)) {
       if (tryToVectorizePair(CI->getOperand(0), CI->getOperand(1), R)) {
         Changed |= true;
         continue;

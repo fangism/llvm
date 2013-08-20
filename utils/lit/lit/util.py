@@ -2,6 +2,8 @@ import errno
 import itertools
 import math
 import os
+import platform
+import signal
 import subprocess
 import sys
 
@@ -138,3 +140,30 @@ def printHistogram(items, title = 'Items'):
             pDigits, pfDigits, i*barH, pDigits, pfDigits, (i+1)*barH,
             '*'*w, ' '*(barW-w), cDigits, len(row), cDigits, len(items)))
 
+# Close extra file handles on UNIX (on Windows this cannot be done while
+# also redirecting input).
+kUseCloseFDs = not (platform.system() == 'Windows')
+def executeCommand(command, cwd=None, env=None):
+    p = subprocess.Popen(command, cwd=cwd,
+                         stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE,
+                         env=env, close_fds=kUseCloseFDs)
+    out,err = p.communicate()
+    exitCode = p.wait()
+
+    # Detect Ctrl-C in subprocess.
+    if exitCode == -signal.SIGINT:
+        raise KeyboardInterrupt
+
+    # Ensure the resulting output is always of string type.
+    try:
+        out = str(out.decode('ascii'))
+    except:
+        out = str(out)
+    try:
+        err = str(err.decode('ascii'))
+    except:
+        err = str(err)
+
+    return out, err, exitCode

@@ -4087,7 +4087,8 @@ def : t2InstAlias<"sbc${s}${p} $Rd, $Rn, $ShiftedRm",
 
 // Aliases for ADD without the ".w" optional width specifier.
 def : t2InstAlias<"add${s}${p} $Rd, $Rn, $imm",
-        (t2ADDri rGPR:$Rd, GPRnopc:$Rn, t2_so_imm:$imm, pred:$p, cc_out:$s)>;
+        (t2ADDri GPRnopc:$Rd, GPRnopc:$Rn, t2_so_imm:$imm, pred:$p, 
+         cc_out:$s)>;
 def : t2InstAlias<"add${p} $Rd, $Rn, $imm",
            (t2ADDri12 GPRnopc:$Rd, GPR:$Rn, imm0_4095:$imm, pred:$p)>;
 def : t2InstAlias<"add${s}${p} $Rd, $Rn, $Rm",
@@ -4191,7 +4192,7 @@ def : t2InstAlias<"ldrsh${p} $Rt, $addr",
                   (t2LDRSHs rGPR:$Rt, t2addrmode_so_reg:$addr, pred:$p)>;
 
 def : t2InstAlias<"ldr${p} $Rt, $addr",
-                  (t2LDRpci GPR:$Rt, t2ldrlabel:$addr, pred:$p)>;
+                  (t2LDRpci rGPR:$Rt, t2ldrlabel:$addr, pred:$p)>;
 def : t2InstAlias<"ldrb${p} $Rt, $addr",
                   (t2LDRBpci rGPR:$Rt, t2ldrlabel:$addr, pred:$p)>;
 def : t2InstAlias<"ldrh${p} $Rt, $addr",
@@ -4353,16 +4354,16 @@ def : t2InstAlias<"mvn${p} $Rd, $imm",
                   (t2MOVi rGPR:$Rd, t2_so_imm_not:$imm, pred:$p, zero_reg)>;
 // Same for AND <--> BIC
 def : t2InstAlias<"bic${s}${p} $Rd, $Rn, $imm",
-                  (t2ANDri rGPR:$Rd, rGPR:$Rn, so_imm_not:$imm,
+                  (t2ANDri rGPR:$Rd, rGPR:$Rn, t2_so_imm_not:$imm,
                            pred:$p, cc_out:$s)>;
 def : t2InstAlias<"bic${s}${p} $Rdn, $imm",
-                  (t2ANDri rGPR:$Rdn, rGPR:$Rdn, so_imm_not:$imm,
+                  (t2ANDri rGPR:$Rdn, rGPR:$Rdn, t2_so_imm_not:$imm,
                            pred:$p, cc_out:$s)>;
 def : t2InstAlias<"and${s}${p} $Rd, $Rn, $imm",
-                  (t2BICri rGPR:$Rd, rGPR:$Rn, so_imm_not:$imm,
+                  (t2BICri rGPR:$Rd, rGPR:$Rn, t2_so_imm_not:$imm,
                            pred:$p, cc_out:$s)>;
 def : t2InstAlias<"and${s}${p} $Rdn, $imm",
-                  (t2BICri rGPR:$Rdn, rGPR:$Rdn, so_imm_not:$imm,
+                  (t2BICri rGPR:$Rdn, rGPR:$Rdn, t2_so_imm_not:$imm,
                            pred:$p, cc_out:$s)>;
 // Likewise, "add Rd, t2_so_imm_neg" -> sub
 def : t2InstAlias<"add${s}${p} $Rd, $Rn, $imm",
@@ -4404,7 +4405,7 @@ def : t2InstAlias<"adr${p} $Rd, $addr",
 
 // LDR(literal) w/ alternate [pc, #imm] syntax.
 def t2LDRpcrel   : t2AsmPseudo<"ldr${p} $Rt, $addr",
-                         (ins GPRnopc:$Rt, t2ldr_pcrel_imm12:$addr, pred:$p)>;
+                         (ins GPR:$Rt, t2ldr_pcrel_imm12:$addr, pred:$p)>;
 def t2LDRBpcrel  : t2AsmPseudo<"ldrb${p} $Rt, $addr",
                          (ins GPRnopc:$Rt, t2ldr_pcrel_imm12:$addr, pred:$p)>;
 def t2LDRHpcrel  : t2AsmPseudo<"ldrh${p} $Rt, $addr",
@@ -4415,7 +4416,7 @@ def t2LDRSHpcrel  : t2AsmPseudo<"ldrsh${p} $Rt, $addr",
                          (ins GPRnopc:$Rt, t2ldr_pcrel_imm12:$addr, pred:$p)>;
     // Version w/ the .w suffix.
 def : t2InstAlias<"ldr${p}.w $Rt, $addr",
-                  (t2LDRpcrel GPRnopc:$Rt, t2ldr_pcrel_imm12:$addr, pred:$p), 0>;
+                  (t2LDRpcrel GPR:$Rt, t2ldr_pcrel_imm12:$addr, pred:$p), 0>;
 def : t2InstAlias<"ldrb${p}.w $Rt, $addr",
                   (t2LDRBpcrel GPRnopc:$Rt, t2ldr_pcrel_imm12:$addr, pred:$p)>;
 def : t2InstAlias<"ldrh${p}.w $Rt, $addr",

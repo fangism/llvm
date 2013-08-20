@@ -305,6 +305,22 @@ bool SystemZTargetLowering::isLegalAddressingMode(const AddrMode &AM,
   return AM.Scale == 0 || AM.Scale == 1;
 }
 
+bool SystemZTargetLowering::isTruncateFree(Type *FromType, Type *ToType) const {
+  if (!FromType->isIntegerTy() || !ToType->isIntegerTy())
+    return false;
+  unsigned FromBits = FromType->getPrimitiveSizeInBits();
+  unsigned ToBits = ToType->getPrimitiveSizeInBits();
+  return FromBits > ToBits;
+}
+
+bool SystemZTargetLowering::isTruncateFree(EVT FromVT, EVT ToVT) const {
+  if (!FromVT.isInteger() || !ToVT.isInteger())
+    return false;
+  unsigned FromBits = FromVT.getSizeInBits();
+  unsigned ToBits = ToVT.getSizeInBits();
+  return FromBits > ToBits;
+}
+
 //===----------------------------------------------------------------------===//
 // Inline asm support
 //===----------------------------------------------------------------------===//
@@ -527,6 +543,17 @@ LowerAsmOperandForConstraint(SDValue Op, std::string &Constraint,
 
 #include "SystemZGenCallingConv.inc"
 
+bool SystemZTargetLowering::allowTruncateForTailCall(Type *FromType,
+                                                     Type *ToType) const {
+  return isTruncateFree(FromType, ToType);
+}
+
+bool SystemZTargetLowering::mayBeEmittedAsTailCall(CallInst *CI) const {
+  if (!CI->isTailCall())
+    return false;
+  return true;
+}
+
 // Value is a value that has been passed to us in the location described by VA
 // (and so has type VA.getLocVT()).  Convert Value to VA.getValVT(), chaining
 // any loads onto Chain.
@@ -689,6 +716,23 @@ LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv, bool IsVarArg,
   return Chain;
 }
 
+static bool canUseSiblingCall(CCState ArgCCInfo,
+                              SmallVectorImpl<CCValAssign> &ArgLocs) {
+  // Punt if there are any indirect or stack arguments, or if the call
+  // needs the call-saved argument register R6.
+  for (unsigned I = 0, E = ArgLocs.size(); I != E; ++I) {
+    CCValAssign &VA = ArgLocs[I];
+    if (VA.getLocInfo() == CCValAssign::Indirect)
+      return false;
+    if (!VA.isRegLoc())
+      return false;
+    unsigned Reg = VA.getLocReg();
+    if (Reg == SystemZ::R6W || Reg == SystemZ::R6D)
+      return false;
+  }
+  return true;
+}
+
 SDValue
 SystemZTargetLowering::LowerCall(CallLoweringInfo &CLI,
                                  SmallVectorImpl<SDValue> &InVals) const {
@@ -699,26 +743,29 @@ SystemZTargetLowering::LowerCall(CallLoweringInfo &CLI,
   SmallVectorImpl<ISD::InputArg> &Ins = CLI.Ins;
   SDValue Chain = CLI.Chain;
   SDValue Callee = CLI.Callee;
-  bool &isTailCall = CLI.IsTailCall;
+  bool &IsTailCall = CLI.IsTailCall;
   CallingConv::ID CallConv = CLI.CallConv;
   bool IsVarArg = CLI.IsVarArg;
   MachineFunction &MF = DAG.getMachineFunction();
   EVT PtrVT = getPointerTy();
-
-  // SystemZ target does not yet support tail call optimization.
-  isTailCall = false;
 
   // Analyze the operands of the call, assigning locations to each operand.
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState ArgCCInfo(CallConv, IsVarArg, MF, TM, ArgLocs, *DAG.getContext());
   ArgCCInfo.AnalyzeCallOperands(Outs, CC_SystemZ);
 
+  // We don't support GuaranteedTailCallOpt, only automatically-detected
+  // sibling calls.
+  if (IsTailCall && !canUseSiblingCall(ArgCCInfo, ArgLocs))
+    IsTailCall = false;
+
   // Get a count of how many bytes are to be pushed on the stack.
   unsigned NumBytes = ArgCCInfo.getNextStackOffset();
 
   // Mark the start of the call.
-  Chain = DAG.getCALLSEQ_START(Chain, DAG.getConstant(NumBytes, PtrVT, true),
-                               DL);
+  if (!IsTailCall)
+    Chain = DAG.getCALLSEQ_START(Chain, DAG.getConstant(NumBytes, PtrVT, true),
+                                 DL);
 
   // Copy argument values to their designated locations.
   SmallVector<std::pair<unsigned, SDValue>, 9> RegsToPass;
@@ -767,22 +814,27 @@ SystemZTargetLowering::LowerCall(CallLoweringInfo &CLI,
     Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other,
                         &MemOpChains[0], MemOpChains.size());
 
-  // Build a sequence of copy-to-reg nodes, chained and glued together.
-  SDValue Glue;
-  for (unsigned I = 0, E = RegsToPass.size(); I != E; ++I) {
-    Chain = DAG.getCopyToReg(Chain, DL, RegsToPass[I].first,
-                             RegsToPass[I].second, Glue);
-    Glue = Chain.getValue(1);
-  }
-
   // Accept direct calls by converting symbolic call addresses to the
-  // associated Target* opcodes.
+  // associated Target* opcodes.  Force %r1 to be used for indirect
+  // tail calls.
+  SDValue Glue;
   if (GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee)) {
     Callee = DAG.getTargetGlobalAddress(G->getGlobal(), DL, PtrVT);
     Callee = DAG.getNode(SystemZISD::PCREL_WRAPPER, DL, PtrVT, Callee);
   } else if (ExternalSymbolSDNode *E = dyn_cast<ExternalSymbolSDNode>(Callee)) {
     Callee = DAG.getTargetExternalSymbol(E->getSymbol(), PtrVT);
     Callee = DAG.getNode(SystemZISD::PCREL_WRAPPER, DL, PtrVT, Callee);
+  } else if (IsTailCall) {
+    Chain = DAG.getCopyToReg(Chain, DL, SystemZ::R1D, Callee, Glue);
+    Glue = Chain.getValue(1);
+    Callee = DAG.getRegister(SystemZ::R1D, Callee.getValueType());
+  }
+
+  // Build a sequence of copy-to-reg nodes, chained and glued together.
+  for (unsigned I = 0, E = RegsToPass.size(); I != E; ++I) {
+    Chain = DAG.getCopyToReg(Chain, DL, RegsToPass[I].first,
+                             RegsToPass[I].second, Glue);
+    Glue = Chain.getValue(1);
   }
 
   // The first call operand is the chain and the second is the target address.
@@ -802,6 +854,8 @@ SystemZTargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   // Emit the call.
   SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
+  if (IsTailCall)
+    return DAG.getNode(SystemZISD::SIBCALL, DL, NodeTys, &Ops[0], Ops.size());
   Chain = DAG.getNode(SystemZISD::CALL, DL, NodeTys, &Ops[0], Ops.size());
   Glue = Chain.getValue(1);
 
@@ -1689,6 +1743,7 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch (Opcode) {
     OPCODE(RET_FLAG);
     OPCODE(CALL);
+    OPCODE(SIBCALL);
     OPCODE(PCREL_WRAPPER);
     OPCODE(CMP);
     OPCODE(UCMP);
@@ -1702,6 +1757,9 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
     OPCODE(UDIVREM64);
     OPCODE(MVC);
     OPCODE(CLC);
+    OPCODE(STRCMP);
+    OPCODE(STPCPY);
+    OPCODE(SEARCH_STRING);
     OPCODE(IPM);
     OPCODE(ATOMIC_SWAPW);
     OPCODE(ATOMIC_LOADW_ADD);
@@ -2261,6 +2319,67 @@ SystemZTargetLowering::emitMemMemWrapper(MachineInstr *MI,
   return MBB;
 }
 
+// Decompose string pseudo-instruction MI into a loop that continually performs
+// Opcode until CC != 3.
+MachineBasicBlock *
+SystemZTargetLowering::emitStringWrapper(MachineInstr *MI,
+                                         MachineBasicBlock *MBB,
+                                         unsigned Opcode) const {
+  const SystemZInstrInfo *TII = TM.getInstrInfo();
+  MachineFunction &MF = *MBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  DebugLoc DL = MI->getDebugLoc();
+
+  uint64_t End1Reg   = MI->getOperand(0).getReg();
+  uint64_t Start1Reg = MI->getOperand(1).getReg();
+  uint64_t Start2Reg = MI->getOperand(2).getReg();
+  uint64_t CharReg   = MI->getOperand(3).getReg();
+
+  const TargetRegisterClass *RC = &SystemZ::GR64BitRegClass;
+  uint64_t This1Reg = MRI.createVirtualRegister(RC);
+  uint64_t This2Reg = MRI.createVirtualRegister(RC);
+  uint64_t End2Reg  = MRI.createVirtualRegister(RC);
+
+  MachineBasicBlock *StartMBB = MBB;
+  MachineBasicBlock *DoneMBB = splitBlockAfter(MI, MBB);
+  MachineBasicBlock *LoopMBB = emitBlockAfter(StartMBB);
+
+  //  StartMBB:
+  //   # fall through to LoopMMB
+  MBB->addSuccessor(LoopMBB);
+
+  //  LoopMBB:
+  //   %This1Reg = phi [ %Start1Reg, StartMBB ], [ %End1Reg, LoopMBB ]
+  //   %This2Reg = phi [ %Start2Reg, StartMBB ], [ %End2Reg, LoopMBB ]
+  //   R0W = %CharReg
+  //   %End1Reg, %End2Reg = CLST %This1Reg, %This2Reg -- uses R0W
+  //   JO LoopMBB
+  //   # fall through to DoneMMB
+  //
+  // The load of R0W can be hoisted by post-RA LICM.
+  MBB = LoopMBB;
+
+  BuildMI(MBB, DL, TII->get(SystemZ::PHI), This1Reg)
+    .addReg(Start1Reg).addMBB(StartMBB)
+    .addReg(End1Reg).addMBB(LoopMBB);
+  BuildMI(MBB, DL, TII->get(SystemZ::PHI), This2Reg)
+    .addReg(Start2Reg).addMBB(StartMBB)
+    .addReg(End2Reg).addMBB(LoopMBB);
+  BuildMI(MBB, DL, TII->get(TargetOpcode::COPY), SystemZ::R0W).addReg(CharReg);
+  BuildMI(MBB, DL, TII->get(Opcode))
+    .addReg(End1Reg, RegState::Define).addReg(End2Reg, RegState::Define)
+    .addReg(This1Reg).addReg(This2Reg);
+  BuildMI(MBB, DL, TII->get(SystemZ::BRC))
+    .addImm(SystemZ::CCMASK_ANY).addImm(SystemZ::CCMASK_3).addMBB(LoopMBB);
+  MBB->addSuccessor(LoopMBB);
+  MBB->addSuccessor(DoneMBB);
+
+  DoneMBB->addLiveIn(SystemZ::CC);
+
+  MI->eraseFromParent();
+  return DoneMBB;
+}
+
 MachineBasicBlock *SystemZTargetLowering::
 EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
   switch (MI->getOpcode()) {
@@ -2488,6 +2607,12 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
     return emitMemMemWrapper(MI, MBB, SystemZ::MVC);
   case SystemZ::CLCWrapper:
     return emitMemMemWrapper(MI, MBB, SystemZ::CLC);
+  case SystemZ::CLSTLoop:
+    return emitStringWrapper(MI, MBB, SystemZ::CLST);
+  case SystemZ::MVSTLoop:
+    return emitStringWrapper(MI, MBB, SystemZ::MVST);
+  case SystemZ::SRSTLoop:
+    return emitStringWrapper(MI, MBB, SystemZ::SRST);
   default:
     llvm_unreachable("Unexpected instr type to insert");
   }

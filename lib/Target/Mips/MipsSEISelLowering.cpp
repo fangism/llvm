@@ -40,7 +40,7 @@ MipsSETargetLowering::MipsSETargetLowering(MipsTargetMachine &TM)
     MVT::SimpleValueType VecTys[2] = {MVT::v2i16, MVT::v4i8};
 
     for (unsigned i = 0; i < array_lengthof(VecTys); ++i) {
-      addRegisterClass(VecTys[i], &Mips::DSPRegsRegClass);
+      addRegisterClass(VecTys[i], &Mips::DSPRRegClass);
 
       // Expand all builtin opcodes.
       for (unsigned Opc = 0; Opc < ISD::BUILTIN_OP_END; ++Opc)
@@ -76,6 +76,16 @@ MipsSETargetLowering::MipsSETargetLowering(MipsTargetMachine &TM)
 
   if (Subtarget->hasDSPR2())
     setOperationAction(ISD::MUL, MVT::v2i16, Legal);
+
+  if (Subtarget->hasMSA()) {
+    addMSAType(MVT::v16i8);
+    addMSAType(MVT::v8i16);
+    addMSAType(MVT::v4i32);
+    addMSAType(MVT::v2i64);
+    addMSAType(MVT::v8f16);
+    addMSAType(MVT::v4f32);
+    addMSAType(MVT::v2f64);
+  }
 
   if (!TM.Options.UseSoftFloat) {
     addRegisterClass(MVT::f32, &Mips::FGR32RegClass);
@@ -123,6 +133,18 @@ llvm::createMipsSETargetLowering(MipsTargetMachine &TM) {
   return new MipsSETargetLowering(TM);
 }
 
+void
+MipsSETargetLowering::addMSAType(MVT::SimpleValueType Ty) {
+  addRegisterClass(Ty, &Mips::MSA128RegClass);
+
+  // Expand all builtin opcodes.
+  for (unsigned Opc = 0; Opc < ISD::BUILTIN_OP_END; ++Opc)
+    setOperationAction(Opc, Ty, Expand);
+
+  setOperationAction(ISD::LOAD, Ty, Legal);
+  setOperationAction(ISD::STORE, Ty, Legal);
+  setOperationAction(ISD::BITCAST, Ty, Legal);
+}
 
 bool
 MipsSETargetLowering::allowsUnalignedMemoryAccesses(EVT VT, bool *Fast) const {

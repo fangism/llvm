@@ -118,6 +118,15 @@ def X86cmpp    : SDNode<"X86ISD::CMPP",      SDTX86VFCMP>;
 def X86pcmpeq  : SDNode<"X86ISD::PCMPEQ", SDTIntBinOp, [SDNPCommutative]>;
 def X86pcmpgt  : SDNode<"X86ISD::PCMPGT", SDTIntBinOp>;
 
+def X86IntCmpMask : SDTypeProfile<1, 2,
+    [SDTCisVec<0>, SDTCisSameAs<1, 2>, SDTCisInt<1>]>;
+def X86pcmpeqm  : SDNode<"X86ISD::PCMPEQM", X86IntCmpMask, [SDNPCommutative]>;
+def X86pcmpgtm  : SDNode<"X86ISD::PCMPGTM", X86IntCmpMask>;
+
+def X86CmpMaskCC : SDTypeProfile<1, 3, [SDTCisVec<0>, SDTCisSameAs<1, 2>, SDTCisVT<3, i8>]>;
+def X86cmpm   : SDNode<"X86ISD::CMPM",    X86CmpMaskCC>;
+def X86cmpmu  : SDNode<"X86ISD::CMPMU",   X86CmpMaskCC>;
+
 def X86vshl    : SDNode<"X86ISD::VSHL",
                         SDTypeProfile<1, 2, [SDTCisVec<0>, SDTCisSameAs<0,1>,
                                       SDTCisVec<2>]>>;
@@ -268,7 +277,6 @@ def loadv4i64    : PatFrag<(ops node:$ptr), (v4i64 (load node:$ptr))>;
 // 512-bit load pattern fragments
 def loadv16f32   : PatFrag<(ops node:$ptr), (v16f32 (load node:$ptr))>;
 def loadv8f64    : PatFrag<(ops node:$ptr), (v8f64 (load node:$ptr))>;
-def loadv16i32   : PatFrag<(ops node:$ptr), (v16i32 (load node:$ptr))>;
 def loadv8i64    : PatFrag<(ops node:$ptr), (v8i64 (load node:$ptr))>;
 
 // 128-/256-/512-bit extload pattern fragments
@@ -340,10 +348,10 @@ def alignedloadv4i64 : PatFrag<(ops node:$ptr),
 // 512-bit aligned load pattern fragments
 def alignedloadv16f32 : PatFrag<(ops node:$ptr),
                                 (v16f32 (alignedload512 node:$ptr))>;
-def alignedloadv8f64  : PatFrag<(ops node:$ptr),
-                                (v8f64  (alignedload512 node:$ptr))>;
 def alignedloadv16i32 : PatFrag<(ops node:$ptr),
                                 (v16i32 (alignedload512 node:$ptr))>;
+def alignedloadv8f64  : PatFrag<(ops node:$ptr),
+                                (v8f64  (alignedload512 node:$ptr))>;
 def alignedloadv8i64  : PatFrag<(ops node:$ptr),
                                 (v8i64  (alignedload512 node:$ptr))>;
 
@@ -358,6 +366,16 @@ def memop : PatFrag<(ops node:$ptr), (load node:$ptr), [{
          || cast<LoadSDNode>(N)->getAlignment() >= 16;
 }]>;
 
+def memop4 : PatFrag<(ops node:$ptr), (load node:$ptr), [{
+  return    Subtarget->hasVectorUAMem()
+         || cast<LoadSDNode>(N)->getAlignment() >= 4;
+}]>;
+
+def memop8 : PatFrag<(ops node:$ptr), (load node:$ptr), [{
+  return    Subtarget->hasVectorUAMem()
+         || cast<LoadSDNode>(N)->getAlignment() >= 8;
+}]>;
+
 def memopfsf32 : PatFrag<(ops node:$ptr), (f32   (memop node:$ptr))>;
 def memopfsf64 : PatFrag<(ops node:$ptr), (f64   (memop node:$ptr))>;
 
@@ -370,15 +388,14 @@ def memopv2i64 : PatFrag<(ops node:$ptr), (v2i64 (memop node:$ptr))>;
 // 256-bit memop pattern fragments
 // NOTE: all 256-bit integer vector loads are promoted to v4i64
 def memopv8f32 : PatFrag<(ops node:$ptr), (v8f32 (memop node:$ptr))>;
-def memopv8i32 : PatFrag<(ops node:$ptr), (v8i32 (memop node:$ptr))>;
 def memopv4f64 : PatFrag<(ops node:$ptr), (v4f64 (memop node:$ptr))>;
 def memopv4i64 : PatFrag<(ops node:$ptr), (v4i64 (memop node:$ptr))>;
 
 // 512-bit memop pattern fragments
-def memopv16f32 : PatFrag<(ops node:$ptr), (v16f32 (memop node:$ptr))>;
-def memopv8f64 : PatFrag<(ops node:$ptr), (v8f64 (memop node:$ptr))>;
-def memopv16i32 : PatFrag<(ops node:$ptr), (v16i32 (memop node:$ptr))>;
-def memopv8i64 : PatFrag<(ops node:$ptr), (v8i64 (memop node:$ptr))>;
+def memopv16f32 : PatFrag<(ops node:$ptr), (v16f32 (memop4 node:$ptr))>;
+def memopv8f64  : PatFrag<(ops node:$ptr), (v8f64  (memop8 node:$ptr))>;
+def memopv16i32 : PatFrag<(ops node:$ptr), (v16i32 (memop4 node:$ptr))>;
+def memopv8i64  : PatFrag<(ops node:$ptr), (v8i64  (memop8 node:$ptr))>;
 
 // SSSE3 uses MMX registers for some instructions. They aren't aligned on a
 // 16-byte boundary.
@@ -428,6 +445,10 @@ def bc_v32i8 : PatFrag<(ops node:$in), (v32i8 (bitconvert node:$in))>;
 def bc_v16i16 : PatFrag<(ops node:$in), (v16i16 (bitconvert node:$in))>;
 def bc_v8i32 : PatFrag<(ops node:$in), (v8i32 (bitconvert node:$in))>;
 def bc_v4i64 : PatFrag<(ops node:$in), (v4i64 (bitconvert node:$in))>;
+
+// 512-bit bitconvert pattern fragments
+def bc_v16i32 : PatFrag<(ops node:$in), (v16i32 (bitconvert node:$in))>;
+def bc_v8i64 : PatFrag<(ops node:$in), (v8i64 (bitconvert node:$in))>;
 
 def vzmovl_v2i64 : PatFrag<(ops node:$src),
                            (bitconvert (v2i64 (X86vzmovl

@@ -58,14 +58,14 @@ static cl::opt<bool> UnknownLocations(
     cl::init(false));
 
 static cl::opt<bool>
-GenerateDwarfPubNamesSection("generate-dwarf-pubnames", cl::Hidden,
-                             cl::init(false),
-                             cl::desc("Generate DWARF pubnames section"));
-
-static cl::opt<bool>
 GenerateODRHash("generate-odr-hash", cl::Hidden,
                 cl::desc("Add an ODR hash to external type DIEs."),
                 cl::init(false));
+
+static cl::opt<bool>
+GenerateCUHash("generate-cu-hash", cl::Hidden,
+               cl::desc("Add the CU hash as the dwo_id."),
+               cl::init(false));
 
 namespace {
 enum DefaultOnOff {
@@ -98,6 +98,14 @@ SplitDwarf("split-dwarf", cl::Hidden,
                       clEnumVal(Enable, "Enabled"),
                       clEnumVal(Disable, "Disabled"), clEnumValEnd),
            cl::init(Default));
+
+static cl::opt<DefaultOnOff>
+DwarfPubNames("generate-dwarf-pubnames", cl::Hidden,
+              cl::desc("Generate DWARF pubnames section"),
+              cl::values(clEnumVal(Default, "Default for platform"),
+                         clEnumVal(Enable, "Enabled"),
+                         clEnumVal(Disable, "Disabled"), clEnumValEnd),
+              cl::init(Default));
 
 namespace {
   const char *const DWARFGroupName = "DWARF Emission";
@@ -197,28 +205,29 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
   FunctionBeginSym = FunctionEndSym = 0;
 
   // Turn on accelerator tables and older gdb compatibility
-  // for Darwin.
+  // for Darwin by default, pubnames by default for non-Darwin,
+  // and handle split dwarf.
   bool IsDarwin = Triple(A->getTargetTriple()).isOSDarwin();
-  if (DarwinGDBCompat == Default) {
-    if (IsDarwin)
-      IsDarwinGDBCompat = true;
-    else
-      IsDarwinGDBCompat = false;
-  } else
-    IsDarwinGDBCompat = DarwinGDBCompat == Enable ? true : false;
 
-  if (DwarfAccelTables == Default) {
-    if (IsDarwin)
-      HasDwarfAccelTables = true;
-    else
-      HasDwarfAccelTables = false;
-  } else
-    HasDwarfAccelTables = DwarfAccelTables == Enable ? true : false;
+  if (DarwinGDBCompat == Default)
+    IsDarwinGDBCompat = IsDarwin;
+  else
+    IsDarwinGDBCompat = DarwinGDBCompat == Enable;
+
+  if (DwarfAccelTables == Default)
+    HasDwarfAccelTables = IsDarwin;
+  else
+    HasDwarfAccelTables = DwarfAccelTables = Enable;
 
   if (SplitDwarf == Default)
     HasSplitDwarf = false;
   else
-    HasSplitDwarf = SplitDwarf == Enable ? true : false;
+    HasSplitDwarf = SplitDwarf == Enable;
+
+  if (DwarfPubNames == Default)
+    HasDwarfPubNames = !IsDarwin;
+  else
+    HasDwarfPubNames = DwarfPubNames == Enable;
 
   DwarfVersion = getDwarfVersionFromModule(MMI->getModule());
 
@@ -735,7 +744,7 @@ CompileUnit *DwarfDebug::constructCompileUnit(const MDNode *N) {
   // is not okay to use line_table_start here.
   if (!useSplitDwarf()) {
     if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-      NewCU->addLabel(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4,
+      NewCU->addLabel(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_sec_offset,
                       UseTheFirstCU ?
                       Asm->GetTempSymbol("section_line") : LineTableStartSym);
     else if (UseTheFirstCU)
@@ -792,7 +801,7 @@ void DwarfDebug::constructSubprogramDIE(CompileUnit *TheCU,
   TheCU->addToContextOwner(SubprogramDie, SP.getContext());
 
   // Expose as global, if requested.
-  if (GenerateDwarfPubNamesSection)
+  if (HasDwarfPubNames)
     TheCU->addGlobalName(SP.getName(), SubprogramDie);
 }
 
@@ -1024,14 +1033,19 @@ void DwarfDebug::finalizeModuleInfo() {
     // If we're splitting the dwarf out now that we've got the entire
     // CU then construct a skeleton CU based upon it.
     if (useSplitDwarf()) {
+      uint64_t ID = 0;
+      if (GenerateCUHash) {
+        DIEHash CUHash;
+        ID = CUHash.computeCUSignature(TheCU->getCUDie());
+      }
       // This should be a unique identifier when we want to build .dwp files.
       TheCU->addUInt(TheCU->getCUDie(), dwarf::DW_AT_GNU_dwo_id,
-                     dwarf::DW_FORM_data8, 0);
+                     dwarf::DW_FORM_data8, ID);
       // Now construct the skeleton CU associated.
       CompileUnit *SkCU = constructSkeletonCU(CUI->first);
       // This should be a unique identifier when we want to build .dwp files.
       SkCU->addUInt(SkCU->getCUDie(), dwarf::DW_AT_GNU_dwo_id,
-                    dwarf::DW_FORM_data8, 0);
+                    dwarf::DW_FORM_data8, ID);
     }
   }
 
@@ -1136,7 +1150,7 @@ void DwarfDebug::endModule() {
   }
 
   // Emit info into a debug pubnames section, if requested.
-  if (GenerateDwarfPubNamesSection)
+  if (HasDwarfPubNames)
     emitDebugPubnames();
 
   // Emit info into a debug pubtypes section.
@@ -1922,7 +1936,7 @@ void DwarfDebug::emitSectionLabels() {
   DwarfLineSectionSym =
     emitSectionSym(Asm, TLOF.getDwarfLineSection(), "section_line");
   emitSectionSym(Asm, TLOF.getDwarfLocSection());
-  if (GenerateDwarfPubNamesSection)
+  if (HasDwarfPubNames)
     emitSectionSym(Asm, TLOF.getDwarfPubNamesSection());
   emitSectionSym(Asm, TLOF.getDwarfPubTypesSection());
   DwarfStrSectionSym =
@@ -2297,8 +2311,8 @@ void DwarfDebug::emitDebugPubnames() {
       continue;
 
     // Start the dwarf pubnames section.
-    Asm->OutStreamer.SwitchSection(
-      Asm->getObjFileLowering().getDwarfPubNamesSection());
+    Asm->OutStreamer
+        .SwitchSection(Asm->getObjFileLowering().getDwarfPubNamesSection());
 
     Asm->OutStreamer.AddComment("Length of Public Names Info");
     Asm->EmitLabelDifference(Asm->GetTempSymbol("pubnames_end", ID),
