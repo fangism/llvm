@@ -96,6 +96,10 @@ def az_extloadi8 : PatFrag<(ops node:$ptr), (az_extload node:$ptr), [{
   return cast<LoadSDNode>(N)->getMemoryVT() == MVT::i8;
 }]>;
 
+def az_extloadi8_global : PatFrag<(ops node:$ptr), (az_extloadi8 node:$ptr), [{
+    return isGlobalLoad(dyn_cast<LoadSDNode>(N));
+}]>;
+
 def sextloadi8_global : PatFrag<(ops node:$ptr), (sextloadi8 node:$ptr), [{
     return isGlobalLoad(dyn_cast<LoadSDNode>(N));
 }]>;
@@ -108,8 +112,12 @@ def sextloadi8_constant : PatFrag<(ops node:$ptr), (sextloadi8 node:$ptr), [{
     return isConstantLoad(dyn_cast<LoadSDNode>(N), -1);
 }]>;
 
-def az_extloadi8_global : PatFrag<(ops node:$ptr), (az_extloadi8 node:$ptr), [{
-    return isGlobalLoad(dyn_cast<LoadSDNode>(N));
+def az_extloadi8_local : PatFrag<(ops node:$ptr), (az_extloadi8 node:$ptr), [{
+    return isLocalLoad(dyn_cast<LoadSDNode>(N));
+}]>;
+
+def sextloadi8_local : PatFrag<(ops node:$ptr), (sextloadi8 node:$ptr), [{
+    return isLocalLoad(dyn_cast<LoadSDNode>(N));
 }]>;
 
 def az_extloadi16 : PatFrag<(ops node:$ptr), (az_extload node:$ptr), [{
@@ -130,6 +138,14 @@ def az_extloadi16_constant : PatFrag<(ops node:$ptr), (az_extloadi16 node:$ptr),
 
 def sextloadi16_constant : PatFrag<(ops node:$ptr), (sextloadi16 node:$ptr), [{
     return isConstantLoad(dyn_cast<LoadSDNode>(N), -1);
+}]>;
+
+def az_extloadi16_local : PatFrag<(ops node:$ptr), (az_extloadi16 node:$ptr), [{
+    return isLocalLoad(dyn_cast<LoadSDNode>(N));
+}]>;
+
+def sextloadi16_local : PatFrag<(ops node:$ptr), (sextloadi16 node:$ptr), [{
+    return isLocalLoad(dyn_cast<LoadSDNode>(N));
 }]>;
 
 def az_extloadi32 : PatFrag<(ops node:$ptr), (az_extload node:$ptr), [{
@@ -156,13 +172,23 @@ def truncstorei16_global : PatFrag<(ops node:$val, node:$ptr),
   return isGlobalStore(dyn_cast<StoreSDNode>(N));
 }]>;
 
-def local_load : PatFrag<(ops node:$ptr), (load node:$ptr), [{
-    return isLocalLoad(dyn_cast<LoadSDNode>(N));
-}]>;
-
 def local_store : PatFrag<(ops node:$val, node:$ptr),
                              (store node:$val, node:$ptr), [{
-    return isLocalStore(dyn_cast<StoreSDNode>(N));
+  return isLocalStore(dyn_cast<StoreSDNode>(N));
+}]>;
+
+def truncstorei8_local : PatFrag<(ops node:$val, node:$ptr),
+                                  (truncstorei8 node:$val, node:$ptr), [{
+  return isLocalStore(dyn_cast<StoreSDNode>(N));
+}]>;
+
+def truncstorei16_local : PatFrag<(ops node:$val, node:$ptr),
+                                  (truncstorei16 node:$val, node:$ptr), [{
+  return isLocalStore(dyn_cast<StoreSDNode>(N));
+}]>;
+
+def local_load : PatFrag<(ops node:$ptr), (load node:$ptr), [{
+    return isLocalLoad(dyn_cast<LoadSDNode>(N));
 }]>;
 
 def mskor_global : PatFrag<(ops node:$val, node:$ptr),

@@ -128,9 +128,11 @@ SystemZTargetLowering::SystemZTargetLowering(SystemZTargetMachine &tm)
       setOperationAction(ISD::CTLZ_ZERO_UNDEF, VT, Expand);
       setOperationAction(ISD::ROTR,            VT, Expand);
 
-      // Use *MUL_LOHI where possible and a wider multiplication otherwise.
+      // Use *MUL_LOHI where possible instead of MULH*.
       setOperationAction(ISD::MULHS, VT, Expand);
       setOperationAction(ISD::MULHU, VT, Expand);
+      setOperationAction(ISD::SMUL_LOHI, VT, Custom);
+      setOperationAction(ISD::UMUL_LOHI, VT, Custom);
 
       // We have instructions for signed but not unsigned FP conversion.
       setOperationAction(ISD::FP_TO_UINT, VT, Expand);
@@ -165,14 +167,6 @@ SystemZTargetLowering::SystemZTargetLowering(SystemZTargetMachine &tm)
   // Give LowerOperation the chance to replace 64-bit ORs with subregs.
   setOperationAction(ISD::OR, MVT::i64, Custom);
 
-  // The architecture has 32-bit SMUL_LOHI and UMUL_LOHI (MR and MLR),
-  // but they aren't really worth using.  There is no 64-bit SMUL_LOHI,
-  // but there is a 64-bit UMUL_LOHI: MLGR.
-  setOperationAction(ISD::SMUL_LOHI, MVT::i32, Expand);
-  setOperationAction(ISD::SMUL_LOHI, MVT::i64, Expand);
-  setOperationAction(ISD::UMUL_LOHI, MVT::i32, Expand);
-  setOperationAction(ISD::UMUL_LOHI, MVT::i64, Custom);
-
   // FIXME: Can we support these natively?
   setOperationAction(ISD::SRL_PARTS, MVT::i64, Expand);
   setOperationAction(ISD::SHL_PARTS, MVT::i64, Expand);
@@ -200,6 +194,9 @@ SystemZTargetLowering::SystemZTargetLowering(SystemZTargetMachine &tm)
   setOperationAction(ISD::STACKSAVE,    MVT::Other, Custom);
   setOperationAction(ISD::STACKRESTORE, MVT::Other, Custom);
 
+  // Handle prefetches with PFD or PFDRL.
+  setOperationAction(ISD::PREFETCH, MVT::Other, Custom);
+
   // Handle floating-point types.
   for (unsigned I = MVT::FIRST_FP_VALUETYPE;
        I <= MVT::LAST_FP_VALUETYPE;
@@ -208,6 +205,15 @@ SystemZTargetLowering::SystemZTargetLowering(SystemZTargetMachine &tm)
     if (isTypeLegal(VT)) {
       // We can use FI for FRINT.
       setOperationAction(ISD::FRINT, VT, Legal);
+
+      // We can use the extended form of FI for other rounding operations.
+      if (Subtarget.hasFPExtension()) {
+        setOperationAction(ISD::FNEARBYINT, VT, Legal);
+        setOperationAction(ISD::FFLOOR, VT, Legal);
+        setOperationAction(ISD::FCEIL, VT, Legal);
+        setOperationAction(ISD::FTRUNC, VT, Legal);
+        setOperationAction(ISD::FROUND, VT, Legal);
+      }
 
       // No special instructions for these.
       setOperationAction(ISD::FSIN, VT, Expand);
@@ -1107,6 +1113,69 @@ static bool preferUnsignedComparison(SelectionDAG &DAG, SDValue CmpOp0,
   return false;
 }
 
+// Return true if Op is either an unextended load, or a load with the
+// extension type given by IsUnsigned.
+static bool isNaturalMemoryOperand(SDValue Op, bool IsUnsigned) {
+  LoadSDNode *Load = dyn_cast<LoadSDNode>(Op.getNode());
+  if (Load)
+    switch (Load->getExtensionType()) {
+    case ISD::NON_EXTLOAD:
+    case ISD::EXTLOAD:
+      return true;
+    case ISD::SEXTLOAD:
+      return !IsUnsigned;
+    case ISD::ZEXTLOAD:
+      return IsUnsigned;
+    default:
+      break;
+    }
+  return false;
+}
+
+// Return true if it is better to swap comparison operands Op0 and Op1.
+// IsUnsigned says whether an integer comparison is signed or unsigned.
+static bool shouldSwapCmpOperands(SDValue Op0, SDValue Op1,
+                                  bool IsUnsigned) {
+  // Leave f128 comparisons alone, since they have no memory forms.
+  if (Op0.getValueType() == MVT::f128)
+    return false;
+
+  // Always keep a floating-point constant second, since comparisons with
+  // zero can use LOAD TEST and comparisons with other constants make a
+  // natural memory operand.
+  if (isa<ConstantFPSDNode>(Op1))
+    return false;
+
+  // Never swap comparisons with zero since there are many ways to optimize
+  // those later.
+  ConstantSDNode *COp1 = dyn_cast<ConstantSDNode>(Op1);
+  if (COp1 && COp1->getZExtValue() == 0)
+    return false;
+
+  // Look for cases where Cmp0 is a single-use load and Cmp1 isn't.
+  // In that case we generally prefer the memory to be second.
+  if ((isNaturalMemoryOperand(Op0, IsUnsigned) && Op0.hasOneUse()) &&
+      !(isNaturalMemoryOperand(Op1, IsUnsigned) && Op1.hasOneUse())) {
+    // The only exceptions are when the second operand is a constant and
+    // we can use things like CHHSI.
+    if (!COp1)
+      return true;
+    if (IsUnsigned) {
+      // The memory-immediate instructions require 16-bit unsigned integers.
+      if (isUInt<16>(COp1->getZExtValue()))
+        return false;
+    } else {
+      // There are no comparisons between integers and signed memory bytes.
+      // The others require 16-bit signed integers.
+      if (cast<LoadSDNode>(Op0.getNode())->getMemoryVT() == MVT::i8 ||
+          isInt<16>(COp1->getSExtValue()))
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 // Return a target node that compares CmpOp0 with CmpOp1 and stores a
 // 2-bit result in CC.  Set CCValid to the CCMASK_* of all possible
 // 2-bit results and CCMask to the subset of those results that are
@@ -1128,9 +1197,31 @@ static SDValue emitCmp(SelectionDAG &DAG, SDValue CmpOp0, SDValue CmpOp1,
       IsUnsigned = true;
   }
 
+  if (shouldSwapCmpOperands(CmpOp0, CmpOp1, IsUnsigned)) {
+    std::swap(CmpOp0, CmpOp1);
+    CCMask = ((CCMask & SystemZ::CCMASK_CMP_EQ) |
+              (CCMask & SystemZ::CCMASK_CMP_GT ? SystemZ::CCMASK_CMP_LT : 0) |
+              (CCMask & SystemZ::CCMASK_CMP_LT ? SystemZ::CCMASK_CMP_GT : 0) |
+              (CCMask & SystemZ::CCMASK_CMP_UO));
+  }
+
   SDLoc DL(CmpOp0);
   return DAG.getNode((IsUnsigned ? SystemZISD::UCMP : SystemZISD::CMP),
                      DL, MVT::Glue, CmpOp0, CmpOp1);
+}
+
+// Implement a 32-bit *MUL_LOHI operation by extending both operands to
+// 64 bits.  Extend is the extension type to use.  Store the high part
+// in Hi and the low part in Lo.
+static void lowerMUL_LOHI32(SelectionDAG &DAG, SDLoc DL,
+                            unsigned Extend, SDValue Op0, SDValue Op1,
+                            SDValue &Hi, SDValue &Lo) {
+  Op0 = DAG.getNode(Extend, DL, MVT::i64, Op0);
+  Op1 = DAG.getNode(Extend, DL, MVT::i64, Op1);
+  SDValue Mul = DAG.getNode(ISD::MUL, DL, MVT::i64, Op0, Op1);
+  Hi = DAG.getNode(ISD::SRL, DL, MVT::i64, Mul, DAG.getConstant(32, MVT::i64));
+  Hi = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Hi);
+  Lo = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Mul);
 }
 
 // Lower a binary operation that produces two VT results, one in each
@@ -1418,18 +1509,64 @@ lowerDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const {
   return DAG.getMergeValues(Ops, 2, DL);
 }
 
+SDValue SystemZTargetLowering::lowerSMUL_LOHI(SDValue Op,
+                                              SelectionDAG &DAG) const {
+  EVT VT = Op.getValueType();
+  SDLoc DL(Op);
+  SDValue Ops[2];
+  if (is32Bit(VT))
+    // Just do a normal 64-bit multiplication and extract the results.
+    // We define this so that it can be used for constant division.
+    lowerMUL_LOHI32(DAG, DL, ISD::SIGN_EXTEND, Op.getOperand(0),
+                    Op.getOperand(1), Ops[1], Ops[0]);
+  else {
+    // Do a full 128-bit multiplication based on UMUL_LOHI64:
+    //
+    //   (ll * rl) + ((lh * rl) << 64) + ((ll * rh) << 64)
+    //
+    // but using the fact that the upper halves are either all zeros
+    // or all ones:
+    //
+    //   (ll * rl) - ((lh & rl) << 64) - ((ll & rh) << 64)
+    //
+    // and grouping the right terms together since they are quicker than the
+    // multiplication:
+    //
+    //   (ll * rl) - (((lh & rl) + (ll & rh)) << 64)
+    SDValue C63 = DAG.getConstant(63, MVT::i64);
+    SDValue LL = Op.getOperand(0);
+    SDValue RL = Op.getOperand(1);
+    SDValue LH = DAG.getNode(ISD::SRA, DL, VT, LL, C63);
+    SDValue RH = DAG.getNode(ISD::SRA, DL, VT, RL, C63);
+    // UMUL_LOHI64 returns the low result in the odd register and the high
+    // result in the even register.  SMUL_LOHI is defined to return the
+    // low half first, so the results are in reverse order.
+    lowerGR128Binary(DAG, DL, VT, SystemZ::AEXT128_64, SystemZISD::UMUL_LOHI64,
+                     LL, RL, Ops[1], Ops[0]);
+    SDValue NegLLTimesRH = DAG.getNode(ISD::AND, DL, VT, LL, RH);
+    SDValue NegLHTimesRL = DAG.getNode(ISD::AND, DL, VT, LH, RL);
+    SDValue NegSum = DAG.getNode(ISD::ADD, DL, VT, NegLLTimesRH, NegLHTimesRL);
+    Ops[1] = DAG.getNode(ISD::SUB, DL, VT, Ops[1], NegSum);
+  }
+  return DAG.getMergeValues(Ops, 2, DL);
+}
+
 SDValue SystemZTargetLowering::lowerUMUL_LOHI(SDValue Op,
                                               SelectionDAG &DAG) const {
   EVT VT = Op.getValueType();
   SDLoc DL(Op);
-  assert(!is32Bit(VT) && "Only support 64-bit UMUL_LOHI");
-
-  // UMUL_LOHI64 returns the low result in the odd register and the high
-  // result in the even register.  UMUL_LOHI is defined to return the
-  // low half first, so the results are in reverse order.
   SDValue Ops[2];
-  lowerGR128Binary(DAG, DL, VT, SystemZ::AEXT128_64, SystemZISD::UMUL_LOHI64,
-                   Op.getOperand(0), Op.getOperand(1), Ops[1], Ops[0]);
+  if (is32Bit(VT))
+    // Just do a normal 64-bit multiplication and extract the results.
+    // We define this so that it can be used for constant division.
+    lowerMUL_LOHI32(DAG, DL, ISD::ZERO_EXTEND, Op.getOperand(0),
+                    Op.getOperand(1), Ops[1], Ops[0]);
+  else
+    // UMUL_LOHI64 returns the low result in the odd register and the high
+    // result in the even register.  UMUL_LOHI is defined to return the
+    // low half first, so the results are in reverse order.
+    lowerGR128Binary(DAG, DL, VT, SystemZ::AEXT128_64, SystemZISD::UMUL_LOHI64,
+                     Op.getOperand(0), Op.getOperand(1), Ops[1], Ops[0]);
   return DAG.getMergeValues(Ops, 2, DL);
 }
 
@@ -1672,6 +1809,26 @@ SDValue SystemZTargetLowering::lowerSTACKRESTORE(SDValue Op,
                           SystemZ::R15D, Op.getOperand(1));
 }
 
+SDValue SystemZTargetLowering::lowerPREFETCH(SDValue Op,
+                                             SelectionDAG &DAG) const {
+  bool IsData = cast<ConstantSDNode>(Op.getOperand(4))->getZExtValue();
+  if (!IsData)
+    // Just preserve the chain.
+    return Op.getOperand(0);
+
+  bool IsWrite = cast<ConstantSDNode>(Op.getOperand(2))->getZExtValue();
+  unsigned Code = IsWrite ? SystemZ::PFD_WRITE : SystemZ::PFD_READ;
+  MemIntrinsicSDNode *Node = cast<MemIntrinsicSDNode>(Op.getNode());
+  SDValue Ops[] = {
+    Op.getOperand(0),
+    DAG.getConstant(Code, MVT::i32),
+    Op.getOperand(1)
+  };
+  return DAG.getMemIntrinsicNode(SystemZISD::PREFETCH, SDLoc(Op),
+                                 Node->getVTList(), Ops, array_lengthof(Ops),
+                                 Node->getMemoryVT(), Node->getMemOperand());
+}
+
 SDValue SystemZTargetLowering::LowerOperation(SDValue Op,
                                               SelectionDAG &DAG) const {
   switch (Op.getOpcode()) {
@@ -1697,6 +1854,8 @@ SDValue SystemZTargetLowering::LowerOperation(SDValue Op,
     return lowerVACOPY(Op, DAG);
   case ISD::DYNAMIC_STACKALLOC:
     return lowerDYNAMIC_STACKALLOC(Op, DAG);
+  case ISD::SMUL_LOHI:
+    return lowerSMUL_LOHI(Op, DAG);
   case ISD::UMUL_LOHI:
     return lowerUMUL_LOHI(Op, DAG);
   case ISD::SDIVREM:
@@ -1733,6 +1892,8 @@ SDValue SystemZTargetLowering::LowerOperation(SDValue Op,
     return lowerSTACKSAVE(Op, DAG);
   case ISD::STACKRESTORE:
     return lowerSTACKRESTORE(Op, DAG);
+  case ISD::PREFETCH:
+    return lowerPREFETCH(Op, DAG);
   default:
     llvm_unreachable("Unexpected node to lower");
   }
@@ -1773,6 +1934,7 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
     OPCODE(ATOMIC_LOADW_UMIN);
     OPCODE(ATOMIC_LOADW_UMAX);
     OPCODE(ATOMIC_CMP_SWAPW);
+    OPCODE(PREFETCH);
   }
   return NULL;
 #undef OPCODE

@@ -104,7 +104,21 @@ MachineBasicBlock * R600TargetLowering::EmitInstrWithCustomInserter(
     static_cast<const R600InstrInfo*>(MF->getTarget().getInstrInfo());
 
   switch (MI->getOpcode()) {
-  default: return AMDGPUTargetLowering::EmitInstrWithCustomInserter(MI, BB);
+  default:
+    if (TII->get(MI->getOpcode()).TSFlags & R600_InstFlag::LDS_1A) {
+      MachineInstrBuilder NewMI = BuildMI(*BB, I, BB->findDebugLoc(I),
+                                          TII->get(MI->getOpcode()),
+                                          AMDGPU::OQAP);
+      for (unsigned i = 1, e = MI->getNumOperands(); i < e; ++i) {
+        NewMI.addOperand(MI->getOperand(i));
+      }
+      TII->buildDefaultInstruction(*BB, I, AMDGPU::MOV,
+                                   MI->getOperand(0).getReg(),
+                                   AMDGPU::OQAP);
+    } else {
+      return AMDGPUTargetLowering::EmitInstrWithCustomInserter(MI, BB);
+    }
+    break;
   case AMDGPU::CLAMP_R600: {
     MachineInstr *NewMI = TII->buildDefaultInstruction(*BB, I,
                                                    AMDGPU::MOV,
@@ -137,19 +151,6 @@ MachineBasicBlock * R600TargetLowering::EmitInstrWithCustomInserter(
     assert(TargetRegisterInfo::isVirtualRegister(maskedRegister));
     MachineInstr * defInstr = MRI.getVRegDef(maskedRegister);
     TII->addFlag(defInstr, 0, MO_FLAG_MASK);
-    break;
-  }
-
-  case AMDGPU::LDS_READ_RET: {
-    MachineInstrBuilder NewMI = BuildMI(*BB, I, BB->findDebugLoc(I),
-                                        TII->get(MI->getOpcode()),
-                                        AMDGPU::OQAP);
-    for (unsigned i = 1, e = MI->getNumOperands(); i < e; ++i) {
-      NewMI.addOperand(MI->getOperand(i));
-    }
-    TII->buildDefaultInstruction(*BB, I, AMDGPU::MOV,
-                                 MI->getOperand(0).getReg(),
-                                 AMDGPU::OQAP);
     break;
   }
 
@@ -1002,7 +1003,7 @@ SDValue R600TargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
   SDValue Value = Op.getOperand(1);
   SDValue Ptr = Op.getOperand(2);
 
-  SDValue Result = AMDGPUTargetLowering::LowerVectorStore(Op, DAG);
+  SDValue Result = AMDGPUTargetLowering::LowerSTORE(Op, DAG);
   if (Result.getNode()) {
     return Result;
   }
@@ -1153,6 +1154,14 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
   SDValue Chain = Op.getOperand(0);
   SDValue Ptr = Op.getOperand(1);
   SDValue LoweredLoad;
+
+  if (LoadNode->getAddressSpace() == AMDGPUAS::LOCAL_ADDRESS && VT.isVector()) {
+    SDValue MergedValues[2] = {
+      SplitVectorLoad(Op, DAG),
+      Chain
+    };
+    return DAG.getMergeValues(MergedValues, 2, DL);
+  }
 
   int ConstantBlock = ConstantAddressBlock(LoadNode->getAddressSpace());
   if (ConstantBlock > -1) {

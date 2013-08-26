@@ -168,6 +168,91 @@ entry:
   ret void
 }
 
+;===------------------------------------------------------------------------===;
+; Local Address Space
+;===------------------------------------------------------------------------===;
+
+; EG-CHECK: @store_local_i8
+; EG-CHECK: LDS_BYTE_WRITE
+; SI-CHECK: @store_local_i8
+; SI-CHECK: DS_WRITE_B8
+define void @store_local_i8(i8 addrspace(3)* %out, i8 %in) {
+  store i8 %in, i8 addrspace(3)* %out
+  ret void
+}
+
+; EG-CHECK: @store_local_i16
+; EG-CHECK: LDS_SHORT_WRITE
+; SI-CHECK: @store_local_i16
+; SI-CHECK: DS_WRITE_B16
+define void @store_local_i16(i16 addrspace(3)* %out, i16 %in) {
+  store i16 %in, i16 addrspace(3)* %out
+  ret void
+}
+
+; EG-CHECK: @store_local_v2i16
+; EG-CHECK: LDS_WRITE
+; CM-CHECK: @store_local_v2i16
+; CM-CHECK: LDS_WRITE
+; SI-CHECK: @store_local_v2i16
+; SI-CHECK: DS_WRITE_B32
+define void @store_local_v2i16(<2 x i16> addrspace(3)* %out, <2 x i16> %in) {
+entry:
+  store <2 x i16> %in, <2 x i16> addrspace(3)* %out
+  ret void
+}
+
+; EG-CHECK: @store_local_v4i8
+; EG-CHECK: LDS_WRITE
+; CM-CHECK: @store_local_v4i8
+; CM-CHECK: LDS_WRITE
+; SI-CHECK: @store_local_v4i8
+; SI-CHECK: DS_WRITE_B8
+; SI-CHECK: DS_WRITE_B8
+; SI-CHECK: DS_WRITE_B8
+; SI-CHECK: DS_WRITE_B8
+define void @store_local_v4i8(<4 x i8> addrspace(3)* %out, <4 x i8> %in) {
+entry:
+  store <4 x i8> %in, <4 x i8> addrspace(3)* %out
+  ret void
+}
+
+; EG-CHECK: @store_local_v2i32
+; EG-CHECK: LDS_WRITE
+; EG-CHECK: LDS_WRITE
+; CM-CHECK: @store_local_v2i32
+; CM-CHECK: LDS_WRITE
+; CM-CHECK: LDS_WRITE
+; SI-CHECK: @store_local_v2i32
+; SI-CHECK: DS_WRITE_B32
+; SI-CHECK: DS_WRITE_B32
+define void @store_local_v2i32(<2 x i32> addrspace(3)* %out, <2 x i32> %in) {
+entry:
+  store <2 x i32> %in, <2 x i32> addrspace(3)* %out
+  ret void
+}
+
+; EG-CHECK: @store_local_v4i32
+; EG-CHECK: LDS_WRITE
+; EG-CHECK: LDS_WRITE
+; EG-CHECK: LDS_WRITE
+; EG-CHECK: LDS_WRITE
+; CM-CHECK: @store_local_v4i32
+; CM-CHECK: LDS_WRITE
+; CM-CHECK: LDS_WRITE
+; CM-CHECK: LDS_WRITE
+; CM-CHECK: LDS_WRITE
+; SI-CHECK: @store_local_v4i32
+; SI-CHECK: DS_WRITE_B32
+; SI-CHECK: DS_WRITE_B32
+; SI-CHECK: DS_WRITE_B32
+; SI-CHECK: DS_WRITE_B32
+define void @store_local_v4i32(<4 x i32> addrspace(3)* %out, <4 x i32> %in) {
+entry:
+  store <4 x i32> %in, <4 x i32> addrspace(3)* %out
+  ret void
+}
+
 ; The stores in this function are combined by the optimizer to create a
 ; 64-bit store with 32-bit alignment.  This is legal for SI and the legalizer
 ; should not try to split the 64-bit store back into 2 32-bit stores.
@@ -192,7 +277,7 @@ entry:
   ret void
 }
 
-attributes #0 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-frame-pointer-elim-non-leaf"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #0 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "unsafe-fp-math"="false" "use-soft-float"="false" }
 
 !5 = metadata !{metadata !"int", metadata !6}
 !6 = metadata !{metadata !"omnipotent char", metadata !7}
