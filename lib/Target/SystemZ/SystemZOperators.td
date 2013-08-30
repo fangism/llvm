@@ -57,7 +57,12 @@ def SDT_ZAtomicCmpSwapW     : SDTypeProfile<1, 6,
 def SDT_ZMemMemLength       : SDTypeProfile<0, 3,
                                             [SDTCisPtrTy<0>,
                                              SDTCisPtrTy<1>,
-                                             SDTCisVT<2, i32>]>;
+                                             SDTCisVT<2, i64>]>;
+def SDT_ZMemMemLoop         : SDTypeProfile<0, 4,
+                                            [SDTCisPtrTy<0>,
+                                             SDTCisPtrTy<1>,
+                                             SDTCisVT<2, i64>,
+                                             SDTCisVT<3, i64>]>;
 def SDT_ZString             : SDTypeProfile<1, 3,
                                             [SDTCisPtrTy<0>,
                                              SDTCisPtrTy<1>,
@@ -91,6 +96,7 @@ def z_sibcall           : SDNode<"SystemZISD::SIBCALL", SDT_ZCall,
 def z_pcrel_wrapper     : SDNode<"SystemZISD::PCREL_WRAPPER", SDT_ZWrapPtr, []>;
 def z_cmp               : SDNode<"SystemZISD::CMP", SDT_ZCmp, [SDNPOutGlue]>;
 def z_ucmp              : SDNode<"SystemZISD::UCMP", SDT_ZCmp, [SDNPOutGlue]>;
+def z_tm                : SDNode<"SystemZISD::TM", SDT_ZCmp, [SDNPOutGlue]>;
 def z_br_ccmask         : SDNode<"SystemZISD::BR_CCMASK", SDT_ZBRCCMask,
                                  [SDNPHasChain, SDNPInGlue]>;
 def z_select_ccmask     : SDNode<"SystemZISD::SELECT_CCMASK", SDT_ZSelectCCMask,
@@ -123,7 +129,11 @@ def z_atomic_cmp_swapw  : AtomicWOp<"ATOMIC_CMP_SWAPW", SDT_ZAtomicCmpSwapW>;
 
 def z_mvc               : SDNode<"SystemZISD::MVC", SDT_ZMemMemLength,
                                  [SDNPHasChain, SDNPMayStore, SDNPMayLoad]>;
+def z_mvc_loop          : SDNode<"SystemZISD::MVC_LOOP", SDT_ZMemMemLoop,
+                                 [SDNPHasChain, SDNPMayStore, SDNPMayLoad]>;
 def z_clc               : SDNode<"SystemZISD::CLC", SDT_ZMemMemLength,
+                                 [SDNPHasChain, SDNPOutGlue, SDNPMayLoad]>;
+def z_clc_loop          : SDNode<"SystemZISD::CLC_LOOP", SDT_ZMemMemLoop,
                                  [SDNPHasChain, SDNPOutGlue, SDNPMayLoad]>;
 def z_strcmp            : SDNode<"SystemZISD::STRCMP", SDT_ZString,
                                  [SDNPHasChain, SDNPOutGlue, SDNPMayLoad]>;

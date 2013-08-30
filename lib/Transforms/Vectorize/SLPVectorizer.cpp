@@ -311,6 +311,10 @@ private:
   /// \returns the Instruction in the bundle \p VL.
   Instruction *getLastInstruction(ArrayRef<Value *> VL);
 
+  /// \brief Set the Builder insert point to one after the last instruction in
+  /// the bundle
+  void setInsertPointAfterBundle(ArrayRef<Value *> VL);
+
   /// \returns a vector from a collection of scalars in \p VL.
   Value *Gather(ArrayRef<Value *> VL, VectorType *Ty);
 
@@ -1068,6 +1072,15 @@ Instruction *BoUpSLP::getLastInstruction(ArrayRef<Value *> VL) {
   return I;
 }
 
+void BoUpSLP::setInsertPointAfterBundle(ArrayRef<Value *> VL) {
+  Instruction *VL0 = cast<Instruction>(VL[0]);
+  Instruction *LastInst = getLastInstruction(VL);
+  BasicBlock::iterator NextInst = LastInst;
+  ++NextInst;
+  Builder.SetInsertPoint(VL0->getParent(), NextInst);
+  Builder.SetCurrentDebugLocation(VL0->getDebugLoc());
+}
+
 Value *BoUpSLP::Gather(ArrayRef<Value *> VL, VectorType *Ty) {
   Value *Vec = UndefValue::get(Ty);
   // Generate the 'InsertElement' instruction.
@@ -1141,11 +1154,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
   VectorType *VecTy = VectorType::get(ScalarTy, E->Scalars.size());
 
   if (E->NeedToGather) {
-    BasicBlock *BB = VL0->getParent();
-    BasicBlock::iterator NextInst = getLastInstruction(E->Scalars);
-    ++NextInst;
-    assert(NextInst != BB->end());
-    Builder.SetInsertPoint(NextInst);
+    setInsertPointAfterBundle(E->Scalars);
     return Gather(E->Scalars, VecTy);
   }
 
@@ -1213,8 +1222,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       for (int i = 0, e = E->Scalars.size(); i < e; ++i)
         INVL.push_back(cast<Instruction>(E->Scalars[i])->getOperand(0));
 
-      Builder.SetInsertPoint(getLastInstruction(E->Scalars));
-      Builder.SetCurrentDebugLocation(VL0->getDebugLoc());
+      setInsertPointAfterBundle(E->Scalars);
 
       Value *InVec = vectorizeTree(INVL);
 
@@ -1234,8 +1242,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
         RHSV.push_back(cast<Instruction>(E->Scalars[i])->getOperand(1));
       }
 
-      Builder.SetInsertPoint(getLastInstruction(E->Scalars));
-      Builder.SetCurrentDebugLocation(VL0->getDebugLoc());
+      setInsertPointAfterBundle(E->Scalars);
 
       Value *L = vectorizeTree(LHSV);
       Value *R = vectorizeTree(RHSV);
@@ -1261,8 +1268,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
         FalseVec.push_back(cast<Instruction>(E->Scalars[i])->getOperand(2));
       }
 
-      Builder.SetInsertPoint(getLastInstruction(E->Scalars));
-      Builder.SetCurrentDebugLocation(VL0->getDebugLoc());
+      setInsertPointAfterBundle(E->Scalars);
 
       Value *Cond = vectorizeTree(CondVec);
       Value *True = vectorizeTree(TrueVec);
@@ -1270,7 +1276,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
 
       if (Value *V = alreadyVectorized(E->Scalars))
         return V;
-      
+
       Value *V = Builder.CreateSelect(Cond, True, False);
       E->VectorizedValue = V;
       return V;
@@ -1299,8 +1305,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
         RHSVL.push_back(cast<Instruction>(E->Scalars[i])->getOperand(1));
       }
 
-      Builder.SetInsertPoint(getLastInstruction(E->Scalars));
-      Builder.SetCurrentDebugLocation(VL0->getDebugLoc());
+      setInsertPointAfterBundle(E->Scalars);
 
       Value *LHS = vectorizeTree(LHSVL);
       Value *RHS = vectorizeTree(RHSVL);
@@ -1320,8 +1325,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
     case Instruction::Load: {
       // Loads are inserted at the head of the tree because we don't want to
       // sink them all the way down past store instructions.
-      Builder.SetInsertPoint(getLastInstruction(E->Scalars));
-      Builder.SetCurrentDebugLocation(VL0->getDebugLoc());
+      setInsertPointAfterBundle(E->Scalars);
 
       LoadInst *LI = cast<LoadInst>(VL0);
       Value *VecPtr =
@@ -1340,8 +1344,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       for (int i = 0, e = E->Scalars.size(); i < e; ++i)
         ValueOp.push_back(cast<StoreInst>(E->Scalars[i])->getValueOperand());
 
-      Builder.SetInsertPoint(getLastInstruction(E->Scalars));
-      Builder.SetCurrentDebugLocation(VL0->getDebugLoc());
+      setInsertPointAfterBundle(E->Scalars);
 
       Value *VecValue = vectorizeTree(ValueOp);
       Value *VecPtr =
@@ -1915,7 +1918,6 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
   VisitedInstrs.clear();
 
   for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; it++) {
-
     // We may go through BB multiple times so skip the one we have checked.
     if (!VisitedInstrs.insert(it))
       continue;

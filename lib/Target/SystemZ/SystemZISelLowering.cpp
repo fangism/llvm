@@ -1072,8 +1072,8 @@ static void adjustSubwordCmp(SelectionDAG &DAG, bool &IsUnsigned,
 // Return true if a comparison described by CCMask, CmpOp0 and CmpOp1
 // is an equality comparison that is better implemented using unsigned
 // rather than signed comparison instructions.
-static bool preferUnsignedComparison(SelectionDAG &DAG, SDValue CmpOp0,
-                                     SDValue CmpOp1, unsigned CCMask) {
+static bool preferUnsignedComparison(SDValue CmpOp0, SDValue CmpOp1,
+                                     unsigned CCMask) {
   // The test must be for equality or inequality.
   if (CCMask != SystemZ::CCMASK_CMP_EQ && CCMask != SystemZ::CCMASK_CMP_NE)
     return false;
@@ -1176,12 +1176,52 @@ static bool shouldSwapCmpOperands(SDValue Op0, SDValue Op1,
   return false;
 }
 
+// See whether the comparison (Opcode CmpOp0, CmpOp1) can be implemented
+// as a TEST UNDER MASK instruction when the condition being tested is
+// as described by CCValid and CCMask.  Update the arguments with the
+// TM version if so.
+static void adjustForTestUnderMask(unsigned &Opcode, SDValue &CmpOp0,
+                                   SDValue &CmpOp1, unsigned &CCValid,
+                                   unsigned &CCMask) {
+  // For now we just handle equality and inequality with zero.
+  if (CCMask != SystemZ::CCMASK_CMP_EQ &&
+      (CCMask ^ CCValid) != SystemZ::CCMASK_CMP_EQ)
+    return;
+  ConstantSDNode *ConstCmpOp1 = dyn_cast<ConstantSDNode>(CmpOp1);
+  if (!ConstCmpOp1 || ConstCmpOp1->getZExtValue() != 0)
+    return;
+
+  // Check whether the nonconstant input is an AND with a constant mask.
+  if (CmpOp0.getOpcode() != ISD::AND)
+    return;
+  SDValue AndOp0 = CmpOp0.getOperand(0);
+  SDValue AndOp1 = CmpOp0.getOperand(1);
+  ConstantSDNode *Mask = dyn_cast<ConstantSDNode>(AndOp1.getNode());
+  if (!Mask)
+    return;
+
+  // Check whether the mask is suitable for TMHH, TMHL, TMLH or TMLL.
+  uint64_t MaskVal = Mask->getZExtValue();
+  if (!SystemZ::isImmLL(MaskVal) && !SystemZ::isImmLH(MaskVal) &&
+      !SystemZ::isImmHL(MaskVal) && !SystemZ::isImmHH(MaskVal))
+    return;
+
+  // Go ahead and make the change.
+  Opcode = SystemZISD::TM;
+  CmpOp0 = AndOp0;
+  CmpOp1 = AndOp1;
+  CCValid = SystemZ::CCMASK_TM;
+  CCMask = (CCMask == SystemZ::CCMASK_CMP_EQ ?
+            SystemZ::CCMASK_TM_ALL_0 :
+            SystemZ::CCMASK_TM_ALL_0 ^ CCValid);
+}
+
 // Return a target node that compares CmpOp0 with CmpOp1 and stores a
 // 2-bit result in CC.  Set CCValid to the CCMASK_* of all possible
 // 2-bit results and CCMask to the subset of those results that are
 // associated with Cond.
-static SDValue emitCmp(SelectionDAG &DAG, SDValue CmpOp0, SDValue CmpOp1,
-                       ISD::CondCode Cond, unsigned &CCValid,
+static SDValue emitCmp(SelectionDAG &DAG, SDLoc DL, SDValue CmpOp0,
+                       SDValue CmpOp1, ISD::CondCode Cond, unsigned &CCValid,
                        unsigned &CCMask) {
   bool IsUnsigned = false;
   CCMask = CCMaskForCondCode(Cond);
@@ -1193,7 +1233,7 @@ static SDValue emitCmp(SelectionDAG &DAG, SDValue CmpOp0, SDValue CmpOp1,
     CCMask &= CCValid;
     adjustZeroCmp(DAG, IsUnsigned, CmpOp0, CmpOp1, CCMask);
     adjustSubwordCmp(DAG, IsUnsigned, CmpOp0, CmpOp1, CCMask);
-    if (preferUnsignedComparison(DAG, CmpOp0, CmpOp1, CCMask))
+    if (preferUnsignedComparison(CmpOp0, CmpOp1, CCMask))
       IsUnsigned = true;
   }
 
@@ -1205,9 +1245,9 @@ static SDValue emitCmp(SelectionDAG &DAG, SDValue CmpOp0, SDValue CmpOp1,
               (CCMask & SystemZ::CCMASK_CMP_UO));
   }
 
-  SDLoc DL(CmpOp0);
-  return DAG.getNode((IsUnsigned ? SystemZISD::UCMP : SystemZISD::CMP),
-                     DL, MVT::Glue, CmpOp0, CmpOp1);
+  unsigned Opcode = (IsUnsigned ? SystemZISD::UCMP : SystemZISD::CMP);
+  adjustForTestUnderMask(Opcode, CmpOp0, CmpOp1, CCValid, CCMask);
+  return DAG.getNode(Opcode, DL, MVT::Glue, CmpOp0, CmpOp1);
 }
 
 // Implement a 32-bit *MUL_LOHI operation by extending both operands to
@@ -1256,7 +1296,7 @@ SDValue SystemZTargetLowering::lowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
 
   unsigned CCValid, CCMask;
-  SDValue Flags = emitCmp(DAG, CmpOp0, CmpOp1, CC, CCValid, CCMask);
+  SDValue Flags = emitCmp(DAG, DL, CmpOp0, CmpOp1, CC, CCValid, CCMask);
   return DAG.getNode(SystemZISD::BR_CCMASK, DL, Op.getValueType(),
                      Chain, DAG.getConstant(CCValid, MVT::i32),
                      DAG.getConstant(CCMask, MVT::i32), Dest, Flags);
@@ -1272,7 +1312,7 @@ SDValue SystemZTargetLowering::lowerSELECT_CC(SDValue Op,
   SDLoc DL(Op);
 
   unsigned CCValid, CCMask;
-  SDValue Flags = emitCmp(DAG, CmpOp0, CmpOp1, CC, CCValid, CCMask);
+  SDValue Flags = emitCmp(DAG, DL, CmpOp0, CmpOp1, CC, CCValid, CCMask);
 
   SmallVector<SDValue, 5> Ops;
   Ops.push_back(TrueOp);
@@ -1908,6 +1948,7 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
     OPCODE(PCREL_WRAPPER);
     OPCODE(CMP);
     OPCODE(UCMP);
+    OPCODE(TM);
     OPCODE(BR_CCMASK);
     OPCODE(SELECT_CCMASK);
     OPCODE(ADJDYNALLOC);
@@ -1917,7 +1958,9 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
     OPCODE(UDIVREM32);
     OPCODE(UDIVREM64);
     OPCODE(MVC);
+    OPCODE(MVC_LOOP);
     OPCODE(CLC);
+    OPCODE(CLC_LOOP);
     OPCODE(STRCMP);
     OPCODE(STPCPY);
     OPCODE(SEARCH_STRING);
@@ -1964,6 +2007,31 @@ static MachineBasicBlock *splitBlockAfter(MachineInstr *MI,
   return NewMBB;
 }
 
+// Split MBB before MI and return the new block (the one that contains MI).
+static MachineBasicBlock *splitBlockBefore(MachineInstr *MI,
+                                           MachineBasicBlock *MBB) {
+  MachineBasicBlock *NewMBB = emitBlockAfter(MBB);
+  NewMBB->splice(NewMBB->begin(), MBB, MI, MBB->end());
+  NewMBB->transferSuccessorsAndUpdatePHIs(MBB);
+  return NewMBB;
+}
+
+// Force base value Base into a register before MI.  Return the register.
+static unsigned forceReg(MachineInstr *MI, MachineOperand &Base,
+                         const SystemZInstrInfo *TII) {
+  if (Base.isReg())
+    return Base.getReg();
+
+  MachineBasicBlock *MBB = MI->getParent();
+  MachineFunction &MF = *MBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+
+  unsigned Reg = MRI.createVirtualRegister(&SystemZ::ADDR64BitRegClass);
+  BuildMI(*MBB, MI, MI->getDebugLoc(), TII->get(SystemZ::LA), Reg)
+    .addOperand(Base).addImm(0).addReg(0);
+  return Reg;
+}
+
 // Implement EmitInstrWithCustomInserter for pseudo Select* instruction MI.
 MachineBasicBlock *
 SystemZTargetLowering::emitSelect(MachineInstr *MI,
@@ -1978,7 +2046,7 @@ SystemZTargetLowering::emitSelect(MachineInstr *MI,
   DebugLoc DL       = MI->getDebugLoc();
 
   MachineBasicBlock *StartMBB = MBB;
-  MachineBasicBlock *JoinMBB  = splitBlockAfter(MI, MBB);
+  MachineBasicBlock *JoinMBB  = splitBlockBefore(MI, MBB);
   MachineBasicBlock *FalseMBB = emitBlockAfter(StartMBB);
 
   //  StartMBB:
@@ -1999,7 +2067,7 @@ SystemZTargetLowering::emitSelect(MachineInstr *MI,
   //   %Result = phi [ %FalseReg, FalseMBB ], [ %TrueReg, StartMBB ]
   //  ...
   MBB = JoinMBB;
-  BuildMI(*MBB, MBB->begin(), DL, TII->get(SystemZ::PHI), DestReg)
+  BuildMI(*MBB, MI, DL, TII->get(SystemZ::PHI), DestReg)
     .addReg(TrueReg).addMBB(StartMBB)
     .addReg(FalseReg).addMBB(FalseMBB);
 
@@ -2046,7 +2114,7 @@ SystemZTargetLowering::emitCondStore(MachineInstr *MI,
     CCMask ^= CCValid;
 
   MachineBasicBlock *StartMBB = MBB;
-  MachineBasicBlock *JoinMBB  = splitBlockAfter(MI, MBB);
+  MachineBasicBlock *JoinMBB  = splitBlockBefore(MI, MBB);
   MachineBasicBlock *FalseMBB = emitBlockAfter(StartMBB);
 
   //  StartMBB:
@@ -2122,7 +2190,7 @@ SystemZTargetLowering::emitAtomicLoadBinary(MachineInstr *MI,
 
   // Insert a basic block for the main loop.
   MachineBasicBlock *StartMBB = MBB;
-  MachineBasicBlock *DoneMBB  = splitBlockAfter(MI, MBB);
+  MachineBasicBlock *DoneMBB  = splitBlockBefore(MI, MBB);
   MachineBasicBlock *LoopMBB  = emitBlockAfter(StartMBB);
 
   //  StartMBB:
@@ -2244,7 +2312,7 @@ SystemZTargetLowering::emitAtomicLoadMinMax(MachineInstr *MI,
 
   // Insert 3 basic blocks for the loop.
   MachineBasicBlock *StartMBB  = MBB;
-  MachineBasicBlock *DoneMBB   = splitBlockAfter(MI, MBB);
+  MachineBasicBlock *DoneMBB   = splitBlockBefore(MI, MBB);
   MachineBasicBlock *LoopMBB   = emitBlockAfter(StartMBB);
   MachineBasicBlock *UseAltMBB = emitBlockAfter(LoopMBB);
   MachineBasicBlock *UpdateMBB = emitBlockAfter(UseAltMBB);
@@ -2351,7 +2419,7 @@ SystemZTargetLowering::emitAtomicCmpSwapW(MachineInstr *MI,
 
   // Insert 2 basic blocks for the loop.
   MachineBasicBlock *StartMBB = MBB;
-  MachineBasicBlock *DoneMBB  = splitBlockAfter(MI, MBB);
+  MachineBasicBlock *DoneMBB  = splitBlockBefore(MI, MBB);
   MachineBasicBlock *LoopMBB  = emitBlockAfter(StartMBB);
   MachineBasicBlock *SetMBB   = emitBlockAfter(LoopMBB);
 
@@ -2465,17 +2533,163 @@ SystemZTargetLowering::emitMemMemWrapper(MachineInstr *MI,
                                          MachineBasicBlock *MBB,
                                          unsigned Opcode) const {
   const SystemZInstrInfo *TII = TM.getInstrInfo();
+  MachineFunction &MF = *MBB->getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
   DebugLoc DL = MI->getDebugLoc();
 
-  MachineOperand DestBase = MI->getOperand(0);
+  MachineOperand DestBase = earlyUseOperand(MI->getOperand(0));
   uint64_t       DestDisp = MI->getOperand(1).getImm();
-  MachineOperand SrcBase  = MI->getOperand(2);
+  MachineOperand SrcBase  = earlyUseOperand(MI->getOperand(2));
   uint64_t       SrcDisp  = MI->getOperand(3).getImm();
   uint64_t       Length   = MI->getOperand(4).getImm();
 
-  BuildMI(*MBB, MI, DL, TII->get(Opcode))
-    .addOperand(DestBase).addImm(DestDisp).addImm(Length)
-    .addOperand(SrcBase).addImm(SrcDisp);
+  // When generating more than one CLC, all but the last will need to
+  // branch to the end when a difference is found.
+  MachineBasicBlock *EndMBB = (Length > 256 && Opcode == SystemZ::CLC ?
+                               splitBlockAfter(MI, MBB) : 0);
+
+  // Check for the loop form, in which operand 5 is the trip count.
+  if (MI->getNumExplicitOperands() > 5) {
+    bool HaveSingleBase = DestBase.isIdenticalTo(SrcBase);
+
+    uint64_t StartCountReg = MI->getOperand(5).getReg();
+    uint64_t StartSrcReg   = forceReg(MI, SrcBase, TII);
+    uint64_t StartDestReg  = (HaveSingleBase ? StartSrcReg :
+                              forceReg(MI, DestBase, TII));
+
+    const TargetRegisterClass *RC = &SystemZ::ADDR64BitRegClass;
+    uint64_t ThisSrcReg  = MRI.createVirtualRegister(RC);
+    uint64_t ThisDestReg = (HaveSingleBase ? ThisSrcReg :
+                            MRI.createVirtualRegister(RC));
+    uint64_t NextSrcReg  = MRI.createVirtualRegister(RC);
+    uint64_t NextDestReg = (HaveSingleBase ? NextSrcReg :
+                            MRI.createVirtualRegister(RC));
+
+    RC = &SystemZ::GR64BitRegClass;
+    uint64_t ThisCountReg = MRI.createVirtualRegister(RC);
+    uint64_t NextCountReg = MRI.createVirtualRegister(RC);
+
+    MachineBasicBlock *StartMBB = MBB;
+    MachineBasicBlock *DoneMBB = splitBlockBefore(MI, MBB);
+    MachineBasicBlock *LoopMBB = emitBlockAfter(StartMBB);
+    MachineBasicBlock *NextMBB = (EndMBB ? emitBlockAfter(LoopMBB) : LoopMBB);
+
+    //  StartMBB:
+    //   # fall through to LoopMMB
+    MBB->addSuccessor(LoopMBB);
+
+    //  LoopMBB:
+    //   %ThisDestReg = phi [ %StartDestReg, StartMBB ],
+    //                      [ %NextDestReg, NextMBB ]
+    //   %ThisSrcReg = phi [ %StartSrcReg, StartMBB ],
+    //                     [ %NextSrcReg, NextMBB ]
+    //   %ThisCountReg = phi [ %StartCountReg, StartMBB ],
+    //                       [ %NextCountReg, NextMBB ]
+    //   ( PFD 2, 768+DestDisp(%ThisDestReg) )
+    //   Opcode DestDisp(256,%ThisDestReg), SrcDisp(%ThisSrcReg)
+    //   ( JLH EndMBB )
+    //
+    // The prefetch is used only for MVC.  The JLH is used only for CLC.
+    MBB = LoopMBB;
+
+    BuildMI(MBB, DL, TII->get(SystemZ::PHI), ThisDestReg)
+      .addReg(StartDestReg).addMBB(StartMBB)
+      .addReg(NextDestReg).addMBB(NextMBB);
+    if (!HaveSingleBase)
+      BuildMI(MBB, DL, TII->get(SystemZ::PHI), ThisSrcReg)
+        .addReg(StartSrcReg).addMBB(StartMBB)
+        .addReg(NextSrcReg).addMBB(NextMBB);
+    BuildMI(MBB, DL, TII->get(SystemZ::PHI), ThisCountReg)
+      .addReg(StartCountReg).addMBB(StartMBB)
+      .addReg(NextCountReg).addMBB(NextMBB);
+    if (Opcode == SystemZ::MVC)
+      BuildMI(MBB, DL, TII->get(SystemZ::PFD))
+        .addImm(SystemZ::PFD_WRITE)
+        .addReg(ThisDestReg).addImm(DestDisp + 768).addReg(0);
+    BuildMI(MBB, DL, TII->get(Opcode))
+      .addReg(ThisDestReg).addImm(DestDisp).addImm(256)
+      .addReg(ThisSrcReg).addImm(SrcDisp);
+    if (EndMBB) {
+      BuildMI(MBB, DL, TII->get(SystemZ::BRC))
+        .addImm(SystemZ::CCMASK_ICMP).addImm(SystemZ::CCMASK_CMP_NE)
+        .addMBB(EndMBB);
+      MBB->addSuccessor(EndMBB);
+      MBB->addSuccessor(NextMBB);
+    }
+
+    // NextMBB:
+    //   %NextDestReg = LA 256(%ThisDestReg)
+    //   %NextSrcReg = LA 256(%ThisSrcReg)
+    //   %NextCountReg = AGHI %ThisCountReg, -1
+    //   CGHI %NextCountReg, 0
+    //   JLH LoopMBB
+    //   # fall through to DoneMMB
+    //
+    // The AGHI, CGHI and JLH should be converted to BRCTG by later passes.
+    MBB = NextMBB;
+
+    BuildMI(MBB, DL, TII->get(SystemZ::LA), NextDestReg)
+      .addReg(ThisDestReg).addImm(256).addReg(0);
+    if (!HaveSingleBase)
+      BuildMI(MBB, DL, TII->get(SystemZ::LA), NextSrcReg)
+        .addReg(ThisSrcReg).addImm(256).addReg(0);
+    BuildMI(MBB, DL, TII->get(SystemZ::AGHI), NextCountReg)
+      .addReg(ThisCountReg).addImm(-1);
+    BuildMI(MBB, DL, TII->get(SystemZ::CGHI))
+      .addReg(NextCountReg).addImm(0);
+    BuildMI(MBB, DL, TII->get(SystemZ::BRC))
+      .addImm(SystemZ::CCMASK_ICMP).addImm(SystemZ::CCMASK_CMP_NE)
+      .addMBB(LoopMBB);
+    MBB->addSuccessor(LoopMBB);
+    MBB->addSuccessor(DoneMBB);
+
+    DestBase = MachineOperand::CreateReg(NextDestReg, false);
+    SrcBase = MachineOperand::CreateReg(NextSrcReg, false);
+    Length &= 255;
+    MBB = DoneMBB;
+  }
+  // Handle any remaining bytes with straight-line code.
+  while (Length > 0) {
+    uint64_t ThisLength = std::min(Length, uint64_t(256));
+    // The previous iteration might have created out-of-range displacements.
+    // Apply them using LAY if so.
+    if (!isUInt<12>(DestDisp)) {
+      unsigned Reg = MRI.createVirtualRegister(&SystemZ::ADDR64BitRegClass);
+      BuildMI(*MBB, MI, MI->getDebugLoc(), TII->get(SystemZ::LAY), Reg)
+        .addOperand(DestBase).addImm(DestDisp).addReg(0);
+      DestBase = MachineOperand::CreateReg(Reg, false);
+      DestDisp = 0;
+    }
+    if (!isUInt<12>(SrcDisp)) {
+      unsigned Reg = MRI.createVirtualRegister(&SystemZ::ADDR64BitRegClass);
+      BuildMI(*MBB, MI, MI->getDebugLoc(), TII->get(SystemZ::LAY), Reg)
+        .addOperand(SrcBase).addImm(SrcDisp).addReg(0);
+      SrcBase = MachineOperand::CreateReg(Reg, false);
+      SrcDisp = 0;
+    }
+    BuildMI(*MBB, MI, DL, TII->get(Opcode))
+      .addOperand(DestBase).addImm(DestDisp).addImm(ThisLength)
+      .addOperand(SrcBase).addImm(SrcDisp);
+    DestDisp += ThisLength;
+    SrcDisp += ThisLength;
+    Length -= ThisLength;
+    // If there's another CLC to go, branch to the end if a difference
+    // was found.
+    if (EndMBB && Length > 0) {
+      MachineBasicBlock *NextMBB = splitBlockBefore(MI, MBB);
+      BuildMI(MBB, DL, TII->get(SystemZ::BRC))
+        .addImm(SystemZ::CCMASK_ICMP).addImm(SystemZ::CCMASK_CMP_NE)
+        .addMBB(EndMBB);
+      MBB->addSuccessor(EndMBB);
+      MBB->addSuccessor(NextMBB);
+      MBB = NextMBB;
+    }
+  }
+  if (EndMBB) {
+    MBB->addSuccessor(EndMBB);
+    MBB = EndMBB;
+    MBB->addLiveIn(SystemZ::CC);
+  }
 
   MI->eraseFromParent();
   return MBB;
@@ -2503,7 +2717,7 @@ SystemZTargetLowering::emitStringWrapper(MachineInstr *MI,
   uint64_t End2Reg  = MRI.createVirtualRegister(RC);
 
   MachineBasicBlock *StartMBB = MBB;
-  MachineBasicBlock *DoneMBB = splitBlockAfter(MI, MBB);
+  MachineBasicBlock *DoneMBB = splitBlockBefore(MI, MBB);
   MachineBasicBlock *LoopMBB = emitBlockAfter(StartMBB);
 
   //  StartMBB:
@@ -2765,9 +2979,11 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
 
   case SystemZ::ATOMIC_CMP_SWAPW:
     return emitAtomicCmpSwapW(MI, MBB);
-  case SystemZ::MVCWrapper:
+  case SystemZ::MVCSequence:
+  case SystemZ::MVCLoop:
     return emitMemMemWrapper(MI, MBB, SystemZ::MVC);
-  case SystemZ::CLCWrapper:
+  case SystemZ::CLCSequence:
+  case SystemZ::CLCLoop:
     return emitMemMemWrapper(MI, MBB, SystemZ::CLC);
   case SystemZ::CLSTLoop:
     return emitStringWrapper(MI, MBB, SystemZ::CLST);

@@ -60,6 +60,7 @@ class AFPR<bits<16> Enc, string n, list<Register> subregs>
 class AFPR64<bits<16> Enc, string n, list<Register> subregs>
   : MipsRegWithSubRegs<Enc, n, subregs> {
   let SubRegIndices = [sub_lo, sub_hi];
+  let CoveredBySubRegs = 1;
 }
 
 // Mips 128-bit (aliased) MSA Registers
@@ -230,6 +231,16 @@ let Namespace = "Mips" in {
   def DSPOutFlag : RegisterWithSubRegs<"", [DSPOutFlag16_19, DSPOutFlag20,
                                             DSPOutFlag21, DSPOutFlag22,
                                             DSPOutFlag23]>;
+
+  // MSA-ASE control registers.
+  def MSAIR : Register<"0">;
+  def MSACSR : Register<"1">;
+  def MSAAccess : Register<"2">;
+  def MSASave : Register<"3">;
+  def MSAModify : Register<"4">;
+  def MSARequest : Register<"5">;
+  def MSAMap : Register<"6">;
+  def MSAUnmap : Register<"7">;
 }
 
 //===----------------------------------------------------------------------===//
@@ -294,7 +305,8 @@ def CPUSPReg : RegisterClass<"Mips", [i32], 32, (add SP)>, Unallocatable;
 // * FGR32 - 32 32-bit registers (single float only mode)
 def FGR32 : RegisterClass<"Mips", [f32], 32, (sequence "F%u", 0, 31)>;
 
-def FGRH32 : RegisterClass<"Mips", [f32], 32, (sequence "F_HI%u", 0, 31)>;
+def FGRH32 : RegisterClass<"Mips", [f32], 32, (sequence "F_HI%u", 0, 31)>,
+             Unallocatable;
 
 def AFGR64 : RegisterClass<"Mips", [f64], 64, (add
   // Return Values and Arguments
@@ -326,6 +338,9 @@ def MSA128W: RegisterClass<"Mips", [v4i32, v4f32], 128,
                            (sequence "W%u", 0, 31)>;
 def MSA128D: RegisterClass<"Mips", [v2i64, v2f64], 128,
                            (sequence "W%u", 0, 31)>;
+
+def MSACtrl: RegisterClass<"Mips", [i32], 32, (add
+  MSAIR, MSACSR, MSAAccess, MSASave, MSAModify, MSARequest, MSAMap, MSAUnmap)>;
 
 // Hi/Lo Registers
 def LO32 : RegisterClass<"Mips", [i32], 32, (add LO0)>;

@@ -33,10 +33,10 @@
 using namespace llvm;
 
 /// CompileUnit - Compile unit constructor.
-CompileUnit::CompileUnit(unsigned UID, unsigned L, DIE *D, const MDNode *N,
-                         AsmPrinter *A, DwarfDebug *DW, DwarfUnits *DWU)
-  : UniqueID(UID), Language(L), CUDie(D), Asm(A), DD(DW), DU(DWU),
-    IndexTyDie(0), DebugInfoOffset(0) {
+CompileUnit::CompileUnit(unsigned UID, DIE *D, const MDNode *N, AsmPrinter *A,
+                         DwarfDebug *DW, DwarfUnits *DWU)
+    : UniqueID(UID), Node(N), CUDie(D), Asm(A), DD(DW), DU(DWU), IndexTyDie(0),
+      DebugInfoOffset(0) {
   DIEIntegerOne = new (DIEValueAllocator) DIEInteger(1);
   insertDIE(N, D);
 }
@@ -57,7 +57,7 @@ DIEEntry *CompileUnit::createDIEEntry(DIE *Entry) {
 /// getDefaultLowerBound - Return the default lower bound for an array. If the
 /// DWARF version doesn't handle the language, return -1.
 int64_t CompileUnit::getDefaultLowerBound() const {
-  switch (Language) {
+  switch (DICompileUnit(Node).getLanguage()) {
   default:
     break;
 
@@ -606,21 +606,36 @@ void CompileUnit::addConstantValue(DIE *Die, const MachineOperand &MO,
   // their maximum bit width which is a bit unfortunate (& doesn't prefer
   // udata/sdata over dataN as suggested by the DWARF spec)
   assert(MO.isImm() && "Invalid machine operand!");
-  DIEBlock *Block = new (DIEValueAllocator) DIEBlock();
   int SizeInBits = -1;
   bool SignedConstant = isTypeSigned(Ty, &SizeInBits);
-  uint16_t Form = SignedConstant ? dwarf::DW_FORM_sdata : dwarf::DW_FORM_udata;
-  switch (SizeInBits) {
-    case 8:  Form = dwarf::DW_FORM_data1; break;
-    case 16: Form = dwarf::DW_FORM_data2; break;
-    case 32: Form = dwarf::DW_FORM_data4; break;
-    case 64: Form = dwarf::DW_FORM_data8; break;
-    default: break;
-  }
-  SignedConstant ? addSInt(Block, 0, Form, MO.getImm())
-    : addUInt(Block, 0, Form, MO.getImm());
+  uint16_t Form;
 
-  addBlock(Die, dwarf::DW_AT_const_value, 0, Block);
+  // If we're a signed constant definitely use sdata.
+  if (SignedConstant) {
+    addSInt(Die, dwarf::DW_AT_const_value, dwarf::DW_FORM_sdata, MO.getImm());
+    return;
+  }
+
+  // Else use data for now unless it's larger than we can deal with.
+  switch (SizeInBits) {
+  case 8:
+    Form = dwarf::DW_FORM_data1;
+    break;
+  case 16:
+    Form = dwarf::DW_FORM_data2;
+    break;
+  case 32:
+    Form = dwarf::DW_FORM_data4;
+    break;
+  case 64:
+    Form = dwarf::DW_FORM_data8;
+    break;
+  default:
+    Form = dwarf::DW_FORM_udata;
+    addUInt(Die, dwarf::DW_AT_const_value, Form, MO.getImm());
+    return;
+  }
+  addUInt(Die, dwarf::DW_AT_const_value, Form, MO.getImm());
 }
 
 /// addConstantFPValue - Add constant value entry in variable DIE.
@@ -649,7 +664,8 @@ void CompileUnit::addConstantFPValue(DIE *Die, const MachineOperand &MO) {
 
 /// addConstantFPValue - Add constant value entry in variable DIE.
 void CompileUnit::addConstantFPValue(DIE *Die, const ConstantFP *CFP) {
-  addConstantValue(Die, CFP->getValueAPF().bitcastToAPInt(), false);
+  // Pass this down to addConstantValue as an unsigned bag of bits.
+  addConstantValue(Die, CFP->getValueAPF().bitcastToAPInt(), true);
 }
 
 /// addConstantValue - Add constant value entry in variable DIE.
@@ -662,19 +678,34 @@ void CompileUnit::addConstantValue(DIE *Die, const ConstantInt *CI,
 void CompileUnit::addConstantValue(DIE *Die, const APInt &Val, bool Unsigned) {
   unsigned CIBitWidth = Val.getBitWidth();
   if (CIBitWidth <= 64) {
-    unsigned form = 0;
-    switch (CIBitWidth) {
-    case 8: form = dwarf::DW_FORM_data1; break;
-    case 16: form = dwarf::DW_FORM_data2; break;
-    case 32: form = dwarf::DW_FORM_data4; break;
-    case 64: form = dwarf::DW_FORM_data8; break;
-    default:
-      form = Unsigned ? dwarf::DW_FORM_udata : dwarf::DW_FORM_sdata;
+    // If we're a signed constant definitely use sdata.
+    if (!Unsigned) {
+      addSInt(Die, dwarf::DW_AT_const_value, dwarf::DW_FORM_sdata,
+              Val.getSExtValue());
+      return;
     }
-    if (Unsigned)
-      addUInt(Die, dwarf::DW_AT_const_value, form, Val.getZExtValue());
-    else
-      addSInt(Die, dwarf::DW_AT_const_value, form, Val.getSExtValue());
+
+    // Else use data for now unless it's larger than we can deal with.
+    uint16_t Form;
+    switch (CIBitWidth) {
+    case 8:
+      Form = dwarf::DW_FORM_data1;
+      break;
+    case 16:
+      Form = dwarf::DW_FORM_data2;
+      break;
+    case 32:
+      Form = dwarf::DW_FORM_data4;
+      break;
+    case 64:
+      Form = dwarf::DW_FORM_data8;
+      break;
+    default:
+      addUInt(Die, dwarf::DW_AT_const_value, dwarf::DW_FORM_udata,
+              Val.getZExtValue());
+      return;
+    }
+    addUInt(Die, dwarf::DW_AT_const_value, Form, Val.getZExtValue());
     return;
   }
 
@@ -971,6 +1002,7 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
     }
     // Add prototype flag if we're dealing with a C language and the
     // function has been prototyped.
+    uint16_t Language = DICompileUnit(Node).getLanguage();
     if (isPrototyped &&
         (Language == dwarf::DW_LANG_C89 ||
          Language == dwarf::DW_LANG_C99 ||
@@ -1244,6 +1276,7 @@ DIE *CompileUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
 
   // Add the prototype if we have a prototype and we have a C like
   // language.
+  uint16_t Language = DICompileUnit(Node).getLanguage();
   if (SP.isPrototyped() &&
       (Language == dwarf::DW_LANG_C89 ||
        Language == dwarf::DW_LANG_C99 ||

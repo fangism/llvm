@@ -186,6 +186,8 @@ def InMicroMips    :  Predicate<"Subtarget.inMicroMipsMode()">,
                       AssemblerPredicate<"FeatureMicroMips">;
 def NotInMicroMips :  Predicate<"!Subtarget.inMicroMipsMode()">,
                       AssemblerPredicate<"!FeatureMicroMips">;
+def IsLE           :  Predicate<"Subtarget.isLittle()">;
+def IsBE           :  Predicate<"!Subtarget.isLittle()">;
 
 class MipsPat<dag pattern, dag result> : Pat<pattern, result> {
   let Predicates = [HasStdEnc];
@@ -277,6 +279,11 @@ def MipsMemAsmOperand : AsmOperandClass {
   let ParserMethod = "parseMemOperand";
 }
 
+def PtrRegAsmOperand : AsmOperandClass {
+  let Name = "PtrReg";
+  let ParserMethod = "parsePtrReg";
+}
+
 // Address operand
 def mem : Operand<iPTR> {
   let PrintMethod = "printMemOperand";
@@ -295,6 +302,8 @@ def mem_ea : Operand<iPTR> {
 
 def PtrRC : Operand<iPTR> {
   let MIOperandInfo = (ops ptr_rc);
+  let DecoderMethod = "DecodePtrRegisterClass";
+  let ParserMatchClass = PtrRegAsmOperand;
 }
 
 // size operand of ext instruction
@@ -366,6 +375,9 @@ def addr :
 
 def addrRegImm :
   ComplexPattern<iPTR, 2, "selectAddrRegImm", [frameindex]>;
+
+def addrRegReg :
+  ComplexPattern<iPTR, 2, "selectAddrRegReg", [frameindex]>;
 
 def addrDefault :
   ComplexPattern<iPTR, 2, "selectAddrDefault", [frameindex]>;
@@ -771,8 +783,9 @@ class SCBase<string opstr, RegisterOperand RO> :
   let Constraints = "$rt = $dst";
 }
 
-class MFC3OP<dag outs, dag ins, string asmstr> :
-  InstSE<outs, ins, asmstr, [], NoItinerary, FrmFR>;
+class MFC3OP<string asmstr, RegisterOperand RO> :
+  InstSE<(outs RO:$rt, RO:$rd, uimm16:$sel), (ins),
+         !strconcat(asmstr, "\t$rt, $rd, $sel"), [], NoItinerary, FrmFR>;
 
 let isBarrier = 1, isTerminator = 1, isCodeGenOnly = 1 in
 def TRAP : InstSE<(outs), (ins), "break", [(trap)], NoItinerary, FrmOther> {
@@ -1044,21 +1057,10 @@ def EXT : ExtBase<"ext", GPR32Opnd>, EXT_FM<0>;
 def INS : InsBase<"ins", GPR32Opnd>, EXT_FM<4>;
 
 /// Move Control Registers From/To CPU Registers
-def MFC0_3OP : MFC3OP<(outs GPR32Opnd:$rt),
-                      (ins GPR32Opnd:$rd, uimm16:$sel),
-                      "mfc0\t$rt, $rd, $sel">, MFC3OP_FM<0x10, 0>;
-
-def MTC0_3OP : MFC3OP<(outs GPR32Opnd:$rd, uimm16:$sel),
-                      (ins GPR32Opnd:$rt),
-                      "mtc0\t$rt, $rd, $sel">, MFC3OP_FM<0x10, 4>;
-
-def MFC2_3OP : MFC3OP<(outs GPR32Opnd:$rt),
-                      (ins GPR32Opnd:$rd, uimm16:$sel),
-                      "mfc2\t$rt, $rd, $sel">, MFC3OP_FM<0x12, 0>;
-
-def MTC2_3OP : MFC3OP<(outs GPR32Opnd:$rd, uimm16:$sel),
-                      (ins GPR32Opnd:$rt),
-                      "mtc2\t$rt, $rd, $sel">, MFC3OP_FM<0x12, 4>;
+def MFC0 : MFC3OP<"mfc0", GPR32Opnd>, MFC3OP_FM<0x10, 0>;
+def MTC0 : MFC3OP<"mtc0", GPR32Opnd>, MFC3OP_FM<0x10, 4>;
+def MFC2 : MFC3OP<"mfc2", GPR32Opnd>, MFC3OP_FM<0x12, 0>;
+def MTC2 : MFC3OP<"mtc2", GPR32Opnd>, MFC3OP_FM<0x12, 4>;
 
 //===----------------------------------------------------------------------===//
 // Instruction aliases
@@ -1090,14 +1092,10 @@ def : InstAlias<"xor $rs, $rt, $imm",
 def : InstAlias<"or $rs, $rt, $imm",
                 (ORi GPR32Opnd:$rs, GPR32Opnd:$rt, uimm16:$imm), 0>;
 def : InstAlias<"nop", (SLL ZERO, ZERO, 0), 1>;
-def : InstAlias<"mfc0 $rt, $rd",
-                (MFC0_3OP GPR32Opnd:$rt, GPR32Opnd:$rd, 0), 0>;
-def : InstAlias<"mtc0 $rt, $rd",
-                (MTC0_3OP GPR32Opnd:$rd, 0, GPR32Opnd:$rt), 0>;
-def : InstAlias<"mfc2 $rt, $rd",
-                (MFC2_3OP GPR32Opnd:$rt, GPR32Opnd:$rd, 0), 0>;
-def : InstAlias<"mtc2 $rt, $rd",
-                (MTC2_3OP GPR32Opnd:$rd, 0, GPR32Opnd:$rt), 0>;
+def : InstAlias<"mfc0 $rt, $rd", (MFC0 GPR32Opnd:$rt, GPR32Opnd:$rd, 0), 0>;
+def : InstAlias<"mtc0 $rt, $rd", (MTC0 GPR32Opnd:$rt, GPR32Opnd:$rd, 0), 0>;
+def : InstAlias<"mfc2 $rt, $rd", (MFC2 GPR32Opnd:$rt, GPR32Opnd:$rd, 0), 0>;
+def : InstAlias<"mtc2 $rt, $rd", (MTC2 GPR32Opnd:$rt, GPR32Opnd:$rd, 0), 0>;
 def : InstAlias<"bnez $rs,$offset",
                 (BNE GPR32Opnd:$rs, ZERO, brtarget:$offset), 0>;
 def : InstAlias<"beqz $rs,$offset",

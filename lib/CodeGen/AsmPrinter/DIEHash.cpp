@@ -119,6 +119,9 @@ void DIEHash::collectAttributes(DIE *Die, DIEAttrs &Attrs) {
     case dwarf::DW_AT_name:
       COLLECT_ATTR(DW_AT_name);
       break;
+    case dwarf::DW_AT_language:
+      COLLECT_ATTR(DW_AT_language);
+      break;
     default:
       break;
     }
@@ -142,8 +145,16 @@ void DIEHash::hashAttribute(AttrEntry Attr) {
 
   // TODO: Add support for additional forms.
   switch (Desc->getForm()) {
+  // TODO: We'll want to add DW_FORM_string here if we start emitting them again.
   case dwarf::DW_FORM_strp:
     addString(cast<DIEString>(Value)->getString());
+    break;
+  case dwarf::DW_FORM_data1:
+  case dwarf::DW_FORM_data2:
+  case dwarf::DW_FORM_data4:
+  case dwarf::DW_FORM_data8:
+  case dwarf::DW_FORM_udata:
+    addULEB128(cast<DIEInteger>(Value)->getValue());
     break;
   }
 }
@@ -159,6 +170,7 @@ void DIEHash::hashAttributes(const DIEAttrs &Attrs) {
 
   // FIXME: Add the rest.
   ADD_ATTR(Attrs.DW_AT_name);
+  ADD_ATTR(Attrs.DW_AT_language);
 }
 
 // Add all of the attributes for \param Die to the hash.

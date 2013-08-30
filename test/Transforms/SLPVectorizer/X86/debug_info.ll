@@ -19,7 +19,7 @@ target triple = "x86_64-apple-macosx10.7.0"
 ;CHECK: store <2 x double> {{.*}}, !dbg ![[LOC2:[0-9]+]]
 ;CHECK: ret
 ;CHECK: ![[LOC]] = metadata !{i32 4, i32 0,
-;CHECK: ![[LOC2]] = metadata !{i32 7, i32 0,
+;CHECK: ![[LOC2]] = metadata !{i32 8, i32 0,
 
 define i32 @depth(double* nocapture %A, i32 %m) #0 {
 entry:
@@ -63,7 +63,7 @@ attributes #1 = { nounwind readnone }
 !3 = metadata !{metadata !4}
 !4 = metadata !{i32 786478, metadata !1, metadata !5, metadata !"depth", metadata !"depth", metadata !"", i32 1, metadata !6, i1 false, i1 true, i32 0, i32 0, null, i32 256, i1 true, i32 (double*, i32)* @depth, null, null, metadata !11, i32 1} ; [ DW_TAG_subprogram ] [line 1] [def] [depth]
 !5 = metadata !{i32 786473, metadata !1}          ; [ DW_TAG_file_type ] [/Users/nadav/file.c]
-!6 = metadata !{i32 786453, i32 0, i32 0, metadata !"", i32 0, i64 0, i64 0, i64 0, i32 0, null, metadata !7, i32 0, i32 0} ; [ DW_TAG_subroutine_type ] [line 0, size 0, align 0, offset 0] [from ]
+!6 = metadata !{i32 786453, i32 0, i32 0, metadata !"", i32 0, i64 0, i64 0, i64 0, i32 0, null, metadata !7, i32 0, i32 0, null, null} ; [ DW_TAG_subroutine_type ] [line 0, size 0, align 0, offset 0] [from ]
 !7 = metadata !{metadata !8, metadata !9, metadata !8}
 !8 = metadata !{i32 786468, null, null, metadata !"int", i32 0, i64 32, i64 32, i64 0, i32 0, i32 5} ; [ DW_TAG_base_type ] [int] [line 0, size 32, align 32, offset 0, enc DW_ATE_signed]
 !9 = metadata !{i32 786447, null, null, metadata !"", i32 0, i64 64, i64 64, i64 0, i32 0, metadata !10} ; [ DW_TAG_pointer_type ] [line 0, size 64, align 64, offset 0] [from double]

@@ -358,14 +358,6 @@ class DwarfDebug {
   // as DW_AT_inline.
   SmallPtrSet<DIE *, 4> InlinedSubprogramDIEs;
 
-  // Keep track of inlined functions and their location.  This
-  // information is used to populate the debug_inlined section.
-  typedef std::pair<const MCSymbol *, DIE *> InlineInfoLabels;
-  typedef DenseMap<const MDNode *,
-                   SmallVector<InlineInfoLabels, 4> > InlineInfoMap;
-  InlineInfoMap InlineInfo;
-  SmallVector<const MDNode *, 4> InlinedSPNodes;
-
   // This is a collection of subprogram MDNodes that are processed to
   // create DIEs.
   SmallPtrSet<const MDNode *, 16> ProcessedSPNodes;
@@ -431,12 +423,15 @@ class DwarfDebug {
   // Holder for types that are going to be extracted out into a type unit.
   std::vector<DIE *> TypeUnits;
 
+  // Whether to emit the pubnames/pubtypes sections.
+  bool HasDwarfPubSections;
+
+  // Version of dwarf we're emitting.
+  unsigned DwarfVersion;
+
   // DWARF5 Experimental Options
   bool HasDwarfAccelTables;
   bool HasSplitDwarf;
-  bool HasDwarfPubNames;
-
-  unsigned DwarfVersion;
 
   // Separated Dwarf Variables
   // In general these will all be for bits that are left in the
@@ -556,7 +551,7 @@ private:
 
   /// \brief Construct the split debug info compile unit for the debug info
   /// section.
-  CompileUnit *constructSkeletonCU(const MDNode *);
+  CompileUnit *constructSkeletonCU(const CompileUnit *CU);
 
   /// \brief Emit the local split abbreviations.
   void emitSkeletonAbbrevs(const MCSection *);

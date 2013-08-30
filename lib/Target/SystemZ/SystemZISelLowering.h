@@ -45,6 +45,10 @@ namespace SystemZISD {
     // Likewise unsigned integer comparison.
     UCMP,
 
+    // Test under mask.  The first operand is ANDed with the second operand
+    // and the condition codes are set on the result.
+    TM,
+
     // Branches if a condition is true.  Operand 0 is the chain operand;
     // operand 1 is the 4-bit condition-code mask, with bit N in
     // big-endian order meaning "branch if CC=N"; operand 2 is the
@@ -74,16 +78,25 @@ namespace SystemZISD {
     UDIVREM32,
     UDIVREM64,
 
-    // Use MVC to copy bytes from one memory location to another.
-    // The first operand is the target address, the second operand is the
-    // source address, and the third operand is the constant length.
+    // Use a series of MVCs to copy bytes from one memory location to another.
+    // The operands are:
+    // - the target address
+    // - the source address
+    // - the constant length
+    //
     // This isn't a memory opcode because we'd need to attach two
     // MachineMemOperands rather than one.
     MVC,
 
+    // Like MVC, but implemented as a loop that handles X*256 bytes
+    // followed by straight-line code to handle the rest (if any).
+    // The value of X is passed as an additional operand.
+    MVC_LOOP,
+
     // Use CLC to compare two blocks of memory, with the same comments
-    // as for MVC.
+    // as for MVC and MVC_LOOP.
     CLC,
+    CLC_LOOP,
 
     // Use an MVST-based sequence to implement stpcpy().
     STPCPY,
