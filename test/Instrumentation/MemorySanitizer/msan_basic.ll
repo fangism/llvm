@@ -260,6 +260,8 @@ entry:
 
 ; CHECK: @Select
 ; CHECK: select
+; CHECK-NEXT: sext i1 {{.*}} to i32
+; CHECK-NEXT: or i32
 ; CHECK-NEXT: select
 ; CHECK: ret i32
 
@@ -274,11 +276,31 @@ entry:
   ret <8 x i16> %cond
 }
 
+; CHECK: @SelectVector
+; CHECK: select <8 x i1>
+; CHECK-NEXT: sext <8 x i1> {{.*}} to <8 x i16>
+; CHECK-NEXT: or <8 x i16>
+; CHECK-NEXT: select <8 x i1>
+; CHECK: ret <8 x i16>
+
 ; CHECK-ORIGINS: @SelectVector
 ; CHECK-ORIGINS: bitcast <8 x i1> {{.*}} to i8
 ; CHECK-ORIGINS: icmp ne i8
 ; CHECK-ORIGINS: select i1
 ; CHECK-ORIGINS: ret <8 x i16>
+
+
+define { i64, i64 } @SelectStruct(i1 zeroext %x, { i64, i64 } %a, { i64, i64 } %b) readnone sanitize_memory {
+entry:
+  %c = select i1 %x, { i64, i64 } %a, { i64, i64 } %b
+  ret { i64, i64 } %c
+}
+
+; CHECK: @SelectStruct
+; CHECK: select i1 {{.*}}, { i64, i64 }
+; CHECK-NEXT: select i1 {{.*}}, { i64, i64 } { i64 -1, i64 -1 }, { i64, i64 }
+; CHECK-NEXT: select i1 {{.*}}, { i64, i64 }
+; CHECK: ret { i64, i64 }
 
 
 define i8* @IntToPtr(i64 %x) nounwind uwtable readnone sanitize_memory {
