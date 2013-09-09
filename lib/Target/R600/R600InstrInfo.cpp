@@ -154,11 +154,21 @@ bool R600InstrInfo::isLDSInstr(unsigned Opcode) const {
 }
 
 bool R600InstrInfo::isTransOnly(unsigned Opcode) const {
-  return (get(Opcode).TSFlags & R600_InstFlag::TRANS_ONLY);
+  if (ST.hasCaymanISA())
+    return false;
+  return (get(Opcode).getSchedClass() == AMDGPU::Sched::TransALU);
 }
 
 bool R600InstrInfo::isTransOnly(const MachineInstr *MI) const {
   return isTransOnly(MI->getOpcode());
+}
+
+bool R600InstrInfo::isVectorOnly(unsigned Opcode) const {
+  return (get(Opcode).getSchedClass() == AMDGPU::Sched::VecALU);
+}
+
+bool R600InstrInfo::isVectorOnly(const MachineInstr *MI) const {
+  return isVectorOnly(MI->getOpcode());
 }
 
 bool R600InstrInfo::isExport(unsigned Opcode) const {
@@ -326,6 +336,8 @@ R600InstrInfo::ExtractSrcs(MachineInstr *MI,
 static std::vector<std::pair<int, unsigned> >
 Swizzle(std::vector<std::pair<int, unsigned> > Src,
         R600InstrInfo::BankSwizzle Swz) {
+  if (Src[0] == Src[1])
+    Src[1].first = -1;
   switch (Swz) {
   case R600InstrInfo::ALU_VEC_012_SCL_210:
     break;
@@ -467,6 +479,9 @@ static bool
 isConstCompatible(R600InstrInfo::BankSwizzle TransSwz,
                   const std::vector<std::pair<int, unsigned> > &TransOps,
                   unsigned ConstCount) {
+  // TransALU can't read 3 constants
+  if (ConstCount > 2)
+    return false;
   for (unsigned i = 0, e = TransOps.size(); i < e; ++i) {
     const std::pair<int, unsigned> &Src = TransOps[i];
     unsigned Cycle = getTransSwizzle(TransSwz, i);

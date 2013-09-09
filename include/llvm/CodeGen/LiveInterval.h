@@ -194,6 +194,10 @@ namespace llvm {
       ranges.clear();
     }
 
+    size_t size() const {
+      return ranges.size();
+    }
+
     bool hasAtLeastOneValue() const { return !valnos.empty(); }
 
     bool containsOneValue() const { return valnos.size() == 1; }
@@ -242,7 +246,7 @@ namespace llvm {
     /// unused values.
     void RenumberValues();
 
-    /// MergeValueNumberInto - This method is called when two value nubmers
+    /// MergeValueNumberInto - This method is called when two value numbers
     /// are found to be equivalent.  This eliminates V1, replacing all
     /// LiveRanges with the V1 value number with the V2 value number.  This can
     /// cause merging of V1/V2 values numbers and compaction of the value space.
@@ -370,8 +374,7 @@ namespace llvm {
     void join(LiveInterval &Other,
               const int *ValNoAssignments,
               const int *RHSValNoAssignments,
-              SmallVectorImpl<VNInfo *> &NewVNInfo,
-              MachineRegisterInfo *MRI);
+              SmallVectorImpl<VNInfo *> &NewVNInfo);
 
     /// True iff this live range is a single segment that lies between the
     /// specified boundaries, exclusively. Vregs live across a backedge are not
@@ -440,9 +443,9 @@ namespace llvm {
 
   private:
 
-    Ranges::iterator addRangeFrom(LiveRange LR, Ranges::iterator From);
-    void extendIntervalEndTo(Ranges::iterator I, SlotIndex NewEnd);
-    Ranges::iterator extendIntervalStartTo(Ranges::iterator I, SlotIndex NewStr);
+    iterator addRangeFrom(LiveRange LR, iterator From);
+    void extendIntervalEndTo(iterator I, SlotIndex NewEnd);
+    iterator extendIntervalStartTo(iterator I, SlotIndex NewStr);
     void markValNoForDeletion(VNInfo *V);
 
     LiveInterval& operator=(const LiveInterval& rhs) LLVM_DELETED_FUNCTION;

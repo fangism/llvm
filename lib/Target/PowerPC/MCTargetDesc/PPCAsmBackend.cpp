@@ -197,10 +197,9 @@ namespace {
 
 } // end anonymous namespace
 
-
-
-
-MCAsmBackend *llvm::createPPCAsmBackend(const Target &T, StringRef TT, StringRef CPU) {
+MCAsmBackend *llvm::createPPCAsmBackend(const Target &T,
+                                        const MCRegisterInfo &MRI,
+                                        StringRef TT, StringRef CPU) {
   STACKTRACE_VERBOSE;
   if (Triple(TT).isOSDarwin())
     return new DarwinPPCAsmBackend(T);

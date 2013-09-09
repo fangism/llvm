@@ -527,11 +527,11 @@ bool RegisterCoalescer::hasOtherReachingDefs(LiveInterval &IntA,
   for (LiveInterval::iterator AI = IntA.begin(), AE = IntA.end();
        AI != AE; ++AI) {
     if (AI->valno != AValNo) continue;
-    LiveInterval::Ranges::iterator BI =
-      std::upper_bound(IntB.ranges.begin(), IntB.ranges.end(), AI->start);
-    if (BI != IntB.ranges.begin())
+    LiveInterval::iterator BI =
+      std::upper_bound(IntB.begin(), IntB.end(), AI->start);
+    if (BI != IntB.begin())
       --BI;
-    for (; BI != IntB.ranges.end() && AI->end >= BI->start; ++BI) {
+    for (; BI != IntB.end() && AI->end >= BI->start; ++BI) {
       if (BI->valno == BValNo)
         continue;
       if (BI->start <= AI->start && BI->end > AI->start)
@@ -577,13 +577,11 @@ bool RegisterCoalescer::removeCopyByCommutingDef(const CoalescerPair &CP,
   LiveInterval &IntB =
     LIS->getInterval(CP.isFlipped() ? CP.getSrcReg() : CP.getDstReg());
 
-  // BValNo is a value number in B that is defined by a copy from A. 'B3' in
+  // BValNo is a value number in B that is defined by a copy from A. 'B1' in
   // the example above.
   VNInfo *BValNo = IntB.getVNInfoAt(CopyIdx);
   if (!BValNo || BValNo->def != CopyIdx)
     return false;
-
-  assert(BValNo->def == CopyIdx && "Copy doesn't define the value?");
 
   // AValNo is the value number in A that defines the copy, A3 in the example.
   VNInfo *AValNo = IntA.getVNInfoAt(CopyIdx.getRegSlot(true));
@@ -1091,8 +1089,8 @@ bool RegisterCoalescer::joinCopy(MachineInstr *CopyMI, bool &Again) {
     });
 
     // When possible, let DstReg be the larger interval.
-    if (!CP.isPartial() && LIS->getInterval(CP.getSrcReg()).ranges.size() >
-                           LIS->getInterval(CP.getDstReg()).ranges.size())
+    if (!CP.isPartial() && LIS->getInterval(CP.getSrcReg()).size() >
+                           LIS->getInterval(CP.getDstReg()).size())
       CP.flip();
   }
 
@@ -2001,8 +1999,7 @@ bool RegisterCoalescer::joinVirtRegs(CoalescerPair &CP) {
     LIS->shrinkToUses(&LIS->getInterval(ShrinkRegs.pop_back_val()));
 
   // Join RHS into LHS.
-  LHS.join(RHS, LHSVals.getAssignments(), RHSVals.getAssignments(), NewVNInfo,
-           MRI);
+  LHS.join(RHS, LHSVals.getAssignments(), RHSVals.getAssignments(), NewVNInfo);
 
   // Kill flags are going to be wrong if the live ranges were overlapping.
   // Eventually, we should simply clear all kill flags when computing live

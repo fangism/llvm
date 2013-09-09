@@ -86,9 +86,9 @@ def : CopySign128<FP64,  (CPSDRdd (EXTRACT_SUBREG FP128:$src1, subreg_high),
 def : CopySign128<FP128, (CPSDRdd (EXTRACT_SUBREG FP128:$src1, subreg_high),
                                   (EXTRACT_SUBREG FP128:$src2, subreg_high))>;
 
-defm LoadStoreF32  : MVCLoadStore<load, store, f32,  MVCSequence, 4>;
-defm LoadStoreF64  : MVCLoadStore<load, store, f64,  MVCSequence, 8>;
-defm LoadStoreF128 : MVCLoadStore<load, store, f128, MVCSequence, 16>;
+defm LoadStoreF32  : MVCLoadStore<load, f32,  MVCSequence, 4>;
+defm LoadStoreF64  : MVCLoadStore<load, f64,  MVCSequence, 8>;
+defm LoadStoreF128 : MVCLoadStore<load, f128, MVCSequence, 16>;
 
 //===----------------------------------------------------------------------===//
 // Load instructions
@@ -349,12 +349,12 @@ def DDB : BinaryRXE<"ddb", 0xED1D, fdiv, FP64, load, 8>;
 //===----------------------------------------------------------------------===//
 
 let Defs = [CC], CCValues = 0xF in {
-  def CEBR : CompareRRE<"ceb", 0xB309, z_cmp, FP32,  FP32>;
-  def CDBR : CompareRRE<"cdb", 0xB319, z_cmp, FP64,  FP64>;
-  def CXBR : CompareRRE<"cxb", 0xB349, z_cmp, FP128, FP128>;
+  def CEBR : CompareRRE<"ceb", 0xB309, z_fcmp, FP32,  FP32>;
+  def CDBR : CompareRRE<"cdb", 0xB319, z_fcmp, FP64,  FP64>;
+  def CXBR : CompareRRE<"cxb", 0xB349, z_fcmp, FP128, FP128>;
 
-  def CEB : CompareRXE<"ceb", 0xED09, z_cmp, FP32, load, 4>;
-  def CDB : CompareRXE<"cdb", 0xED19, z_cmp, FP64, load, 8>;
+  def CEB : CompareRXE<"ceb", 0xED09, z_fcmp, FP32, load, 4>;
+  def CDB : CompareRXE<"cdb", 0xED19, z_fcmp, FP64, load, 8>;
 }
 
 //===----------------------------------------------------------------------===//

@@ -101,11 +101,39 @@ public:
 
 class ScheduleDAGMI;
 
+/// Define a generic scheduling policy for targets that don't provide their own
+/// MachineSchedStrategy. This can be overriden for each scheduling region
+/// before building the DAG.
+struct MachineSchedPolicy {
+  // Allow the scheduler to disable register pressure tracking.
+  bool ShouldTrackPressure;
+
+  // Allow the scheduler to force top-down or bottom-up scheduling. If neither
+  // is true, the scheduler runs in both directions and converges.
+  bool OnlyTopDown;
+  bool OnlyBottomUp;
+
+  MachineSchedPolicy():
+    ShouldTrackPressure(false), OnlyTopDown(false), OnlyBottomUp(false) {}
+};
+
 /// MachineSchedStrategy - Interface to the scheduling algorithm used by
 /// ScheduleDAGMI.
+///
+/// Initialization sequence:
+///   initPolicy -> shouldTrackPressure -> initialize(DAG) -> registerRoots
 class MachineSchedStrategy {
 public:
   virtual ~MachineSchedStrategy() {}
+
+  /// Optionally override the per-region scheduling policy.
+  virtual void initPolicy(MachineBasicBlock::iterator Begin,
+                          MachineBasicBlock::iterator End,
+                          unsigned NumRegionInstrs) {}
+
+  /// Check if pressure tracking is needed before building the DAG and
+  /// initializing this strategy. Called after initPolicy.
+  virtual bool shouldTrackPressure() const { return true; }
 
   /// Initialize the strategy after building the DAG for a new region.
   virtual void initialize(ScheduleDAGMI *DAG) = 0;
@@ -227,6 +255,7 @@ protected:
   PressureDiffs SUPressureDiffs;
 
   /// Register pressure in this region computed by initRegPressure.
+  bool ShouldTrackPressure;
   IntervalPressure RegPressure;
   RegPressureTracker RPTracker;
 
@@ -259,8 +288,9 @@ public:
   ScheduleDAGMI(MachineSchedContext *C, MachineSchedStrategy *S):
     ScheduleDAGInstrs(*C->MF, *C->MLI, *C->MDT, /*IsPostRA=*/false, C->LIS),
     AA(C->AA), RegClassInfo(C->RegClassInfo), SchedImpl(S), DFSResult(0),
-    Topo(SUnits, &ExitSU), RPTracker(RegPressure), CurrentTop(),
-    TopRPTracker(TopPressure), CurrentBottom(), BotRPTracker(BotPressure),
+    Topo(SUnits, &ExitSU), ShouldTrackPressure(false),
+    RPTracker(RegPressure), CurrentTop(), TopRPTracker(TopPressure),
+    CurrentBottom(), BotRPTracker(BotPressure),
     NextClusterPred(NULL), NextClusterSucc(NULL) {
 #ifndef NDEBUG
     NumInstrsScheduled = 0;
@@ -268,6 +298,9 @@ public:
   }
 
   virtual ~ScheduleDAGMI();
+
+  /// \brief Return true if register pressure tracking is enabled.
+  bool isTrackingPressure() const { return ShouldTrackPressure; }
 
   /// Add a postprocessing step to the DAG builder.
   /// Mutations are applied in the order that they are added after normal DAG
@@ -380,7 +413,8 @@ protected:
 
   void updatePressureDiffs(ArrayRef<unsigned> LiveUses);
 
-  void updateScheduledPressure(const std::vector<unsigned> &NewMaxPressure);
+  void updateScheduledPressure(const SUnit *SU,
+                               const std::vector<unsigned> &NewMaxPressure);
 
   bool checkSchedLimit();
 

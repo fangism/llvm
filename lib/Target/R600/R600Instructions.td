@@ -926,12 +926,16 @@ class CNDE_Common <bits<5> inst> : R600_3OP <
 class CNDGT_Common <bits<5> inst> : R600_3OP <
   inst, "CNDGT",
   [(set f32:$dst, (selectcc f32:$src0, FP_ZERO, f32:$src1, f32:$src2, COND_GT))]
->;
+> {
+  let Itinerary = VecALU;
+}
 
 class CNDGE_Common <bits<5> inst> : R600_3OP <
   inst, "CNDGE",
   [(set f32:$dst, (selectcc f32:$src0, FP_ZERO, f32:$src1, f32:$src2, COND_GE))]
->;
+> {
+  let Itinerary = VecALU;
+}
 
 
 let isCodeGenOnly = 1, isPseudo = 1, Namespace = "AMDGPU"  in {
@@ -1001,35 +1005,30 @@ multiclass CUBE_Common <bits<11> inst> {
 class EXP_IEEE_Common <bits<11> inst> : R600_1OP_Helper <
   inst, "EXP_IEEE", fexp2
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class FLT_TO_INT_Common <bits<11> inst> : R600_1OP_Helper <
   inst, "FLT_TO_INT", fp_to_sint
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class INT_TO_FLT_Common <bits<11> inst> : R600_1OP_Helper <
   inst, "INT_TO_FLT", sint_to_fp
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class FLT_TO_UINT_Common <bits<11> inst> : R600_1OP_Helper <
   inst, "FLT_TO_UINT", fp_to_uint
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class UINT_TO_FLT_Common <bits<11> inst> : R600_1OP_Helper <
   inst, "UINT_TO_FLT", uint_to_fp
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
@@ -1040,7 +1039,6 @@ class LOG_CLAMPED_Common <bits<11> inst> : R600_1OP <
 class LOG_IEEE_Common <bits<11> inst> : R600_1OP_Helper <
   inst, "LOG_IEEE", flog2
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
@@ -1050,72 +1048,61 @@ class ASHR_Common <bits<11> inst> : R600_2OP_Helper <inst, "ASHR", sra>;
 class MULHI_INT_Common <bits<11> inst> : R600_2OP_Helper <
   inst, "MULHI_INT", mulhs
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 class MULHI_UINT_Common <bits<11> inst> : R600_2OP_Helper <
   inst, "MULHI", mulhu
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 class MULLO_INT_Common <bits<11> inst> : R600_2OP_Helper <
   inst, "MULLO_INT", mul
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 class MULLO_UINT_Common <bits<11> inst> : R600_2OP <inst, "MULLO_UINT", []> {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class RECIP_CLAMPED_Common <bits<11> inst> : R600_1OP <
   inst, "RECIP_CLAMPED", []
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class RECIP_IEEE_Common <bits<11> inst> : R600_1OP <
   inst, "RECIP_IEEE", [(set f32:$dst, (fdiv FP_ONE, f32:$src0))]
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class RECIP_UINT_Common <bits<11> inst> : R600_1OP_Helper <
   inst, "RECIP_UINT", AMDGPUurecip
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class RECIPSQRT_CLAMPED_Common <bits<11> inst> : R600_1OP_Helper <
   inst, "RECIPSQRT_CLAMPED", int_AMDGPU_rsq
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class RECIPSQRT_IEEE_Common <bits<11> inst> : R600_1OP <
   inst, "RECIPSQRT_IEEE", []
 > {
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class SIN_Common <bits<11> inst> : R600_1OP <
   inst, "SIN", [(set f32:$dst, (SIN_HW f32:$src0))]>{
   let Trig = 1;
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
 class COS_Common <bits<11> inst> : R600_1OP <
   inst, "COS", [(set f32:$dst, (COS_HW f32:$src0))]> {
   let Trig = 1;
-  let TransOnly = 1;
   let Itinerary = TransALU;
 }
 
@@ -1548,7 +1535,6 @@ let hasSideEffects = 1 in {
 
   def FLT_TO_INT_eg : FLT_TO_INT_Common<0x50> {
     let Pattern = [];
-    let TransOnly = 0;
     let Itinerary = AnyALU;
   }
 
@@ -1640,21 +1626,37 @@ class R600_LDS_1A <bits<6> lds_op, string name, list<dag> pattern> : R600_LDS <
   let DisableEncoding = "$dst";
 }
 
-class R600_LDS_1A1D <bits<6> lds_op, string name, list<dag> pattern> :
+class R600_LDS_1A1D <bits<6> lds_op, dag outs, string name, list<dag> pattern,
+                     string dst =""> :
     R600_LDS <
-  lds_op,
-  (outs),
+  lds_op, outs,
   (ins R600_Reg32:$src0, REL:$src0_rel, SEL:$src0_sel,
        R600_Reg32:$src1, REL:$src1_rel, SEL:$src1_sel,
        LAST:$last, R600_Pred:$pred_sel,
        BANK_SWIZZLE:$bank_swizzle),
-  "  "#name#" $last $src0$src0_rel, $src1$src1_rel, $pred_sel",
+  "  "#name#" $last "#dst#"$src0$src0_rel, $src1$src1_rel, $pred_sel",
   pattern
   > {
+
+  field string BaseOp;
 
   let src2 = 0;
   let src2_rel = 0;
   let LDS_1A1D = 1;
+}
+
+class R600_LDS_1A1D_NORET <bits<6> lds_op, string name, list<dag> pattern> :
+    R600_LDS_1A1D <lds_op, (outs), name, pattern> {
+  let BaseOp = name;
+}
+
+class R600_LDS_1A1D_RET <bits<6> lds_op, string name, list<dag> pattern> :
+    R600_LDS_1A1D <lds_op,  (outs R600_Reg32:$dst), name##"_RET", pattern, "OQAP, "> {
+
+  let BaseOp = name;
+  let usesCustomInserter = 1;
+  let DisableEncoding = "$dst";
+  let Defs = [OQAP];
 }
 
 class R600_LDS_1A2D <bits<6> lds_op, string name, list<dag> pattern> :
@@ -1670,14 +1672,22 @@ class R600_LDS_1A2D <bits<6> lds_op, string name, list<dag> pattern> :
   let LDS_1A2D = 1;
 }
 
-def LDS_WRITE : R600_LDS_1A1D <0xD, "LDS_WRITE",
+def LDS_ADD : R600_LDS_1A1D_NORET <0x0, "LDS_ADD", [] >;
+def LDS_SUB : R600_LDS_1A1D_NORET <0x1, "LDS_SUB", [] >;
+def LDS_WRITE : R600_LDS_1A1D_NORET <0xD, "LDS_WRITE",
   [(local_store (i32 R600_Reg32:$src1), R600_Reg32:$src0)]
 >;
-def LDS_BYTE_WRITE : R600_LDS_1A1D<0x12, "LDS_BYTE_WRITE",
+def LDS_BYTE_WRITE : R600_LDS_1A1D_NORET<0x12, "LDS_BYTE_WRITE",
   [(truncstorei8_local i32:$src1, i32:$src0)]
 >;
-def LDS_SHORT_WRITE : R600_LDS_1A1D<0x13, "LDS_SHORT_WRITE",
+def LDS_SHORT_WRITE : R600_LDS_1A1D_NORET<0x13, "LDS_SHORT_WRITE",
   [(truncstorei16_local i32:$src1, i32:$src0)]
+>;
+def LDS_ADD_RET : R600_LDS_1A1D_RET <0x20, "LDS_ADD",
+  [(set i32:$dst, (atomic_load_add_local i32:$src0, i32:$src1))]
+>;
+def LDS_SUB_RET : R600_LDS_1A1D_RET <0x21, "LDS_SUB",
+  [(set i32:$dst, (atomic_load_sub_local i32:$src0, i32:$src1))]
 >;
 def LDS_READ_RET : R600_LDS_1A <0x32, "LDS_READ_RET",
   [(set (i32 R600_Reg32:$dst), (local_load R600_Reg32:$src0))]
@@ -2442,3 +2452,11 @@ def : BitConvert <v4i32, v4f32, R600_Reg128>;
 def : DwordAddrPat  <i32, R600_Reg32>;
 
 } // End isR600toCayman Predicate
+
+def getLDSNoRetOp : InstrMapping {
+  let FilterClass = "R600_LDS_1A1D";
+  let RowFields = ["BaseOp"];
+  let ColFields = ["DisableEncoding"];
+  let KeyCol = ["$dst"];
+  let ValueCols = [[""""]];
+}

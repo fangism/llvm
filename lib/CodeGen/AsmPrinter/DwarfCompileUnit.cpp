@@ -100,7 +100,7 @@ int64_t CompileUnit::getDefaultLowerBound() const {
 
 /// addFlag - Add a flag that is true.
 void CompileUnit::addFlag(DIE *Die, uint16_t Attribute) {
-  if (!DD->useDarwinGDBCompat())
+  if (DD->getDwarfVersion() >= 4)
     Die->addValue(Attribute, dwarf::DW_FORM_flag_present,
                   DIEIntegerOne);
   else
@@ -796,8 +796,7 @@ DIE *CompileUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
       IsImplementation = (CT.getRunTimeLang() == 0) ||
         CT.isObjcClassComplete();
     }
-    unsigned Flags = IsImplementation ?
-                     DwarfAccelTable::eTypeFlagClassIsImplementation : 0;
+    unsigned Flags = IsImplementation ? dwarf::DW_FLAG_type_implementation : 0;
     addAccelType(Ty.getName(), std::make_pair(TyDIE, Flags));
   }
 
@@ -906,7 +905,7 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DIDerivedType DTy) {
 
   if (Tag == dwarf::DW_TAG_ptr_to_member_type)
       addDIEEntry(&Buffer, dwarf::DW_AT_containing_type, dwarf::DW_FORM_ref4,
-                  getOrCreateTypeDIE(DTy.getClassType()));
+                  getOrCreateTypeDIE(DD->resolve(DTy.getClassType())));
   // Add source line info if available and TyDesc is not a forward declaration.
   if (!DTy.isForwardDecl())
     addSourceLine(&Buffer, DTy);
@@ -1084,7 +1083,7 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
     if (CTy.isAppleBlockExtension())
       addFlag(&Buffer, dwarf::DW_AT_APPLE_block);
 
-    DICompositeType ContainingType = CTy.getContainingType();
+    DICompositeType ContainingType(DD->resolve(CTy.getContainingType()));
     if (DIDescriptor(ContainingType).isCompositeType())
       addDIEEntry(&Buffer, dwarf::DW_AT_containing_type, dwarf::DW_FORM_ref4,
                   getOrCreateTypeDIE(DIType(ContainingType)));
@@ -1242,17 +1241,6 @@ DIE *CompileUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   // Add function template parameters.
   addTemplateParams(*SPDie, SP.getTemplateParams());
 
-  // Unfortunately this code needs to stay here instead of below the
-  // AT_specification code in order to work around a bug in older
-  // gdbs that requires the linkage name to resolve multiple template
-  // functions.
-  // TODO: Remove this set of code when we get rid of the old gdb
-  // compatibility.
-  StringRef LinkageName = SP.getLinkageName();
-  if (!LinkageName.empty() && DD->useDarwinGDBCompat())
-    addString(SPDie, dwarf::DW_AT_MIPS_linkage_name,
-              GlobalValue::getRealLinkageName(LinkageName));
-
   // If this DIE is going to refer declaration info using AT_specification
   // then there is no need to add other attributes.
   if (DeclDie) {
@@ -1264,7 +1252,8 @@ DIE *CompileUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   }
 
   // Add the linkage name if we have one.
-  if (!LinkageName.empty() && !DD->useDarwinGDBCompat())
+  StringRef LinkageName = SP.getLinkageName();
+  if (!LinkageName.empty())
     addString(SPDie, dwarf::DW_AT_MIPS_linkage_name,
               GlobalValue::getRealLinkageName(LinkageName));
 
@@ -1300,7 +1289,7 @@ DIE *CompileUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
     addUInt(Block, 0, dwarf::DW_FORM_udata, SP.getVirtualIndex());
     addBlock(SPDie, dwarf::DW_AT_vtable_elem_location, 0, Block);
     ContainingTypeMap.insert(std::make_pair(SPDie,
-                                            SP.getContainingType()));
+                                    DD->resolve(SP.getContainingType())));
   }
 
   if (!SP.isDefinition()) {
@@ -1459,21 +1448,15 @@ void CompileUnit::createGlobalVariableDIE(const MDNode *N) {
     } else {
       addBlock(VariableDIE, dwarf::DW_AT_location, 0, Block);
     }
-    // Add linkage name.
+    // Add the linkage name.
     StringRef LinkageName = GV.getLinkageName();
-    if (!LinkageName.empty()) {
+    if (!LinkageName.empty())
       // From DWARF4: DIEs to which DW_AT_linkage_name may apply include:
       // TAG_common_block, TAG_constant, TAG_entry_point, TAG_subprogram and
       // TAG_variable.
       addString(IsStaticMember && VariableSpecDIE ?
                 VariableSpecDIE : VariableDIE, dwarf::DW_AT_MIPS_linkage_name,
                 GlobalValue::getRealLinkageName(LinkageName));
-      // In compatibility mode with older gdbs we put the linkage name on both
-      // the TAG_variable DIE and on the TAG_member DIE.
-      if (IsStaticMember && VariableSpecDIE && DD->useDarwinGDBCompat())
-        addString(VariableDIE, dwarf::DW_AT_MIPS_linkage_name,
-                  GlobalValue::getRealLinkageName(LinkageName));
-    }
   } else if (const ConstantInt *CI =
              dyn_cast_or_null<ConstantInt>(GV.getConstant())) {
     // AT_const_value was added when the static member was created. To avoid

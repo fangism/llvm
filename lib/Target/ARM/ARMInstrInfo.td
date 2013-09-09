@@ -165,8 +165,6 @@ def ARMeh_sjlj_longjmp: SDNode<"ARMISD::EH_SJLJ_LONGJMP",
                                SDT_ARMEH_SJLJ_Longjmp,
                                [SDNPHasChain, SDNPSideEffect]>;
 
-def ARMMemBarrier     : SDNode<"ARMISD::MEMBARRIER", SDT_ARMMEMBARRIER,
-                               [SDNPHasChain, SDNPSideEffect]>;
 def ARMMemBarrierMCR  : SDNode<"ARMISD::MEMBARRIER_MCR", SDT_ARMMEMBARRIER,
                                [SDNPHasChain, SDNPSideEffect]>;
 def ARMPreload        : SDNode<"ARMISD::PRELOAD", SDT_ARMPREFETCH,
@@ -1754,6 +1752,16 @@ def BKPT : AInoP<(outs), (ins imm0_65535:$val), MiscFrm, NoItinerary,
   let Inst{3-0} = val{3-0};
   let Inst{19-8} = val{15-4};
   let Inst{27-20} = 0b00010010;
+  let Inst{31-28} = 0xe; // AL
+  let Inst{7-4} = 0b0111;
+}
+
+def HLT : AInoP<(outs), (ins imm0_65535:$val), MiscFrm, NoItinerary,
+                 "hlt", "\t$val", []>, Requires<[IsARM, HasV8]> {
+  bits<16> val;
+  let Inst{3-0} = val{3-0};
+  let Inst{19-8} = val{15-4};
+  let Inst{27-20} = 0b00010000;
   let Inst{31-28} = 0xe; // AL
   let Inst{7-4} = 0b0111;
 }
@@ -4255,7 +4263,7 @@ def instsyncb_opt : Operand<i32> {
 // memory barriers protect the atomic sequences
 let hasSideEffects = 1 in {
 def DMB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
-                "dmb", "\t$opt", [(ARMMemBarrier (i32 imm:$opt))]>,
+                "dmb", "\t$opt", [(int_arm_dmb (i32 imm0_15:$opt))]>,
                 Requires<[IsARM, HasDB]> {
   bits<4> opt;
   let Inst{31-4} = 0xf57ff05;
@@ -4264,7 +4272,7 @@ def DMB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
 }
 
 def DSB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
-                "dsb", "\t$opt", []>,
+                "dsb", "\t$opt", [(int_arm_dsb (i32 imm0_15:$opt))]>,
                 Requires<[IsARM, HasDB]> {
   bits<4> opt;
   let Inst{31-4} = 0xf57ff04;

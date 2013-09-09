@@ -297,17 +297,6 @@ class BGEZ_FM<bits<6> op, bits<5> funct> {
   let Inst{15-0}  = offset;
 }
 
-class B_FM {
-  bits<16> offset;
-
-  bits<32> Inst;
-
-  let Inst{31-26} = 4;
-  let Inst{25-21} = 0;
-  let Inst{20-16} = 0;
-  let Inst{15-0}  = offset;
-}
-
 class SLTI_FM<bits<6> op> : StdArch {
   bits<5> rt;
   bits<5> rs;
@@ -321,7 +310,7 @@ class SLTI_FM<bits<6> op> : StdArch {
   let Inst{15-0}  = imm16;
 }
 
-class MFLO_FM<bits<6> funct> {
+class MFLO_FM<bits<6> funct> : StdArch {
   bits<5> rd;
 
   bits<32> Inst;
@@ -333,7 +322,7 @@ class MFLO_FM<bits<6> funct> {
   let Inst{5-0}   = funct;
 }
 
-class MTLO_FM<bits<6> funct> {
+class MTLO_FM<bits<6> funct> : StdArch {
   bits<5> rs;
 
   bits<32> Inst;
@@ -730,7 +719,7 @@ class CMov_I_F_FM<bits<6> funct, bits<5> fmt> {
   let Inst{5-0} = funct;
 }
 
-class CMov_F_I_FM<bit tf> {
+class CMov_F_I_FM<bit tf> : StdArch {
   bits<5> rd;
   bits<5> rs;
   bits<3> fcc;

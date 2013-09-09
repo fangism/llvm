@@ -60,8 +60,12 @@ R600TargetLowering::R600TargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::SETCC, MVT::f32, Expand);
   setOperationAction(ISD::FP_TO_UINT, MVT::i1, Custom);
 
-  setOperationAction(ISD::SELECT, MVT::i32, Custom);
-  setOperationAction(ISD::SELECT, MVT::f32, Custom);
+  setOperationAction(ISD::SELECT, MVT::i32, Expand);
+  setOperationAction(ISD::SELECT, MVT::f32, Expand);
+  setOperationAction(ISD::SELECT, MVT::v2i32, Expand);
+  setOperationAction(ISD::SELECT, MVT::v2f32, Expand);
+  setOperationAction(ISD::SELECT, MVT::v4i32, Expand);
+  setOperationAction(ISD::SELECT, MVT::v4f32, Expand);
 
   // Legalize loads and stores to the private address space.
   setOperationAction(ISD::LOAD, MVT::i32, Custom);
@@ -105,16 +109,24 @@ MachineBasicBlock * R600TargetLowering::EmitInstrWithCustomInserter(
 
   switch (MI->getOpcode()) {
   default:
-    if (TII->get(MI->getOpcode()).TSFlags & R600_InstFlag::LDS_1A) {
-      MachineInstrBuilder NewMI = BuildMI(*BB, I, BB->findDebugLoc(I),
-                                          TII->get(MI->getOpcode()),
-                                          AMDGPU::OQAP);
+    if (TII->isLDSInstr(MI->getOpcode()) &&
+        TII->getOperandIdx(MI->getOpcode(), AMDGPU::OpName::dst) != -1) {
+      int DstIdx = TII->getOperandIdx(MI->getOpcode(), AMDGPU::OpName::dst);
+      assert(DstIdx != -1);
+      MachineInstrBuilder NewMI;
+      if (!MRI.use_empty(MI->getOperand(DstIdx).getReg())) {
+        NewMI = BuildMI(*BB, I, BB->findDebugLoc(I), TII->get(MI->getOpcode()),
+                        AMDGPU::OQAP);
+        TII->buildDefaultInstruction(*BB, I, AMDGPU::MOV,
+                                     MI->getOperand(0).getReg(),
+                                     AMDGPU::OQAP);
+      } else {
+        NewMI = BuildMI(*BB, I, BB->findDebugLoc(I),
+                        TII->get(AMDGPU::getLDSNoRetOp(MI->getOpcode())));
+      }
       for (unsigned i = 1, e = MI->getNumOperands(); i < e; ++i) {
         NewMI.addOperand(MI->getOperand(i));
       }
-      TII->buildDefaultInstruction(*BB, I, AMDGPU::MOV,
-                                   MI->getOperand(0).getReg(),
-                                   AMDGPU::OQAP);
     } else {
       return AMDGPUTargetLowering::EmitInstrWithCustomInserter(MI, BB);
     }
@@ -480,7 +492,6 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
   case ISD::FCOS:
   case ISD::FSIN: return LowerTrig(Op, DAG);
   case ISD::SELECT_CC: return LowerSELECT_CC(Op, DAG);
-  case ISD::SELECT: return LowerSELECT(Op, DAG);
   case ISD::STORE: return LowerSTORE(Op, DAG);
   case ISD::LOAD: return LowerLOAD(Op, DAG);
   case ISD::FrameIndex: return LowerFrameIndex(Op, DAG);
@@ -927,17 +938,6 @@ SDValue R600TargetLowering::LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const 
   return DAG.getNode(ISD::SELECT_CC, DL, VT,
       Cond, HWFalse,
       True, False,
-      DAG.getCondCode(ISD::SETNE));
-}
-
-SDValue R600TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
-  return DAG.getNode(ISD::SELECT_CC,
-      SDLoc(Op),
-      Op.getValueType(),
-      Op.getOperand(0),
-      DAG.getConstant(0, MVT::i32),
-      Op.getOperand(1),
-      Op.getOperand(2),
       DAG.getCondCode(ISD::SETNE));
 }
 

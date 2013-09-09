@@ -17,6 +17,7 @@
 #ifndef LLVM_DEBUGINFO_H
 #define LLVM_DEBUGINFO_H
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -45,12 +46,19 @@ namespace llvm {
   class DILexicalBlockFile;
   class DIVariable;
   class DIType;
+  class DITypeRef;
   class DIObjCProperty;
+
+  /// Maps from type identifier to the actual MDNode.
+  typedef DenseMap<const MDString *, MDNode*> DITypeIdentifierMap;
 
   /// DIDescriptor - A thin wraper around MDNode to access encoded debug info.
   /// This should not be stored in a container, because the underlying MDNode
   /// may change in certain situations.
   class DIDescriptor {
+    // Befriends DITypeRef so DITypeRef can befriend the protected member
+    // function: getFieldAs<DITypeRef>.
+    friend class DITypeRef;
   public:
     enum {
       FlagPrivate            = 1 << 0,
@@ -142,6 +150,10 @@ namespace llvm {
     /// dump - print descriptor to dbgs() with a newline.
     void dump() const;
   };
+
+  /// Specialize getFieldAs to handle fields that are references to DITypes.
+  template <>
+  DITypeRef DIDescriptor::getFieldAs<DITypeRef>(unsigned Elt) const;
 
   /// DISubrange - This is used to represent ranges, for array bounds.
   class DISubrange : public DIDescriptor {
@@ -259,10 +271,30 @@ namespace llvm {
     /// isUnsignedDIType - Return true if type encoding is unsigned.
     bool isUnsignedDIType();
 
+    /// Generate a reference to this DIType. Uses the type identifier instead
+    /// of the actual MDNode if possible, to help type uniquing.
+    DITypeRef generateRef();
+
     /// replaceAllUsesWith - Replace all uses of debug info referenced by
     /// this descriptor.
     void replaceAllUsesWith(DIDescriptor &D);
     void replaceAllUsesWith(MDNode *D);
+  };
+
+  /// Represents reference to a DIType, abstracts over direct and
+  /// identifier-based metadata type references.
+  class DITypeRef {
+    template <typename DescTy>
+    friend DescTy DIDescriptor::getFieldAs(unsigned Elt) const;
+    friend DITypeRef DIType::generateRef();
+
+    /// TypeVal can be either a MDNode or a MDString, in the latter,
+    /// MDString specifies the type identifier.
+    const Value *TypeVal;
+    explicit DITypeRef(const Value *V);
+  public:
+    DIType resolve(const DITypeIdentifierMap &Map) const;
+    operator Value *() const { return const_cast<Value*>(TypeVal); }
   };
 
   /// DIBasicType - A basic type, like 'int' or 'float'.
@@ -296,9 +328,9 @@ namespace llvm {
     /// associated with one.
     MDNode *getObjCProperty() const;
 
-    DIType getClassType() const {
+    DITypeRef getClassType() const {
       assert(getTag() == dwarf::DW_TAG_ptr_to_member_type);
-      return getFieldAs<DIType>(10);
+      return getFieldAs<DITypeRef>(10);
     }
 
     Constant *getConstant() const {
@@ -326,8 +358,8 @@ namespace llvm {
     void setTypeArray(DIArray Elements, DIArray TParams = DIArray());
     void addMember(DIDescriptor D);
     unsigned getRunTimeLang() const { return getUnsignedField(11); }
-    DICompositeType getContainingType() const {
-      return getFieldAs<DICompositeType>(12);
+    DITypeRef getContainingType() const {
+      return getFieldAs<DITypeRef>(12);
     }
     void setContainingType(DICompositeType ContainingType);
     DIArray getTemplateParams() const { return getFieldAs<DIArray>(13); }
@@ -394,8 +426,8 @@ namespace llvm {
     unsigned getVirtuality() const { return getUnsignedField(10); }
     unsigned getVirtualIndex() const { return getUnsignedField(11); }
 
-    DICompositeType getContainingType() const {
-      return getFieldAs<DICompositeType>(12);
+    DITypeRef getContainingType() const {
+      return getFieldAs<DITypeRef>(12);
     }
 
     unsigned getFlags() const {
@@ -719,6 +751,9 @@ namespace llvm {
 
   /// cleanseInlinedVariable - Remove inlined scope from the variable.
   DIVariable cleanseInlinedVariable(MDNode *DV, LLVMContext &VMContext);
+
+  /// Construct DITypeIdentifierMap by going through retained types of each CU.
+  DITypeIdentifierMap generateDITypeIdentifierMap(const NamedMDNode *CU_Nodes);
 
   /// DebugInfoFinder tries to list all debug info MDNodes used in a module. To
   /// list debug info MDNodes used by an instruction, DebugInfoFinder uses

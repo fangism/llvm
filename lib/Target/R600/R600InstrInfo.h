@@ -68,6 +68,8 @@ namespace llvm {
 
   bool isTransOnly(unsigned Opcode) const;
   bool isTransOnly(const MachineInstr *MI) const;
+  bool isVectorOnly(unsigned Opcode) const;
+  bool isVectorOnly(const MachineInstr *MI) const;
   bool isExport(unsigned Opcode) const;
 
   bool usesVertexCache(unsigned Opcode) const;
@@ -272,6 +274,12 @@ namespace llvm {
   /// \brief Clear the specified flag on the instruction.
   void clearFlag(MachineInstr *MI, unsigned Operand, unsigned Flag) const;
 };
+
+namespace AMDGPU {
+
+int getLDSNoRetOp(uint16_t Opcode);
+
+} //End namespace AMDGPU
 
 } // End llvm namespace
 

@@ -425,6 +425,17 @@ static bool fieldIsMDString(const MDNode *DbgNode, unsigned Elt) {
   return !Fld || isa<MDString>(Fld);
 }
 
+/// Check if a value can be a TypeRef.
+static bool isTypeRef(const Value *Val) {
+  return !Val || isa<MDString>(Val) || isa<MDNode>(Val);
+}
+
+/// Check if a field at position Elt of a MDNode can be a TypeRef.
+static bool fieldIsTypeRef(const MDNode *DbgNode, unsigned Elt) {
+  Value *Fld = getField(DbgNode, Elt);
+  return isTypeRef(Fld);
+}
+
 /// Verify - Verify that a type descriptor is well formed.
 bool DIType::Verify() const {
   if (!isType())
@@ -470,8 +481,8 @@ bool DIDerivedType::Verify() const {
   if (!fieldIsMDNode(DbgNode, 9))
     return false;
   if (getTag() == dwarf::DW_TAG_ptr_to_member_type)
-    // Make sure ClassType @ field 10 is MDNode.
-    if (!fieldIsMDNode(DbgNode, 10))
+    // Make sure ClassType @ field 10 is a TypeRef.
+    if (!fieldIsTypeRef(DbgNode, 10))
       return false;
 
   return isDerivedType() && DbgNode->getNumOperands() >= 10 &&
@@ -486,7 +497,7 @@ bool DICompositeType::Verify() const {
   // Make sure DerivedFrom @ field 9 and ContainingType @ field 12 are MDNodes.
   if (!fieldIsMDNode(DbgNode, 9))
     return false;
-  if (!fieldIsMDNode(DbgNode, 12))
+  if (!fieldIsTypeRef(DbgNode, 12))
     return false;
 
   // Make sure the type identifier at field 14 is MDString, it can be null.
@@ -513,7 +524,7 @@ bool DISubprogram::Verify() const {
   if (!fieldIsMDNode(DbgNode, 7))
     return false;
   // Containing type @ field 12.
-  if (!fieldIsMDNode(DbgNode, 12))
+  if (!fieldIsTypeRef(DbgNode, 12))
     return false;
   return DbgNode->getNumOperands() == 20;
 }
@@ -696,10 +707,21 @@ void DICompositeType::addMember(DIDescriptor D) {
   setTypeArray(DIArray(MDNode::get(DbgNode->getContext(), M)));
 }
 
+/// Generate a reference to this DIType. Uses the type identifier instead
+/// of the actual MDNode if possible, to help type uniquing.
+DITypeRef DIType::generateRef() {
+  if (!isCompositeType())
+    return DITypeRef(*this);
+  DICompositeType DTy(DbgNode);
+  if (!DTy.getIdentifier())
+    return DITypeRef(*this);
+  return DITypeRef(DTy.getIdentifier());
+}
+
 /// \brief Set the containing type.
 void DICompositeType::setContainingType(DICompositeType ContainingType) {
   TrackingVH<MDNode> N(*this);
-  N->replaceOperandWith(12, ContainingType);
+  N->replaceOperandWith(12, ContainingType.generateRef());
   DbgNode = N;
 }
 
@@ -921,6 +943,32 @@ bool llvm::isSubprogramContext(const MDNode *Context) {
   if (D.isType())
     return isSubprogramContext(DIType(Context).getContext());
   return false;
+}
+
+/// Update DITypeIdentifierMap by going through retained types of each CU.
+DITypeIdentifierMap llvm::generateDITypeIdentifierMap(
+                              const NamedMDNode *CU_Nodes) {
+  DITypeIdentifierMap Map;
+  for (unsigned CUi = 0, CUe = CU_Nodes->getNumOperands(); CUi != CUe; ++CUi) {
+    DICompileUnit CU(CU_Nodes->getOperand(CUi));
+    DIArray Retain = CU.getRetainedTypes();
+    for (unsigned Ti = 0, Te = Retain.getNumElements(); Ti != Te; ++Ti) {
+      if (!Retain.getElement(Ti).isCompositeType())
+        continue;
+      DICompositeType Ty(Retain.getElement(Ti));
+      if (MDString *TypeId = Ty.getIdentifier()) {
+        // Definition has priority over declaration.
+        // Try to insert (TypeId, Ty) to Map.
+        std::pair<DITypeIdentifierMap::iterator, bool> P =
+            Map.insert(std::make_pair(TypeId, Ty));
+        // If TypeId already exists in Map and this is a definition, replace
+        // whatever we had (declaration or definition) with the definition.
+        if (!P.second && !Ty.isForwardDecl())
+          P.first->second = Ty;
+      }
+    }
+  }
+  return Map;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1377,4 +1425,35 @@ void DIVariable::printExtendedName(raw_ostream &OS) const {
       OS << "]";
     }
   }
+}
+
+DITypeRef::DITypeRef(const Value *V) : TypeVal(V) {
+  assert(isTypeRef(V) && "DITypeRef should be a MDString or MDNode");
+}
+
+/// Given a DITypeIdentifierMap, tries to find the corresponding
+/// DIType for a DITypeRef.
+DIType DITypeRef::resolve(const DITypeIdentifierMap &Map) const {
+  if (!TypeVal)
+    return NULL;
+
+  if (const MDNode *MD = dyn_cast<MDNode>(TypeVal)) {
+    assert(DIType(MD).isType() &&
+           "MDNode in DITypeRef should be a DIType.");
+    return MD;
+  }
+
+  const MDString *MS = cast<MDString>(TypeVal);
+  // Find the corresponding MDNode.
+  DITypeIdentifierMap::const_iterator Iter = Map.find(MS);
+  assert(Iter != Map.end() && "Identifier not in the type map?");
+  assert(DIType(Iter->second).isType() &&
+         "MDNode in DITypeIdentifierMap should be a DIType.");
+  return Iter->second;
+}
+
+/// Specialize getFieldAs to handle fields that are references to DITypes.
+template <>
+DITypeRef DIDescriptor::getFieldAs<DITypeRef>(unsigned Elt) const {
+  return DITypeRef(getField(DbgNode, Elt));
 }

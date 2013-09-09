@@ -3155,7 +3155,7 @@ def t2MOVCCi32imm
 // memory barriers protect the atomic sequences
 let hasSideEffects = 1 in {
 def t2DMB : T2I<(outs), (ins memb_opt:$opt), NoItinerary,
-                "dmb", "\t$opt", [(ARMMemBarrier (i32 imm:$opt))]>,
+                "dmb", "\t$opt", [(int_arm_dmb (i32 imm0_15:$opt))]>,
                 Requires<[HasDB]> {
   bits<4> opt;
   let Inst{31-4} = 0xf3bf8f5;
@@ -3164,7 +3164,8 @@ def t2DMB : T2I<(outs), (ins memb_opt:$opt), NoItinerary,
 }
 
 def t2DSB : T2I<(outs), (ins memb_opt:$opt), NoItinerary,
-                "dsb", "\t$opt", []>, Requires<[HasDB]> {
+                "dsb", "\t$opt", [(int_arm_dsb (i32 imm0_15:$opt))]>,
+                Requires<[HasDB]> {
   bits<4> opt;
   let Inst{31-4} = 0xf3bf8f4;
   let Inst{3-0} = opt;
@@ -3644,6 +3645,20 @@ def t2SMC : T2I<(outs), (ins imm0_15:$opt), NoItinerary, "smc", "\t$opt",
   bits<4> opt;
   let Inst{19-16} = opt;
 }
+
+class T2DCPS<bits<2> opt, string opc>
+  : T2I<(outs), (ins), NoItinerary, opc, "", []>, Requires<[IsThumb2, HasV8]> {
+  let Inst{31-27} = 0b11110;
+  let Inst{26-20} = 0b1111000;
+  let Inst{19-16} = 0b1111;
+  let Inst{15-12} = 0b1000;
+  let Inst{11-2} = 0b0000000000;
+  let Inst{1-0} = opt;
+}
+
+def t2DCPS1 : T2DCPS<0b01, "dcps1">;
+def t2DCPS2 : T2DCPS<0b10, "dcps2">;
+def t2DCPS3 : T2DCPS<0b11, "dcps3">;
 
 class T2SRS<bits<2> Op, bit W, dag oops, dag iops, InstrItinClass itin,
             string opc, string asm, list<dag> pattern>

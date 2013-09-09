@@ -59,8 +59,8 @@ const char *llvm::dwarf::TagString(unsigned Tag) {
   case DW_TAG_namelist_item:             return "DW_TAG_namelist_item";
   case DW_TAG_packed_type:               return "DW_TAG_packed_type";
   case DW_TAG_subprogram:                return "DW_TAG_subprogram";
-  case DW_TAG_template_type_parameter:  return "DW_TAG_template_type_parameter";
-  case DW_TAG_template_value_parameter:return "DW_TAG_template_value_parameter";
+  case DW_TAG_template_type_parameter:   return "DW_TAG_template_type_parameter";
+  case DW_TAG_template_value_parameter:  return "DW_TAG_template_value_parameter";
   case DW_TAG_thrown_type:               return "DW_TAG_thrown_type";
   case DW_TAG_try_block:                 return "DW_TAG_try_block";
   case DW_TAG_variant_part:              return "DW_TAG_variant_part";
@@ -720,6 +720,22 @@ const char *llvm::dwarf::CallFrameString(unsigned Encoding) {
   case DW_CFA_GNU_args_size:             return "DW_CFA_GNU_args_size";
   case DW_CFA_lo_user:                   return "DW_CFA_lo_user";
   case DW_CFA_hi_user:                   return "DW_CFA_hi_user";
+  }
+  return 0;
+}
+
+const char *llvm::dwarf::AtomTypeString(unsigned AT) {
+  switch (AT) {
+  case dwarf::DW_ATOM_null:
+    return "DW_ATOM_null";
+  case dwarf::DW_ATOM_die_offset:
+    return "DW_ATOM_die_offset";
+  case DW_ATOM_cu_offset:
+    return "DW_ATOM_cu_offset";
+  case DW_ATOM_die_tag:
+    return "DW_ATOM_die_tag";
+  case DW_ATOM_type_flags:
+    return "DW_ATOM_type_flags";
   }
   return 0;
 }

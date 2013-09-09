@@ -2521,7 +2521,7 @@ void ARMOperand::print(raw_ostream &OS) const {
     getImm()->print(OS);
     break;
   case k_MemBarrierOpt:
-    OS << "<ARM_MB::" << MemBOptToString(getMemBarrierOpt()) << ">";
+    OS << "<ARM_MB::" << MemBOptToString(getMemBarrierOpt(), false) << ">";
     break;
   case k_InstSyncBarrierOpt:
     OS << "<ARM_ISB::" << InstSyncBOptToString(getInstSyncBarrierOpt()) << ">";
@@ -3466,17 +3466,26 @@ parseMemBarrierOptOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
     Opt = StringSwitch<unsigned>(OptStr.slice(0, OptStr.size()).lower())
       .Case("sy",    ARM_MB::SY)
       .Case("st",    ARM_MB::ST)
+      .Case("ld",    ARM_MB::LD)
       .Case("sh",    ARM_MB::ISH)
       .Case("ish",   ARM_MB::ISH)
       .Case("shst",  ARM_MB::ISHST)
       .Case("ishst", ARM_MB::ISHST)
+      .Case("ishld", ARM_MB::ISHLD)
       .Case("nsh",   ARM_MB::NSH)
       .Case("un",    ARM_MB::NSH)
       .Case("nshst", ARM_MB::NSHST)
+      .Case("nshld", ARM_MB::NSHLD)
       .Case("unst",  ARM_MB::NSHST)
       .Case("osh",   ARM_MB::OSH)
       .Case("oshst", ARM_MB::OSHST)
+      .Case("oshld", ARM_MB::OSHLD)
       .Default(~0U);
+
+    // ishld, oshld, nshld and ld are only available from ARMv8.
+    if (!hasV8Ops() && (Opt == ARM_MB::ISHLD || Opt == ARM_MB::OSHLD ||
+                        Opt == ARM_MB::NSHLD || Opt == ARM_MB::LD))
+      Opt = ~0U;
 
     if (Opt == ~0U)
       return MatchOperand_NoMatch;
@@ -4687,7 +4696,7 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
       Mnemonic == "mls"   || Mnemonic == "smmls"  || Mnemonic == "vcls"  ||
       Mnemonic == "vmls"  || Mnemonic == "vnmls"  || Mnemonic == "vacge" ||
       Mnemonic == "vcge"  || Mnemonic == "vclt"   || Mnemonic == "vacgt" ||
-      Mnemonic == "vaclt" || Mnemonic == "vacle"  ||
+      Mnemonic == "vaclt" || Mnemonic == "vacle"  || Mnemonic == "hlt" ||
       Mnemonic == "vcgt"  || Mnemonic == "vcle"   || Mnemonic == "smlal" ||
       Mnemonic == "umaal" || Mnemonic == "umlal"  || Mnemonic == "vabal" ||
       Mnemonic == "vmlal" || Mnemonic == "vpadal" || Mnemonic == "vqdmlal" ||
@@ -4793,7 +4802,7 @@ getMnemonicAcceptInfo(StringRef Mnemonic, bool &CanAcceptCarrySet,
 
   if (Mnemonic == "bkpt" || Mnemonic == "cbnz" || Mnemonic == "setend" ||
       Mnemonic == "cps" ||  Mnemonic == "it" ||  Mnemonic == "cbz" ||
-      Mnemonic == "trap" || Mnemonic == "setend" ||
+      Mnemonic == "trap" || Mnemonic == "hlt" ||
       Mnemonic.startswith("cps") || Mnemonic.startswith("vsel") ||
       Mnemonic == "vmaxnm" || Mnemonic == "vminnm" || Mnemonic == "vcvta" ||
       Mnemonic == "vcvtn" || Mnemonic == "vcvtp" || Mnemonic == "vcvtm" ||
@@ -5297,6 +5306,16 @@ static const MCInstrDesc &getInstDesc(unsigned Opcode) {
   return ARMInsts[Opcode];
 }
 
+// Return true if instruction has the interesting property of being
+// allowed in IT blocks, but not being predicable.
+static bool instIsBreakpoint(const MCInst &Inst) {
+    return Inst.getOpcode() == ARM::tBKPT ||
+           Inst.getOpcode() == ARM::BKPT ||
+           Inst.getOpcode() == ARM::tHLT ||
+           Inst.getOpcode() == ARM::HLT;
+
+}
+
 // FIXME: We would really like to be able to tablegen'erate this.
 bool ARMAsmParser::
 validateInstruction(MCInst &Inst,
@@ -5305,11 +5324,10 @@ validateInstruction(MCInst &Inst,
   SMLoc Loc = Operands[0]->getStartLoc();
 
   // Check the IT block state first.
-  // NOTE: BKPT instruction has the interesting property of being
-  // allowed in IT blocks, but not being predicable.  It just always
-  // executes.
-  if (inITBlock() && Inst.getOpcode() != ARM::tBKPT &&
-      Inst.getOpcode() != ARM::BKPT) {
+  // NOTE: BKPT and HLT instructions have the interesting property of being
+  // allowed in IT blocks, but not being predicable.  They just always
+  // execute.
+  if (inITBlock() && !instIsBreakpoint(Inst)) {
     unsigned bit = 1;
     if (ITState.FirstCond)
       ITState.FirstCond = false;

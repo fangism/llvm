@@ -38,12 +38,12 @@ namespace SystemZISD {
     // accesses (LARL).  Operand 0 is the address.
     PCREL_WRAPPER,
 
-    // Signed integer and floating-point comparisons.  The operands are the
-    // two values to compare.
-    CMP,
+    // Integer comparisons.  There are three operands: the two values
+    // to compare, and an integer of type SystemZICMP.
+    ICMP,
 
-    // Likewise unsigned integer comparison.
-    UCMP,
+    // Floating-point comparisons.  The two operands are the values to compare.
+    FCMP,
 
     // Test under mask.  The first operand is ANDed with the second operand
     // and the condition codes are set on the result.
@@ -92,6 +92,14 @@ namespace SystemZISD {
     // followed by straight-line code to handle the rest (if any).
     // The value of X is passed as an additional operand.
     MVC_LOOP,
+
+    // Similar to MVC and MVC_LOOP, but for logic operations (AND, OR, XOR).
+    NC,
+    NC_LOOP,
+    OC,
+    OC_LOOP,
+    XC,
+    XC_LOOP,
 
     // Use CLC to compare two blocks of memory, with the same comments
     // as for MVC and MVC_LOOP.
@@ -151,6 +159,16 @@ namespace SystemZISD {
     // the first operand.  The code is 1 for a load prefetch and 2 for
     // a store prefetch.
     PREFETCH
+  };
+}
+
+namespace SystemZICMP {
+  // Describes whether an integer comparison needs to be signed or unsigned,
+  // or whether either type is OK.
+  enum {
+    Any,
+    UnsignedOnly,
+    SignedOnly
   };
 }
 
