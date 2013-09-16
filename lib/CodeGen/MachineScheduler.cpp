@@ -57,7 +57,7 @@ static cl::opt<bool> EnableRegPressure("misched-regpressure", cl::Hidden,
   cl::desc("Enable register pressure scheduling."), cl::init(true));
 
 static cl::opt<bool> EnableCyclicPath("misched-cyclicpath", cl::Hidden,
-  cl::desc("Enable cyclic critical path analysis."), cl::init(false));
+  cl::desc("Enable cyclic critical path analysis."), cl::init(true));
 
 static cl::opt<bool> EnableLoadCluster("misched-cluster", cl::Hidden,
   cl::desc("Enable load clustering."), cl::init(true));
@@ -2492,7 +2492,10 @@ void ConvergingScheduler::tryCandidate(SchedCandidate &Cand,
     return;
 
   // For loops that are acyclic path limited, aggressively schedule for latency.
-  if (Rem.IsAcyclicLatencyLimited && tryLatency(TryCand, Cand, Zone))
+  // This can result in very long dependence chains scheduled in sequence, so
+  // once every cycle (when CurrMOps == 0), switch to normal heuristics.
+  if (Rem.IsAcyclicLatencyLimited && !Zone.CurrMOps
+      && tryLatency(TryCand, Cand, Zone))
     return;
 
   // Keep clustered nodes together to encourage downstream peephole

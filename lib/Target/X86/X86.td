@@ -122,7 +122,8 @@ def FeatureMOVBE   : SubtargetFeature<"movbe", "HasMOVBE", "true",
 def FeatureRDRAND  : SubtargetFeature<"rdrnd", "HasRDRAND", "true",
                                       "Support RDRAND instruction">;
 def FeatureF16C    : SubtargetFeature<"f16c", "HasF16C", "true",
-                       "Support 16-bit floating point conversion instructions">;
+                       "Support 16-bit floating point conversion instructions",
+                       [FeatureAVX]>;
 def FeatureFSGSBase : SubtargetFeature<"fsgsbase", "HasFSGSBase", "true",
                                        "Support FS/GS Base instructions">;
 def FeatureLZCNT   : SubtargetFeature<"lzcnt", "HasLZCNT", "true",
@@ -137,6 +138,9 @@ def FeatureHLE     : SubtargetFeature<"hle", "HasHLE", "true",
                                       "Support HLE">;
 def FeatureADX     : SubtargetFeature<"adx", "HasADX", "true",
                                       "Support ADX instructions">;
+def FeatureSHA     : SubtargetFeature<"sha", "HasSHA", "true",
+                                      "Enable SHA instructions",
+                                      [FeatureSSE2]>;
 def FeaturePRFCHW  : SubtargetFeature<"prfchw", "HasPRFCHW", "true",
                                       "Support PRFCHW instructions">;
 def FeatureRDSEED  : SubtargetFeature<"rdseed", "HasRDSEED", "true",
@@ -163,9 +167,16 @@ include "X86Schedule.td"
 
 def ProcIntelAtom : SubtargetFeature<"atom", "X86ProcFamily", "IntelAtom",
                     "Intel Atom processors">;
+def ProcIntelSLM  : SubtargetFeature<"slm", "X86ProcFamily", "IntelSLM",
+                    "Intel Silvermont processors">;
 
 class Proc<string Name, list<SubtargetFeature> Features>
  : ProcessorModel<Name, GenericModel, Features>;
+
+//class AtomProc<string Name, list<SubtargetFeature> Features>
+// : ProcessorModel<Name, AtomModel, Features>;
+//class SLMProc<string Name, list<SubtargetFeature> Features>
+// : ProcessorModel<Name, SLMModel, Features>;
 
 def : Proc<"generic",         []>;
 def : Proc<"i386",            []>;
@@ -206,15 +217,14 @@ def : ProcessorModel<"atom", AtomModel,
                       FeatureLEAUsesAG,
                       FeaturePadShortFunctions]>;
 
-// Silvermont.
-def : ProcessorModel<"slm", AtomModel,
-                     [ProcIntelAtom, FeatureSSE42, FeatureCMPXCHG16B,
-                      FeatureMOVBE, FeatureSlowBTMem, FeatureLeaForSP,
-                      FeatureSlowDivide,
-                      FeatureCallRegIndirect,
-                      FeatureLEAUsesAG,
-                      FeaturePadShortFunctions]>;
-
+// Atom Silvermont.
+def : ProcessorModel<"slm",  SLMModel, [ProcIntelSLM,
+                               FeatureSSE42, FeatureCMPXCHG16B,
+                               FeatureMOVBE, FeaturePOPCNT,
+                               FeaturePCLMUL, FeatureAES,
+                               FeatureCallRegIndirect,
+                               FeaturePRFCHW,
+                               FeatureSlowBTMem]>;
 // "Arrandale" along with corei3 and corei5
 def : ProcessorModel<"corei7", SandyBridgeModel,
                      [FeatureSSE42, FeatureCMPXCHG16B, FeatureSlowBTMem,

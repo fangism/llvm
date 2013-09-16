@@ -864,15 +864,18 @@ private:
     unsigned Val = C->getZExtValue();
 
     if (Hint == "width") {
-      assert(isPowerOf2_32(Val) && Val <= MaxVectorWidth &&
-             "Invalid width metadata");
-      Width = Val;
+      if (isPowerOf2_32(Val) && Val <= MaxVectorWidth)
+        Width = Val;
+      else
+        DEBUG(dbgs() << "LV: ignoring invalid width hint metadata");
     } else if (Hint == "unroll") {
-      assert(isPowerOf2_32(Val) && Val <= MaxUnrollFactor &&
-             "Invalid unroll metadata");
-      Unroll = Val;
-    } else
+      if (isPowerOf2_32(Val) && Val <= MaxUnrollFactor)
+        Unroll = Val;
+      else
+        DEBUG(dbgs() << "LV: ignoring invalid unroll hint metadata");
+    } else {
       DEBUG(dbgs() << "LV: ignoring unknown hint " << Hint);
+    }
   }
 };
 
@@ -2175,7 +2178,7 @@ InnerLoopVectorizer::vectorizeLoop(LoopVectorizationLegality *Legal) {
     for (BasicBlock::iterator LEI = LoopExitBlock->begin(),
          LEE = LoopExitBlock->end(); LEI != LEE; ++LEI) {
       PHINode *LCSSAPhi = dyn_cast<PHINode>(LEI);
-      if (!LCSSAPhi) continue;
+      if (!LCSSAPhi) break;
 
       // All PHINodes need to have a single entry edge, or two if
       // we already fixed them.
@@ -2208,7 +2211,7 @@ void InnerLoopVectorizer::fixLCSSAPHIs() {
   for (BasicBlock::iterator LEI = LoopExitBlock->begin(),
        LEE = LoopExitBlock->end(); LEI != LEE; ++LEI) {
     PHINode *LCSSAPhi = dyn_cast<PHINode>(LEI);
-    if (!LCSSAPhi) continue;
+    if (!LCSSAPhi) break;
     if (LCSSAPhi->getNumIncomingValues() == 1)
       LCSSAPhi->addIncoming(UndefValue::get(LCSSAPhi->getType()),
                             LoopMiddleBlock);

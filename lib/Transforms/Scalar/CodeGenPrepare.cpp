@@ -840,10 +840,12 @@ struct ExtAddrMode : public TargetLowering::AddrMode {
   }
 };
 
+#ifndef NDEBUG
 static inline raw_ostream &operator<<(raw_ostream &OS, const ExtAddrMode &AM) {
   AM.print(OS);
   return OS;
 }
+#endif
 
 void ExtAddrMode::print(raw_ostream &OS) const {
   bool NeedPlus = false;

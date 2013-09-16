@@ -1629,3 +1629,253 @@ SDValue R600TargetLowering::PerformDAGCombine(SDNode *N,
   }
   return SDValue();
 }
+
+static bool
+FoldOperand(SDNode *ParentNode, unsigned SrcIdx, SDValue &Src, SDValue &Neg,
+            SDValue &Abs, SDValue &Sel, SDValue &Imm, SelectionDAG &DAG) {
+  const R600InstrInfo *TII =
+      static_cast<const R600InstrInfo *>(DAG.getTarget().getInstrInfo());
+  if (!Src.isMachineOpcode())
+    return false;
+  switch (Src.getMachineOpcode()) {
+  case AMDGPU::FNEG_R600:
+    if (!Neg.getNode())
+      return false;
+    Src = Src.getOperand(0);
+    Neg = DAG.getTargetConstant(1, MVT::i32);
+    return true;
+  case AMDGPU::FABS_R600:
+    if (!Abs.getNode())
+      return false;
+    Src = Src.getOperand(0);
+    Abs = DAG.getTargetConstant(1, MVT::i32);
+    return true;
+  case AMDGPU::CONST_COPY: {
+    unsigned Opcode = ParentNode->getMachineOpcode();
+    bool HasDst = TII->getOperandIdx(Opcode, AMDGPU::OpName::dst) > -1;
+
+    if (!Sel.getNode())
+      return false;
+
+    SDValue CstOffset = Src.getOperand(0);
+    if (ParentNode->getValueType(0).isVector())
+      return false;
+
+    // Gather constants values
+    int SrcIndices[] = {
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src2),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_X),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_Y),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_Z),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_W),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_X),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_Y),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_Z),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_W)
+    };
+    std::vector<unsigned> Consts;
+    for (unsigned i = 0; i < sizeof(SrcIndices) / sizeof(int); i++) {
+      int OtherSrcIdx = SrcIndices[i];
+      int OtherSelIdx = TII->getSelIdx(Opcode, OtherSrcIdx);
+      if (OtherSrcIdx < 0 || OtherSelIdx < 0)
+        continue;
+      if (HasDst) {
+        OtherSrcIdx--;
+        OtherSelIdx--;
+      }
+      if (RegisterSDNode *Reg =
+          dyn_cast<RegisterSDNode>(ParentNode->getOperand(OtherSrcIdx))) {
+        if (Reg->getReg() == AMDGPU::ALU_CONST) {
+          ConstantSDNode *Cst = dyn_cast<ConstantSDNode>(
+              ParentNode->getOperand(OtherSelIdx));
+          Consts.push_back(Cst->getZExtValue());
+        }
+      }
+    }
+
+    ConstantSDNode *Cst = dyn_cast<ConstantSDNode>(CstOffset);
+    Consts.push_back(Cst->getZExtValue());
+    if (!TII->fitsConstReadLimitations(Consts)) {
+      return false;
+    }
+
+    Sel = CstOffset;
+    Src = DAG.getRegister(AMDGPU::ALU_CONST, MVT::f32);
+    return true;
+  }
+  case AMDGPU::MOV_IMM_I32:
+  case AMDGPU::MOV_IMM_F32: {
+    unsigned ImmReg = AMDGPU::ALU_LITERAL_X;
+    uint64_t ImmValue = 0;
+
+
+    if (Src.getMachineOpcode() == AMDGPU::MOV_IMM_F32) {
+      ConstantFPSDNode *FPC = dyn_cast<ConstantFPSDNode>(Src.getOperand(0));
+      float FloatValue = FPC->getValueAPF().convertToFloat();
+      if (FloatValue == 0.0) {
+        ImmReg = AMDGPU::ZERO;
+      } else if (FloatValue == 0.5) {
+        ImmReg = AMDGPU::HALF;
+      } else if (FloatValue == 1.0) {
+        ImmReg = AMDGPU::ONE;
+      } else {
+        ImmValue = FPC->getValueAPF().bitcastToAPInt().getZExtValue();
+      }
+    } else {
+      ConstantSDNode *C = dyn_cast<ConstantSDNode>(Src.getOperand(0));
+      uint64_t Value = C->getZExtValue();
+      if (Value == 0) {
+        ImmReg = AMDGPU::ZERO;
+      } else if (Value == 1) {
+        ImmReg = AMDGPU::ONE_INT;
+      } else {
+        ImmValue = Value;
+      }
+    }
+
+    // Check that we aren't already using an immediate.
+    // XXX: It's possible for an instruction to have more than one
+    // immediate operand, but this is not supported yet.
+    if (ImmReg == AMDGPU::ALU_LITERAL_X) {
+      if (!Imm.getNode())
+        return false;
+      ConstantSDNode *C = dyn_cast<ConstantSDNode>(Imm);
+      assert(C);
+      if (C->getZExtValue())
+        return false;
+      Imm = DAG.getTargetConstant(ImmValue, MVT::i32);
+    }
+    Src = DAG.getRegister(ImmReg, MVT::i32);
+    return true;
+  }
+  default:
+    return false;
+  }
+}
+
+
+/// \brief Fold the instructions after selecting them
+SDNode *R600TargetLowering::PostISelFolding(MachineSDNode *Node,
+                                            SelectionDAG &DAG) const {
+  const R600InstrInfo *TII =
+      static_cast<const R600InstrInfo *>(DAG.getTarget().getInstrInfo());
+  if (!Node->isMachineOpcode())
+    return Node;
+  unsigned Opcode = Node->getMachineOpcode();
+  SDValue FakeOp;
+
+  std::vector<SDValue> Ops;
+  for(SDNode::op_iterator I = Node->op_begin(), E = Node->op_end();
+              I != E; ++I)
+	  Ops.push_back(*I);
+
+  if (Opcode == AMDGPU::DOT_4) {
+    int OperandIdx[] = {
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_X),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_Y),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_Z),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_W),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_X),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_Y),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_Z),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_W)
+	};
+    int NegIdx[] = {
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_neg_X),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_neg_Y),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_neg_Z),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_neg_W),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_neg_X),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_neg_Y),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_neg_Z),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_neg_W)
+    };
+    int AbsIdx[] = {
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_abs_X),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_abs_Y),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_abs_Z),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_abs_W),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_abs_X),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_abs_Y),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_abs_Z),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_abs_W)
+    };
+    for (unsigned i = 0; i < 8; i++) {
+      if (OperandIdx[i] < 0)
+        return Node;
+      SDValue &Src = Ops[OperandIdx[i] - 1];
+      SDValue &Neg = Ops[NegIdx[i] - 1];
+      SDValue &Abs = Ops[AbsIdx[i] - 1];
+      bool HasDst = TII->getOperandIdx(Opcode, AMDGPU::OpName::dst) > -1;
+      int SelIdx = TII->getSelIdx(Opcode, OperandIdx[i]);
+      if (HasDst)
+        SelIdx--;
+      SDValue &Sel = (SelIdx > -1) ? Ops[SelIdx] : FakeOp;
+      if (FoldOperand(Node, i, Src, Neg, Abs, Sel, FakeOp, DAG))
+        return DAG.getMachineNode(Opcode, SDLoc(Node), Node->getVTList(), Ops);
+    }
+  } else if (Opcode == AMDGPU::REG_SEQUENCE) {
+    for (unsigned i = 1, e = Node->getNumOperands(); i < e; i += 2) {
+      SDValue &Src = Ops[i];
+      if (FoldOperand(Node, i, Src, FakeOp, FakeOp, FakeOp, FakeOp, DAG))
+        return DAG.getMachineNode(Opcode, SDLoc(Node), Node->getVTList(), Ops);
+    }
+  } else if (Opcode == AMDGPU::CLAMP_R600) {
+    SDValue Src = Node->getOperand(0);
+    if (!Src.isMachineOpcode() ||
+        !TII->hasInstrModifiers(Src.getMachineOpcode()))
+      return Node;
+    int ClampIdx = TII->getOperandIdx(Src.getMachineOpcode(),
+        AMDGPU::OpName::clamp);
+    if (ClampIdx < 0)
+      return Node;
+    std::vector<SDValue> Ops;
+    unsigned NumOp = Src.getNumOperands();
+    for(unsigned i = 0; i < NumOp; ++i)
+  	  Ops.push_back(Src.getOperand(i));
+    Ops[ClampIdx - 1] = DAG.getTargetConstant(1, MVT::i32);
+    return DAG.getMachineNode(Src.getMachineOpcode(), SDLoc(Node),
+        Node->getVTList(), Ops);
+  } else {
+    if (!TII->hasInstrModifiers(Opcode))
+      return Node;
+    int OperandIdx[] = {
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src2)
+    };
+    int NegIdx[] = {
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_neg),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_neg),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src2_neg)
+    };
+    int AbsIdx[] = {
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_abs),
+      TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_abs),
+      -1
+    };
+    for (unsigned i = 0; i < 3; i++) {
+      if (OperandIdx[i] < 0)
+        return Node;
+      SDValue &Src = Ops[OperandIdx[i] - 1];
+      SDValue &Neg = Ops[NegIdx[i] - 1];
+      SDValue FakeAbs;
+      SDValue &Abs = (AbsIdx[i] > -1) ? Ops[AbsIdx[i] - 1] : FakeAbs;
+      bool HasDst = TII->getOperandIdx(Opcode, AMDGPU::OpName::dst) > -1;
+      int SelIdx = TII->getSelIdx(Opcode, OperandIdx[i]);
+      int ImmIdx = TII->getOperandIdx(Opcode, AMDGPU::OpName::literal);
+      if (HasDst) {
+        SelIdx--;
+        ImmIdx--;
+      }
+      SDValue &Sel = (SelIdx > -1) ? Ops[SelIdx] : FakeOp;
+      SDValue &Imm = Ops[ImmIdx];
+      if (FoldOperand(Node, i, Src, Neg, Abs, Sel, Imm, DAG))
+        return DAG.getMachineNode(Opcode, SDLoc(Node), Node->getVTList(), Ops);
+    }
+  }
+
+  return Node;
+}

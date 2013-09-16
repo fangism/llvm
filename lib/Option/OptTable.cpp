@@ -46,6 +46,7 @@ static int StrCmpOptionNameIgnoreCase(const char *A, const char *B) {
   return (a < b) ? -1 : 1;
 }
 
+#ifndef NDEBUG
 static int StrCmpOptionName(const char *A, const char *B) {
   if (int N = StrCmpOptionNameIgnoreCase(A, B))
     return N;
@@ -72,13 +73,11 @@ static inline bool operator<(const OptTable::Info &A, const OptTable::Info &B) {
          "Unexpected classes for options with same name.");
   return B.Kind == Option::JoinedClass;
 }
+#endif
 
 // Support lower_bound between info and an option name.
 static inline bool operator<(const OptTable::Info &I, const char *Name) {
   return StrCmpOptionNameIgnoreCase(I.Name, Name) < 0;
-}
-static inline bool operator<(const char *Name, const OptTable::Info &I) {
-  return StrCmpOptionNameIgnoreCase(Name, I.Name) < 0;
 }
 }
 }

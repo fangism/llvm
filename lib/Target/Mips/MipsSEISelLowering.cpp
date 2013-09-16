@@ -83,13 +83,13 @@ MipsSETargetLowering::MipsSETargetLowering(MipsTargetMachine &TM)
     setOperationAction(ISD::MUL, MVT::v2i16, Legal);
 
   if (Subtarget->hasMSA()) {
-    addMSAType(MVT::v16i8, &Mips::MSA128BRegClass);
-    addMSAType(MVT::v8i16, &Mips::MSA128HRegClass);
-    addMSAType(MVT::v4i32, &Mips::MSA128WRegClass);
-    addMSAType(MVT::v2i64, &Mips::MSA128DRegClass);
-    addMSAType(MVT::v8f16, &Mips::MSA128HRegClass);
-    addMSAType(MVT::v4f32, &Mips::MSA128WRegClass);
-    addMSAType(MVT::v2f64, &Mips::MSA128DRegClass);
+    addMSAIntType(MVT::v16i8, &Mips::MSA128BRegClass);
+    addMSAIntType(MVT::v8i16, &Mips::MSA128HRegClass);
+    addMSAIntType(MVT::v4i32, &Mips::MSA128WRegClass);
+    addMSAIntType(MVT::v2i64, &Mips::MSA128DRegClass);
+    addMSAFloatType(MVT::v8f16, &Mips::MSA128HRegClass);
+    addMSAFloatType(MVT::v4f32, &Mips::MSA128WRegClass);
+    addMSAFloatType(MVT::v2f64, &Mips::MSA128DRegClass);
   }
 
   if (!Subtarget->mipsSEUsesSoftFloat()) {
@@ -148,7 +148,30 @@ llvm::createMipsSETargetLowering(MipsTargetMachine &TM) {
 }
 
 void MipsSETargetLowering::
-addMSAType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
+addMSAIntType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
+  addRegisterClass(Ty, RC);
+
+  // Expand all builtin opcodes.
+  for (unsigned Opc = 0; Opc < ISD::BUILTIN_OP_END; ++Opc)
+    setOperationAction(Opc, Ty, Expand);
+
+  setOperationAction(ISD::BITCAST, Ty, Legal);
+  setOperationAction(ISD::LOAD, Ty, Legal);
+  setOperationAction(ISD::STORE, Ty, Legal);
+
+  setOperationAction(ISD::ADD, Ty, Legal);
+  setOperationAction(ISD::CTLZ, Ty, Legal);
+  setOperationAction(ISD::MUL, Ty, Legal);
+  setOperationAction(ISD::SDIV, Ty, Legal);
+  setOperationAction(ISD::SHL, Ty, Legal);
+  setOperationAction(ISD::SRA, Ty, Legal);
+  setOperationAction(ISD::SRL, Ty, Legal);
+  setOperationAction(ISD::SUB, Ty, Legal);
+  setOperationAction(ISD::UDIV, Ty, Legal);
+}
+
+void MipsSETargetLowering::
+addMSAFloatType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
   addRegisterClass(Ty, RC);
 
   // Expand all builtin opcodes.
@@ -158,6 +181,16 @@ addMSAType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
   setOperationAction(ISD::LOAD, Ty, Legal);
   setOperationAction(ISD::STORE, Ty, Legal);
   setOperationAction(ISD::BITCAST, Ty, Legal);
+
+  if (Ty != MVT::v8f16) {
+    setOperationAction(ISD::FADD,  Ty, Legal);
+    setOperationAction(ISD::FDIV,  Ty, Legal);
+    setOperationAction(ISD::FLOG2, Ty, Legal);
+    setOperationAction(ISD::FMUL,  Ty, Legal);
+    setOperationAction(ISD::FRINT, Ty, Legal);
+    setOperationAction(ISD::FSQRT, Ty, Legal);
+    setOperationAction(ISD::FSUB,  Ty, Legal);
+  }
 }
 
 bool
@@ -645,7 +678,7 @@ SDValue MipsSETargetLowering::lowerLOAD(SDValue Op, SelectionDAG &DAG) const {
   SDValue Hi = DAG.getLoad(MVT::i32, DL, Lo.getValue(1), Ptr,
                            MachinePointerInfo(), Nd.isVolatile(),
                            Nd.isNonTemporal(), Nd.isInvariant(),
-                           Nd.getAlignment());
+                           std::min(Nd.getAlignment(), 4U));
 
   if (!Subtarget->isLittle())
     std::swap(Lo, Hi);
@@ -681,8 +714,8 @@ SDValue MipsSETargetLowering::lowerSTORE(SDValue Op, SelectionDAG &DAG) const {
   // i32 store to higher address.
   Ptr = DAG.getNode(ISD::ADD, DL, PtrVT, Ptr, DAG.getConstant(4, PtrVT));
   return DAG.getStore(Chain, DL, Hi, Ptr, MachinePointerInfo(),
-                      Nd.isVolatile(), Nd.isNonTemporal(), Nd.getAlignment(),
-                      Nd.getTBAAInfo());
+                      Nd.isVolatile(), Nd.isNonTemporal(),
+                      std::min(Nd.getAlignment(), 4U), Nd.getTBAAInfo());
 }
 
 SDValue MipsSETargetLowering::lowerMulDiv(SDValue Op, unsigned NewOpc,
@@ -785,7 +818,28 @@ static SDValue lowerDSPIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
   return DAG.getMergeValues(Vals, 2, DL);
 }
 
+static SDValue lowerMSABinaryIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
+  SDLoc DL(Op);
+  SDValue LHS = Op->getOperand(1);
+  SDValue RHS = Op->getOperand(2);
+  EVT ResTy = Op->getValueType(0);
+
+  SDValue Result = DAG.getNode(Opc, DL, ResTy, LHS, RHS);
+
+  return Result;
+}
+
 static SDValue lowerMSABranchIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
+  SDLoc DL(Op);
+  SDValue Value = Op->getOperand(1);
+  EVT ResTy = Op->getValueType(0);
+
+  SDValue Result = DAG.getNode(Opc, DL, ResTy, Value);
+
+  return Result;
+}
+
+static SDValue lowerMSAUnaryIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
   SDLoc DL(Op);
   SDValue Value = Op->getOperand(1);
   EVT ResTy = Op->getValueType(0);
@@ -832,6 +886,11 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
     return lowerDSPIntr(Op, DAG, MipsISD::MSub);
   case Intrinsic::mips_msubu:
     return lowerDSPIntr(Op, DAG, MipsISD::MSubu);
+  case Intrinsic::mips_addv_b:
+  case Intrinsic::mips_addv_h:
+  case Intrinsic::mips_addv_w:
+  case Intrinsic::mips_addv_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::ADD);
   case Intrinsic::mips_bnz_b:
   case Intrinsic::mips_bnz_h:
   case Intrinsic::mips_bnz_w:
@@ -846,6 +905,67 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
     return lowerMSABranchIntr(Op, DAG, MipsISD::VALL_ZERO);
   case Intrinsic::mips_bz_v:
     return lowerMSABranchIntr(Op, DAG, MipsISD::VANY_ZERO);
+  case Intrinsic::mips_div_s_b:
+  case Intrinsic::mips_div_s_h:
+  case Intrinsic::mips_div_s_w:
+  case Intrinsic::mips_div_s_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::SDIV);
+  case Intrinsic::mips_div_u_b:
+  case Intrinsic::mips_div_u_h:
+  case Intrinsic::mips_div_u_w:
+  case Intrinsic::mips_div_u_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::UDIV);
+  case Intrinsic::mips_fadd_w:
+  case Intrinsic::mips_fadd_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::FADD);
+  case Intrinsic::mips_fdiv_w:
+  case Intrinsic::mips_fdiv_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::FDIV);
+  case Intrinsic::mips_flog2_w:
+  case Intrinsic::mips_flog2_d:
+    return lowerMSAUnaryIntr(Op, DAG, ISD::FLOG2);
+  case Intrinsic::mips_fmul_w:
+  case Intrinsic::mips_fmul_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::FMUL);
+  case Intrinsic::mips_frint_w:
+  case Intrinsic::mips_frint_d:
+    return lowerMSAUnaryIntr(Op, DAG, ISD::FRINT);
+  case Intrinsic::mips_fsqrt_w:
+  case Intrinsic::mips_fsqrt_d:
+    return lowerMSAUnaryIntr(Op, DAG, ISD::FSQRT);
+  case Intrinsic::mips_fsub_w:
+  case Intrinsic::mips_fsub_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::FSUB);
+  case Intrinsic::mips_mulv_b:
+  case Intrinsic::mips_mulv_h:
+  case Intrinsic::mips_mulv_w:
+  case Intrinsic::mips_mulv_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::MUL);
+  case Intrinsic::mips_nlzc_b:
+  case Intrinsic::mips_nlzc_h:
+  case Intrinsic::mips_nlzc_w:
+  case Intrinsic::mips_nlzc_d:
+    return lowerMSAUnaryIntr(Op, DAG, ISD::CTLZ);
+  case Intrinsic::mips_sll_b:
+  case Intrinsic::mips_sll_h:
+  case Intrinsic::mips_sll_w:
+  case Intrinsic::mips_sll_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::SHL);
+  case Intrinsic::mips_sra_b:
+  case Intrinsic::mips_sra_h:
+  case Intrinsic::mips_sra_w:
+  case Intrinsic::mips_sra_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::SRA);
+  case Intrinsic::mips_srl_b:
+  case Intrinsic::mips_srl_h:
+  case Intrinsic::mips_srl_w:
+  case Intrinsic::mips_srl_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::SRL);
+  case Intrinsic::mips_subv_b:
+  case Intrinsic::mips_subv_h:
+  case Intrinsic::mips_subv_w:
+  case Intrinsic::mips_subv_d:
+    return lowerMSABinaryIntr(Op, DAG, ISD::SUB);
   }
 }
 

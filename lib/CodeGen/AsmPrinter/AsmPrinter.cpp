@@ -94,7 +94,7 @@ static unsigned getGVAlignmentLog2(const GlobalValue *GV, const DataLayout &TD,
 
 AsmPrinter::AsmPrinter(TargetMachine &tm, MCStreamer &Streamer)
   : MachineFunctionPass(ID),
-    TM(tm), MAI(tm.getMCAsmInfo()),
+    TM(tm), MAI(tm.getMCAsmInfo()), MII(tm.getInstrInfo()),
     OutContext(Streamer.getContext()),
     OutStreamer(Streamer),
     LastMI(0), LastFn(0), Counter(~0U), SetCounter(0) {
@@ -458,6 +458,10 @@ void AsmPrinter::EmitFunctionHeader() {
     OutStreamer.AddComment("Address taken block that was later removed");
     OutStreamer.EmitLabel(DeadBlockSyms[i]);
   }
+
+  // Emit the prefix data.
+  if (F->hasPrefixData())
+    EmitGlobalConstant(F->getPrefixData());
 
   // Emit pre-function debug and/or EH information.
   if (DE) {

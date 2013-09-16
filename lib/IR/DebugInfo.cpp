@@ -246,11 +246,12 @@ bool DIDescriptor::isScope() const {
   case dwarf::DW_TAG_lexical_block:
   case dwarf::DW_TAG_subprogram:
   case dwarf::DW_TAG_namespace:
+  case dwarf::DW_TAG_file_type:
     return true;
   default:
     break;
   }
-  return false;
+  return isType();
 }
 
 /// isTemplateTypeParameter - Return true if the specified tag is
@@ -425,15 +426,30 @@ static bool fieldIsMDString(const MDNode *DbgNode, unsigned Elt) {
   return !Fld || isa<MDString>(Fld);
 }
 
-/// Check if a value can be a TypeRef.
+/// Check if a value can be a reference to a type.
 static bool isTypeRef(const Value *Val) {
-  return !Val || isa<MDString>(Val) || isa<MDNode>(Val);
+  return !Val ||
+         (isa<MDString>(Val) && !cast<MDString>(Val)->getString().empty()) ||
+         (isa<MDNode>(Val) && DIType(cast<MDNode>(Val)).isType());
 }
 
-/// Check if a field at position Elt of a MDNode can be a TypeRef.
+/// Check if a field at position Elt of a MDNode can be a reference to a type.
 static bool fieldIsTypeRef(const MDNode *DbgNode, unsigned Elt) {
   Value *Fld = getField(DbgNode, Elt);
   return isTypeRef(Fld);
+}
+
+/// Check if a value can be a ScopeRef.
+static bool isScopeRef(const Value *Val) {
+  return !Val ||
+         (isa<MDString>(Val) && !cast<MDString>(Val)->getString().empty()) ||
+         (isa<MDNode>(Val) && DIScope(cast<MDNode>(Val)).isScope());
+}
+
+/// Check if a field at position Elt of a MDNode can be a ScopeRef.
+static bool fieldIsScopeRef(const MDNode *DbgNode, unsigned Elt) {
+  Value *Fld = getField(DbgNode, Elt);
+  return isScopeRef(Fld);
 }
 
 /// Verify - Verify that a type descriptor is well formed.
@@ -441,7 +457,7 @@ bool DIType::Verify() const {
   if (!isType())
     return false;
   // Make sure Context @ field 2 is MDNode.
-  if (!fieldIsMDNode(DbgNode, 2))
+  if (!fieldIsScopeRef(DbgNode, 2))
     return false;
 
   // FIXME: Sink this into the various subclass verifies.
@@ -709,13 +725,13 @@ void DICompositeType::addMember(DIDescriptor D) {
 
 /// Generate a reference to this DIType. Uses the type identifier instead
 /// of the actual MDNode if possible, to help type uniquing.
-DITypeRef DIType::generateRef() {
+DIScopeRef DIScope::generateRef() {
   if (!isCompositeType())
-    return DITypeRef(*this);
+    return DIScopeRef(*this);
   DICompositeType DTy(DbgNode);
   if (!DTy.getIdentifier())
-    return DITypeRef(*this);
-  return DITypeRef(DTy.getIdentifier());
+    return DIScopeRef(*this);
+  return DIScopeRef(DTy.getIdentifier());
 }
 
 /// \brief Set the containing type.
@@ -771,25 +787,25 @@ Value *DITemplateValueParameter::getValue() const {
 
 // If the current node has a parent scope then return that,
 // else return an empty scope.
-DIScope DIScope::getContext() const {
+DIScopeRef DIScope::getContext() const {
 
   if (isType())
     return DIType(DbgNode).getContext();
 
   if (isSubprogram())
-    return DISubprogram(DbgNode).getContext();
+    return DIScopeRef(DISubprogram(DbgNode).getContext());
 
   if (isLexicalBlock())
-    return DILexicalBlock(DbgNode).getContext();
+    return DIScopeRef(DILexicalBlock(DbgNode).getContext());
 
   if (isLexicalBlockFile())
-    return DILexicalBlockFile(DbgNode).getContext();
+    return DIScopeRef(DILexicalBlockFile(DbgNode).getContext());
 
   if (isNameSpace())
-    return DINameSpace(DbgNode).getContext();
+    return DIScopeRef(DINameSpace(DbgNode).getContext());
 
   assert((isFile() || isCompileUnit()) && "Unhandled type of scope.");
-  return DIScope();
+  return DIScopeRef(NULL);
 }
 
 StringRef DIScope::getFilename() const {
@@ -932,19 +948,6 @@ DICompositeType llvm::getDICompositeType(DIType T) {
   return DICompositeType();
 }
 
-/// isSubprogramContext - Return true if Context is either a subprogram
-/// or another context nested inside a subprogram.
-bool llvm::isSubprogramContext(const MDNode *Context) {
-  if (!Context)
-    return false;
-  DIDescriptor D(Context);
-  if (D.isSubprogram())
-    return true;
-  if (D.isType())
-    return isSubprogramContext(DIType(Context).getContext());
-  return false;
-}
-
 /// Update DITypeIdentifierMap by going through retained types of each CU.
 DITypeIdentifierMap llvm::generateDITypeIdentifierMap(
                               const NamedMDNode *CU_Nodes) {
@@ -982,11 +985,13 @@ void DebugInfoFinder::reset() {
   TYs.clear();
   Scopes.clear();
   NodesSeen.clear();
+  TypeIdentifierMap.clear();
 }
 
 /// processModule - Process entire module and collect debug info.
 void DebugInfoFinder::processModule(const Module &M) {
   if (NamedMDNode *CU_Nodes = M.getNamedMetadata("llvm.dbg.cu")) {
+    TypeIdentifierMap = generateDITypeIdentifierMap(CU_Nodes);
     for (unsigned i = 0, e = CU_Nodes->getNumOperands(); i != e; ++i) {
       DICompileUnit CU(CU_Nodes->getOperand(i));
       addCompileUnit(CU);
@@ -1036,7 +1041,7 @@ void DebugInfoFinder::processLocation(DILocation Loc) {
 void DebugInfoFinder::processType(DIType DT) {
   if (!addType(DT))
     return;
-  processScope(DT.getContext());
+  processScope(DT.getContext().resolve(TypeIdentifierMap));
   if (DT.isCompositeType()) {
     DICompositeType DCT(DT);
     processType(DCT.getTypeDerivedFrom());
@@ -1427,31 +1432,21 @@ void DIVariable::printExtendedName(raw_ostream &OS) const {
   }
 }
 
-DITypeRef::DITypeRef(const Value *V) : TypeVal(V) {
+/// Specialize constructor to make sure it has the correct type.
+template <>
+DIRef<DIScope>::DIRef(const Value *V) : Val(V) {
+  assert(isScopeRef(V) && "DIScopeRef should be a MDString or MDNode");
+}
+template <>
+DIRef<DIType>::DIRef(const Value *V) : Val(V) {
   assert(isTypeRef(V) && "DITypeRef should be a MDString or MDNode");
 }
 
-/// Given a DITypeIdentifierMap, tries to find the corresponding
-/// DIType for a DITypeRef.
-DIType DITypeRef::resolve(const DITypeIdentifierMap &Map) const {
-  if (!TypeVal)
-    return NULL;
-
-  if (const MDNode *MD = dyn_cast<MDNode>(TypeVal)) {
-    assert(DIType(MD).isType() &&
-           "MDNode in DITypeRef should be a DIType.");
-    return MD;
-  }
-
-  const MDString *MS = cast<MDString>(TypeVal);
-  // Find the corresponding MDNode.
-  DITypeIdentifierMap::const_iterator Iter = Map.find(MS);
-  assert(Iter != Map.end() && "Identifier not in the type map?");
-  assert(DIType(Iter->second).isType() &&
-         "MDNode in DITypeIdentifierMap should be a DIType.");
-  return Iter->second;
+/// Specialize getFieldAs to handle fields that are references to DIScopes.
+template <>
+DIScopeRef DIDescriptor::getFieldAs<DIScopeRef>(unsigned Elt) const {
+  return DIScopeRef(getField(DbgNode, Elt));
 }
-
 /// Specialize getFieldAs to handle fields that are references to DITypes.
 template <>
 DITypeRef DIDescriptor::getFieldAs<DITypeRef>(unsigned Elt) const {

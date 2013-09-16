@@ -24,6 +24,10 @@
 
 using namespace llvm;
 
+namespace llvm {
+class MCInstrInfo;
+}
+
 namespace {
 class MipsAssemblerOptions {
 public:
@@ -51,14 +55,6 @@ private:
 
 namespace {
 class MipsAsmParser : public MCTargetAsmParser {
-
-  enum FpFormatTy {
-    FP_FORMAT_NONE = -1,
-    FP_FORMAT_S,
-    FP_FORMAT_D,
-    FP_FORMAT_L,
-    FP_FORMAT_W
-  } FpFormat;
 
   MCSubtargetInfo &STI;
   MCAsmParser &Parser;
@@ -202,8 +198,6 @@ class MipsAsmParser : public MCTargetAsmParser {
 
   int regKindToRegClass(int RegKind);
 
-  FpFormatTy getFpFormat() {return FpFormat;}
-
   unsigned getReg(int RC, int RegNo);
 
   int getATReg();
@@ -211,8 +205,10 @@ class MipsAsmParser : public MCTargetAsmParser {
   bool processInstruction(MCInst &Inst, SMLoc IDLoc,
                         SmallVectorImpl<MCInst> &Instructions);
 public:
-  MipsAsmParser(MCSubtargetInfo &sti, MCAsmParser &parser)
-    : MCTargetAsmParser(), STI(sti), Parser(parser), hasConsumedDollar(false) {
+  MipsAsmParser(MCSubtargetInfo &sti, MCAsmParser &parser,
+                const MCInstrInfo &MII)
+      : MCTargetAsmParser(), STI(sti), Parser(parser),
+        hasConsumedDollar(false) {
     // Initialize the set of available features.
     setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
   }
@@ -1414,6 +1410,10 @@ MipsAsmParser::parseRegs(SmallVectorImpl<MCParsedAsmOperand*> &Operands,
       RegNum = matchFPURegisterName(RegName);
       if (RegKind == MipsOperand::Kind_AFGR64Regs)
         RegNum /= 2;
+      else if (RegKind == MipsOperand::Kind_FGRH32Regs
+               && !isFP64())
+        if (RegNum != -1 && RegNum %2 != 0)
+          Warning(S, "Float register should be even.");
       break;
     case MipsOperand::Kind_FCCRegs:
       RegNum = matchFCCRegisterName(RegName);
@@ -1437,18 +1437,6 @@ MipsAsmParser::parseRegs(SmallVectorImpl<MCParsedAsmOperand*> &Operands,
     Operands.push_back(Op);
     hasConsumedDollar = false;
     Parser.Lex(); // Eat the register name.
-    if ((RegKind == MipsOperand::Kind_GPR32)
-      && (getLexer().is(AsmToken::LParen))) {
-      // Check if it is indexed addressing operand.
-      Operands.push_back(MipsOperand::CreateToken("(", getLexer().getLoc()));
-      Parser.Lex(); // Eat the parenthesis.
-      if (parseRegs(Operands,RegKind) != MatchOperand_Success)
-        return MatchOperand_NoMatch;
-      if (getLexer().isNot(AsmToken::RParen))
-        return MatchOperand_NoMatch;
-      Operands.push_back(MipsOperand::CreateToken(")", getLexer().getLoc()));
-      Parser.Lex();
-    }
     return MatchOperand_Success;
   } else if (getLexer().getKind() == AsmToken::Integer) {
     unsigned RegNum = Parser.getTok().getIntVal();

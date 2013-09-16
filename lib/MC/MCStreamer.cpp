@@ -73,12 +73,11 @@ raw_ostream &MCStreamer::GetCommentOS() {
   return nulls();
 }
 
-void MCStreamer::generateCompactUnwindEncodings(MCAsmBackend &MAB) {
+void MCStreamer::generateCompactUnwindEncodings(MCAsmBackend *MAB) {
   for (std::vector<MCDwarfFrameInfo>::iterator I = FrameInfos.begin(),
          E = FrameInfos.end(); I != E; ++I)
-    if (!I->CompactUnwindEncoding)
-      I->CompactUnwindEncoding =
-        MAB.generateCompactUnwindEncoding(I->Instructions);
+    I->CompactUnwindEncoding =
+      (MAB ? MAB->generateCompactUnwindEncoding(I->Instructions) : 0);
 }
 
 void MCStreamer::EmitDwarfSetLineAddr(int64_t LineDelta,
@@ -604,15 +603,15 @@ void MCStreamer::EmitRawText(const Twine &T) {
   EmitRawText(Str.str());
 }
 
-void MCStreamer::EmitFrames(bool usingCFI) {
+void MCStreamer::EmitFrames(MCAsmBackend *MAB, bool usingCFI) {
   if (!getNumFrameInfos())
     return;
 
   if (EmitEHFrame)
-    MCDwarfFrameEmitter::Emit(*this, usingCFI, true);
+    MCDwarfFrameEmitter::Emit(*this, MAB, usingCFI, true);
 
   if (EmitDebugFrame)
-    MCDwarfFrameEmitter::Emit(*this, usingCFI, false);
+    MCDwarfFrameEmitter::Emit(*this, MAB, usingCFI, false);
 }
 
 void MCStreamer::EmitW64Tables() {

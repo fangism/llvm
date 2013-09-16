@@ -68,6 +68,11 @@ GenerateCUHash("generate-cu-hash", cl::Hidden,
                cl::desc("Add the CU hash as the dwo_id."),
                cl::init(false));
 
+static cl::opt<bool>
+GenerateGnuPubSections("generate-gnu-dwarf-pub-sections", cl::Hidden,
+                       cl::desc("Generate GNU-style pubnames and pubtypes"),
+                       cl::init(false));
+
 namespace {
 enum DefaultOnOff {
   Default,
@@ -332,6 +337,19 @@ static void addSubprogramNames(CompileUnit *TheCU, DISubprogram SP,
   }
 }
 
+/// isSubprogramContext - Return true if Context is either a subprogram
+/// or another context nested inside a subprogram.
+bool DwarfDebug::isSubprogramContext(const MDNode *Context) {
+  if (!Context)
+    return false;
+  DIDescriptor D(Context);
+  if (D.isSubprogram())
+    return true;
+  if (D.isType())
+    return isSubprogramContext(resolve(DIType(Context).getContext()));
+  return false;
+}
+
 // Find DIE for the given subprogram and attach appropriate DW_AT_low_pc
 // and DW_AT_high_pc attributes. If there are global variables in this
 // scope then create and insert DIEs for these variables.
@@ -411,18 +429,39 @@ DIE *DwarfDebug::updateSubprogramScopeDIE(CompileUnit *SPCU,
   return SPDie;
 }
 
+/// Check whether we should create a DIE for the given Scope, return true
+/// if we don't create a DIE (the corresponding DIE is null).
+bool DwarfDebug::isLexicalScopeDIENull(LexicalScope *Scope) {
+  if (Scope->isAbstractScope())
+    return false;
+
+  // We don't create a DIE if there is no Range.
+  const SmallVectorImpl<InsnRange> &Ranges = Scope->getRanges();
+  if (Ranges.empty())
+    return true;
+
+  if (Ranges.size() > 1)
+    return false;
+
+  // We don't create a DIE if we have a single Range and the end label
+  // is null.
+  SmallVectorImpl<InsnRange>::const_iterator RI = Ranges.begin();
+  MCSymbol *End = getLabelAfterInsn(RI->second);
+  return !End;
+}
+
 // Construct new DW_TAG_lexical_block for this scope and attach
 // DW_AT_low_pc/DW_AT_high_pc labels.
 DIE *DwarfDebug::constructLexicalScopeDIE(CompileUnit *TheCU,
                                           LexicalScope *Scope) {
+  if (isLexicalScopeDIENull(Scope))
+    return 0;
+
   DIE *ScopeDIE = new DIE(dwarf::DW_TAG_lexical_block);
   if (Scope->isAbstractScope())
     return ScopeDIE;
 
   const SmallVectorImpl<InsnRange> &Ranges = Scope->getRanges();
-  if (Ranges.empty())
-    return 0;
-
   // If we have multiple ranges, emit them into the range section.
   if (Ranges.size() > 1) {
     // .debug_range section has not been laid out yet. Emit offset in
@@ -447,8 +486,7 @@ DIE *DwarfDebug::constructLexicalScopeDIE(CompileUnit *TheCU,
   SmallVectorImpl<InsnRange>::const_iterator RI = Ranges.begin();
   MCSymbol *Start = getLabelBeforeInsn(RI->first);
   MCSymbol *End = getLabelAfterInsn(RI->second);
-
-  if (End == 0) return 0;
+  assert(End && "End label should not be null!");
 
   assert(Start->isDefined() && "Invalid starting label for an inlined scope!");
   assert(End->isDefined() && "Invalid end label for an inlined scope!");
@@ -527,19 +565,9 @@ DIE *DwarfDebug::constructInlinedScopeDIE(CompileUnit *TheCU,
   return ScopeDIE;
 }
 
-// Construct a DIE for this scope.
-DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
-  if (!Scope || !Scope->getScopeNode())
-    return NULL;
-
-  DIScope DS(Scope->getScopeNode());
-  // Early return to avoid creating dangling variable|scope DIEs.
-  if (!Scope->getInlinedAt() && DS.isSubprogram() && Scope->isAbstractScope() &&
-      !TheCU->getDIE(DS))
-    return NULL;
-
-  SmallVector<DIE *, 8> Children;
-  DIE *ObjectPointer = NULL;
+DIE *DwarfDebug::createScopeChildrenDIE(CompileUnit *TheCU, LexicalScope *Scope,
+                                        SmallVectorImpl<DIE*> &Children) {
+    DIE *ObjectPointer = NULL;
 
   // Collect arguments for current function.
   if (LScopes.isCurrentFunctionScope(Scope))
@@ -563,6 +591,23 @@ DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
   for (unsigned j = 0, M = Scopes.size(); j < M; ++j)
     if (DIE *Nested = constructScopeDIE(TheCU, Scopes[j]))
       Children.push_back(Nested);
+  return ObjectPointer;
+}
+
+// Construct a DIE for this scope.
+DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
+  if (!Scope || !Scope->getScopeNode())
+    return NULL;
+
+  DIScope DS(Scope->getScopeNode());
+
+  SmallVector<DIE *, 8> Children;
+  DIE *ObjectPointer = NULL;
+  bool ChildrenCreated = false;
+
+  // We try to create the scope DIE first, then the children DIEs. This will
+  // avoid creating un-used children then removing them later when we find out
+  // the scope DIE is null.
   DIE *ScopeDIE = NULL;
   if (Scope->getInlinedAt())
     ScopeDIE = constructInlinedScopeDIE(TheCU, Scope);
@@ -578,6 +623,15 @@ DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
       ScopeDIE = updateSubprogramScopeDIE(TheCU, DS);
   }
   else {
+    // Early exit when we know the scope DIE is going to be null.
+    if (isLexicalScopeDIENull(Scope))
+      return NULL;
+
+    // We create children here when we know the scope DIE is not going to be
+    // null and the children will be added to the scope DIE.
+    ObjectPointer = createScopeChildrenDIE(TheCU, Scope, Children);
+    ChildrenCreated = true;
+
     // There is no need to emit empty lexical block DIE.
     std::pair<ImportedEntityMap::const_iterator,
               ImportedEntityMap::const_iterator> Range = std::equal_range(
@@ -587,15 +641,20 @@ DIE *DwarfDebug::constructScopeDIE(CompileUnit *TheCU, LexicalScope *Scope) {
     if (Children.empty() && Range.first == Range.second)
       return NULL;
     ScopeDIE = constructLexicalScopeDIE(TheCU, Scope);
+    assert(ScopeDIE && "Scope DIE should not be null.");
     for (ImportedEntityMap::const_iterator i = Range.first; i != Range.second;
          ++i)
       constructImportedEntityDIE(TheCU, i->second, ScopeDIE);
   }
 
   if (!ScopeDIE) {
-    std::for_each(Children.begin(), Children.end(), deleter<DIE>);
+    assert(Children.empty() &&
+           "We create children only when the scope DIE is not null.");
     return NULL;
   }
+  if (!ChildrenCreated)
+    // We create children when the scope DIE is not null.
+    ObjectPointer = createScopeChildrenDIE(TheCU, Scope, Children);
 
   // Add children
   for (SmallVectorImpl<DIE *>::iterator I = Children.begin(),
@@ -714,6 +773,12 @@ CompileUnit *DwarfDebug::constructCompileUnit(const MDNode *N) {
   // skeleton CU and so we don't need to duplicate it here.
   if (!useSplitDwarf() && !CompilationDir.empty())
     NewCU->addString(Die, dwarf::DW_AT_comp_dir, CompilationDir);
+
+  // Flag to let the linker know we have emitted new style pubnames. Only
+  // emit it here if we don't have a skeleton CU for split dwarf.
+  if (!useSplitDwarf() && GenerateGnuPubSections)
+    NewCU->addFlag(Die, dwarf::DW_AT_GNU_pubnames);
+
   if (DIUnit.isOptimized())
     NewCU->addFlag(Die, dwarf::DW_AT_APPLE_optimized);
 
@@ -756,9 +821,8 @@ void DwarfDebug::constructSubprogramDIE(CompileUnit *TheCU,
   // Add to context owner.
   TheCU->addToContextOwner(SubprogramDie, SP.getContext());
 
-  // Expose as global, if requested.
-  if (HasDwarfPubSections)
-    TheCU->addGlobalName(SP.getName(), SubprogramDie);
+  // Expose as a global name.
+  TheCU->addGlobalName(SP.getName(), SubprogramDie);
 }
 
 void DwarfDebug::constructImportedEntityDIE(CompileUnit *TheCU,
@@ -1096,8 +1160,8 @@ void DwarfDebug::endModule() {
 
   // Emit the pubnames and pubtypes sections if requested.
   if (HasDwarfPubSections) {
-    emitDebugPubnames();
-    emitDebugPubTypes();
+    emitDebugPubNames(GenerateGnuPubSections ? true : false);
+    emitDebugPubTypes(GenerateGnuPubSections ? true : false);
   }
 
   // Finally emit string information into a string table.
@@ -1880,7 +1944,11 @@ void DwarfDebug::emitSectionLabels() {
   if (HasDwarfPubSections) {
     emitSectionSym(Asm, TLOF.getDwarfPubNamesSection());
     emitSectionSym(Asm, TLOF.getDwarfPubTypesSection());
+  } else if (GenerateGnuPubSections) {
+    emitSectionSym(Asm, TLOF.getDwarfGnuPubNamesSection());
+    emitSectionSym(Asm, TLOF.getDwarfGnuPubTypesSection());
   }
+
   DwarfStrSectionSym =
     emitSectionSym(Asm, TLOF.getDwarfStrSection(), "info_string");
   if (useSplitDwarf()) {
@@ -2239,10 +2307,83 @@ void DwarfDebug::emitAccelTypes() {
   AT.Emit(Asm, SectionBegin, &InfoHolder);
 }
 
-/// emitDebugPubnames - Emit visible names into a debug pubnames section.
+// Public name handling.
+// The format for the various pubnames:
+//
+// dwarf pubnames - offset/name pairs where the offset is the offset into the CU
+// for the DIE that is named.
+//
+// gnu pubnames - offset/index value/name tuples where the offset is the offset
+// into the CU and the index value is computed according to the type of value
+// for the DIE that is named.
+//
+// For type units the offset is the offset of the skeleton DIE. For split dwarf
+// it's the offset within the debug_info/debug_types dwo section, however, the
+// reference in the pubname header doesn't change.
+
+/// computeIndexValue - Compute the gdb index value for the DIE and CU.
+static uint8_t computeIndexValue(CompileUnit *CU, DIE *Die) {
+#define UPDATE_VALUE(CURRENT, VALUE)                                           \
+  {                                                                            \
+    (CURRENT) |= (((VALUE) & dwarf::GDB_INDEX_SYMBOL_KIND_MASK)                \
+                  << dwarf::GDB_INDEX_SYMBOL_KIND_SHIFT);                      \
+  }
+
+#define UPDATE_STATIC(CURRENT, IS_STATIC)                                      \
+  {                                                                            \
+    (CURRENT) |= (((IS_STATIC) & dwarf::GDB_INDEX_SYMBOL_STATIC_MASK)          \
+                  << dwarf::GDB_INDEX_SYMBOL_STATIC_SHIFT);                    \
+  }
+
+  // Compute the Attributes for the Die.
+  uint32_t Value = dwarf::GDB_INDEX_SYMBOL_KIND_NONE;
+  bool External =
+      Die->findAttribute(dwarf::DW_AT_external) != NULL ? true : false;
+
+  switch (Die->getTag()) {
+  case dwarf::DW_TAG_class_type:
+  case dwarf::DW_TAG_structure_type:
+  case dwarf::DW_TAG_union_type:
+  case dwarf::DW_TAG_enumeration_type:
+  case dwarf::DW_TAG_typedef:
+  case dwarf::DW_TAG_base_type:
+  case dwarf::DW_TAG_subrange_type:
+    UPDATE_VALUE(Value, dwarf::GDB_INDEX_SYMBOL_KIND_TYPE);
+    UPDATE_STATIC(Value, 1);
+    break;
+  case dwarf::DW_TAG_namespace:
+    UPDATE_VALUE(Value, dwarf::GDB_INDEX_SYMBOL_KIND_TYPE);
+    break;
+  case dwarf::DW_TAG_subprogram:
+    UPDATE_VALUE(Value, dwarf::GDB_INDEX_SYMBOL_KIND_FUNCTION);
+    UPDATE_STATIC(Value, !External);
+    break;
+  case dwarf::DW_TAG_constant:
+  case dwarf::DW_TAG_variable:
+    UPDATE_VALUE(Value, dwarf::GDB_INDEX_SYMBOL_KIND_VARIABLE);
+    UPDATE_STATIC(Value, !External);
+    break;
+  case dwarf::DW_TAG_enumerator:
+    UPDATE_VALUE(Value, dwarf::GDB_INDEX_SYMBOL_KIND_VARIABLE);
+    UPDATE_STATIC(Value, 1);
+    break;
+  default:
+    break;
+  }
+  // We don't need to add the CU into the bitmask for two reasons:
+  // a) the pubnames/pubtypes sections are per-cpu, and
+  // b) the linker wouldn't understand it anyhow.
+  // so go ahead and make it 1 byte by shifting it down.
+  return Value >> dwarf::GDB_INDEX_CU_BITSIZE;
+}
+
+/// emitDebugPubNames - Emit visible names into a debug pubnames section.
 ///
-void DwarfDebug::emitDebugPubnames() {
+void DwarfDebug::emitDebugPubNames(bool GnuStyle) {
   const MCSection *ISec = Asm->getObjFileLowering().getDwarfInfoSection();
+  const MCSection *PSec =
+      GnuStyle ? Asm->getObjFileLowering().getDwarfGnuPubNamesSection()
+               : Asm->getObjFileLowering().getDwarfPubNamesSection();
 
   typedef DenseMap<const MDNode*, CompileUnit*> CUMapType;
   for (CUMapType::iterator I = CUMap.begin(), E = CUMap.end(); I != E; ++I) {
@@ -2253,9 +2394,9 @@ void DwarfDebug::emitDebugPubnames() {
       continue;
 
     // Start the dwarf pubnames section.
-    Asm->OutStreamer
-        .SwitchSection(Asm->getObjFileLowering().getDwarfPubNamesSection());
+    Asm->OutStreamer.SwitchSection(PSec);
 
+    // Emit the header.
     Asm->OutStreamer.AddComment("Length of Public Names Info");
     Asm->EmitLabelDifference(Asm->GetTempSymbol("pubnames_end", ID),
                              Asm->GetTempSymbol("pubnames_begin", ID), 4);
@@ -2274,14 +2415,20 @@ void DwarfDebug::emitDebugPubnames() {
                              Asm->GetTempSymbol(ISec->getLabelBeginName(), ID),
                              4);
 
+    // Emit the pubnames for this compilation unit.
     const StringMap<DIE*> &Globals = TheCU->getGlobalNames();
     for (StringMap<DIE*>::const_iterator
            GI = Globals.begin(), GE = Globals.end(); GI != GE; ++GI) {
       const char *Name = GI->getKeyData();
-      const DIE *Entity = GI->second;
+      DIE *Entity = GI->second;
 
       Asm->OutStreamer.AddComment("DIE offset");
       Asm->EmitInt32(Entity->getOffset());
+
+      if (GnuStyle) {
+        Asm->OutStreamer.AddComment("Index value");
+        Asm->EmitInt8(computeIndexValue(TheCU, Entity));
+      }
 
       if (Asm->isVerbose())
         Asm->OutStreamer.AddComment("External Name");
@@ -2294,55 +2441,65 @@ void DwarfDebug::emitDebugPubnames() {
   }
 }
 
-void DwarfDebug::emitDebugPubTypes() {
+void DwarfDebug::emitDebugPubTypes(bool GnuStyle) {
+  const MCSection *ISec = Asm->getObjFileLowering().getDwarfInfoSection();
+  const MCSection *PSec = Asm->getObjFileLowering().getDwarfPubTypesSection();
+
   for (DenseMap<const MDNode *, CompileUnit *>::iterator I = CUMap.begin(),
-         E = CUMap.end(); I != E; ++I) {
+                                                         E = CUMap.end();
+       I != E; ++I) {
     CompileUnit *TheCU = I->second;
     // Start the dwarf pubtypes section.
-    Asm->OutStreamer.SwitchSection(
-      Asm->getObjFileLowering().getDwarfPubTypesSection());
+    Asm->OutStreamer.SwitchSection(PSec);
     Asm->OutStreamer.AddComment("Length of Public Types Info");
     Asm->EmitLabelDifference(
-      Asm->GetTempSymbol("pubtypes_end", TheCU->getUniqueID()),
-      Asm->GetTempSymbol("pubtypes_begin", TheCU->getUniqueID()), 4);
+        Asm->GetTempSymbol("pubtypes_end", TheCU->getUniqueID()),
+        Asm->GetTempSymbol("pubtypes_begin", TheCU->getUniqueID()), 4);
 
-    Asm->OutStreamer.EmitLabel(Asm->GetTempSymbol("pubtypes_begin",
-                                                  TheCU->getUniqueID()));
+    Asm->OutStreamer.EmitLabel(
+        Asm->GetTempSymbol("pubtypes_begin", TheCU->getUniqueID()));
 
-    if (Asm->isVerbose()) Asm->OutStreamer.AddComment("DWARF Version");
+    if (Asm->isVerbose())
+      Asm->OutStreamer.AddComment("DWARF Version");
     Asm->EmitInt16(dwarf::DW_PUBTYPES_VERSION);
 
     Asm->OutStreamer.AddComment("Offset of Compilation Unit Info");
-    const MCSection *ISec = Asm->getObjFileLowering().getDwarfInfoSection();
-    Asm->EmitSectionOffset(Asm->GetTempSymbol(ISec->getLabelBeginName(),
-                                              TheCU->getUniqueID()),
-                           DwarfInfoSectionSym);
+    Asm->EmitSectionOffset(
+        Asm->GetTempSymbol(ISec->getLabelBeginName(), TheCU->getUniqueID()),
+        DwarfInfoSectionSym);
 
     Asm->OutStreamer.AddComment("Compilation Unit Length");
-    Asm->EmitLabelDifference(Asm->GetTempSymbol(ISec->getLabelEndName(),
-                                                TheCU->getUniqueID()),
-                             Asm->GetTempSymbol(ISec->getLabelBeginName(),
-                                                TheCU->getUniqueID()),
-                             4);
+    Asm->EmitLabelDifference(
+        Asm->GetTempSymbol(ISec->getLabelEndName(), TheCU->getUniqueID()),
+        Asm->GetTempSymbol(ISec->getLabelBeginName(), TheCU->getUniqueID()), 4);
 
-    const StringMap<DIE*> &Globals = TheCU->getGlobalTypes();
-    for (StringMap<DIE*>::const_iterator
-           GI = Globals.begin(), GE = Globals.end(); GI != GE; ++GI) {
+    const StringMap<DIE *> &Globals = TheCU->getGlobalTypes();
+    for (StringMap<DIE *>::const_iterator GI = Globals.begin(),
+                                          GE = Globals.end();
+         GI != GE; ++GI) {
       const char *Name = GI->getKeyData();
       DIE *Entity = GI->second;
 
-      if (Asm->isVerbose()) Asm->OutStreamer.AddComment("DIE offset");
+      if (Asm->isVerbose())
+        Asm->OutStreamer.AddComment("DIE offset");
       Asm->EmitInt32(Entity->getOffset());
 
-      if (Asm->isVerbose()) Asm->OutStreamer.AddComment("External Name");
+      if (GnuStyle) {
+        Asm->OutStreamer.AddComment("Index value");
+        Asm->EmitInt8(computeIndexValue(TheCU, Entity));
+      }
+
+      if (Asm->isVerbose())
+        Asm->OutStreamer.AddComment("External Name");
+
       // Emit the name with a terminating null byte.
-      Asm->OutStreamer.EmitBytes(StringRef(Name, GI->getKeyLength()+1));
+      Asm->OutStreamer.EmitBytes(StringRef(Name, GI->getKeyLength() + 1));
     }
 
     Asm->OutStreamer.AddComment("End Mark");
     Asm->EmitInt32(0);
-    Asm->OutStreamer.EmitLabel(Asm->GetTempSymbol("pubtypes_end",
-                                                  TheCU->getUniqueID()));
+    Asm->OutStreamer.EmitLabel(
+        Asm->GetTempSymbol("pubtypes_end", TheCU->getUniqueID()));
   }
 }
 
@@ -2593,6 +2750,10 @@ CompileUnit *DwarfDebug::constructSkeletonCU(const CompileUnit *CU) {
   if (!CompilationDir.empty())
     NewCU->addLocalString(Die, dwarf::DW_AT_comp_dir, CompilationDir);
 
+  // Flag to let the linker know we have emitted new style pubnames.
+  if (GenerateGnuPubSections)
+    NewCU->addFlag(Die, dwarf::DW_AT_GNU_pubnames);
+
   SkeletonHolder.addUnit(NewCU);
   SkeletonCUs.push_back(NewCU);
 
@@ -2631,9 +2792,4 @@ void DwarfDebug::emitDebugStrDWO() {
   const MCSymbol *StrSym = DwarfStrSectionSym;
   InfoHolder.emitStrings(Asm->getObjFileLowering().getDwarfStrDWOSection(),
                          OffSec, StrSym);
-}
-
-/// Find the MDNode for the given type reference.
-MDNode *DwarfDebug::resolve(DITypeRef TRef) const {
-  return TRef.resolve(TypeIdentifierMap);
 }

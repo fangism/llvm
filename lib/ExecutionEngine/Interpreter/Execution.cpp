@@ -898,40 +898,11 @@ void Interpreter::visitSwitchInst(SwitchInst &I) {
   // Check to see if any of the cases match...
   BasicBlock *Dest = 0;
   for (SwitchInst::CaseIt i = I.case_begin(), e = I.case_end(); i != e; ++i) {
-    IntegersSubset& Case = i.getCaseValueEx();
-    if (Case.isSingleNumber()) {
-      // FIXME: Currently work with ConstantInt based numbers.
-      const ConstantInt *CI = Case.getSingleNumber(0).toConstantInt();
-      GenericValue Val = getOperandValue(const_cast<ConstantInt*>(CI), SF);
-      if (executeICMP_EQ(Val, CondVal, ElTy).IntVal != 0) {
-        Dest = cast<BasicBlock>(i.getCaseSuccessor());
-        break;        
-      }
+    GenericValue CaseVal = getOperandValue(i.getCaseValue(), SF);
+    if (executeICMP_EQ(CondVal, CaseVal, ElTy).IntVal != 0) {
+      Dest = cast<BasicBlock>(i.getCaseSuccessor());
+      break;
     }
-    if (Case.isSingleNumbersOnly()) {
-      for (unsigned n = 0, en = Case.getNumItems(); n != en; ++n) {
-        // FIXME: Currently work with ConstantInt based numbers.
-        const ConstantInt *CI = Case.getSingleNumber(n).toConstantInt();
-        GenericValue Val = getOperandValue(const_cast<ConstantInt*>(CI), SF);
-        if (executeICMP_EQ(Val, CondVal, ElTy).IntVal != 0) {
-          Dest = cast<BasicBlock>(i.getCaseSuccessor());
-          break;        
-        }
-      }      
-    } else
-      for (unsigned n = 0, en = Case.getNumItems(); n != en; ++n) {
-        IntegersSubset::Range r = Case.getItem(n);
-        // FIXME: Currently work with ConstantInt based numbers.
-        const ConstantInt *LowCI = r.getLow().toConstantInt();
-        const ConstantInt *HighCI = r.getHigh().toConstantInt();
-        GenericValue Low = getOperandValue(const_cast<ConstantInt*>(LowCI), SF);
-        GenericValue High = getOperandValue(const_cast<ConstantInt*>(HighCI), SF);
-        if (executeICMP_ULE(Low, CondVal, ElTy).IntVal != 0 &&
-            executeICMP_ULE(CondVal, High, ElTy).IntVal != 0) {
-          Dest = cast<BasicBlock>(i.getCaseSuccessor());
-          break;        
-        }
-      }
   }
   if (!Dest) Dest = I.getDefaultDest();   // No cases matched: use default
   SwitchToNewBasicBlock(Dest, SF);
@@ -1906,6 +1877,95 @@ void Interpreter::visitShuffleVectorInst(ShuffleVectorInst &I){
       }
       break;
   }
+  SetValue(&I, Dest, SF);
+}
+
+void Interpreter::visitExtractValueInst(ExtractValueInst &I) {
+  ExecutionContext &SF = ECStack.back();
+  Value *Agg = I.getAggregateOperand();
+  GenericValue Dest;
+  GenericValue Src = getOperandValue(Agg, SF);
+
+  ExtractValueInst::idx_iterator IdxBegin = I.idx_begin();
+  unsigned Num = I.getNumIndices();
+  GenericValue *pSrc = &Src;
+
+  for (unsigned i = 0 ; i < Num; ++i) {
+    pSrc = &pSrc->AggregateVal[*IdxBegin];
+    ++IdxBegin;
+  }
+
+  Type *IndexedType = ExtractValueInst::getIndexedType(Agg->getType(), I.getIndices());
+  switch (IndexedType->getTypeID()) {
+    default:
+      llvm_unreachable("Unhandled dest type for extractelement instruction");
+    break;
+    case Type::IntegerTyID:
+      Dest.IntVal = pSrc->IntVal;
+    break;
+    case Type::FloatTyID:
+      Dest.FloatVal = pSrc->FloatVal;
+    break;
+    case Type::DoubleTyID:
+      Dest.DoubleVal = pSrc->DoubleVal;
+    break;
+    case Type::ArrayTyID:
+    case Type::StructTyID:
+    case Type::VectorTyID:
+      Dest.AggregateVal = pSrc->AggregateVal;
+    break;
+    case Type::PointerTyID:
+      Dest.PointerVal = pSrc->PointerVal;
+    break;
+  }
+
+  SetValue(&I, Dest, SF);
+}
+
+void Interpreter::visitInsertValueInst(InsertValueInst &I) {
+
+  ExecutionContext &SF = ECStack.back();
+  Value *Agg = I.getAggregateOperand();
+
+  GenericValue Src1 = getOperandValue(Agg, SF);
+  GenericValue Src2 = getOperandValue(I.getOperand(1), SF);
+  GenericValue Dest = Src1; // Dest is a slightly changed Src1
+
+  ExtractValueInst::idx_iterator IdxBegin = I.idx_begin();
+  unsigned Num = I.getNumIndices();
+
+  GenericValue *pDest = &Dest;
+  for (unsigned i = 0 ; i < Num; ++i) {
+    pDest = &pDest->AggregateVal[*IdxBegin];
+    ++IdxBegin;
+  }
+  // pDest points to the target value in the Dest now
+
+  Type *IndexedType = ExtractValueInst::getIndexedType(Agg->getType(), I.getIndices());
+
+  switch (IndexedType->getTypeID()) {
+    default:
+      llvm_unreachable("Unhandled dest type for insertelement instruction");
+    break;
+    case Type::IntegerTyID:
+      pDest->IntVal = Src2.IntVal;
+    break;
+    case Type::FloatTyID:
+      pDest->FloatVal = Src2.FloatVal;
+    break;
+    case Type::DoubleTyID:
+      pDest->DoubleVal = Src2.DoubleVal;
+    break;
+    case Type::ArrayTyID:
+    case Type::StructTyID:
+    case Type::VectorTyID:
+      pDest->AggregateVal = Src2.AggregateVal;
+    break;
+    case Type::PointerTyID:
+      pDest->PointerVal = Src2.PointerVal;
+    break;
+  }
+
   SetValue(&I, Dest, SF);
 }
 

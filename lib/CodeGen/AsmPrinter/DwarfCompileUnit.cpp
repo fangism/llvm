@@ -800,7 +800,7 @@ DIE *CompileUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
     addAccelType(Ty.getName(), std::make_pair(TyDIE, Flags));
   }
 
-  addToContextOwner(TyDIE, Ty.getContext());
+  addToContextOwner(TyDIE, DD->resolve(Ty.getContext()));
   return TyDIE;
 }
 
@@ -832,7 +832,7 @@ void CompileUnit::addType(DIE *Entity, DIType Ty, uint16_t Attribute) {
 /// addGlobalType - Add a new global type to the compile unit.
 ///
 void CompileUnit::addGlobalType(DIType Ty) {
-  DIDescriptor Context = Ty.getContext();
+  DIDescriptor Context = DD->resolve(Ty.getContext());
   if (Ty.isCompositeType() && !Ty.getName().empty() && !Ty.isForwardDecl()
       && (!Context || Context.isCompileUnit() || Context.isFile()
           || Context.isNameSpace()))
@@ -913,19 +913,19 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DIDerivedType DTy) {
 
 /// Return true if the type is appropriately scoped to be contained inside
 /// its own type unit.
-static bool isTypeUnitScoped(DIType Ty) {
-  DIScope Parent = Ty.getContext();
+static bool isTypeUnitScoped(DIType Ty, const DwarfDebug *DD) {
+  DIScope Parent = DD->resolve(Ty.getContext());
   while (Parent) {
     // Don't generate a hash for anything scoped inside a function.
     if (Parent.isSubprogram())
       return false;
-    Parent = Parent.getContext();
+    Parent = DD->resolve(Parent.getContext());
   }
   return true;
 }
 
 /// Return true if the type should be split out into a type unit.
-static bool shouldCreateTypeUnit(DICompositeType CTy) {
+static bool shouldCreateTypeUnit(DICompositeType CTy, const DwarfDebug *DD) {
   uint16_t Tag = CTy.getTag();
 
   switch (Tag) {
@@ -936,7 +936,7 @@ static bool shouldCreateTypeUnit(DICompositeType CTy) {
     // If this is a class, structure, union, or enumeration type
     // that is not a declaration, is a type definition, and not scoped
     // inside a function then separate this out as a type unit.
-    if (CTy.isForwardDecl() || !isTypeUnitScoped(CTy))
+    if (CTy.isForwardDecl() || !isTypeUnitScoped(CTy, DD))
       return 0;
     return 1;
   default:
@@ -1088,7 +1088,7 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
       addDIEEntry(&Buffer, dwarf::DW_AT_containing_type, dwarf::DW_FORM_ref4,
                   getOrCreateTypeDIE(DIType(ContainingType)));
     else
-      addToContextOwner(&Buffer, CTy.getContext());
+      addToContextOwner(&Buffer, DD->resolve(CTy.getContext()));
 
     if (CTy.isObjcClassComplete())
       addFlag(&Buffer, dwarf::DW_AT_APPLE_objc_complete_type);
@@ -1138,7 +1138,7 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
   }
   // If this is a type applicable to a type unit it then add it to the
   // list of types we'll compute a hash for later.
-  if (shouldCreateTypeUnit(CTy))
+  if (shouldCreateTypeUnit(CTy, DD))
     DD->addTypeUnitType(&Buffer);
 }
 
@@ -1373,7 +1373,7 @@ void CompileUnit::createGlobalVariableDIE(const MDNode *N) {
     // We need the declaration DIE that is in the static member's class.
     // But that class might not exist in the DWARF yet.
     // Creating the class will create the static member decl DIE.
-    getOrCreateContextDIE(SDMDecl.getContext());
+    getOrCreateContextDIE(DD->resolve(SDMDecl.getContext()));
     VariableDIE = getDIE(SDMDecl);
     assert(VariableDIE && "Static member decl has no context?");
     IsStaticMember = true;
@@ -1435,7 +1435,7 @@ void CompileUnit::createGlobalVariableDIE(const MDNode *N) {
     // Do not create specification DIE if context is either compile unit
     // or a subprogram.
     if (GVContext && GV.isDefinition() && !GVContext.isCompileUnit() &&
-        !GVContext.isFile() && !isSubprogramContext(GVContext)) {
+        !GVContext.isFile() && !DD->isSubprogramContext(GVContext)) {
       // Create specification DIE.
       VariableSpecDIE = new DIE(dwarf::DW_TAG_variable);
       addDIEEntry(VariableSpecDIE, dwarf::DW_AT_specification,
