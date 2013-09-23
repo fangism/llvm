@@ -1544,6 +1544,9 @@ const char *SparcTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case SPISD::RET_FLAG:   return "SPISD::RET_FLAG";
   case SPISD::GLOBAL_BASE_REG: return "SPISD::GLOBAL_BASE_REG";
   case SPISD::FLUSHW:     return "SPISD::FLUSHW";
+  case SPISD::TLS_ADD:    return "SPISD::TLS_ADD";
+  case SPISD::TLS_LD:     return "SPISD::TLS_LD";
+  case SPISD::TLS_CALL:   return "SPISD::TLS_CALL";
   }
 }
 
@@ -1651,6 +1654,10 @@ SDValue SparcTargetLowering::makeAddress(SDValue Op, SelectionDAG &DAG) const {
     SDValue HiLo = makeHiLoPair(Op, SPII::MO_HI, SPII::MO_LO, DAG);
     SDValue GlobalBase = DAG.getNode(SPISD::GLOBAL_BASE_REG, DL, VT);
     SDValue AbsAddr = DAG.getNode(ISD::ADD, DL, VT, GlobalBase, HiLo);
+    // GLOBAL_BASE_REG codegen'ed with call. Inform MFI that this
+    // function has calls.
+    MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
+    MFI->setHasCalls(true);
     return DAG.getLoad(VT, DL, DAG.getEntryNode(), AbsAddr,
                        MachinePointerInfo::getGOT(), false, false, false, 0);
   }
@@ -1693,6 +1700,103 @@ SDValue SparcTargetLowering::LowerConstantPool(SDValue Op,
 SDValue SparcTargetLowering::LowerBlockAddress(SDValue Op,
                                                SelectionDAG &DAG) const {
   return makeAddress(Op, DAG);
+}
+
+SDValue SparcTargetLowering::LowerGlobalTLSAddress(SDValue Op,
+                                                   SelectionDAG &DAG) const {
+
+  GlobalAddressSDNode *GA = cast<GlobalAddressSDNode>(Op);
+  SDLoc DL(GA);
+  const GlobalValue *GV = GA->getGlobal();
+  EVT PtrVT = getPointerTy();
+
+  TLSModel::Model model = getTargetMachine().getTLSModel(GV);
+
+  if (model == TLSModel::GeneralDynamic || model == TLSModel::LocalDynamic) {
+    unsigned HiTF = ((model == TLSModel::GeneralDynamic)? SPII::MO_TLS_GD_HI22
+                     : SPII::MO_TLS_LDM_HI22);
+    unsigned LoTF = ((model == TLSModel::GeneralDynamic)? SPII::MO_TLS_GD_LO10
+                     : SPII::MO_TLS_LDM_LO10);
+    unsigned addTF = ((model == TLSModel::GeneralDynamic)? SPII::MO_TLS_GD_ADD
+                      : SPII::MO_TLS_LDM_ADD);
+    unsigned callTF = ((model == TLSModel::GeneralDynamic)? SPII::MO_TLS_GD_CALL
+                       : SPII::MO_TLS_LDM_CALL);
+
+    SDValue HiLo = makeHiLoPair(Op, HiTF, LoTF, DAG);
+    SDValue Base = DAG.getNode(SPISD::GLOBAL_BASE_REG, DL, PtrVT);
+    SDValue Argument = DAG.getNode(SPISD::TLS_ADD, DL, PtrVT, Base, HiLo,
+                               withTargetFlags(Op, addTF, DAG));
+
+    SDValue Chain = DAG.getEntryNode();
+    SDValue InFlag;
+
+    Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(1, true), DL);
+    Chain = DAG.getCopyToReg(Chain, DL, SP::O0, Argument, InFlag);
+    InFlag = Chain.getValue(1);
+    SDValue Callee = DAG.getTargetExternalSymbol("__tls_get_addr", PtrVT);
+    SDValue Symbol = withTargetFlags(Op, callTF, DAG);
+
+    SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
+    SmallVector<SDValue, 4> Ops;
+    Ops.push_back(Chain);
+    Ops.push_back(Callee);
+    Ops.push_back(Symbol);
+    Ops.push_back(DAG.getRegister(SP::O0, PtrVT));
+    const uint32_t *Mask = getTargetMachine()
+      .getRegisterInfo()->getCallPreservedMask(CallingConv::C);
+    assert(Mask && "Missing call preserved mask for calling convention");
+    Ops.push_back(DAG.getRegisterMask(Mask));
+    Ops.push_back(InFlag);
+    Chain = DAG.getNode(SPISD::TLS_CALL, DL, NodeTys, &Ops[0], Ops.size());
+    InFlag = Chain.getValue(1);
+    Chain = DAG.getCALLSEQ_END(Chain, DAG.getIntPtrConstant(1, true),
+                               DAG.getIntPtrConstant(0, true), InFlag, DL);
+    InFlag = Chain.getValue(1);
+    SDValue Ret = DAG.getCopyFromReg(Chain, DL, SP::O0, PtrVT, InFlag);
+
+    if (model != TLSModel::LocalDynamic)
+      return Ret;
+
+    SDValue Hi = DAG.getNode(SPISD::Hi, DL, PtrVT,
+                             withTargetFlags(Op, SPII::MO_TLS_LDO_HIX22, DAG));
+    SDValue Lo = DAG.getNode(SPISD::Lo, DL, PtrVT,
+                             withTargetFlags(Op, SPII::MO_TLS_LDO_LOX10, DAG));
+    HiLo =  DAG.getNode(ISD::XOR, DL, PtrVT, Hi, Lo);
+    return DAG.getNode(SPISD::TLS_ADD, DL, PtrVT, Ret, HiLo,
+                       withTargetFlags(Op, SPII::MO_TLS_LDO_ADD, DAG));
+  }
+
+  if (model == TLSModel::InitialExec) {
+    unsigned ldTF     = ((PtrVT == MVT::i64)? SPII::MO_TLS_IE_LDX
+                         : SPII::MO_TLS_IE_LD);
+
+    SDValue Base = DAG.getNode(SPISD::GLOBAL_BASE_REG, DL, PtrVT);
+
+    // GLOBAL_BASE_REG codegen'ed with call. Inform MFI that this
+    // function has calls.
+    MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
+    MFI->setHasCalls(true);
+
+    SDValue TGA = makeHiLoPair(Op,
+                               SPII::MO_TLS_IE_HI22, SPII::MO_TLS_IE_LO10, DAG);
+    SDValue Ptr = DAG.getNode(ISD::ADD, DL, PtrVT, Base, TGA);
+    SDValue Offset = DAG.getNode(SPISD::TLS_LD,
+                                 DL, PtrVT, Ptr,
+                                 withTargetFlags(Op, ldTF, DAG));
+    return DAG.getNode(SPISD::TLS_ADD, DL, PtrVT,
+                       DAG.getRegister(SP::G7, PtrVT), Offset,
+                       withTargetFlags(Op, SPII::MO_TLS_IE_ADD, DAG));
+  }
+
+  assert(model == TLSModel::LocalExec);
+  SDValue Hi = DAG.getNode(SPISD::Hi, DL, PtrVT,
+                           withTargetFlags(Op, SPII::MO_TLS_LE_HIX22, DAG));
+  SDValue Lo = DAG.getNode(SPISD::Lo, DL, PtrVT,
+                           withTargetFlags(Op, SPII::MO_TLS_LE_LOX10, DAG));
+  SDValue Offset =  DAG.getNode(ISD::XOR, DL, PtrVT, Hi, Lo);
+
+  return DAG.getNode(ISD::ADD, DL, PtrVT,
+                     DAG.getRegister(SP::G7, PtrVT), Offset);
 }
 
 SDValue
@@ -2160,12 +2264,12 @@ static SDValue LowerRETURNADDR(SDValue Op, SelectionDAG &DAG,
   return RetAddr;
 }
 
-static SDValue LowerF64Op(SDValue Op, SelectionDAG &DAG)
+static SDValue LowerF64Op(SDValue Op, SelectionDAG &DAG, unsigned opcode)
 {
   SDLoc dl(Op);
 
   assert(Op.getValueType() == MVT::f64 && "LowerF64Op called on non-double!");
-  assert(Op.getOpcode() == ISD::FNEG || Op.getOpcode() == ISD::FABS);
+  assert(opcode == ISD::FNEG || opcode == ISD::FABS);
 
   // Lower fneg/fabs on f64 to fneg/fabs on f32.
   // fneg f64 => fneg f32:sub_even, fmov f32:sub_odd.
@@ -2177,7 +2281,7 @@ static SDValue LowerF64Op(SDValue Op, SelectionDAG &DAG)
   SDValue Lo32 = DAG.getTargetExtractSubreg(SP::sub_odd, dl, MVT::f32,
                                             SrcReg64);
 
-  Hi32 = DAG.getNode(Op.getOpcode(), dl, MVT::f32, Hi32);
+  Hi32 = DAG.getNode(opcode, dl, MVT::f32, Hi32);
 
   SDValue DstReg64 = SDValue(DAG.getMachineNode(TargetOpcode::IMPLICIT_DEF,
                                                 dl, MVT::f64), 0);
@@ -2280,7 +2384,7 @@ static SDValue LowerFNEG(SDValue Op, SelectionDAG &DAG,
                          const SparcTargetLowering &TLI,
                          bool is64Bit) {
   if (Op.getValueType() == MVT::f64)
-    return LowerF64Op(Op, DAG);
+    return LowerF64Op(Op, DAG, ISD::FNEG);
   if (Op.getValueType() == MVT::f128)
     return TLI.LowerF128Op(Op, DAG, ((is64Bit) ? "_Qp_neg" : "_Q_neg"), 1);
   return Op;
@@ -2288,7 +2392,7 @@ static SDValue LowerFNEG(SDValue Op, SelectionDAG &DAG,
 
 static SDValue LowerFABS(SDValue Op, SelectionDAG &DAG, bool isV9) {
   if (Op.getValueType() == MVT::f64)
-    return LowerF64Op(Op, DAG);
+    return LowerF64Op(Op, DAG, ISD::FABS);
   if (Op.getValueType() != MVT::f128)
     return Op;
 
@@ -2304,7 +2408,7 @@ static SDValue LowerFABS(SDValue Op, SelectionDAG &DAG, bool isV9) {
   if (isV9)
     Hi64 = DAG.getNode(Op.getOpcode(), dl, MVT::f64, Hi64);
   else
-    Hi64 = LowerF64Op(Op, DAG);
+    Hi64 = LowerF64Op(Hi64, DAG, ISD::FABS);
 
   SDValue DstReg128 = SDValue(DAG.getMachineNode(TargetOpcode::IMPLICIT_DEF,
                                                  dl, MVT::f128), 0);
@@ -2329,8 +2433,7 @@ LowerOperation(SDValue Op, SelectionDAG &DAG) const {
 
   case ISD::RETURNADDR:         return LowerRETURNADDR(Op, DAG, *this);
   case ISD::FRAMEADDR:          return LowerFRAMEADDR(Op, DAG);
-  case ISD::GlobalTLSAddress:
-    llvm_unreachable("TLS not implemented for Sparc.");
+  case ISD::GlobalTLSAddress:   return LowerGlobalTLSAddress(Op, DAG);
   case ISD::GlobalAddress:      return LowerGlobalAddress(Op, DAG);
   case ISD::BlockAddress:       return LowerBlockAddress(Op, DAG);
   case ISD::ConstantPool:       return LowerConstantPool(Op, DAG);

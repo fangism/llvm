@@ -1824,20 +1824,24 @@ SDValue DAGCombiner::visitMUL(SDNode *N) {
   // fold (mul x, 0) -> 0
   if (N1IsConst && ConstValue1 == 0)
     return N1;
+  // We require a splat of the entire scalar bit width for non-contiguous
+  // bit patterns.
+  bool IsFullSplat =
+    ConstValue1.getBitWidth() == VT.getScalarType().getSizeInBits();
   // fold (mul x, 1) -> x
-  if (N1IsConst && ConstValue1 == 1)
+  if (N1IsConst && ConstValue1 == 1 && IsFullSplat)
     return N0;
   // fold (mul x, -1) -> 0-x
   if (N1IsConst && ConstValue1.isAllOnesValue())
     return DAG.getNode(ISD::SUB, SDLoc(N), VT,
                        DAG.getConstant(0, VT), N0);
   // fold (mul x, (1 << c)) -> x << c
-  if (N1IsConst && ConstValue1.isPowerOf2())
+  if (N1IsConst && ConstValue1.isPowerOf2() && IsFullSplat)
     return DAG.getNode(ISD::SHL, SDLoc(N), VT, N0,
                        DAG.getConstant(ConstValue1.logBase2(),
                                        getShiftAmountTy(N0.getValueType())));
   // fold (mul x, -(1 << c)) -> -(x << c) or (-x) << c
-  if (N1IsConst && (-ConstValue1).isPowerOf2()) {
+  if (N1IsConst && (-ConstValue1).isPowerOf2() && IsFullSplat) {
     unsigned Log2Val = (-ConstValue1).logBase2();
     // FIXME: If the input is something that is easily negated (e.g. a
     // single-use add), we should put the negate there.
@@ -3337,6 +3341,7 @@ SDNode *DAGCombiner::MatchRotate(SDValue LHS, SDValue RHS, SDLoc DL) {
   unsigned OpSizeInBits = VT.getSizeInBits();
   SDValue LHSShiftArg = LHSShift.getOperand(0);
   SDValue LHSShiftAmt = LHSShift.getOperand(1);
+  SDValue RHSShiftArg = RHSShift.getOperand(0);
   SDValue RHSShiftAmt = RHSShift.getOperand(1);
 
   // fold (or (shl x, C1), (srl x, C2)) -> (rotl x, C1)
@@ -3415,11 +3420,29 @@ SDNode *DAGCombiner::MatchRotate(SDValue LHS, SDValue RHS, SDLoc DL) {
       // fold (or (shl x, (*ext y)), (srl x, (*ext (sub 32, y)))) ->
       //   (rotr x, (sub 32, y))
       if (ConstantSDNode *SUBC =
-            dyn_cast<ConstantSDNode>(RExtOp0.getOperand(0)))
-        if (SUBC->getAPIntValue() == OpSizeInBits)
+              dyn_cast<ConstantSDNode>(RExtOp0.getOperand(0))) {
+        if (SUBC->getAPIntValue() == OpSizeInBits) {
           return DAG.getNode(HasROTL ? ISD::ROTL : ISD::ROTR, DL, VT,
                              LHSShiftArg,
                              HasROTL ? LHSShiftAmt : RHSShiftAmt).getNode();
+        } else if (LHSShiftArg.getOpcode() == ISD::ZERO_EXTEND ||
+                 LHSShiftArg.getOpcode() == ISD::ANY_EXTEND) {
+          // fold (or (shl (*ext x), (*ext y)),
+          //          (srl (*ext x), (*ext (sub 32, y)))) ->
+          //   (*ext (rotl x, y))
+          // fold (or (shl (*ext x), (*ext y)),
+          //          (srl (*ext x), (*ext (sub 32, y)))) ->
+          //   (*ext (rotr x, (sub 32, y)))
+          SDValue LArgExtOp0 = LHSShiftArg.getOperand(0);
+          EVT LArgVT = LArgExtOp0.getValueType();
+          if (LArgVT.getSizeInBits() == SUBC->getAPIntValue()) {
+            SDValue V = DAG.getNode(HasROTL ? ISD::ROTL : ISD::ROTR, DL, LArgVT,
+                             LArgExtOp0,
+                             HasROTL ? LHSShiftAmt : RHSShiftAmt);
+            return DAG.getNode(LHSShiftArg.getOpcode(), DL, VT, V).getNode();
+          }
+        }
+      }
     } else if (LExtOp0.getOpcode() == ISD::SUB &&
                RExtOp0 == LExtOp0.getOperand(1)) {
       // fold (or (shl x, (*ext (sub 32, y))), (srl x, (*ext y))) ->
@@ -3427,11 +3450,29 @@ SDNode *DAGCombiner::MatchRotate(SDValue LHS, SDValue RHS, SDLoc DL) {
       // fold (or (shl x, (*ext (sub 32, y))), (srl x, (*ext y))) ->
       //   (rotl x, (sub 32, y))
       if (ConstantSDNode *SUBC =
-            dyn_cast<ConstantSDNode>(LExtOp0.getOperand(0)))
-        if (SUBC->getAPIntValue() == OpSizeInBits)
+              dyn_cast<ConstantSDNode>(LExtOp0.getOperand(0))) {
+        if (SUBC->getAPIntValue() == OpSizeInBits) {
           return DAG.getNode(HasROTR ? ISD::ROTR : ISD::ROTL, DL, VT,
                              LHSShiftArg,
                              HasROTR ? RHSShiftAmt : LHSShiftAmt).getNode();
+        } else if (RHSShiftArg.getOpcode() == ISD::ZERO_EXTEND ||
+                 RHSShiftArg.getOpcode() == ISD::ANY_EXTEND) {
+          // fold (or (shl (*ext x), (*ext (sub 32, y))),
+          //          (srl (*ext x), (*ext y))) ->
+          //   (*ext (rotl x, y))
+          // fold (or (shl (*ext x), (*ext (sub 32, y))),
+          //          (srl (*ext x), (*ext y))) ->
+          //   (*ext (rotr x, (sub 32, y)))
+          SDValue RArgExtOp0 = RHSShiftArg.getOperand(0);
+          EVT RArgVT = RArgExtOp0.getValueType();
+          if (RArgVT.getSizeInBits() == SUBC->getAPIntValue()) {
+            SDValue V = DAG.getNode(HasROTR ? ISD::ROTR : ISD::ROTL, DL, RArgVT,
+                             RArgExtOp0,
+                             HasROTR ? RHSShiftAmt : LHSShiftAmt);
+            return DAG.getNode(RHSShiftArg.getOpcode(), DL, VT, V).getNode();
+          }
+        }
+      }
     }
   }
 

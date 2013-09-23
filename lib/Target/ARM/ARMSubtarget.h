@@ -33,9 +33,15 @@ protected:
   enum ARMProcFamilyEnum {
     Others, CortexA5, CortexA8, CortexA9, CortexA15, CortexR5, Swift
   };
+  enum ARMProcClassEnum {
+    None, AClass, RClass, MClass
+  };
 
   /// ARMProcFamily - ARM processor family: Cortex-A8, Cortex-A9, and others.
   ARMProcFamilyEnum ARMProcFamily;
+
+  /// ARMProcClass - ARM processor class: None, AClass, RClass or MClass.
+  ARMProcClassEnum ARMProcClass;
 
   /// HasV4TOps, HasV5TOps, HasV5TEOps,
   /// HasV6Ops, HasV6T2Ops, HasV7Ops, HasV8Ops -
@@ -81,10 +87,6 @@ protected:
 
   /// HasThumb2 - True if Thumb2 instructions are supported.
   bool HasThumb2;
-
-  /// IsMClass - True if the subtarget belongs to the 'M' profile of CPUs -
-  /// v6m, v7m for example.
-  bool IsMClass;
 
   /// NoARM - True if subtarget does not support ARM mode execution.
   bool NoARM;
@@ -158,6 +160,9 @@ protected:
 
   /// HasTrustZone - if true, processor supports TrustZone security extensions
   bool HasTrustZone;
+
+  /// HasCrypto - if true, processor supports Cryptography extensions
+  bool HasCrypto;
 
   /// AllowsUnalignedMem - If true, the subtarget allows unaligned memory
   /// accesses for some types.  For details, see
@@ -248,6 +253,7 @@ public:
   bool hasVFP4() const { return HasVFPv4; }
   bool hasFPARMv8() const { return HasFPARMv8; }
   bool hasNEON() const { return HasNEON;  }
+  bool hasCrypto() const { return HasCrypto; }
   bool useNEONForSinglePrecisionFP() const {
     return hasNEON() && UseNEONForSinglePrecisionFP; }
 
@@ -296,8 +302,9 @@ public:
   bool isThumb1Only() const { return InThumbMode && !HasThumb2; }
   bool isThumb2() const { return InThumbMode && HasThumb2; }
   bool hasThumb2() const { return HasThumb2; }
-  bool isMClass() const { return IsMClass; }
-  bool isARClass() const { return !IsMClass; }
+  bool isMClass() const { return ARMProcClass == MClass; }
+  bool isRClass() const { return ARMProcClass == RClass; }
+  bool isAClass() const { return ARMProcClass == AClass; }
 
   bool isR9Reserved() const { return IsR9Reserved; }
 

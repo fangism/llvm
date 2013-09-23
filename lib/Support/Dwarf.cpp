@@ -12,6 +12,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Support/Dwarf.h"
+#include "llvm/Support/ErrorHandling.h"
+
 using namespace llvm;
 using namespace dwarf;
 
@@ -740,25 +742,34 @@ const char *llvm::dwarf::AtomTypeString(unsigned AT) {
   return 0;
 }
 
-const char *llvm::dwarf::GDBIndexTypeString(unsigned Kind) {
+const char *llvm::dwarf::GDBIndexEntryKindString(GDBIndexEntryKind Kind) {
   switch (Kind) {
-  case GDB_INDEX_SYMBOL_KIND_NONE:
-    return "case GDB_INDEX_SYMBOL_KIND_NONE";
-  case GDB_INDEX_SYMBOL_KIND_TYPE:
-    return "case GDB_INDEX_SYMBOL_KIND_TYPE";
-  case GDB_INDEX_SYMBOL_KIND_VARIABLE:
-    return "case GDB_INDEX_SYMBOL_KIND_VARIABLE";
-  case GDB_INDEX_SYMBOL_KIND_FUNCTION:
-    return "case GDB_INDEX_SYMBOL_KIND_FUNCTION";
-  case GDB_INDEX_SYMBOL_KIND_OTHER:
-    return "case GDB_INDEX_SYMBOL_KIND_OTHER";
-  // 3 unused bits.
-  case GDB_INDEX_SYMBOL_KIND_UNUSED5:
-    return "case GDB_INDEX_SYMBOL_KIND_UNUSED5";
-  case GDB_INDEX_SYMBOL_KIND_UNUSED6:
-    return "case GDB_INDEX_SYMBOL_KIND_UNUSED6";
-  case GDB_INDEX_SYMBOL_KIND_UNUSED7:
-    return "case GDB_INDEX_SYMBOL_KIND_UNUSED7";
+  case GIEK_NONE:
+    return "NONE";
+  case GIEK_TYPE:
+    return "TYPE";
+  case GIEK_VARIABLE:
+    return "VARIABLE";
+  case GIEK_FUNCTION:
+    return "FUNCTION";
+  case GIEK_OTHER:
+    return "OTHER";
+  case GIEK_UNUSED5:
+    return "UNUSED5";
+  case GIEK_UNUSED6:
+    return "UNUSED6";
+  case GIEK_UNUSED7:
+    return "UNUSED7";
   }
-  return 0;
+  llvm_unreachable("Unknown GDBIndexEntryKind value");
+}
+
+const char *llvm::dwarf::GDBIndexEntryLinkageString(GDBIndexEntryLinkage Linkage) {
+  switch (Linkage) {
+  case GIEL_EXTERNAL:
+    return "EXTERNAL";
+  case GIEL_STATIC:
+    return "STATIC";
+  }
+  llvm_unreachable("Unknown GDBIndexEntryLinkage value");
 }

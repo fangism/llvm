@@ -157,6 +157,14 @@ static cl::opt<std::string>  ClBlacklistFile("msan-blacklist",
        cl::desc("File containing the list of functions where MemorySanitizer "
                 "should not report bugs"), cl::Hidden);
 
+// Experimental. Wraps all indirect calls in the instrumented code with
+// a call to the given function. This is needed to assist the dynamic
+// helper tool (MSanDR) to regain control on transition between instrumented and
+// non-instrumented code.
+static cl::opt<std::string> ClWrapIndirectCalls("msan-wrap-indirect-calls",
+       cl::desc("Wrap indirect calls with a given function"),
+       cl::Hidden);
+
 namespace {
 
 /// \brief An instrumentation pass implementing detection of uninitialized
@@ -168,12 +176,12 @@ class MemorySanitizer : public FunctionPass {
  public:
   MemorySanitizer(bool TrackOrigins = false,
                   StringRef BlacklistFile = StringRef())
-    : FunctionPass(ID),
-      TrackOrigins(TrackOrigins || ClTrackOrigins),
-      TD(0),
-      WarningFn(0),
-      BlacklistFile(BlacklistFile.empty() ? ClBlacklistFile
-                                          : BlacklistFile) { }
+      : FunctionPass(ID),
+        TrackOrigins(TrackOrigins || ClTrackOrigins),
+        TD(0),
+        WarningFn(0),
+        BlacklistFile(BlacklistFile.empty() ? ClBlacklistFile : BlacklistFile),
+        WrapIndirectCalls(!ClWrapIndirectCalls.empty()) {}
   const char *getPassName() const { return "MemorySanitizer"; }
   bool runOnFunction(Function &F);
   bool doInitialization(Module &M);
@@ -242,6 +250,12 @@ class MemorySanitizer : public FunctionPass {
   OwningPtr<SpecialCaseList> BL;
   /// \brief An empty volatile inline asm that prevents callback merge.
   InlineAsm *EmptyAsm;
+
+  bool WrapIndirectCalls;
+  /// \brief Run-time wrapper for indirect calls.
+  Value *IndirectCallWrapperFn;
+  // Argument and return type of IndirectCallWrapperFn: void (*f)(void).
+  Type *AnyFunctionPtrTy;
 
   friend struct MemorySanitizerVisitor;
   friend struct VarArgAMD64Helper;
@@ -336,6 +350,13 @@ void MemorySanitizer::initializeCallbacks(Module &M) {
   EmptyAsm = InlineAsm::get(FunctionType::get(IRB.getVoidTy(), false),
                             StringRef(""), StringRef(""),
                             /*hasSideEffects=*/true);
+
+  if (WrapIndirectCalls) {
+    AnyFunctionPtrTy =
+        PointerType::getUnqual(FunctionType::get(IRB.getVoidTy(), false));
+    IndirectCallWrapperFn = M.getOrInsertFunction(
+        ClWrapIndirectCalls, AnyFunctionPtrTy, AnyFunctionPtrTy, NULL);
+  }
 }
 
 /// \brief Module-level initialization.
@@ -434,6 +455,7 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
   bool LoadShadow;
   bool PoisonStack;
   bool PoisonUndef;
+  bool CheckReturnValue;
   OwningPtr<VarArgHelper> VAHelper;
 
   struct ShadowOriginAndInsertPoint {
@@ -456,6 +478,9 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
     LoadShadow = SanitizeFunction;
     PoisonStack = SanitizeFunction && ClPoisonStack;
     PoisonUndef = SanitizeFunction && ClPoisonUndef;
+    // FIXME: Consider using SpecialCaseList to specify a list of functions that
+    // must always return fully initialized values. For now, we hardcode "main".
+    CheckReturnValue = SanitizeFunction && (F.getName() == "main");
 
     DEBUG(if (!InsertChecks)
           dbgs() << "MemorySanitizer is not inserting checks into '"
@@ -1573,6 +1598,17 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
     }
   }
 
+  // Replace call to (*Fn) with a call to (*IndirectCallWrapperFn(Fn)).
+  void wrapIndirectCall(IRBuilder<> &IRB, CallSite CS) {
+    Value *Fn = CS.getCalledValue();
+    Value *NewFn = IRB.CreateBitCast(
+        IRB.CreateCall(MS.IndirectCallWrapperFn,
+                       IRB.CreateBitCast(Fn, MS.AnyFunctionPtrTy)),
+        Fn->getType());
+    setShadow(NewFn, getShadow(Fn));
+    CS.setCalledFunction(NewFn);
+  }
+
   void visitCallSite(CallSite CS) {
     Instruction &I = *CS.getInstruction();
     assert((CS.isCall() || CS.isInvoke()) && "Unknown type of CallSite");
@@ -1611,6 +1647,10 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
       }
     }
     IRBuilder<> IRB(&I);
+
+    if (MS.WrapIndirectCalls && !CS.getCalledFunction())
+      wrapIndirectCall(IRB, CS);
+
     unsigned ArgOffset = 0;
     DEBUG(dbgs() << "  CallSite: " << I << "\n");
     for (CallSite::arg_iterator ArgIt = CS.arg_begin(), End = CS.arg_end();
@@ -1654,7 +1694,7 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
     DEBUG(dbgs() << "  done with call args\n");
 
     FunctionType *FT =
-      cast<FunctionType>(CS.getCalledValue()->getType()-> getContainedType(0));
+      cast<FunctionType>(CS.getCalledValue()->getType()->getContainedType(0));
     if (FT->isVarArg()) {
       VAHelper->visitCallSite(CS, IRB);
     }
@@ -1693,12 +1733,17 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
 
   void visitReturnInst(ReturnInst &I) {
     IRBuilder<> IRB(&I);
-    if (Value *RetVal = I.getReturnValue()) {
-      // Set the shadow for the RetVal.
-      Value *Shadow = getShadow(RetVal);
-      Value *ShadowPtr = getShadowPtrForRetval(RetVal, IRB);
-      DEBUG(dbgs() << "Return: " << *Shadow << "\n" << *ShadowPtr << "\n");
+    Value *RetVal = I.getReturnValue();
+    if (!RetVal) return;
+    Value *ShadowPtr = getShadowPtrForRetval(RetVal, IRB);
+    if (CheckReturnValue) {
+      insertCheck(RetVal, &I);
+      Value *Shadow = getCleanShadow(RetVal);
       IRB.CreateAlignedStore(Shadow, ShadowPtr, kShadowTLSAlignment);
+    } else {
+      Value *Shadow = getShadow(RetVal);
+      IRB.CreateAlignedStore(Shadow, ShadowPtr, kShadowTLSAlignment);
+      // FIXME: make it conditional if ClStoreCleanOrigin==0
       if (MS.TrackOrigins)
         IRB.CreateStore(getOrigin(RetVal), getOriginPtrForRetval(IRB));
     }

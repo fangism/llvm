@@ -422,7 +422,7 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
       MachineBasicBlock::iterator InsertPos = Def;
       const MDNode *Variable =
         MI->getOperand(MI->getNumOperands()-1).getMetadata();
-      bool IsIndirect = MI->getOperand(1).isImm();
+      bool IsIndirect = MI->isIndirectDebugValue();
       unsigned Offset = IsIndirect ? MI->getOperand(1).getImm() : 0;
       // Def is never a terminator here, so it is ok to increment InsertPos.
       BuildMI(*EntryMBB, ++InsertPos, MI->getDebugLoc(),
@@ -1857,15 +1857,15 @@ WalkChainUsers(const SDNode *ChainedNode,
 
     SDNode *User = *UI;
 
+    if (User->getOpcode() == ISD::HANDLENODE)  // Root of the graph.
+      continue;
+
     // If we see an already-selected machine node, then we've gone beyond the
     // pattern that we're selecting down into the already selected chunk of the
     // DAG.
-    if (User->isMachineOpcode() ||
-        User->getOpcode() == ISD::HANDLENODE)  // Root of the graph.
-      continue;
-
     unsigned UserOpcode = User->getOpcode();
-    if (UserOpcode == ISD::CopyToReg ||
+    if (User->isMachineOpcode() ||
+        UserOpcode == ISD::CopyToReg ||
         UserOpcode == ISD::CopyFromReg ||
         UserOpcode == ISD::INLINEASM ||
         UserOpcode == ISD::EH_LABEL ||

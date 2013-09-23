@@ -1,4 +1,5 @@
-; RUN: llc -mtriple=x86_64-pc-linux-gnu -generate-gnu-dwarf-pub-sections -o - %s | FileCheck %s
+; RUN: llc -mtriple=x86_64-pc-linux-gnu -generate-gnu-dwarf-pub-sections < %s | FileCheck -check-prefix=ASM %s
+; RUN: llc -mtriple=x86_64-pc-linux-gnu -generate-gnu-dwarf-pub-sections -filetype=obj < %s | llvm-dwarfdump - | FileCheck %s
 ; ModuleID = 'dwarf-public-names.cpp'
 ;
 ; Generated from:
@@ -33,18 +34,42 @@
 ; }
 
 
-; CHECK: .byte   32                      # Index value
-; CHECK-NEXT: .asciz   "global_namespace_variable" # External Name
-; CHECK: .byte   48                      # Index value
-; CHECK: .asciz   "global_namespace_function" # External Name
-; CHECK: .byte   176                     # Index value
-; CHECK: .asciz   "static_member_function" # External Name
-; CHECK: .byte   32                      # Index value
-; CHECK: .asciz   "global_variable"      # External Name
-; CHECK: .byte   48                      # Index value
-; CHECK: .asciz   "global_function"      # External Name
-; CHECK: .byte   176                     # Index value
-; CHECK: .asciz   "member_function"      # External Name
+; ASM: .byte   32                      # Kind: VARIABLE, EXTERNAL
+
+; CHECK: .debug_info contents:
+; CHECK: 0x00000046: DW_TAG_subprogram
+; CHECK-NEXT: DW_AT_MIPS_linkage_name
+; CHECK-NEXT: DW_AT_name {{.*}} "member_function"
+; CHECK: 0x00000058: DW_TAG_subprogram
+; CHECK-NEXT: DW_AT_MIPS_linkage_name
+; CHECK-NEXT: DW_AT_name {{.*}} "static_member_function"
+; CHECK: 0x0000007c: DW_TAG_variable
+; CHECK-NEXT: DW_AT_name {{.*}} "global_variable"
+; CHECK: 0x00000094: DW_TAG_variable
+; CHECK-NEXT: DW_AT_name {{.*}} "global_namespace_variable"
+; CHECK: 0x000000a3: DW_TAG_subprogram
+; CHECK-NEXT: DW_AT_MIPS_linkage_name
+; CHECK-NEXT: DW_AT_name {{.*}} "global_namespace_function"
+; CHECK: 0x000000be: DW_TAG_subprogram
+; CHECK-NEXT: DW_AT_specification {{.*}}0x00000046}
+; CHECK: 0x000000e8: DW_TAG_subprogram
+; CHECK-NEXT: DW_AT_specification {{.*}}0x00000058}
+; CHECK: 0x000000ff: DW_TAG_subprogram
+; CHECK-NEXT: DW_AT_MIPS_linkage_name
+; CHECK-NEXT: DW_AT_name {{.*}} "global_function"
+
+; CHECK-LABEL: .debug_gnu_pubnames contents:
+; CHECK-NEXT: Length:                167
+; CHECK-NEXT: Version:               2
+; CHECK-NEXT: Offset in .debug_info: 0
+; CHECK-NEXT: Size:                  317
+; CHECK-NEXT: Offset     Linkage  Kind     Name
+; CHECK-DAG:  0x00000094 EXTERNAL VARIABLE "global_namespace_variable"
+; CHECK-DAG:  0x000000a3 EXTERNAL FUNCTION "global_namespace_function"
+; CHECK-DAG:  0x000000e8 STATIC   FUNCTION "static_member_function"
+; CHECK-DAG:  0x0000007c EXTERNAL VARIABLE "global_variable"
+; CHECK-DAG:  0x000000ff EXTERNAL FUNCTION "global_function"
+; CHECK-DAG:  0x000000be STATIC   FUNCTION "member_function"
 
 %struct.C = type { i8 }
 

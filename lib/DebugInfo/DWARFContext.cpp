@@ -69,10 +69,10 @@ void DWARFContext::dump(raw_ostream &OS, DIDumpType DumpType) {
         cu->getCompileUnitDIE()->getAttributeValueAsUnsigned(cu, DW_AT_stmt_list,
                                                              -1U);
       if (stmtOffset != -1U) {
-        DataExtractor lineData(getLineSection(), isLittleEndian(),
+        DataExtractor lineData(getLineSection().Data, isLittleEndian(),
                                savedAddressByteSize);
         DWARFDebugLine::DumpingState state(OS);
-        DWARFDebugLine::parseStatementTable(lineData, &lineRelocMap(), &stmtOffset, state);
+        DWARFDebugLine::parseStatementTable(lineData, &getLineSection().Relocs, &stmtOffset, state);
       }
     }
   }
@@ -117,6 +117,27 @@ void DWARFContext::dump(raw_ostream &OS, DIDumpType DumpType) {
         break;
       OS << format("%8x    ", n);
       OS << pubNames.getCStr(&offset) << "\n";
+    }
+  }
+
+  if (DumpType == DIDT_All || DumpType == DIDT_GnuPubnames) {
+    OS << "\n.debug_gnu_pubnames contents:\n";
+    DataExtractor pubNames(getGnuPubNamesSection(), isLittleEndian(), 0);
+    offset = 0;
+    OS << "Length:                " << pubNames.getU32(&offset) << "\n";
+    OS << "Version:               " << pubNames.getU16(&offset) << "\n";
+    OS << "Offset in .debug_info: " << pubNames.getU32(&offset) << "\n";
+    OS << "Size:                  " << pubNames.getU32(&offset) << "\n";
+    OS << "Offset     Linkage  Kind    Name\n";
+    while (offset < getGnuPubNamesSection().size()) {
+      uint32_t dieRef = pubNames.getU32(&offset);
+      if (dieRef == 0)
+        break;
+      PubIndexEntryDescriptor desc(pubNames.getU8(&offset));
+      OS << format("0x%8.8x ", dieRef)
+         << format("%-8s", dwarf::GDBIndexEntryLinkageString(desc.Linkage))
+         << ' ' << dwarf::GDBIndexEntryKindString(desc.Kind) << " \""
+         << pubNames.getCStr(&offset) << "\"\n";
     }
   }
 
@@ -185,8 +206,8 @@ const DWARFDebugLoc *DWARFContext::getDebugLoc() {
   if (Loc)
     return Loc.get();
 
-  DataExtractor LocData(getLocSection(), isLittleEndian(), 0);
-  Loc.reset(new DWARFDebugLoc(locRelocMap()));
+  DataExtractor LocData(getLocSection().Data, isLittleEndian(), 0);
+  Loc.reset(new DWARFDebugLoc(getLocSection().Relocs));
   // assume all compile units have the same address byte size
   if (getNumCompileUnits())
     Loc->parse(LocData, getCompileUnitAtIndex(0)->getAddressByteSize());
@@ -231,7 +252,7 @@ const DWARFDebugFrame *DWARFContext::getDebugFrame() {
 const DWARFLineTable *
 DWARFContext::getLineTableForCompileUnit(DWARFCompileUnit *cu) {
   if (!Line)
-    Line.reset(new DWARFDebugLine(&lineRelocMap()));
+    Line.reset(new DWARFDebugLine(&getLineSection().Relocs));
 
   unsigned stmtOffset =
     cu->getCompileUnitDIE()->getAttributeValueAsUnsigned(cu, DW_AT_stmt_list,
@@ -244,20 +265,20 @@ DWARFContext::getLineTableForCompileUnit(DWARFCompileUnit *cu) {
     return lt;
 
   // We have to parse it first.
-  DataExtractor lineData(getLineSection(), isLittleEndian(),
+  DataExtractor lineData(getLineSection().Data, isLittleEndian(),
                          cu->getAddressByteSize());
   return Line->getOrParseLineTable(lineData, stmtOffset);
 }
 
 void DWARFContext::parseCompileUnits() {
   uint32_t offset = 0;
-  const DataExtractor &DIData = DataExtractor(getInfoSection(),
+  const DataExtractor &DIData = DataExtractor(getInfoSection().Data,
                                               isLittleEndian(), 0);
   while (DIData.isValidOffset(offset)) {
     OwningPtr<DWARFCompileUnit> CU(new DWARFCompileUnit(
-        getDebugAbbrev(), getInfoSection(), getAbbrevSection(),
+        getDebugAbbrev(), getInfoSection().Data, getAbbrevSection(),
         getRangeSection(), getStringSection(), StringRef(), getAddrSection(),
-        &infoRelocMap(), isLittleEndian()));
+        &getInfoSection().Relocs, isLittleEndian()));
     if (!CU->extract(DIData, &offset)) {
       break;
     }
@@ -268,14 +289,14 @@ void DWARFContext::parseCompileUnits() {
 
 void DWARFContext::parseDWOCompileUnits() {
   uint32_t offset = 0;
-  const DataExtractor &DIData = DataExtractor(getInfoDWOSection(),
-                                              isLittleEndian(), 0);
+  const DataExtractor &DIData =
+      DataExtractor(getInfoDWOSection().Data, isLittleEndian(), 0);
   while (DIData.isValidOffset(offset)) {
     OwningPtr<DWARFCompileUnit> DWOCU(new DWARFCompileUnit(
-        getDebugAbbrevDWO(), getInfoDWOSection(), getAbbrevDWOSection(),
+        getDebugAbbrevDWO(), getInfoDWOSection().Data, getAbbrevDWOSection(),
         getRangeDWOSection(), getStringDWOSection(),
-        getStringOffsetDWOSection(), getAddrSection(), &infoDWORelocMap(),
-        isLittleEndian()));
+        getStringOffsetDWOSection(), getAddrSection(),
+        &getInfoDWOSection().Relocs, isLittleEndian()));
     if (!DWOCU->extract(DIData, &offset)) {
       break;
     }
@@ -417,14 +438,11 @@ DILineInfoTable DWARFContext::getLineInfoForAddressRange(uint64_t Address,
     }
   }
 
-  StringRef  FuncNameRef = StringRef(FunctionName);
-
   // If the Specifier says we don't need FileLineInfo, just
   // return the top-most function at the starting address.
   if (!Specifier.needs(DILineInfoSpecifier::FileLineInfo)) {
-    Lines.push_back(std::make_pair(Address,
-                                   DILineInfo(StringRef("<invalid>"),
-                                              FuncNameRef, 0, 0)));
+    Lines.push_back(
+        std::make_pair(Address, DILineInfo("<invalid>", FunctionName, 0, 0)));
     return Lines;
   }
 
@@ -445,9 +463,8 @@ DILineInfoTable DWARFContext::getLineInfoForAddressRange(uint64_t Address,
     std::string FileName = "<invalid>";
     getFileNameForCompileUnit(CU, LineTable, Row.File,
                               NeedsAbsoluteFilePath, FileName);
-    Lines.push_back(std::make_pair(Row.Address,
-                                   DILineInfo(StringRef(FileName),
-                                         FuncNameRef, Row.Line, Row.Column)));
+    Lines.push_back(std::make_pair(
+        Row.Address, DILineInfo(FileName, FunctionName, Row.Line, Row.Column)));
   }
 
   return Lines;
@@ -557,16 +574,17 @@ DWARFContextInMemory::DWARFContextInMemory(object::ObjectFile *Obj) :
     }
 
     StringRef *Section = StringSwitch<StringRef*>(name)
-        .Case("debug_info", &InfoSection)
+        .Case("debug_info", &InfoSection.Data)
         .Case("debug_abbrev", &AbbrevSection)
-        .Case("debug_loc", &LocSection)
-        .Case("debug_line", &LineSection)
+        .Case("debug_loc", &LocSection.Data)
+        .Case("debug_line", &LineSection.Data)
         .Case("debug_aranges", &ARangeSection)
         .Case("debug_frame", &DebugFrameSection)
         .Case("debug_str", &StringSection)
         .Case("debug_ranges", &RangeSection)
         .Case("debug_pubnames", &PubNamesSection)
-        .Case("debug_info.dwo", &InfoDWOSection)
+        .Case("debug_gnu_pubnames", &GnuPubNamesSection)
+        .Case("debug_info.dwo", &InfoDWOSection.Data)
         .Case("debug_abbrev.dwo", &AbbrevDWOSection)
         .Case("debug_str.dwo", &StringDWOSection)
         .Case("debug_str_offsets.dwo", &StringOffsetDWOSection)
@@ -593,10 +611,10 @@ DWARFContextInMemory::DWARFContextInMemory(object::ObjectFile *Obj) :
     // TODO: Add support for relocations in other sections as needed.
     // Record relocations for the debug_info and debug_line sections.
     RelocAddrMap *Map = StringSwitch<RelocAddrMap*>(RelSecName)
-        .Case("debug_info", &InfoRelocMap)
-        .Case("debug_loc", &LocRelocMap)
-        .Case("debug_info.dwo", &InfoDWORelocMap)
-        .Case("debug_line", &LineRelocMap)
+        .Case("debug_info", &InfoSection.Relocs)
+        .Case("debug_loc", &LocSection.Relocs)
+        .Case("debug_info.dwo", &InfoDWOSection.Relocs)
+        .Case("debug_line", &LineSection.Relocs)
         .Default(0);
     if (!Map)
       continue;

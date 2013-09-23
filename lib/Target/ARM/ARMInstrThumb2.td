@@ -465,6 +465,18 @@ class T2ThreeReg<dag oops, dag iops, InstrItinClass itin,
   let Inst{3-0}   = Rm;
 }
 
+class T2ThreeRegNoP<dag oops, dag iops, InstrItinClass itin,
+           string asm, list<dag> pattern>
+  : T2XI<oops, iops, itin, asm, pattern> {
+  bits<4> Rd;
+  bits<4> Rn;
+  bits<4> Rm;
+
+  let Inst{11-8}  = Rd;
+  let Inst{19-16} = Rn;
+  let Inst{3-0}   = Rm;
+}
+
 class T2sThreeReg<dag oops, dag iops, InstrItinClass itin,
            string opc, string asm, list<dag> pattern>
   : T2sI<oops, iops, itin, opc, asm, pattern> {
@@ -3004,6 +3016,34 @@ def : T2Pat<(or (and rGPR:$src1, 0xFFFF0000),
             Requires<[HasT2ExtractPack, IsThumb2]>;
 
 //===----------------------------------------------------------------------===//
+// CRC32 Instructions
+//
+// Polynomials:
+// + CRC32{B,H,W}       0x04C11DB7
+// + CRC32C{B,H,W}      0x1EDC6F41
+//
+
+class T2I_crc32<bit C, bits<2> sz, string suffix, SDPatternOperator builtin>
+  : T2ThreeRegNoP<(outs rGPR:$Rd), (ins rGPR:$Rn, rGPR:$Rm), NoItinerary,
+               !strconcat("crc32", suffix, "\t$Rd, $Rn, $Rm"),
+               [(set rGPR:$Rd, (builtin rGPR:$Rn, rGPR:$Rm))]>,
+               Requires<[IsThumb2, HasV8]> {
+  let Inst{31-27} = 0b11111;
+  let Inst{26-21} = 0b010110;
+  let Inst{20}    = C;
+  let Inst{15-12} = 0b1111;
+  let Inst{7-6}   = 0b10;
+  let Inst{5-4}   = sz;
+}
+
+def t2CRC32B  : T2I_crc32<0, 0b00, "b", int_arm_crc32b>;
+def t2CRC32CB : T2I_crc32<1, 0b00, "cb", int_arm_crc32cb>;
+def t2CRC32H  : T2I_crc32<0, 0b01, "h", int_arm_crc32h>;
+def t2CRC32CH : T2I_crc32<1, 0b01, "ch", int_arm_crc32ch>;
+def t2CRC32W  : T2I_crc32<0, 0b10, "w", int_arm_crc32w>;
+def t2CRC32CW : T2I_crc32<1, 0b10, "cw", int_arm_crc32cw>;
+
+//===----------------------------------------------------------------------===//
 //  Comparison Instructions...
 //
 defm t2CMP  : T2I_cmp_irs<0b1101, "cmp",
@@ -3882,7 +3922,7 @@ defm t2STC2L : t2LdStCop<0b1111, 0, 1, "stc2l">;
 //
 // A/R class can only move from CPSR or SPSR.
 def t2MRS_AR : T2I<(outs GPR:$Rd), (ins), NoItinerary, "mrs", "\t$Rd, apsr",
-                  []>, Requires<[IsThumb2,IsARClass]> {
+                  []>, Requires<[IsThumb2,IsNotMClass]> {
   bits<4> Rd;
   let Inst{31-12} = 0b11110011111011111000;
   let Inst{11-8} = Rd;
@@ -3892,7 +3932,7 @@ def t2MRS_AR : T2I<(outs GPR:$Rd), (ins), NoItinerary, "mrs", "\t$Rd, apsr",
 def : t2InstAlias<"mrs${p} $Rd, cpsr", (t2MRS_AR GPR:$Rd, pred:$p)>;
 
 def t2MRSsys_AR: T2I<(outs GPR:$Rd), (ins), NoItinerary, "mrs", "\t$Rd, spsr",
-                   []>, Requires<[IsThumb2,IsARClass]> {
+                   []>, Requires<[IsThumb2,IsNotMClass]> {
   bits<4> Rd;
   let Inst{31-12} = 0b11110011111111111000;
   let Inst{11-8} = Rd;
@@ -3925,7 +3965,7 @@ def t2MRS_M : T2I<(outs rGPR:$Rd), (ins msr_mask:$mask), NoItinerary,
 // the mask with the fields to be accessed in the special register.
 def t2MSR_AR : T2I<(outs), (ins msr_mask:$mask, rGPR:$Rn),
                    NoItinerary, "msr", "\t$mask, $Rn", []>,
-               Requires<[IsThumb2,IsARClass]> {
+               Requires<[IsThumb2,IsNotMClass]> {
   bits<5> mask;
   bits<4> Rn;
   let Inst{31-21} = 0b11110011100;
@@ -4007,7 +4047,8 @@ def t2MCR : t2MovRCopro<0b1110, "mcr", 0,
            (ins p_imm:$cop, imm0_7:$opc1, GPR:$Rt, c_imm:$CRn,
                 c_imm:$CRm, imm0_7:$opc2),
            [(int_arm_mcr imm:$cop, imm:$opc1, GPR:$Rt, imm:$CRn,
-                         imm:$CRm, imm:$opc2)]>;
+                         imm:$CRm, imm:$opc2)]>,
+           ComplexDeprecationPredicate<"MCR">;
 def : t2InstAlias<"mcr${p} $cop, $opc1, $Rt, $CRn, $CRm",
                   (t2MCR p_imm:$cop, imm0_7:$opc1, GPR:$Rt, c_imm:$CRn,
                          c_imm:$CRm, 0, pred:$p)>;

@@ -90,6 +90,10 @@ MipsSETargetLowering::MipsSETargetLowering(MipsTargetMachine &TM)
     addMSAFloatType(MVT::v8f16, &Mips::MSA128HRegClass);
     addMSAFloatType(MVT::v4f32, &Mips::MSA128WRegClass);
     addMSAFloatType(MVT::v2f64, &Mips::MSA128DRegClass);
+
+    setTargetDAGCombine(ISD::AND);
+    setTargetDAGCombine(ISD::SRA);
+    setTargetDAGCombine(ISD::XOR);
   }
 
   if (!Subtarget->mipsSEUsesSoftFloat()) {
@@ -147,6 +151,7 @@ llvm::createMipsSETargetLowering(MipsTargetMachine &TM) {
   return new MipsSETargetLowering(TM);
 }
 
+// Enable MSA support for the given integer type and Register class.
 void MipsSETargetLowering::
 addMSAIntType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
   addRegisterClass(Ty, RC);
@@ -158,18 +163,26 @@ addMSAIntType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
   setOperationAction(ISD::BITCAST, Ty, Legal);
   setOperationAction(ISD::LOAD, Ty, Legal);
   setOperationAction(ISD::STORE, Ty, Legal);
+  setOperationAction(ISD::EXTRACT_VECTOR_ELT, Ty, Custom);
+  setOperationAction(ISD::INSERT_VECTOR_ELT, Ty, Legal);
+  setOperationAction(ISD::BUILD_VECTOR, Ty, Custom);
 
   setOperationAction(ISD::ADD, Ty, Legal);
+  setOperationAction(ISD::AND, Ty, Legal);
   setOperationAction(ISD::CTLZ, Ty, Legal);
+  setOperationAction(ISD::CTPOP, Ty, Legal);
   setOperationAction(ISD::MUL, Ty, Legal);
+  setOperationAction(ISD::OR, Ty, Legal);
   setOperationAction(ISD::SDIV, Ty, Legal);
   setOperationAction(ISD::SHL, Ty, Legal);
   setOperationAction(ISD::SRA, Ty, Legal);
   setOperationAction(ISD::SRL, Ty, Legal);
   setOperationAction(ISD::SUB, Ty, Legal);
   setOperationAction(ISD::UDIV, Ty, Legal);
+  setOperationAction(ISD::XOR, Ty, Legal);
 }
 
+// Enable MSA support for the given floating-point type and Register class.
 void MipsSETargetLowering::
 addMSAFloatType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
   addRegisterClass(Ty, RC);
@@ -181,6 +194,7 @@ addMSAFloatType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
   setOperationAction(ISD::LOAD, Ty, Legal);
   setOperationAction(ISD::STORE, Ty, Legal);
   setOperationAction(ISD::BITCAST, Ty, Legal);
+  setOperationAction(ISD::EXTRACT_VECTOR_ELT, Ty, Legal);
 
   if (Ty != MVT::v8f16) {
     setOperationAction(ISD::FADD,  Ty, Legal);
@@ -224,6 +238,8 @@ SDValue MipsSETargetLowering::LowerOperation(SDValue Op,
   case ISD::INTRINSIC_WO_CHAIN: return lowerINTRINSIC_WO_CHAIN(Op, DAG);
   case ISD::INTRINSIC_W_CHAIN:  return lowerINTRINSIC_W_CHAIN(Op, DAG);
   case ISD::INTRINSIC_VOID:     return lowerINTRINSIC_VOID(Op, DAG);
+  case ISD::EXTRACT_VECTOR_ELT: return lowerEXTRACT_VECTOR_ELT(Op, DAG);
+  case ISD::BUILD_VECTOR:       return lowerBUILD_VECTOR(Op, DAG);
   }
 
   return MipsTargetLowering::LowerOperation(Op, DAG);
@@ -394,6 +410,56 @@ static SDValue performADDECombine(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
+// Fold zero extensions into MipsISD::VEXTRACT_[SZ]EXT_ELT
+//
+// Performs the following transformations:
+// - Changes MipsISD::VEXTRACT_[SZ]EXT_ELT to zero extension if its
+//   sign/zero-extension is completely overwritten by the new one performed by
+//   the ISD::AND.
+// - Removes redundant zero extensions performed by an ISD::AND.
+static SDValue performANDCombine(SDNode *N, SelectionDAG &DAG,
+                                 TargetLowering::DAGCombinerInfo &DCI,
+                                 const MipsSubtarget *Subtarget) {
+  if (!Subtarget->hasMSA())
+    return SDValue();
+
+  SDValue Op0 = N->getOperand(0);
+  SDValue Op1 = N->getOperand(1);
+  unsigned Op0Opcode = Op0->getOpcode();
+
+  // (and (MipsVExtract[SZ]Ext $a, $b, $c), imm:$d)
+  // where $d + 1 == 2^n and n == 32
+  // or    $d + 1 == 2^n and n <= 32 and ZExt
+  // -> (MipsVExtractZExt $a, $b, $c)
+  if (Op0Opcode == MipsISD::VEXTRACT_SEXT_ELT ||
+      Op0Opcode == MipsISD::VEXTRACT_ZEXT_ELT) {
+    ConstantSDNode *Mask = dyn_cast<ConstantSDNode>(Op1);
+
+    if (!Mask)
+      return SDValue();
+
+    int32_t Log2IfPositive = (Mask->getAPIntValue() + 1).exactLogBase2();
+
+    if (Log2IfPositive <= 0)
+      return SDValue(); // Mask+1 is not a power of 2
+
+    SDValue Op0Op2 = Op0->getOperand(2);
+    EVT ExtendTy = cast<VTSDNode>(Op0Op2)->getVT();
+    unsigned ExtendTySize = ExtendTy.getSizeInBits();
+    unsigned Log2 = Log2IfPositive;
+
+    if ((Op0Opcode == MipsISD::VEXTRACT_ZEXT_ELT && Log2 >= ExtendTySize) ||
+        Log2 == ExtendTySize) {
+      SDValue Ops[] = { Op0->getOperand(0), Op0->getOperand(1), Op0Op2 };
+      DAG.MorphNodeTo(Op0.getNode(), MipsISD::VEXTRACT_ZEXT_ELT,
+                      Op0->getVTList(), Ops, Op0->getNumOperands());
+      return Op0;
+    }
+  }
+
+  return SDValue();
+}
+
 static SDValue performSUBECombine(SDNode *N, SelectionDAG &DAG,
                                   TargetLowering::DAGCombinerInfo &DCI,
                                   const MipsSubtarget *Subtarget) {
@@ -490,10 +556,52 @@ static SDValue performSHLCombine(SDNode *N, SelectionDAG &DAG,
   return performDSPShiftCombine(MipsISD::SHLL_DSP, N, Ty, DAG, Subtarget);
 }
 
+// Fold sign-extensions into MipsISD::VEXTRACT_[SZ]EXT_ELT for MSA and fold
+// constant splats into MipsISD::SHRA_DSP for DSPr2.
+//
+// Performs the following transformations:
+// - Changes MipsISD::VEXTRACT_[SZ]EXT_ELT to sign extension if its
+//   sign/zero-extension is completely overwritten by the new one performed by
+//   the ISD::SRA and ISD::SHL nodes.
+// - Removes redundant sign extensions performed by an ISD::SRA and ISD::SHL
+//   sequence.
+//
+// See performDSPShiftCombine for more information about the transformation
+// used for DSPr2.
 static SDValue performSRACombine(SDNode *N, SelectionDAG &DAG,
                                  TargetLowering::DAGCombinerInfo &DCI,
                                  const MipsSubtarget *Subtarget) {
   EVT Ty = N->getValueType(0);
+
+  if (Subtarget->hasMSA()) {
+    SDValue Op0 = N->getOperand(0);
+    SDValue Op1 = N->getOperand(1);
+
+    // (sra (shl (MipsVExtract[SZ]Ext $a, $b, $c), imm:$d), imm:$d)
+    // where $d + sizeof($c) == 32
+    // or    $d + sizeof($c) <= 32 and SExt
+    // -> (MipsVExtractSExt $a, $b, $c)
+    if (Op0->getOpcode() == ISD::SHL && Op1 == Op0->getOperand(1)) {
+      SDValue Op0Op0 = Op0->getOperand(0);
+      ConstantSDNode *ShAmount = dyn_cast<ConstantSDNode>(Op1);
+
+      if (!ShAmount)
+        return SDValue();
+
+      EVT ExtendTy = cast<VTSDNode>(Op0Op0->getOperand(2))->getVT();
+      unsigned TotalBits = ShAmount->getZExtValue() + ExtendTy.getSizeInBits();
+
+      if (TotalBits == 32 ||
+          (Op0Op0->getOpcode() == MipsISD::VEXTRACT_SEXT_ELT &&
+           TotalBits <= 32)) {
+        SDValue Ops[] = { Op0Op0->getOperand(0), Op0Op0->getOperand(1),
+                          Op0Op0->getOperand(2) };
+        DAG.MorphNodeTo(Op0Op0.getNode(), MipsISD::VEXTRACT_SEXT_ELT,
+                        Op0Op0->getVTList(), Ops, Op0Op0->getNumOperands());
+        return Op0Op0;
+      }
+    }
+  }
 
   if ((Ty != MVT::v2i16) && ((Ty != MVT::v4i8) || !Subtarget->hasDSPR2()))
     return SDValue();
@@ -560,6 +668,44 @@ static SDValue performVSELECTCombine(SDNode *N, SelectionDAG &DAG) {
                      N->getOperand(2), SetCC.getOperand(2));
 }
 
+static SDValue performXORCombine(SDNode *N, SelectionDAG &DAG,
+                                 const MipsSubtarget *Subtarget) {
+  EVT Ty = N->getValueType(0);
+
+  if (Subtarget->hasMSA() && Ty.is128BitVector() && Ty.isInteger()) {
+    // Try the following combines:
+    //   (xor (or $a, $b), (build_vector allones))
+    //   (xor (or $a, $b), (bitcast (build_vector allones)))
+    SDValue Op0 = N->getOperand(0);
+    SDValue Op1 = N->getOperand(1);
+    SDValue NotOp;
+    ConstantSDNode *Const;
+
+    if (ISD::isBuildVectorAllOnes(Op0.getNode()))
+      NotOp = Op1;
+    else if (ISD::isBuildVectorAllOnes(Op1.getNode()))
+      NotOp = Op0;
+    else if ((Op0->getOpcode() == MipsISD::VSPLAT ||
+              Op0->getOpcode() == MipsISD::VSPLATD) &&
+             (Const = dyn_cast<ConstantSDNode>(Op0->getOperand(0))) &&
+             Const->isAllOnesValue())
+      NotOp = Op1;
+    else if ((Op1->getOpcode() == MipsISD::VSPLAT ||
+              Op1->getOpcode() == MipsISD::VSPLATD) &&
+             (Const = dyn_cast<ConstantSDNode>(Op1->getOperand(0))) &&
+             Const->isAllOnesValue())
+      NotOp = Op0;
+    else
+      return SDValue();
+
+    if (NotOp->getOpcode() == ISD::OR)
+      return DAG.getNode(MipsISD::VNOR, SDLoc(N), Ty, NotOp->getOperand(0),
+                         NotOp->getOperand(1));
+  }
+
+  return SDValue();
+}
+
 SDValue
 MipsSETargetLowering::PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const {
   SelectionDAG &DAG = DCI.DAG;
@@ -568,6 +714,9 @@ MipsSETargetLowering::PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const {
   switch (N->getOpcode()) {
   case ISD::ADDE:
     return performADDECombine(N, DAG, DCI, Subtarget);
+  case ISD::AND:
+    Val = performANDCombine(N, DAG, DCI, Subtarget);
+    break;
   case ISD::SUBE:
     return performSUBECombine(N, DAG, DCI, Subtarget);
   case ISD::MUL:
@@ -580,10 +729,12 @@ MipsSETargetLowering::PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const {
     return performSRLCombine(N, DAG, DCI, Subtarget);
   case ISD::VSELECT:
     return performVSELECTCombine(N, DAG);
-  case ISD::SETCC: {
+  case ISD::XOR:
+    Val = performXORCombine(N, DAG, Subtarget);
+    break;
+  case ISD::SETCC:
     Val = performSETCCCombine(N, DAG);
     break;
-  }
   }
 
   if (Val.getNode())
@@ -829,6 +980,14 @@ static SDValue lowerMSABinaryIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
   return Result;
 }
 
+static SDValue lowerMSABinaryImmIntr(SDValue Op, SelectionDAG &DAG,
+                                     unsigned Opc, SDValue RHS) {
+  SDValue LHS = Op->getOperand(1);
+  EVT ResTy = Op->getValueType(0);
+
+  return DAG.getNode(Opc, SDLoc(Op), ResTy, LHS, RHS);
+}
+
 static SDValue lowerMSABranchIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
   SDLoc DL(Op);
   SDValue Value = Op->getOperand(1);
@@ -837,6 +996,43 @@ static SDValue lowerMSABranchIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
   SDValue Result = DAG.getNode(Opc, DL, ResTy, Value);
 
   return Result;
+}
+
+// Lower an MSA copy intrinsic into the specified SelectionDAG node
+static SDValue lowerMSACopyIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
+  SDLoc DL(Op);
+  SDValue Vec = Op->getOperand(1);
+  SDValue Idx = Op->getOperand(2);
+  EVT ResTy = Op->getValueType(0);
+  EVT EltTy = Vec->getValueType(0).getVectorElementType();
+
+  SDValue Result = DAG.getNode(Opc, DL, ResTy, Vec, Idx,
+                               DAG.getValueType(EltTy));
+
+  return Result;
+}
+
+// Lower an MSA insert intrinsic into the specified SelectionDAG node
+static SDValue lowerMSAInsertIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
+  SDLoc DL(Op);
+  SDValue Op0 = Op->getOperand(1);
+  SDValue Op1 = Op->getOperand(2);
+  SDValue Op2 = Op->getOperand(3);
+  EVT ResTy = Op->getValueType(0);
+
+  SDValue Result = DAG.getNode(Opc, DL, ResTy, Op0, Op2, Op1);
+
+  return Result;
+}
+
+static SDValue lowerMSASplatImm(SDValue Op, unsigned ImmOp, SelectionDAG &DAG) {
+  EVT ResTy = Op->getValueType(0);
+
+  unsigned SplatOp = MipsISD::VSPLAT;
+  if (ResTy == MVT::v2i64)
+    SplatOp = MipsISD::VSPLATD;
+
+  return DAG.getNode(SplatOp, SDLoc(Op), ResTy, Op->getOperand(ImmOp));
 }
 
 static SDValue lowerMSAUnaryIntr(SDValue Op, SelectionDAG &DAG, unsigned Opc) {
@@ -891,6 +1087,14 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_addv_w:
   case Intrinsic::mips_addv_d:
     return lowerMSABinaryIntr(Op, DAG, ISD::ADD);
+  case Intrinsic::mips_addvi_b:
+  case Intrinsic::mips_addvi_h:
+  case Intrinsic::mips_addvi_w:
+  case Intrinsic::mips_addvi_d:
+    return lowerMSABinaryImmIntr(Op, DAG, ISD::ADD,
+                                 lowerMSASplatImm(Op, 2, DAG));
+  case Intrinsic::mips_and_v:
+    return lowerMSABinaryIntr(Op, DAG, ISD::AND);
   case Intrinsic::mips_bnz_b:
   case Intrinsic::mips_bnz_h:
   case Intrinsic::mips_bnz_w:
@@ -905,6 +1109,14 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
     return lowerMSABranchIntr(Op, DAG, MipsISD::VALL_ZERO);
   case Intrinsic::mips_bz_v:
     return lowerMSABranchIntr(Op, DAG, MipsISD::VANY_ZERO);
+  case Intrinsic::mips_copy_s_b:
+  case Intrinsic::mips_copy_s_h:
+  case Intrinsic::mips_copy_s_w:
+    return lowerMSACopyIntr(Op, DAG, MipsISD::VEXTRACT_SEXT_ELT);
+  case Intrinsic::mips_copy_u_b:
+  case Intrinsic::mips_copy_u_h:
+  case Intrinsic::mips_copy_u_w:
+    return lowerMSACopyIntr(Op, DAG, MipsISD::VEXTRACT_ZEXT_ELT);
   case Intrinsic::mips_div_s_b:
   case Intrinsic::mips_div_s_h:
   case Intrinsic::mips_div_s_w:
@@ -921,6 +1133,10 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_fdiv_w:
   case Intrinsic::mips_fdiv_d:
     return lowerMSABinaryIntr(Op, DAG, ISD::FDIV);
+  case Intrinsic::mips_fill_b:
+  case Intrinsic::mips_fill_h:
+  case Intrinsic::mips_fill_w:
+    return lowerMSAUnaryIntr(Op, DAG, MipsISD::VSPLAT);
   case Intrinsic::mips_flog2_w:
   case Intrinsic::mips_flog2_d:
     return lowerMSAUnaryIntr(Op, DAG, ISD::FLOG2);
@@ -936,6 +1152,15 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_fsub_w:
   case Intrinsic::mips_fsub_d:
     return lowerMSABinaryIntr(Op, DAG, ISD::FSUB);
+  case Intrinsic::mips_insert_b:
+  case Intrinsic::mips_insert_h:
+  case Intrinsic::mips_insert_w:
+    return lowerMSAInsertIntr(Op, DAG, ISD::INSERT_VECTOR_ELT);
+  case Intrinsic::mips_ldi_b:
+  case Intrinsic::mips_ldi_h:
+  case Intrinsic::mips_ldi_w:
+  case Intrinsic::mips_ldi_d:
+    return lowerMSAUnaryIntr(Op, DAG, MipsISD::VSPLAT);
   case Intrinsic::mips_mulv_b:
   case Intrinsic::mips_mulv_h:
   case Intrinsic::mips_mulv_w:
@@ -946,6 +1171,17 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_nlzc_w:
   case Intrinsic::mips_nlzc_d:
     return lowerMSAUnaryIntr(Op, DAG, ISD::CTLZ);
+  case Intrinsic::mips_nor_v: {
+    SDValue Res = lowerMSABinaryIntr(Op, DAG, ISD::OR);
+    return DAG.getNOT(SDLoc(Op), Res, Res->getValueType(0));
+  }
+  case Intrinsic::mips_or_v:
+    return lowerMSABinaryIntr(Op, DAG, ISD::OR);
+  case Intrinsic::mips_pcnt_b:
+  case Intrinsic::mips_pcnt_h:
+  case Intrinsic::mips_pcnt_w:
+  case Intrinsic::mips_pcnt_d:
+    return lowerMSAUnaryIntr(Op, DAG, ISD::CTPOP);
   case Intrinsic::mips_sll_b:
   case Intrinsic::mips_sll_h:
   case Intrinsic::mips_sll_w:
@@ -966,6 +1202,14 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_subv_w:
   case Intrinsic::mips_subv_d:
     return lowerMSABinaryIntr(Op, DAG, ISD::SUB);
+  case Intrinsic::mips_subvi_b:
+  case Intrinsic::mips_subvi_h:
+  case Intrinsic::mips_subvi_w:
+  case Intrinsic::mips_subvi_d:
+    return lowerMSABinaryImmIntr(Op, DAG, ISD::SUB,
+                                 lowerMSASplatImm(Op, 2, DAG));
+  case Intrinsic::mips_xor_v:
+    return lowerMSABinaryIntr(Op, DAG, ISD::XOR);
   }
 }
 
@@ -1071,6 +1315,117 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_VOID(SDValue Op,
   case Intrinsic::mips_stx_d:
     return lowerMSAStoreIntr(Op, DAG, Intr);
   }
+}
+
+/// \brief Check if the given BuildVectorSDNode is a splat.
+/// This method currently relies on DAG nodes being reused when equivalent,
+/// so it's possible for this to return false even when isConstantSplat returns
+/// true.
+static bool isSplatVector(const BuildVectorSDNode *N) {
+  unsigned int nOps = N->getNumOperands();
+  assert(nOps > 1 && "isSplat has 0 or 1 sized build vector");
+
+  SDValue Operand0 = N->getOperand(0);
+
+  for (unsigned int i = 1; i < nOps; ++i) {
+    if (N->getOperand(i) != Operand0)
+      return false;
+  }
+
+  return true;
+}
+
+// Lower ISD::EXTRACT_VECTOR_ELT into MipsISD::VEXTRACT_SEXT_ELT.
+//
+// The non-value bits resulting from ISD::EXTRACT_VECTOR_ELT are undefined. We
+// choose to sign-extend but we could have equally chosen zero-extend. The
+// DAGCombiner will fold any sign/zero extension of the ISD::EXTRACT_VECTOR_ELT
+// result into this node later (possibly changing it to a zero-extend in the
+// process).
+SDValue MipsSETargetLowering::
+lowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  EVT ResTy = Op->getValueType(0);
+  SDValue Op0 = Op->getOperand(0);
+  SDValue Op1 = Op->getOperand(1);
+  EVT EltTy = Op0->getValueType(0).getVectorElementType();
+  return DAG.getNode(MipsISD::VEXTRACT_SEXT_ELT, DL, ResTy, Op0, Op1,
+                     DAG.getValueType(EltTy));
+}
+
+// Lowers ISD::BUILD_VECTOR into appropriate SelectionDAG nodes for the
+// backend.
+//
+// Lowers according to the following rules:
+// - Vectors of 128-bits may be legal subject to the other rules. Other sizes
+//   are not legal.
+// - Non-constant splats are legal and are lowered to MipsISD::VSPLAT.
+// - Constant splats with an element size of 32-bits or less are legal and are
+//   lowered to MipsISD::VSPLAT.
+// - Constant splats with an element size of 64-bits but whose value would fit
+//   within a 10 bit immediate are legal and are lowered to MipsISD::VSPLATD.
+// - All other ISD::BUILD_VECTORS are not legal
+SDValue MipsSETargetLowering::lowerBUILD_VECTOR(SDValue Op,
+                                                SelectionDAG &DAG) const {
+  BuildVectorSDNode *Node = cast<BuildVectorSDNode>(Op);
+  EVT ResTy = Op->getValueType(0);
+  SDLoc DL(Op);
+  APInt SplatValue, SplatUndef;
+  unsigned SplatBitSize;
+  bool HasAnyUndefs;
+
+  if (!Subtarget->hasMSA() || !ResTy.is128BitVector())
+    return SDValue();
+
+  if (Node->isConstantSplat(SplatValue, SplatUndef, SplatBitSize,
+                            HasAnyUndefs, 8,
+                            !Subtarget->isLittle())) {
+    SDValue Result;
+    EVT TmpVecTy;
+    EVT ConstTy = MVT::i32;
+    unsigned SplatOp = MipsISD::VSPLAT;
+
+    switch (SplatBitSize) {
+    default:
+      return SDValue();
+    case 64:
+      TmpVecTy = MVT::v2i64;
+
+      // i64 is an illegal type on Mips32, but if it the constant fits into a
+      // signed 10-bit value then we can still handle it using VSPLATD and an
+      // i32 constant
+      if (HasMips64)
+        ConstTy = MVT::i64;
+      else if (isInt<10>(SplatValue.getSExtValue())) {
+        SplatValue = SplatValue.trunc(32);
+        SplatOp = MipsISD::VSPLATD;
+      } else
+        return SDValue();
+      break;
+    case 32:
+      TmpVecTy = MVT::v4i32;
+      break;
+    case 16:
+      TmpVecTy = MVT::v8i16;
+      SplatValue = SplatValue.sext(32);
+      break;
+    case 8:
+      TmpVecTy = MVT::v16i8;
+      SplatValue = SplatValue.sext(32);
+      break;
+    }
+
+    Result = DAG.getNode(SplatOp, DL, TmpVecTy,
+                         DAG.getConstant(SplatValue, ConstTy));
+    if (ResTy != Result.getValueType())
+      Result = DAG.getNode(ISD::BITCAST, DL, ResTy, Result);
+
+    return Result;
+  }
+  else if (isSplatVector(Node))
+    return DAG.getNode(MipsISD::VSPLAT, DL, ResTy, Op->getOperand(0));
+
+  return SDValue();
 }
 
 MachineBasicBlock * MipsSETargetLowering::

@@ -129,30 +129,23 @@ public:
 
   /// addGlobalName - Add a new global entity to the compile unit.
   ///
-  void addGlobalName(StringRef Name, DIE *Die) { GlobalNames[Name] = Die; }
+  void addGlobalName(StringRef Name, DIE *Die);
 
   /// addGlobalType - Add a new global type to the compile unit.
   ///
   void addGlobalType(DIType Ty);
 
-
   /// addAccelName - Add a new name to the name accelerator table.
-  void addAccelName(StringRef Name, DIE *Die) {
-    std::vector<DIE*> &DIEs = AccelNames[Name];
-    DIEs.push_back(Die);
-  }
-  void addAccelObjC(StringRef Name, DIE *Die) {
-    std::vector<DIE*> &DIEs = AccelObjC[Name];
-    DIEs.push_back(Die);
-  }
-  void addAccelNamespace(StringRef Name, DIE *Die) {
-    std::vector<DIE*> &DIEs = AccelNamespace[Name];
-    DIEs.push_back(Die);
-  }
-  void addAccelType(StringRef Name, std::pair<DIE *, unsigned> Die) {
-    std::vector<std::pair<DIE *, unsigned> > &DIEs = AccelTypes[Name];
-    DIEs.push_back(Die);
-  }
+  void addAccelName(StringRef Name, DIE *Die);
+
+  /// addAccelObjC - Add a new name to the ObjC accelerator table.
+  void addAccelObjC(StringRef Name, DIE *Die);
+
+  /// addAccelNamespace - Add a new name to the namespace accelerator table.
+  void addAccelNamespace(StringRef Name, DIE *Die);
+
+  /// addAccelType - Add a new type to the type accelerator table.
+  void addAccelType(StringRef Name, std::pair<DIE *, unsigned> Die);
 
   /// getDIE - Returns the debug information entry map slot for the
   /// specified debug variable.
