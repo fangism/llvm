@@ -54,31 +54,16 @@ static cl::opt<bool>
 ShouldVectorizeHor("slp-vectorize-hor", cl::init(false), cl::Hidden,
                    cl::desc("Attempt to vectorize horizontal reductions"));
 
+static cl::opt<bool> ShouldStartVectorizeHorAtStore(
+    "slp-vectorize-hor-store", cl::init(false), cl::Hidden,
+    cl::desc(
+        "Attempt to vectorize horizontal reductions feeding into a store"));
+
 namespace {
 
 static const unsigned MinVecRegSize = 128;
 
 static const unsigned RecursionMaxDepth = 12;
-
-/// RAII pattern to save the insertion point of the IR builder.
-class BuilderLocGuard {
-public:
-  BuilderLocGuard(IRBuilder<> &B) : Builder(B), Loc(B.GetInsertPoint()),
-  DbgLoc(B.getCurrentDebugLocation()) {}
-  ~BuilderLocGuard() {
-    Builder.SetCurrentDebugLocation(DbgLoc);
-    if (Loc)
-      Builder.SetInsertPoint(Loc);
-  }
-
-private:
-  // Prevent copying.
-  BuilderLocGuard(const BuilderLocGuard &);
-  BuilderLocGuard &operator=(const BuilderLocGuard &);
-  IRBuilder<> &Builder;
-  AssertingVH<Instruction> Loc;
-  DebugLoc DbgLoc;
-};
 
 /// A helper class for numbering instructions in multiple blocks.
 /// Numbers start at zero for each basic block.
@@ -313,7 +298,7 @@ private:
   /// \returns the pointer to the barrier instruction if we can't sink.
   Value *getSinkBarrier(Instruction *Src, Instruction *Dst);
 
-  /// \returns the index of the last instrucion in the BB from \p VL.
+  /// \returns the index of the last instruction in the BB from \p VL.
   int getLastIndex(ArrayRef<Value *> VL);
 
   /// \returns the Instruction in the bundle \p VL.
@@ -947,7 +932,7 @@ int BoUpSLP::getTreeCost() {
     if (!VectorizableTree.size()) {
       assert(!ExternalUses.size() && "We should not have any external users");
     }
-    return 0;
+    return INT_MAX;
   }
 
   unsigned BundleWidth = VectorizableTree[0].Scalars.size();
@@ -1172,7 +1157,7 @@ Value *BoUpSLP::vectorizeTree(ArrayRef<Value *> VL) {
 }
 
 Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
-  BuilderLocGuard Guard(Builder);
+  IRBuilder<>::InsertPointGuard Guard(Builder);
 
   if (E->VectorizedValue) {
     DEBUG(dbgs() << "SLP: Diamond merged for " << *E->Scalars[0] << ".\n");
@@ -1196,7 +1181,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
   switch (Opcode) {
     case Instruction::PHI: {
       PHINode *PH = dyn_cast<PHINode>(VL0);
-      Builder.SetInsertPoint(PH->getParent()->getFirstInsertionPt());
+      Builder.SetInsertPoint(PH->getParent()->getFirstNonPHI());
       Builder.SetCurrentDebugLocation(PH->getDebugLoc());
       PHINode *NewPhi = Builder.CreatePHI(VecTy, PH->getNumIncomingValues());
       E->VectorizedValue = NewPhi;
@@ -1360,8 +1345,10 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       setInsertPointAfterBundle(E->Scalars);
 
       LoadInst *LI = cast<LoadInst>(VL0);
-      Value *VecPtr =
-      Builder.CreateBitCast(LI->getPointerOperand(), VecTy->getPointerTo());
+      unsigned AS = LI->getPointerAddressSpace();
+
+      Value *VecPtr = Builder.CreateBitCast(LI->getPointerOperand(),
+                                            VecTy->getPointerTo(AS));
       unsigned Alignment = LI->getAlignment();
       LI = Builder.CreateLoad(VecPtr);
       LI->setAlignment(Alignment);
@@ -1371,6 +1358,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
     case Instruction::Store: {
       StoreInst *SI = cast<StoreInst>(VL0);
       unsigned Alignment = SI->getAlignment();
+      unsigned AS = SI->getPointerAddressSpace();
 
       ValueList ValueOp;
       for (int i = 0, e = E->Scalars.size(); i < e; ++i)
@@ -1379,8 +1367,8 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       setInsertPointAfterBundle(E->Scalars);
 
       Value *VecValue = vectorizeTree(ValueOp);
-      Value *VecPtr =
-      Builder.CreateBitCast(SI->getPointerOperand(), VecTy->getPointerTo());
+      Value *VecPtr = Builder.CreateBitCast(SI->getPointerOperand(),
+                                            VecTy->getPointerTo(AS));
       StoreInst *S = Builder.CreateStore(VecValue, VecPtr);
       S->setAlignment(Alignment);
       E->VectorizedValue = S;
@@ -2336,20 +2324,20 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
     }
 
     // Try to vectorize horizontal reductions feeding into a store.
-    if (StoreInst *SI = dyn_cast<StoreInst>(it))
-      if (BinaryOperator *BinOp =
-              dyn_cast<BinaryOperator>(SI->getValueOperand())) {
-        HorizontalReduction HorRdx;
-        if (ShouldVectorizeHor &&
-            ((HorRdx.matchAssociativeReduction(0, BinOp, DL) &&
-              HorRdx.tryToReduce(R, TTI)) ||
-             tryToVectorize(BinOp, R))) {
-          Changed = true;
-          it = BB->begin();
-          e = BB->end();
-          continue;
+    if (ShouldStartVectorizeHorAtStore)
+      if (StoreInst *SI = dyn_cast<StoreInst>(it))
+        if (BinaryOperator *BinOp =
+                dyn_cast<BinaryOperator>(SI->getValueOperand())) {
+          HorizontalReduction HorRdx;
+          if (((HorRdx.matchAssociativeReduction(0, BinOp, DL) &&
+                HorRdx.tryToReduce(R, TTI)) ||
+               tryToVectorize(BinOp, R))) {
+            Changed = true;
+            it = BB->begin();
+            e = BB->end();
+            continue;
+          }
         }
-      }
 
     // Try to vectorize trees that start at compare instructions.
     if (CmpInst *CI = dyn_cast<CmpInst>(it)) {

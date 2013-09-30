@@ -31,12 +31,13 @@
 using namespace llvm;
 
 enum AllocType {
-  MallocLike         = 1<<0, // allocates
-  CallocLike         = 1<<1, // allocates + bzero
-  ReallocLike        = 1<<2, // reallocates
-  StrDupLike         = 1<<3,
+  OpNewLike          = 1<<0, // allocates; never returns null
+  MallocLike         = 1<<1 | OpNewLike, // allocates; may return null
+  CallocLike         = 1<<2, // allocates + bzero
+  ReallocLike        = 1<<3, // reallocates
+  StrDupLike         = 1<<4,
   AllocLike          = MallocLike | CallocLike | StrDupLike,
-  AnyAlloc           = MallocLike | CallocLike | ReallocLike | StrDupLike
+  AnyAlloc           = AllocLike | ReallocLike
 };
 
 struct AllocFnsTy {
@@ -52,20 +53,20 @@ struct AllocFnsTy {
 static const AllocFnsTy AllocationFnData[] = {
   {LibFunc::malloc,              MallocLike,  1, 0,  -1},
   {LibFunc::valloc,              MallocLike,  1, 0,  -1},
-  {LibFunc::Znwj,                MallocLike,  1, 0,  -1}, // new(unsigned int)
+  {LibFunc::Znwj,                OpNewLike,   1, 0,  -1}, // new(unsigned int)
   {LibFunc::ZnwjRKSt9nothrow_t,  MallocLike,  2, 0,  -1}, // new(unsigned int, nothrow)
-  {LibFunc::Znwm,                MallocLike,  1, 0,  -1}, // new(unsigned long)
+  {LibFunc::Znwm,                OpNewLike,   1, 0,  -1}, // new(unsigned long)
   {LibFunc::ZnwmRKSt9nothrow_t,  MallocLike,  2, 0,  -1}, // new(unsigned long, nothrow)
-  {LibFunc::Znaj,                MallocLike,  1, 0,  -1}, // new[](unsigned int)
+  {LibFunc::Znaj,                OpNewLike,   1, 0,  -1}, // new[](unsigned int)
   {LibFunc::ZnajRKSt9nothrow_t,  MallocLike,  2, 0,  -1}, // new[](unsigned int, nothrow)
-  {LibFunc::Znam,                MallocLike,  1, 0,  -1}, // new[](unsigned long)
+  {LibFunc::Znam,                OpNewLike,   1, 0,  -1}, // new[](unsigned long)
   {LibFunc::ZnamRKSt9nothrow_t,  MallocLike,  2, 0,  -1}, // new[](unsigned long, nothrow)
-  {LibFunc::posix_memalign,      MallocLike,  3, 2,  -1},
   {LibFunc::calloc,              CallocLike,  2, 0,   1},
   {LibFunc::realloc,             ReallocLike, 2, 1,  -1},
   {LibFunc::reallocf,            ReallocLike, 2, 1,  -1},
   {LibFunc::strdup,              StrDupLike,  1, -1, -1},
   {LibFunc::strndup,             StrDupLike,  2, 1,  -1}
+  // TODO: Handle "int posix_memalign(void **, size_t, size_t)"
 };
 
 
@@ -117,7 +118,7 @@ static const AllocFnsTy *getAllocationData(const Value *V, AllocType AllocTy,
     return 0;
 
   const AllocFnsTy *FnData = &AllocationFnData[i];
-  if ((FnData->AllocTy & AllocTy) == 0)
+  if ((FnData->AllocTy & AllocTy) != FnData->AllocTy)
     return 0;
 
   // Check function prototype.
@@ -187,6 +188,13 @@ bool llvm::isAllocLikeFn(const Value *V, const TargetLibraryInfo *TLI,
 bool llvm::isReallocLikeFn(const Value *V, const TargetLibraryInfo *TLI,
                            bool LookThroughBitCast) {
   return getAllocationData(V, ReallocLike, TLI, LookThroughBitCast);
+}
+
+/// \brief Tests if a value is a call or invoke to a library function that
+/// allocates memory and never returns null (such as operator new).
+bool llvm::isOperatorNewLikeFn(const Value *V, const TargetLibraryInfo *TLI,
+                               bool LookThroughBitCast) {
+  return getAllocationData(V, OpNewLike, TLI, LookThroughBitCast);
 }
 
 /// extractMallocCall - Returns the corresponding CallInst if the instruction
@@ -626,13 +634,15 @@ SizeOffsetEvalType ObjectSizeOffsetEvaluator::compute_(Value *V) {
   if (Instruction *I = dyn_cast<Instruction>(V))
     Builder.SetInsertPoint(I);
 
-  // record the pointers that were handled in this run, so that they can be
-  // cleaned later if something fails
-  SeenVals.insert(V);
-
   // now compute the size and offset
   SizeOffsetEvalType Result;
-  if (GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
+
+  // Record the pointers that were handled in this run, so that they can be
+  // cleaned later if something fails. We also use this set to break cycles that
+  // can occur in dead code.
+  if (!SeenVals.insert(V)) {
+    Result = unknown();
+  } else if (GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
     Result = visitGEPOperator(*GEP);
   } else if (Instruction *I = dyn_cast<Instruction>(V)) {
     Result = visit(*I);

@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "LTOCodeGenerator.h"
-#include "LTOModule.h"
+#include "llvm/LTO/LTOCodeGenerator.h"
+#include "llvm/LTO/LTOModule.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/Verifier.h"
@@ -40,26 +40,13 @@
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/system_error.h"
-#include "llvm/Target/Mangler.h"
-#include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/Target/Mangler.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/ObjCARC.h"
 using namespace llvm;
-
-static cl::opt<bool>
-DisableOpt("disable-opt", cl::init(false),
-  cl::desc("Do not run any optimization passes"));
-
-static cl::opt<bool>
-DisableInline("disable-inlining", cl::init(false),
-  cl::desc("Do not run the inliner pass"));
-
-static cl::opt<bool>
-DisableGVNLoadPRE("disable-gvn-loadpre", cl::init(false),
-  cl::desc("Do not run the GVN load PRE pass"));
 
 const char* LTOCodeGenerator::getVersionString() {
 #ifdef LLVM_VERSION_INFO
@@ -73,9 +60,6 @@ LTOCodeGenerator::LTOCodeGenerator()
     : Context(getGlobalContext()), Linker(new Module("ld-temp.o", Context)),
       TargetMach(NULL), EmitDwarfDebugInfo(false), ScopeRestrictionsDone(false),
       CodeModel(LTO_CODEGEN_PIC_MODEL_DYNAMIC), NativeObjectFile(NULL) {
-  InitializeAllTargets();
-  InitializeAllTargetMCs();
-  InitializeAllAsmPrinters();
   initializeLTOPasses();
 }
 
@@ -128,6 +112,27 @@ bool LTOCodeGenerator::addModule(LTOModule* mod, std::string& errMsg) {
     AsmUndefinedRefs[undefs[i]] = 1;
 
   return !ret;
+}
+
+void LTOCodeGenerator::setTargetOptions(TargetOptions options) {
+  Options.LessPreciseFPMADOption = options.LessPreciseFPMADOption;
+  Options.NoFramePointerElim = options.NoFramePointerElim;
+  Options.AllowFPOpFusion = options.AllowFPOpFusion;
+  Options.UnsafeFPMath = options.UnsafeFPMath;
+  Options.NoInfsFPMath = options.NoInfsFPMath;
+  Options.NoNaNsFPMath = options.NoNaNsFPMath;
+  Options.HonorSignDependentRoundingFPMathOption =
+    options.HonorSignDependentRoundingFPMathOption;
+  Options.UseSoftFloat = options.UseSoftFloat;
+  Options.FloatABIType = options.FloatABIType;
+  Options.NoZerosInBSS = options.NoZerosInBSS;
+  Options.GuaranteedTailCallOpt = options.GuaranteedTailCallOpt;
+  Options.DisableTailCalls = options.DisableTailCalls;
+  Options.StackAlignmentOverride = options.StackAlignmentOverride;
+  Options.TrapFuncName = options.TrapFuncName;
+  Options.PositionIndependentExecutable = options.PositionIndependentExecutable;
+  Options.EnableSegmentedStacks = options.EnableSegmentedStacks;
+  Options.UseInitArray = options.UseInitArray;
 }
 
 void LTOCodeGenerator::setDebugInfo(lto_debug_model debug) {
@@ -186,7 +191,11 @@ bool LTOCodeGenerator::writeMergedModules(const char *path,
   return true;
 }
 
-bool LTOCodeGenerator::compile_to_file(const char** name, std::string& errMsg) {
+bool LTOCodeGenerator::compile_to_file(const char** name, 
+                                       bool disableOpt,
+                                       bool disableInline,
+                                       bool disableGVNLoadPRE,
+                                       std::string& errMsg) {
   // make unique temp .o file to put generated object file
   SmallString<128> Filename;
   int FD;
@@ -199,7 +208,8 @@ bool LTOCodeGenerator::compile_to_file(const char** name, std::string& errMsg) {
   // generate object file
   tool_output_file objFile(Filename.c_str(), FD);
 
-  bool genResult = generateObjectFile(objFile.os(), errMsg);
+  bool genResult = generateObjectFile(objFile.os(), disableOpt, disableInline,
+                                      disableGVNLoadPRE, errMsg);
   objFile.os().close();
   if (objFile.os().has_error()) {
     objFile.os().clear_error();
@@ -218,9 +228,14 @@ bool LTOCodeGenerator::compile_to_file(const char** name, std::string& errMsg) {
   return true;
 }
 
-const void* LTOCodeGenerator::compile(size_t* length, std::string& errMsg) {
+const void* LTOCodeGenerator::compile(size_t* length,
+                                      bool disableOpt,
+                                      bool disableInline,
+                                      bool disableGVNLoadPRE,
+                                      std::string& errMsg) {
   const char *name;
-  if (!compile_to_file(&name, errMsg))
+  if (!compile_to_file(&name, disableOpt, disableInline, disableGVNLoadPRE,
+                       errMsg))
     return NULL;
 
   // remove old buffer if compile() called twice
@@ -290,8 +305,7 @@ bool LTOCodeGenerator::determineTarget(std::string &errMsg) {
     else if (Triple.getArch() == llvm::Triple::x86)
       MCpu = "yonah";
   }
-  TargetOptions Options;
-  LTOModule::getTargetOptions(Options);
+
   TargetMach = march->createTargetMachine(TripleStr, MCpu, FeatureStr, Options,
                                           RelocModel, CodeModel::Default,
                                           CodeGenOpt::Aggressive);
@@ -387,6 +401,9 @@ void LTOCodeGenerator::applyScopeRestrictions() {
 
 /// Optimize merged modules using various IPO passes
 bool LTOCodeGenerator::generateObjectFile(raw_ostream &out,
+                                          bool DisableOpt,
+                                          bool DisableInline,
+                                          bool DisableGVNLoadPRE,
                                           std::string &errMsg) {
   if (!this->determineTarget(errMsg))
     return false;
@@ -452,7 +469,7 @@ void LTOCodeGenerator::setCodeGenDebugOptions(const char *options) {
     // ParseCommandLineOptions() expects argv[0] to be program name. Lazily add
     // that.
     if (CodegenOptions.empty())
-      CodegenOptions.push_back(strdup("libLTO"));
+      CodegenOptions.push_back(strdup("libLLVMLTO"));
     CodegenOptions.push_back(strdup(o.first.str().c_str()));
   }
 }

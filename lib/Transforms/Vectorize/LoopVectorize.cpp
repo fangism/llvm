@@ -1027,24 +1027,18 @@ LoopVectorizationLegality::RuntimePointerCheck::insert(ScalarEvolution *SE,
 }
 
 Value *InnerLoopVectorizer::getBroadcastInstrs(Value *V) {
-  // Save the current insertion location.
-  Instruction *Loc = Builder.GetInsertPoint();
-
   // We need to place the broadcast of invariant variables outside the loop.
   Instruction *Instr = dyn_cast<Instruction>(V);
   bool NewInstr = (Instr && Instr->getParent() == LoopVectorBody);
   bool Invariant = OrigLoop->isLoopInvariant(V) && !NewInstr;
 
   // Place the code for broadcasting invariant variables in the new preheader.
+  IRBuilder<>::InsertPointGuard Guard(Builder);
   if (Invariant)
     Builder.SetInsertPoint(LoopVectorPreHeader->getTerminator());
 
   // Broadcast the scalar into all locations in the vector.
   Value *Shuf = Builder.CreateVectorSplat(VF, V, "broadcast");
-
-  // Restore the builder insertion point.
-  if (Invariant)
-    Builder.SetInsertPoint(Loc);
 
   return Shuf;
 }
@@ -1357,7 +1351,7 @@ void InnerLoopVectorizer::scalarizeInstruction(Instruction *Instr) {
       Instruction *Cloned = Instr->clone();
       if (!IsVoidRetTy)
         Cloned->setName(Instr->getName() + ".cloned");
-      // Replace the operands of the cloned instrucions with extracted scalars.
+      // Replace the operands of the cloned instructions with extracted scalars.
       for (unsigned op = 0, e = Instr->getNumOperands(); op != e; ++op) {
         Value *Op = Params[op][Part];
         // Param is a vector. Need to extract the right lane.
@@ -1552,7 +1546,7 @@ InnerLoopVectorizer::createEmptyLoop(LoopVectorizationLegality *Legal) {
 
   // Use this IR builder to create the loop instructions (Phi, Br, Cmp)
   // inside the loop.
-  Builder.SetInsertPoint(VecBody->getFirstInsertionPt());
+  Builder.SetInsertPoint(VecBody->getFirstNonPHI());
 
   // Generate the induction variable.
   setDebugLocFromInst(Builder, getDebugLocFromInstOrOperands(OldInduction));
@@ -4901,7 +4895,7 @@ void InnerLoopUnroller::scalarizeInstruction(Instruction *Instr) {
     Instruction *Cloned = Instr->clone();
       if (!IsVoidRetTy)
         Cloned->setName(Instr->getName() + ".cloned");
-      // Replace the operands of the cloned instrucions with extracted scalars.
+      // Replace the operands of the cloned instructions with extracted scalars.
       for (unsigned op = 0, e = Instr->getNumOperands(); op != e; ++op) {
         Value *Op = Params[op][Part];
         Cloned->setOperand(op, Op);

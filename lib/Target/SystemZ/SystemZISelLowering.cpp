@@ -733,7 +733,7 @@ static bool canUseSiblingCall(CCState ArgCCInfo,
     if (!VA.isRegLoc())
       return false;
     unsigned Reg = VA.getLocReg();
-    if (Reg == SystemZ::R6W || Reg == SystemZ::R6D)
+    if (Reg == SystemZ::R6L || Reg == SystemZ::R6D)
       return false;
   }
   return true;
@@ -1440,18 +1440,18 @@ SDValue SystemZTargetLowering::lowerGlobalAddress(GlobalAddressSDNode *Node,
 
   SDValue Result;
   if (Subtarget.isPC32DBLSymbol(GV, RM, CM)) {
-    // Make sure that the offset is aligned to a halfword.  If it isn't,
-    // create an "anchor" at the previous 12-bit boundary.
-    // FIXME check whether there is a better way of handling this.
-    if (Offset & 1) {
-      Result = DAG.getTargetGlobalAddress(GV, DL, PtrVT,
-                                          Offset & ~uint64_t(0xfff));
-      Offset &= 0xfff;
-    } else {
-      Result = DAG.getTargetGlobalAddress(GV, DL, PtrVT, Offset);
+    // Assign anchors at 1<<12 byte boundaries.
+    uint64_t Anchor = Offset & ~uint64_t(0xfff);
+    Result = DAG.getTargetGlobalAddress(GV, DL, PtrVT, Anchor);
+    Result = DAG.getNode(SystemZISD::PCREL_WRAPPER, DL, PtrVT, Result);
+
+    // The offset can be folded into the address if it is aligned to a halfword.
+    Offset -= Anchor;
+    if (Offset != 0 && (Offset & 1) == 0) {
+      SDValue Full = DAG.getTargetGlobalAddress(GV, DL, PtrVT, Anchor + Offset);
+      Result = DAG.getNode(SystemZISD::PCREL_OFFSET, DL, PtrVT, Full, Result);
       Offset = 0;
     }
-    Result = DAG.getNode(SystemZISD::PCREL_WRAPPER, DL, PtrVT, Result);
   } else {
     Result = DAG.getTargetGlobalAddress(GV, DL, PtrVT, 0, SystemZII::MO_GOT);
     Result = DAG.getNode(SystemZISD::PCREL_WRAPPER, DL, PtrVT, Result);
@@ -1558,12 +1558,12 @@ SDValue SystemZTargetLowering::lowerBITCAST(SDValue Op,
     SDValue In64 = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i64, In);
     SDValue Shift = DAG.getNode(ISD::SHL, DL, MVT::i64, In64, Shift32);
     SDValue Out64 = DAG.getNode(ISD::BITCAST, DL, MVT::f64, Shift);
-    return DAG.getTargetExtractSubreg(SystemZ::subreg_32bit,
+    return DAG.getTargetExtractSubreg(SystemZ::subreg_h32,
                                       DL, MVT::f32, Out64);
   }
   if (InVT == MVT::f32 && ResVT == MVT::i32) {
     SDNode *U64 = DAG.getMachineNode(TargetOpcode::IMPLICIT_DEF, DL, MVT::f64);
-    SDValue In64 = DAG.getTargetInsertSubreg(SystemZ::subreg_32bit, DL,
+    SDValue In64 = DAG.getTargetInsertSubreg(SystemZ::subreg_h32, DL,
                                              MVT::f64, SDValue(U64, 0), In);
     SDValue Out64 = DAG.getNode(ISD::BITCAST, DL, MVT::i64, In64);
     SDValue Shift = DAG.getNode(ISD::SRL, DL, MVT::i64, Out64, Shift32);
@@ -1809,7 +1809,7 @@ SDValue SystemZTargetLowering::lowerOR(SDValue Op, SelectionDAG &DAG) const {
   // can be folded.
   SDLoc DL(Op);
   SDValue Low32 = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, LowOp);
-  return DAG.getTargetInsertSubreg(SystemZ::subreg_32bit, DL,
+  return DAG.getTargetInsertSubreg(SystemZ::subreg_l32, DL,
                                    MVT::i64, HighOp, Low32);
 }
 
@@ -2046,6 +2046,7 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
     OPCODE(CALL);
     OPCODE(SIBCALL);
     OPCODE(PCREL_WRAPPER);
+    OPCODE(PCREL_OFFSET);
     OPCODE(ICMP);
     OPCODE(FCMP);
     OPCODE(TM);
@@ -2330,11 +2331,11 @@ SystemZTargetLowering::emitAtomicLoadBinary(MachineInstr *MI,
       .addReg(RotatedOldVal).addOperand(Src2);
     if (BitSize < 32)
       // XILF with the upper BitSize bits set.
-      BuildMI(MBB, DL, TII->get(SystemZ::XILF32), RotatedNewVal)
+      BuildMI(MBB, DL, TII->get(SystemZ::XILF), RotatedNewVal)
         .addReg(Tmp).addImm(uint32_t(~0 << (32 - BitSize)));
     else if (BitSize == 32)
       // XILF with every bit set.
-      BuildMI(MBB, DL, TII->get(SystemZ::XILF32), RotatedNewVal)
+      BuildMI(MBB, DL, TII->get(SystemZ::XILF), RotatedNewVal)
         .addReg(Tmp).addImm(~uint32_t(0));
     else {
       // Use LCGR and add -1 to the result, which is more compact than
@@ -2601,8 +2602,8 @@ SystemZTargetLowering::emitAtomicCmpSwapW(MachineInstr *MI,
 
 // Emit an extension from a GR32 or GR64 to a GR128.  ClearEven is true
 // if the high register of the GR128 value must be cleared or false if
-// it's "don't care".  SubReg is subreg_odd32 when extending a GR32
-// and subreg_odd when extending a GR64.
+// it's "don't care".  SubReg is subreg_l32 when extending a GR32
+// and subreg_l64 when extending a GR64.
 MachineBasicBlock *
 SystemZTargetLowering::emitExt128(MachineInstr *MI,
                                   MachineBasicBlock *MBB,
@@ -2624,7 +2625,7 @@ SystemZTargetLowering::emitExt128(MachineInstr *MI,
     BuildMI(*MBB, MI, DL, TII->get(SystemZ::LLILL), Zero64)
       .addImm(0);
     BuildMI(*MBB, MI, DL, TII->get(TargetOpcode::INSERT_SUBREG), NewIn128)
-      .addReg(In128).addReg(Zero64).addImm(SystemZ::subreg_high);
+      .addReg(In128).addReg(Zero64).addImm(SystemZ::subreg_h64);
     In128 = NewIn128;
   }
   BuildMI(*MBB, MI, DL, TII->get(TargetOpcode::INSERT_SUBREG), Dest)
@@ -2833,12 +2834,12 @@ SystemZTargetLowering::emitStringWrapper(MachineInstr *MI,
   //  LoopMBB:
   //   %This1Reg = phi [ %Start1Reg, StartMBB ], [ %End1Reg, LoopMBB ]
   //   %This2Reg = phi [ %Start2Reg, StartMBB ], [ %End2Reg, LoopMBB ]
-  //   R0W = %CharReg
-  //   %End1Reg, %End2Reg = CLST %This1Reg, %This2Reg -- uses R0W
+  //   R0L = %CharReg
+  //   %End1Reg, %End2Reg = CLST %This1Reg, %This2Reg -- uses R0L
   //   JO LoopMBB
   //   # fall through to DoneMMB
   //
-  // The load of R0W can be hoisted by post-RA LICM.
+  // The load of R0L can be hoisted by post-RA LICM.
   MBB = LoopMBB;
 
   BuildMI(MBB, DL, TII->get(SystemZ::PHI), This1Reg)
@@ -2847,7 +2848,7 @@ SystemZTargetLowering::emitStringWrapper(MachineInstr *MI,
   BuildMI(MBB, DL, TII->get(SystemZ::PHI), This2Reg)
     .addReg(Start2Reg).addMBB(StartMBB)
     .addReg(End2Reg).addMBB(LoopMBB);
-  BuildMI(MBB, DL, TII->get(TargetOpcode::COPY), SystemZ::R0W).addReg(CharReg);
+  BuildMI(MBB, DL, TII->get(TargetOpcode::COPY), SystemZ::R0L).addReg(CharReg);
   BuildMI(MBB, DL, TII->get(Opcode))
     .addReg(End1Reg, RegState::Define).addReg(End2Reg, RegState::Define)
     .addReg(This1Reg).addReg(This2Reg);
@@ -2872,18 +2873,6 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
   case SystemZ::SelectF128:
     return emitSelect(MI, MBB);
 
-  case SystemZ::CondStore8_32:
-    return emitCondStore(MI, MBB, SystemZ::STC32, 0, false);
-  case SystemZ::CondStore8_32Inv:
-    return emitCondStore(MI, MBB, SystemZ::STC32, 0, true);
-  case SystemZ::CondStore16_32:
-    return emitCondStore(MI, MBB, SystemZ::STH32, 0, false);
-  case SystemZ::CondStore16_32Inv:
-    return emitCondStore(MI, MBB, SystemZ::STH32, 0, true);
-  case SystemZ::CondStore32_32:
-    return emitCondStore(MI, MBB, SystemZ::ST32, SystemZ::STOC32, false);
-  case SystemZ::CondStore32_32Inv:
-    return emitCondStore(MI, MBB, SystemZ::ST32, SystemZ::STOC32, true);
   case SystemZ::CondStore8:
     return emitCondStore(MI, MBB, SystemZ::STC, 0, false);
   case SystemZ::CondStore8Inv:
@@ -2910,11 +2899,11 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
     return emitCondStore(MI, MBB, SystemZ::STD, 0, true);
 
   case SystemZ::AEXT128_64:
-    return emitExt128(MI, MBB, false, SystemZ::subreg_low);
+    return emitExt128(MI, MBB, false, SystemZ::subreg_l64);
   case SystemZ::ZEXT128_32:
-    return emitExt128(MI, MBB, true, SystemZ::subreg_low32);
+    return emitExt128(MI, MBB, true, SystemZ::subreg_l32);
   case SystemZ::ZEXT128_64:
-    return emitExt128(MI, MBB, true, SystemZ::subreg_low);
+    return emitExt128(MI, MBB, true, SystemZ::subreg_l64);
 
   case SystemZ::ATOMIC_SWAPW:
     return emitAtomicLoadBinary(MI, MBB, 0, 0);
@@ -2950,96 +2939,96 @@ EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
   case SystemZ::ATOMIC_LOADW_NR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NR, 0);
   case SystemZ::ATOMIC_LOADW_NILH:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH32, 0);
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH, 0);
   case SystemZ::ATOMIC_LOAD_NR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NR, 32);
-  case SystemZ::ATOMIC_LOAD_NILL32:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL32, 32);
-  case SystemZ::ATOMIC_LOAD_NILH32:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH32, 32);
-  case SystemZ::ATOMIC_LOAD_NILF32:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF32, 32);
+  case SystemZ::ATOMIC_LOAD_NILL:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL, 32);
+  case SystemZ::ATOMIC_LOAD_NILH:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH, 32);
+  case SystemZ::ATOMIC_LOAD_NILF:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF, 32);
   case SystemZ::ATOMIC_LOAD_NGR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NGR, 64);
-  case SystemZ::ATOMIC_LOAD_NILL:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL, 64);
-  case SystemZ::ATOMIC_LOAD_NILH:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH, 64);
+  case SystemZ::ATOMIC_LOAD_NILL64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL64, 64);
+  case SystemZ::ATOMIC_LOAD_NILH64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH64, 64);
   case SystemZ::ATOMIC_LOAD_NIHL:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHL, 64);
   case SystemZ::ATOMIC_LOAD_NIHH:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHH, 64);
-  case SystemZ::ATOMIC_LOAD_NILF:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF, 64);
+  case SystemZ::ATOMIC_LOAD_NILF64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF64, 64);
   case SystemZ::ATOMIC_LOAD_NIHF:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHF, 64);
 
   case SystemZ::ATOMIC_LOADW_OR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OR, 0);
   case SystemZ::ATOMIC_LOADW_OILH:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILH32, 0);
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILH, 0);
   case SystemZ::ATOMIC_LOAD_OR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OR, 32);
-  case SystemZ::ATOMIC_LOAD_OILL32:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILL32, 32);
-  case SystemZ::ATOMIC_LOAD_OILH32:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILH32, 32);
-  case SystemZ::ATOMIC_LOAD_OILF32:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILF32, 32);
+  case SystemZ::ATOMIC_LOAD_OILL:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILL, 32);
+  case SystemZ::ATOMIC_LOAD_OILH:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILH, 32);
+  case SystemZ::ATOMIC_LOAD_OILF:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILF, 32);
   case SystemZ::ATOMIC_LOAD_OGR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OGR, 64);
-  case SystemZ::ATOMIC_LOAD_OILL:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILL, 64);
-  case SystemZ::ATOMIC_LOAD_OILH:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILH, 64);
+  case SystemZ::ATOMIC_LOAD_OILL64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILL64, 64);
+  case SystemZ::ATOMIC_LOAD_OILH64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILH64, 64);
   case SystemZ::ATOMIC_LOAD_OIHL:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OIHL, 64);
   case SystemZ::ATOMIC_LOAD_OIHH:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OIHH, 64);
-  case SystemZ::ATOMIC_LOAD_OILF:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILF, 64);
+  case SystemZ::ATOMIC_LOAD_OILF64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::OILF64, 64);
   case SystemZ::ATOMIC_LOAD_OIHF:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::OIHF, 64);
 
   case SystemZ::ATOMIC_LOADW_XR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::XR, 0);
   case SystemZ::ATOMIC_LOADW_XILF:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::XILF32, 0);
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::XILF, 0);
   case SystemZ::ATOMIC_LOAD_XR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::XR, 32);
-  case SystemZ::ATOMIC_LOAD_XILF32:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::XILF32, 32);
+  case SystemZ::ATOMIC_LOAD_XILF:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::XILF, 32);
   case SystemZ::ATOMIC_LOAD_XGR:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::XGR, 64);
-  case SystemZ::ATOMIC_LOAD_XILF:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::XILF, 64);
+  case SystemZ::ATOMIC_LOAD_XILF64:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::XILF64, 64);
   case SystemZ::ATOMIC_LOAD_XIHF:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::XIHF, 64);
 
   case SystemZ::ATOMIC_LOADW_NRi:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NR, 0, true);
   case SystemZ::ATOMIC_LOADW_NILHi:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH32, 0, true);
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH, 0, true);
   case SystemZ::ATOMIC_LOAD_NRi:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NR, 32, true);
-  case SystemZ::ATOMIC_LOAD_NILL32i:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL32, 32, true);
-  case SystemZ::ATOMIC_LOAD_NILH32i:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH32, 32, true);
-  case SystemZ::ATOMIC_LOAD_NILF32i:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF32, 32, true);
+  case SystemZ::ATOMIC_LOAD_NILLi:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL, 32, true);
+  case SystemZ::ATOMIC_LOAD_NILHi:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH, 32, true);
+  case SystemZ::ATOMIC_LOAD_NILFi:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF, 32, true);
   case SystemZ::ATOMIC_LOAD_NGRi:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NGR, 64, true);
-  case SystemZ::ATOMIC_LOAD_NILLi:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL, 64, true);
-  case SystemZ::ATOMIC_LOAD_NILHi:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH, 64, true);
+  case SystemZ::ATOMIC_LOAD_NILL64i:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILL64, 64, true);
+  case SystemZ::ATOMIC_LOAD_NILH64i:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILH64, 64, true);
   case SystemZ::ATOMIC_LOAD_NIHLi:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHL, 64, true);
   case SystemZ::ATOMIC_LOAD_NIHHi:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHH, 64, true);
-  case SystemZ::ATOMIC_LOAD_NILFi:
-    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF, 64, true);
+  case SystemZ::ATOMIC_LOAD_NILF64i:
+    return emitAtomicLoadBinary(MI, MBB, SystemZ::NILF64, 64, true);
   case SystemZ::ATOMIC_LOAD_NIHFi:
     return emitAtomicLoadBinary(MI, MBB, SystemZ::NIHF, 64, true);
 

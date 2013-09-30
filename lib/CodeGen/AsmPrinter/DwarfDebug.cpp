@@ -754,32 +754,32 @@ CompileUnit *DwarfDebug::constructCompileUnit(const MDNode *N) {
      Asm->OutStreamer.getKind() == MCStreamer::SK_AsmStreamer) ||
     (NewCU->getUniqueID() == 0);
 
-  // DW_AT_stmt_list is a offset of line number information for this
-  // compile unit in debug_line section. For split dwarf this is
-  // left in the skeleton CU and so not included.
-  // The line table entries are not always emitted in assembly, so it
-  // is not okay to use line_table_start here.
   if (!useSplitDwarf()) {
+    // DW_AT_stmt_list is a offset of line number information for this
+    // compile unit in debug_line section. For split dwarf this is
+    // left in the skeleton CU and so not included.
+    // The line table entries are not always emitted in assembly, so it
+    // is not okay to use line_table_start here.
     if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
       NewCU->addLabel(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_sec_offset,
-                      UseTheFirstCU ?
-                      Asm->GetTempSymbol("section_line") : LineTableStartSym);
+                      UseTheFirstCU ? Asm->GetTempSymbol("section_line")
+                                    : LineTableStartSym);
     else if (UseTheFirstCU)
       NewCU->addUInt(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4, 0);
     else
       NewCU->addDelta(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4,
                       LineTableStartSym, DwarfLineSectionSym);
+
+    // If we're using split dwarf the compilation dir is going to be in the
+    // skeleton CU and so we don't need to duplicate it here.
+    if (!CompilationDir.empty())
+      NewCU->addString(Die, dwarf::DW_AT_comp_dir, CompilationDir);
+
+    // Flag to let the linker know we have emitted new style pubnames. Only
+    // emit it here if we don't have a skeleton CU for split dwarf.
+    if (GenerateGnuPubSections)
+      NewCU->addFlag(Die, dwarf::DW_AT_GNU_pubnames);
   }
-
-  // If we're using split dwarf the compilation dir is going to be in the
-  // skeleton CU and so we don't need to duplicate it here.
-  if (!useSplitDwarf() && !CompilationDir.empty())
-    NewCU->addString(Die, dwarf::DW_AT_comp_dir, CompilationDir);
-
-  // Flag to let the linker know we have emitted new style pubnames. Only
-  // emit it here if we don't have a skeleton CU for split dwarf.
-  if (!useSplitDwarf() && GenerateGnuPubSections)
-    NewCU->addFlag(Die, dwarf::DW_AT_GNU_pubnames);
 
   if (DIUnit.isOptimized())
     NewCU->addFlag(Die, dwarf::DW_AT_APPLE_optimized);
@@ -1966,12 +1966,12 @@ void DwarfDebug::emitSectionLabels() {
   DwarfLineSectionSym =
     emitSectionSym(Asm, TLOF.getDwarfLineSection(), "section_line");
   emitSectionSym(Asm, TLOF.getDwarfLocSection());
-  if (HasDwarfPubSections) {
-    emitSectionSym(Asm, TLOF.getDwarfPubNamesSection());
-    emitSectionSym(Asm, TLOF.getDwarfPubTypesSection());
-  } else if (GenerateGnuPubSections) {
+  if (GenerateGnuPubSections) {
     emitSectionSym(Asm, TLOF.getDwarfGnuPubNamesSection());
     emitSectionSym(Asm, TLOF.getDwarfGnuPubTypesSection());
+  } else if (HasDwarfPubSections) {
+    emitSectionSym(Asm, TLOF.getDwarfPubNamesSection());
+    emitSectionSym(Asm, TLOF.getDwarfPubTypesSection());
   }
 
   DwarfStrSectionSym =
@@ -2349,7 +2349,7 @@ void DwarfDebug::emitAccelTypes() {
 /// computeIndexValue - Compute the gdb index value for the DIE and CU.
 static dwarf::PubIndexEntryDescriptor computeIndexValue(CompileUnit *CU,
                                                         DIE *Die) {
-  dwarf::GDBIndexEntryLinkage IsStatic =
+  dwarf::GDBIndexEntryLinkage Linkage =
       Die->findAttribute(dwarf::DW_AT_external) ? dwarf::GIEL_EXTERNAL
                                                 : dwarf::GIEL_STATIC;
 
@@ -2358,6 +2358,10 @@ static dwarf::PubIndexEntryDescriptor computeIndexValue(CompileUnit *CU,
   case dwarf::DW_TAG_structure_type:
   case dwarf::DW_TAG_union_type:
   case dwarf::DW_TAG_enumeration_type:
+    return dwarf::PubIndexEntryDescriptor(
+        dwarf::GIEK_TYPE, CU->getLanguage() != dwarf::DW_LANG_C_plus_plus
+                              ? dwarf::GIEL_STATIC
+                              : dwarf::GIEL_EXTERNAL);
   case dwarf::DW_TAG_typedef:
   case dwarf::DW_TAG_base_type:
   case dwarf::DW_TAG_subrange_type:
@@ -2365,10 +2369,10 @@ static dwarf::PubIndexEntryDescriptor computeIndexValue(CompileUnit *CU,
   case dwarf::DW_TAG_namespace:
     return dwarf::GIEK_TYPE;
   case dwarf::DW_TAG_subprogram:
-    return dwarf::PubIndexEntryDescriptor(dwarf::GIEK_FUNCTION, IsStatic);
+    return dwarf::PubIndexEntryDescriptor(dwarf::GIEK_FUNCTION, Linkage);
   case dwarf::DW_TAG_constant:
   case dwarf::DW_TAG_variable:
-    return dwarf::PubIndexEntryDescriptor(dwarf::GIEK_VARIABLE, IsStatic);
+    return dwarf::PubIndexEntryDescriptor(dwarf::GIEK_VARIABLE, Linkage);
   case dwarf::DW_TAG_enumerator:
     return dwarf::PubIndexEntryDescriptor(dwarf::GIEK_VARIABLE,
                                           dwarf::GIEL_STATIC);
@@ -2446,7 +2450,9 @@ void DwarfDebug::emitDebugPubNames(bool GnuStyle) {
 
 void DwarfDebug::emitDebugPubTypes(bool GnuStyle) {
   const MCSection *ISec = Asm->getObjFileLowering().getDwarfInfoSection();
-  const MCSection *PSec = Asm->getObjFileLowering().getDwarfPubTypesSection();
+  const MCSection *PSec =
+      GnuStyle ? Asm->getObjFileLowering().getDwarfGnuPubTypesSection()
+               : Asm->getObjFileLowering().getDwarfPubTypesSection();
 
   for (DenseMap<const MDNode *, CompileUnit *>::iterator I = CUMap.begin(),
                                                          E = CUMap.end();
@@ -2838,12 +2844,17 @@ void DwarfDebug::emitDebugARanges() {
       Asm->EmitLabelReference(Span.Start, PtrSize);
 
       // Calculate the size as being from the span start to it's end.
-      // If we have no valid end symbol, then we just cover the first byte.
-      // (this sucks, but I can't seem to figure out how to get the size)
-      if (Span.End)
+      if (Span.End) {
         Asm->EmitLabelDifference(Span.End, Span.Start, PtrSize);
-      else
-        Asm->OutStreamer.EmitIntValue(1, PtrSize);
+      } else {
+        // For symbols without an end marker (e.g. common), we
+        // write a single arange entry containing just that one symbol.
+        uint64_t Size = SymSize[Span.Start];
+        if (Size == 0)
+          Size = 1;
+
+        Asm->OutStreamer.EmitIntValue(Size, PtrSize);
+      }
     }
 
     Asm->OutStreamer.AddComment("ARange terminator");

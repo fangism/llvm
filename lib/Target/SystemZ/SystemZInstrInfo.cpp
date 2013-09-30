@@ -48,8 +48,8 @@ void SystemZInstrInfo::splitMove(MachineBasicBlock::iterator MI,
   // Set up the two 64-bit registers.
   MachineOperand &HighRegOp = EarlierMI->getOperand(0);
   MachineOperand &LowRegOp = MI->getOperand(0);
-  HighRegOp.setReg(RI.getSubReg(HighRegOp.getReg(), SystemZ::subreg_high));
-  LowRegOp.setReg(RI.getSubReg(LowRegOp.getReg(), SystemZ::subreg_low));
+  HighRegOp.setReg(RI.getSubReg(HighRegOp.getReg(), SystemZ::subreg_h64));
+  LowRegOp.setReg(RI.getSubReg(LowRegOp.getReg(), SystemZ::subreg_l64));
 
   // The address in the first (high) instruction is already correct.
   // Adjust the offset in the second (low) instruction.
@@ -453,10 +453,10 @@ SystemZInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
 			      bool KillSrc) const {
   // Split 128-bit GPR moves into two 64-bit moves.  This handles ADDR128 too.
   if (SystemZ::GR128BitRegClass.contains(DestReg, SrcReg)) {
-    copyPhysReg(MBB, MBBI, DL, RI.getSubReg(DestReg, SystemZ::subreg_high),
-                RI.getSubReg(SrcReg, SystemZ::subreg_high), KillSrc);
-    copyPhysReg(MBB, MBBI, DL, RI.getSubReg(DestReg, SystemZ::subreg_low),
-                RI.getSubReg(SrcReg, SystemZ::subreg_low), KillSrc);
+    copyPhysReg(MBB, MBBI, DL, RI.getSubReg(DestReg, SystemZ::subreg_h64),
+                RI.getSubReg(SrcReg, SystemZ::subreg_h64), KillSrc);
+    copyPhysReg(MBB, MBBI, DL, RI.getSubReg(DestReg, SystemZ::subreg_l64),
+                RI.getSubReg(SrcReg, SystemZ::subreg_l64), KillSrc);
     return;
   }
 
@@ -535,14 +535,14 @@ namespace {
 
 static LogicOp interpretAndImmediate(unsigned Opcode) {
   switch (Opcode) {
-  case SystemZ::NILL32: return LogicOp(32,  0, 16);
-  case SystemZ::NILH32: return LogicOp(32, 16, 16);
-  case SystemZ::NILL:   return LogicOp(64,  0, 16);
-  case SystemZ::NILH:   return LogicOp(64, 16, 16);
+  case SystemZ::NILL:   return LogicOp(32,  0, 16);
+  case SystemZ::NILH:   return LogicOp(32, 16, 16);
+  case SystemZ::NILL64: return LogicOp(64,  0, 16);
+  case SystemZ::NILH64: return LogicOp(64, 16, 16);
   case SystemZ::NIHL:   return LogicOp(64, 32, 16);
   case SystemZ::NIHH:   return LogicOp(64, 48, 16);
-  case SystemZ::NILF32: return LogicOp(32,  0, 32);
-  case SystemZ::NILF:   return LogicOp(64,  0, 32);
+  case SystemZ::NILF:   return LogicOp(32,  0, 32);
+  case SystemZ::NILF64: return LogicOp(64,  0, 32);
   case SystemZ::NIHF:   return LogicOp(64, 32, 32);
   default:              return LogicOp();
   }
@@ -674,10 +674,14 @@ SystemZInstrInfo::foldMemoryOperandImpl(MachineFunction &MF,
   //
   // Although MVC is in practice a fast choice in these cases, it is still
   // logically a bytewise copy.  This means that we cannot use it if the
-  // load or store is volatile.  It also means that the transformation is
-  // not valid in cases where the two memories partially overlap; however,
-  // that is not a problem here, because we know that one of the memories
-  // is a full frame index.
+  // load or store is volatile.  We also wouldn't be able to use MVC if
+  // the two memories partially overlap, but that case cannot occur here,
+  // because we know that one of the memories is a full frame index.
+  //
+  // For performance reasons, we also want to avoid using MVC if the addresses
+  // might be equal.  We don't worry about that case here, because spill slot
+  // coloring happens later, and because we have special code to remove
+  // MVCs that turn out to be redundant.
   if (OpNum == 0 && MI->hasOneMemOperand()) {
     MachineMemOperand *MMO = *MI->memoperands_begin();
     if (MMO->getSize() == Size && !MMO->isVolatile()) {
@@ -819,7 +823,7 @@ void SystemZInstrInfo::getLoadStoreOpcodes(const TargetRegisterClass *RC,
                                            unsigned &StoreOpcode) const {
   if (RC == &SystemZ::GR32BitRegClass || RC == &SystemZ::ADDR32BitRegClass) {
     LoadOpcode = SystemZ::L;
-    StoreOpcode = SystemZ::ST32;
+    StoreOpcode = SystemZ::ST;
   } else if (RC == &SystemZ::GR64BitRegClass ||
              RC == &SystemZ::ADDR64BitRegClass) {
     LoadOpcode = SystemZ::LG;

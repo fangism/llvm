@@ -2553,10 +2553,10 @@ defm VSHUFPSY : sse12_shuffle<VR256, f256mem, v8f32,
            "shufps\t{$src3, $src2, $src1, $dst|$dst, $src1, $src2, $src3}",
            memopv8f32, SSEPackedSingle>, TB, VEX_4V, VEX_L;
 defm VSHUFPD  : sse12_shuffle<VR128, f128mem, v2f64,
-           "shufpd\t{$src3, $src2, $src1, $dst|$dst, $src2, $src2, $src3}",
+           "shufpd\t{$src3, $src2, $src1, $dst|$dst, $src1, $src2, $src3}",
            memopv2f64, SSEPackedDouble>, TB, OpSize, VEX_4V;
 defm VSHUFPDY : sse12_shuffle<VR256, f256mem, v4f64,
-           "shufpd\t{$src3, $src2, $src1, $dst|$dst, $src2, $src2, $src3}",
+           "shufpd\t{$src3, $src2, $src1, $dst|$dst, $src1, $src2, $src3}",
            memopv4f64, SSEPackedDouble>, TB, OpSize, VEX_4V, VEX_L;
 
 let Constraints = "$src1 = $dst" in {
@@ -4710,8 +4710,6 @@ def MOVZQI2PQIrm : I<0x7E, MRMSrcMem, (outs VR128:$dst), (ins i64mem:$src),
                      XS, Requires<[UseSSE2]>, Sched<[WriteLoad]>;
 
 let Predicates = [UseAVX], AddedComplexity = 20 in {
-  def : Pat<(v2i64 (X86vzmovl (loadv2i64 addr:$src))),
-            (VMOVZQI2PQIrm addr:$src)>;
   def : Pat<(v2i64 (X86vzmovl (bc_v2i64 (loadv4f32 addr:$src)))),
             (VMOVZQI2PQIrm addr:$src)>;
   def : Pat<(v2i64 (X86vzload addr:$src)),
@@ -4719,8 +4717,6 @@ let Predicates = [UseAVX], AddedComplexity = 20 in {
 }
 
 let Predicates = [UseSSE2], AddedComplexity = 20 in {
-  def : Pat<(v2i64 (X86vzmovl (loadv2i64 addr:$src))),
-            (MOVZQI2PQIrm addr:$src)>;
   def : Pat<(v2i64 (X86vzmovl (bc_v2i64 (loadv4f32 addr:$src)))),
             (MOVZQI2PQIrm addr:$src)>;
   def : Pat<(v2i64 (X86vzload addr:$src)), (MOVZQI2PQIrm addr:$src)>;
@@ -4772,14 +4768,10 @@ def MOVZPQILo2PQIrm : I<0x7E, MRMSrcMem, (outs VR128:$dst), (ins i128mem:$src),
 
 let AddedComplexity = 20 in {
   let Predicates = [UseAVX] in {
-    def : Pat<(v2i64 (X86vzmovl (loadv2i64 addr:$src))),
-              (VMOVZPQILo2PQIrm addr:$src)>;
     def : Pat<(v2f64 (X86vzmovl (v2f64 VR128:$src))),
               (VMOVZPQILo2PQIrr VR128:$src)>;
   }
   let Predicates = [UseSSE2] in {
-    def : Pat<(v2i64 (X86vzmovl (loadv2i64 addr:$src))),
-              (MOVZPQILo2PQIrm addr:$src)>;
     def : Pat<(v2f64 (X86vzmovl (v2f64 VR128:$src))),
               (MOVZPQILo2PQIrr VR128:$src)>;
   }
@@ -6307,7 +6299,7 @@ multiclass SS41I_insertf32<bits<8> opc, string asm, bit Is2Addr = 1,
 }
 
 let ExeDomain = SSEPackedSingle in {
-  let Predicates = [HasAVX] in
+  let Predicates = [UseAVX] in
     defm VINSERTPS : SS41I_insertf32<0x21, "vinsertps", 0>, VEX_4V;
   let Constraints = "$src1 = $dst" in
     defm INSERTPS : SS41I_insertf32<0x21, "insertps", 1, SSE_INSERT_ITINS>;
