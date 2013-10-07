@@ -144,6 +144,9 @@ class MipsAsmParser : public MCTargetAsmParser {
   MipsAsmParser::OperandMatchResultTy
   parseMSA128DRegs(SmallVectorImpl<MCParsedAsmOperand*> &Operands);
 
+  MipsAsmParser::OperandMatchResultTy
+  parseInvNum(SmallVectorImpl<MCParsedAsmOperand*> &Operands);
+
   bool searchSymbolAlias(SmallVectorImpl<MCParsedAsmOperand*> &Operands,
                          unsigned RegKind);
 
@@ -177,6 +180,8 @@ class MipsAsmParser : public MCTargetAsmParser {
 
   bool isEvaluated(const MCExpr *Expr);
   bool parseDirectiveSet();
+  bool parseDirectiveMipsHackStocg();
+  bool parseDirectiveMipsHackELFFlags();
 
   bool parseSetAtDirective();
   bool parseSetNoAtDirective();
@@ -351,6 +356,7 @@ public:
   bool isToken() const { return Kind == k_Token; }
   bool isMem() const { return Kind == k_Memory; }
   bool isPtrReg() const { return Kind == k_PtrReg; }
+  bool isInvNum() const { return Kind == k_Immediate; }
 
   StringRef getToken() const {
     assert(Kind == k_Token && "Invalid access!");
@@ -1817,6 +1823,24 @@ MipsAsmParser::parseCCRRegs(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   return parseRegs(Operands, (int) MipsOperand::Kind_CCRRegs);
 }
 
+MipsAsmParser::OperandMatchResultTy
+MipsAsmParser::parseInvNum(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
+  const MCExpr *IdVal;
+  // If the first token is '$' we may have register operand.
+  if (Parser.getTok().is(AsmToken::Dollar))
+    return MatchOperand_NoMatch;
+  SMLoc S = Parser.getTok().getLoc();
+  if (getParser().parseExpression(IdVal))
+    return MatchOperand_ParseFail;
+  const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(IdVal);
+    assert( MCE && "Unexpected MCExpr type.");
+  int64_t Val = MCE->getValue();
+  SMLoc E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
+  Operands.push_back(MipsOperand::CreateImm(
+                     MCConstantExpr::Create(0 - Val, getContext()), S, E));
+  return MatchOperand_Success;
+}
+
 MCSymbolRefExpr::VariantKind MipsAsmParser::getVariantKind(StringRef Symbol) {
 
   MCSymbolRefExpr::VariantKind VK
@@ -2076,6 +2100,34 @@ bool MipsAsmParser::parseDirectiveSet() {
   return true;
 }
 
+bool MipsAsmParser::parseDirectiveMipsHackStocg() {
+  MCAsmParser &Parser = getParser();
+  StringRef Name;
+  if (Parser.parseIdentifier(Name))
+    reportParseError("expected identifier");
+
+  MCSymbol *Sym = getContext().GetOrCreateSymbol(Name);
+  if (getLexer().isNot(AsmToken::Comma))
+    return TokError("unexpected token");
+  Lex();
+
+  int64_t Flags = 0;
+  if (Parser.parseAbsoluteExpression(Flags))
+    return TokError("unexpected token");
+
+  Parser.getStreamer().emitMipsHackSTOCG(Sym, Flags);
+  return false;
+}
+
+bool MipsAsmParser::parseDirectiveMipsHackELFFlags() {
+  int64_t Flags = 0;
+  if (Parser.parseAbsoluteExpression(Flags))
+    return TokError("unexpected token");
+
+  Parser.getStreamer().emitMipsHackELFFlags(Flags);
+  return false;
+}
+
 /// parseDirectiveWord
 ///  ::= .word [ expression (, expression)* ]
 bool MipsAsmParser::parseDirectiveWord(unsigned Size, SMLoc L) {
@@ -2149,6 +2201,12 @@ bool MipsAsmParser::ParseDirective(AsmToken DirectiveID) {
     parseDirectiveWord(4, DirectiveID.getLoc());
     return false;
   }
+
+  if (IDVal == ".mips_hack_stocg")
+    return parseDirectiveMipsHackStocg();
+
+  if (IDVal == ".mips_hack_elf_flags")
+    return parseDirectiveMipsHackELFFlags();
 
   return true;
 }

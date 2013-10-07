@@ -1330,7 +1330,16 @@ void X86TargetLowering::resetOperationActions() {
     setOperationAction(ISD::FMA,                MVT::v16f32, Legal);
     setOperationAction(ISD::SDIV,               MVT::v16i32, Custom);
 
-
+    setOperationAction(ISD::FP_TO_SINT,         MVT::i32, Legal);
+    setOperationAction(ISD::FP_TO_UINT,         MVT::i32, Legal);
+    setOperationAction(ISD::SINT_TO_FP,         MVT::i32, Legal);
+    setOperationAction(ISD::UINT_TO_FP,         MVT::i32, Legal);
+    if (Subtarget->is64Bit()) {
+      setOperationAction(ISD::FP_TO_UINT,       MVT::i64, Legal);
+      setOperationAction(ISD::FP_TO_SINT,       MVT::i64, Legal);
+      setOperationAction(ISD::SINT_TO_FP,       MVT::i64, Legal);
+      setOperationAction(ISD::UINT_TO_FP,       MVT::i64, Legal);
+    }
     setOperationAction(ISD::FP_TO_SINT,         MVT::v16i32, Legal);
     setOperationAction(ISD::FP_TO_UINT,         MVT::v16i32, Legal);
     setOperationAction(ISD::FP_TO_UINT,         MVT::v8i32, Legal);
@@ -6139,6 +6148,10 @@ LowerVECTOR_SHUFFLEtoBlend(ShuffleVectorSDNode *SVOp,
   MVT EltVT = VT.getVectorElementType();
   unsigned NumElems = VT.getVectorNumElements();
 
+  // There is no blend with immediate in AVX-512.
+  if (VT.is512BitVector())
+    return SDValue();
+
   if (!Subtarget->hasSSE41() || EltVT == MVT::i8)
     return SDValue();
   if (!Subtarget->hasInt256() && VT == MVT::v16i16)
@@ -9814,7 +9827,6 @@ static SDValue Lower256IntVSETCC(SDValue Op, SelectionDAG &DAG) {
 }
 
 static SDValue LowerIntVSETCC_AVX512(SDValue Op, SelectionDAG &DAG) {
-  SDValue Cond;
   SDValue Op0 = Op.getOperand(0);
   SDValue Op1 = Op.getOperand(1);
   SDValue CC = Op.getOperand(2);
@@ -9850,7 +9862,6 @@ static SDValue LowerIntVSETCC_AVX512(SDValue Op, SelectionDAG &DAG) {
 
 static SDValue LowerVSETCC(SDValue Op, const X86Subtarget *Subtarget,
                            SelectionDAG &DAG) {
-  SDValue Cond;
   SDValue Op0 = Op.getOperand(0);
   SDValue Op1 = Op.getOperand(1);
   SDValue CC = Op.getOperand(2);
@@ -17580,22 +17591,6 @@ static SDValue PerformAndCombine(SDNode *N, SelectionDAG &DAG,
       if (N1.getOpcode() == ISD::ADD && N1.getOperand(0) == N0 &&
           isAllOnes(N1.getOperand(1)))
         return DAG.getNode(X86ISD::BLSR, DL, VT, N0);
-
-      // Check for BEXTR
-      if (N0.getOpcode() == ISD::SRA || N0.getOpcode() == ISD::SRL) {
-        ConstantSDNode *MaskNode = dyn_cast<ConstantSDNode>(N1);
-        ConstantSDNode *ShiftNode = dyn_cast<ConstantSDNode>(N0.getOperand(1));
-        if (MaskNode && ShiftNode) {
-          uint64_t Mask = MaskNode->getZExtValue();
-          uint64_t Shift = ShiftNode->getZExtValue();
-          if (isMask_64(Mask)) {
-            uint64_t MaskSize = CountPopulation_64(Mask);
-            if (Shift + MaskSize <= VT.getSizeInBits())
-              return DAG.getNode(X86ISD::BEXTR, DL, VT, N0.getOperand(0),
-                                 DAG.getConstant(Shift | (MaskSize << 8), VT));
-          }
-        }
-      }
     }
 
     if (Subtarget->hasBMI2()) {
@@ -17623,6 +17618,23 @@ static SDValue PerformAndCombine(SDNode *N, SelectionDAG &DAG,
         }
       }
     }
+
+    // Check for BEXTR.
+    if ((Subtarget->hasBMI() || Subtarget->hasTBM()) &&
+        (N0.getOpcode() == ISD::SRA || N0.getOpcode() == ISD::SRL)) {
+      ConstantSDNode *MaskNode = dyn_cast<ConstantSDNode>(N1);
+      ConstantSDNode *ShiftNode = dyn_cast<ConstantSDNode>(N0.getOperand(1));
+      if (MaskNode && ShiftNode) {
+        uint64_t Mask = MaskNode->getZExtValue();
+        uint64_t Shift = ShiftNode->getZExtValue();
+        if (isMask_64(Mask)) {
+          uint64_t MaskSize = CountPopulation_64(Mask);
+          if (Shift + MaskSize <= VT.getSizeInBits())
+            return DAG.getNode(X86ISD::BEXTR, DL, VT, N0.getOperand(0),
+                               DAG.getConstant(Shift | (MaskSize << 8), VT));
+        }
+      }
+    } // BEXTR
 
     return SDValue();
   }

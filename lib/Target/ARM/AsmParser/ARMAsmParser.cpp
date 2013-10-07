@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ARMFeatures.h"
 #include "llvm/MC/MCTargetAsmParser.h"
 #include "MCTargetDesc/ARMAddressingModes.h"
 #include "MCTargetDesc/ARMBaseInfo.h"
@@ -161,6 +162,9 @@ class ARMAsmParser : public MCTargetAsmParser {
   bool hasV6Ops() const {
     return STI.getFeatureBits() & ARM::HasV6Ops;
   }
+  bool hasV6MOps() const {
+    return STI.getFeatureBits() & ARM::HasV6MOps;
+  }
   bool hasV7Ops() const {
     return STI.getFeatureBits() & ARM::HasV7Ops;
   }
@@ -259,13 +263,6 @@ public:
 
     // Not in an ITBlock to start with.
     ITState.CurPosition = ~0U;
-
-    // Set ELF header flags.
-    // FIXME: This should eventually end up somewhere else where more
-    // intelligent flag decisions can be made. For now we are just maintaining
-    // the statu/parseDirects quo for ARM and setting EF_ARM_EABI_VER5 as the default.
-    if (MCELFStreamer *MES = dyn_cast<MCELFStreamer>(&Parser.getStreamer()))
-      MES->getAssembler().setELFHeaderEFlags(ELF::EF_ARM_EABI_VER5);
   }
 
   // Implementation of the MCTargetAsmParser interface:
@@ -678,13 +675,6 @@ public:
     if (!CE) return false;
     int64_t Value = CE->getValue();
     return ((Value & 3) == 0) && Value >= -1020 && Value <= 1020;
-  }
-  bool isImm0_4() const {
-    if (!isImm()) return false;
-    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
-    if (!CE) return false;
-    int64_t Value = CE->getValue();
-    return Value >= 0 && Value < 5;
   }
   bool isImm0_1020s4() const {
     if (!isImm()) return false;
@@ -4825,7 +4815,10 @@ getMnemonicAcceptInfo(StringRef Mnemonic, StringRef FullInst,
         Mnemonic != "stc2" && Mnemonic != "stc2l" &&
         !Mnemonic.startswith("rfe") && !Mnemonic.startswith("srs");
   } else if (isThumbOne()) {
-    CanAcceptPredicationCode = Mnemonic != "nop" && Mnemonic != "movs";
+    if (hasV6MOps())
+      CanAcceptPredicationCode = Mnemonic != "movs";
+    else
+      CanAcceptPredicationCode = Mnemonic != "nop" && Mnemonic != "movs";
   } else
     CanAcceptPredicationCode = true;
 }
@@ -7629,12 +7622,22 @@ MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       return true;
     }
 
-    // Some instructions need post-processing to, for example, tweak which
-    // encoding is selected. Loop on it while changes happen so the
-    // individual transformations can chain off each other. E.g.,
-    // tPOP(r8)->t2LDMIA_UPD(sp,r8)->t2STR_POST(sp,r8)
-    while (processInstruction(Inst, Operands))
-      ;
+    { // processInstruction() updates inITBlock state, we need to save it away
+      bool wasInITBlock = inITBlock();
+
+      // Some instructions need post-processing to, for example, tweak which
+      // encoding is selected. Loop on it while changes happen so the
+      // individual transformations can chain off each other. E.g.,
+      // tPOP(r8)->t2LDMIA_UPD(sp,r8)->t2STR_POST(sp,r8)
+      while (processInstruction(Inst, Operands))
+        ;
+
+      // Only after the instruction is fully processed, we can validate it
+      if (wasInITBlock && hasV8Ops() && isThumb() &&
+          !isV8EligibleForIT(&Inst, 2)) {
+        Warning(IDLoc, "deprecated instruction in IT block");
+      }
+    }
 
     // Only move forward at the very end so that everything in validate
     // and process gets a consistent answer about whether we're in an IT
@@ -7687,11 +7690,6 @@ MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     return Error(IDLoc, "instruction variant requires ARMv6 or later");
   case Match_RequiresThumb2:
     return Error(IDLoc, "instruction variant requires Thumb2");
-  case Match_ImmRange0_4: {
-    SMLoc ErrorLoc = ((ARMOperand*)Operands[ErrorInfo])->getStartLoc();
-    if (ErrorLoc == SMLoc()) ErrorLoc = IDLoc;
-    return Error(ErrorLoc, "immediate operand must be in the range [0,4]");
-  }
   case Match_ImmRange0_15: {
     SMLoc ErrorLoc = ((ARMOperand*)Operands[ErrorInfo])->getStartLoc();
     if (ErrorLoc == SMLoc()) ErrorLoc = IDLoc;

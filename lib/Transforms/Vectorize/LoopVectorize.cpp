@@ -867,14 +867,14 @@ private:
       if (isPowerOf2_32(Val) && Val <= MaxVectorWidth)
         Width = Val;
       else
-        DEBUG(dbgs() << "LV: ignoring invalid width hint metadata");
+        DEBUG(dbgs() << "LV: ignoring invalid width hint metadata\n");
     } else if (Hint == "unroll") {
       if (isPowerOf2_32(Val) && Val <= MaxUnrollFactor)
         Unroll = Val;
       else
-        DEBUG(dbgs() << "LV: ignoring invalid unroll hint metadata");
+        DEBUG(dbgs() << "LV: ignoring invalid unroll hint metadata\n");
     } else {
-      DEBUG(dbgs() << "LV: ignoring unknown hint " << Hint);
+      DEBUG(dbgs() << "LV: ignoring unknown hint " << Hint << '\n');
     }
   }
 };
@@ -915,7 +915,7 @@ struct LoopVectorize : public LoopPass {
       return false;
 
     if (DL == NULL) {
-      DEBUG(dbgs() << "LV: Not vectorizing because of missing data layout");
+      DEBUG(dbgs() << "LV: Not vectorizing because of missing data layout\n");
       return false;
     }
 
@@ -966,8 +966,8 @@ struct LoopVectorize : public LoopPass {
     }
 
     DEBUG(dbgs() << "LV: Found a vectorizable loop ("<< VF.Width << ") in "<<
-          F->getParent()->getModuleIdentifier()<<"\n");
-    DEBUG(dbgs() << "LV: Unroll Factor is " << UF << "\n");
+          F->getParent()->getModuleIdentifier() << '\n');
+    DEBUG(dbgs() << "LV: Unroll Factor is " << UF << '\n');
 
     if (VF.Width == 1) {
       if (UF == 1)
@@ -1385,10 +1385,8 @@ InnerLoopVectorizer::addRuntimeCheck(LoopVectorizationLegality *Legal,
   SmallVector<TrackingVH<Value> , 2> Starts;
   SmallVector<TrackingVH<Value> , 2> Ends;
 
+  LLVMContext &Ctx = Loc->getContext();
   SCEVExpander Exp(*SE, "induction");
-
-  // Use this type for pointer arithmetic.
-  Type* PtrArithTy = Type::getInt8PtrTy(Loc->getContext(), 0);
 
   for (unsigned i = 0; i < NumPointers; ++i) {
     Value *Ptr = PtrRtCheck->Pointers[i];
@@ -1400,7 +1398,11 @@ InnerLoopVectorizer::addRuntimeCheck(LoopVectorizationLegality *Legal,
       Starts.push_back(Ptr);
       Ends.push_back(Ptr);
     } else {
-      DEBUG(dbgs() << "LV: Adding RT check for range:" << *Ptr <<"\n");
+      DEBUG(dbgs() << "LV: Adding RT check for range:" << *Ptr << '\n');
+      unsigned AS = Ptr->getType()->getPointerAddressSpace();
+
+      // Use this type for pointer arithmetic.
+      Type *PtrArithTy = Type::getInt8PtrTy(Ctx, AS);
 
       Value *Start = Exp.expandCodeFor(PtrRtCheck->Starts[i], PtrArithTy, Loc);
       Value *End = Exp.expandCodeFor(PtrRtCheck->Ends[i], PtrArithTy, Loc);
@@ -1422,10 +1424,20 @@ InnerLoopVectorizer::addRuntimeCheck(LoopVectorizationLegality *Legal,
       if (PtrRtCheck->DependencySetId[i] == PtrRtCheck->DependencySetId[j])
        continue;
 
-      Value *Start0 = ChkBuilder.CreateBitCast(Starts[i], PtrArithTy, "bc");
-      Value *Start1 = ChkBuilder.CreateBitCast(Starts[j], PtrArithTy, "bc");
-      Value *End0 =   ChkBuilder.CreateBitCast(Ends[i],   PtrArithTy, "bc");
-      Value *End1 =   ChkBuilder.CreateBitCast(Ends[j],   PtrArithTy, "bc");
+      unsigned AS0 = Starts[i]->getType()->getPointerAddressSpace();
+      unsigned AS1 = Starts[j]->getType()->getPointerAddressSpace();
+
+      assert((AS0 == Ends[j]->getType()->getPointerAddressSpace()) &&
+             (AS1 == Ends[i]->getType()->getPointerAddressSpace()) &&
+             "Trying to bounds check pointers with different address spaces");
+
+      Type *PtrArithTy0 = Type::getInt8PtrTy(Ctx, AS0);
+      Type *PtrArithTy1 = Type::getInt8PtrTy(Ctx, AS1);
+
+      Value *Start0 = ChkBuilder.CreateBitCast(Starts[i], PtrArithTy0, "bc");
+      Value *Start1 = ChkBuilder.CreateBitCast(Starts[j], PtrArithTy1, "bc");
+      Value *End0 =   ChkBuilder.CreateBitCast(Ends[i],   PtrArithTy1, "bc");
+      Value *End1 =   ChkBuilder.CreateBitCast(Ends[j],   PtrArithTy0, "bc");
 
       Value *Cmp0 = ChkBuilder.CreateICmpULE(Start0, End1, "bound0");
       Value *Cmp1 = ChkBuilder.CreateICmpULE(Start1, End0, "bound1");
@@ -1440,9 +1452,8 @@ InnerLoopVectorizer::addRuntimeCheck(LoopVectorizationLegality *Legal,
   // We have to do this trickery because the IRBuilder might fold the check to a
   // constant expression in which case there is no Instruction anchored in a
   // the block.
-  LLVMContext &Ctx = Loc->getContext();
-  Instruction * Check = BinaryOperator::CreateAnd(MemoryRuntimeCheck,
-                                                  ConstantInt::getTrue(Ctx));
+  Instruction *Check = BinaryOperator::CreateAnd(MemoryRuntimeCheck,
+                                                 ConstantInt::getTrue(Ctx));
   ChkBuilder.Insert(Check, "memcheck.conflict");
   return Check;
 }
@@ -2745,7 +2756,7 @@ bool LoopVectorizationLegality::canVectorize() {
   // We need to have a loop header.
   BasicBlock *Latch = TheLoop->getLoopLatch();
   DEBUG(dbgs() << "LV: Found a loop: " <<
-        TheLoop->getHeader()->getName() << "\n");
+        TheLoop->getHeader()->getName() << '\n');
 
   // ScalarEvolution needs to be able to find the exit count.
   const SCEV *ExitCount = SE->getBackedgeTakenCount(TheLoop);
@@ -2815,7 +2826,7 @@ static bool hasOutsideLoopUser(const Loop *TheLoop, Instruction *Inst,
       Instruction *U = cast<Instruction>(*I);
       // This user may be a reduction exit value.
       if (!TheLoop->contains(U)) {
-        DEBUG(dbgs() << "LV: Found an outside user for : "<< *U << "\n");
+        DEBUG(dbgs() << "LV: Found an outside user for : " << *U << '\n');
         return true;
       }
     }
@@ -2953,7 +2964,7 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
       // Check that the instruction return type is vectorizable.
       if (!VectorType::isValidElementType(it->getType()) &&
           !it->getType()->isVoidTy()) {
-        DEBUG(dbgs() << "LV: Found unvectorizable type." << "\n");
+        DEBUG(dbgs() << "LV: Found unvectorizable type.\n");
         return false;
       }
 
@@ -3158,7 +3169,7 @@ bool AccessAnalysis::canCheckPtrAtRT(
 
       RtCheck.insert(SE, TheLoop, Ptr, IsWrite, DepId);
 
-      DEBUG(dbgs() << "LV: Found a runtime check ptr:" << *Ptr <<"\n");
+      DEBUG(dbgs() << "LV: Found a runtime check ptr:" << *Ptr << '\n');
     } else {
       CanDoRT = false;
     }
@@ -3166,9 +3177,36 @@ bool AccessAnalysis::canCheckPtrAtRT(
 
   if (IsDepCheckNeeded && CanDoRT && RunningDepId == 2)
     NumComparisons = 0; // Only one dependence set.
-  else
+  else {
     NumComparisons = (NumWritePtrChecks * (NumReadPtrChecks +
                                            NumWritePtrChecks - 1));
+  }
+
+  // If the pointers that we would use for the bounds comparison have different
+  // address spaces, assume the values aren't directly comparable, so we can't
+  // use them for the runtime check. We also have to assume they could
+  // overlap. In the future there should be metadata for whether address spaces
+  // are disjoint.
+  unsigned NumPointers = RtCheck.Pointers.size();
+  for (unsigned i = 0; i < NumPointers; ++i) {
+    for (unsigned j = i + 1; j < NumPointers; ++j) {
+      // Only need to check pointers between two different dependency sets.
+      if (RtCheck.DependencySetId[i] == RtCheck.DependencySetId[j])
+       continue;
+
+      Value *PtrI = RtCheck.Pointers[i];
+      Value *PtrJ = RtCheck.Pointers[j];
+
+      unsigned ASi = PtrI->getType()->getPointerAddressSpace();
+      unsigned ASj = PtrJ->getType()->getPointerAddressSpace();
+      if (ASi != ASj) {
+        DEBUG(dbgs() << "LV: Runtime check would require comparison between"
+                       " different address spaces\n");
+        return false;
+      }
+    }
+  }
+
   return CanDoRT;
 }
 
@@ -3223,7 +3261,7 @@ void AccessAnalysis::processMemAccesses(bool UseDeferred) {
                         !isa<Argument>(UnderlyingObj)) &&
            !isIdentifiedObject(UnderlyingObj))) {
         DEBUG(dbgs() << "LV: Found an unidentified " <<
-              (IsWrite ?  "write" : "read" ) << " ptr:" << *UnderlyingObj <<
+              (IsWrite ?  "write" : "read" ) << " ptr: " << *UnderlyingObj <<
               "\n");
         IsRTCheckNeeded = (IsRTCheckNeeded ||
                            !isIdentifiedObject(UnderlyingObj) ||
@@ -3567,7 +3605,7 @@ bool MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
   if (Val == 0) {
     if (ATy == BTy)
       return false;
-    DEBUG(dbgs() << "LV: Zero dependence difference but different types");
+    DEBUG(dbgs() << "LV: Zero dependence difference but different types\n");
     return true;
   }
 
@@ -3576,7 +3614,7 @@ bool MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
   // Positive distance bigger than max vectorization factor.
   if (ATy != BTy) {
     DEBUG(dbgs() <<
-          "LV: ReadWrite-Write positive dependency with different types");
+          "LV: ReadWrite-Write positive dependency with different types\n");
     return false;
   }
 
@@ -3593,7 +3631,7 @@ bool MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
       2*TypeByteSize > MaxSafeDepDistBytes ||
       Distance < TypeByteSize * ForcedUnroll * ForcedFactor) {
     DEBUG(dbgs() << "LV: Failure because of Positive distance "
-        << Val.getSExtValue() << "\n");
+        << Val.getSExtValue() << '\n');
     return true;
   }
 
@@ -3606,7 +3644,7 @@ bool MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
      return true;
 
   DEBUG(dbgs() << "LV: Positive distance " << Val.getSExtValue() <<
-        " with max VF=" << MaxSafeDepDistBytes/TypeByteSize << "\n");
+        " with max VF = " << MaxSafeDepDistBytes / TypeByteSize << '\n');
 
   return false;
 }
@@ -3710,8 +3748,8 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
         Stores.push_back(St);
         DepChecker.addAccess(St);
       }
-    } // next instr.
-  } // next block.
+    } // Next instr.
+  } // Next block.
 
   // Now we have two lists that hold the loads and the stores.
   // Next, we find the pointers that they use.
@@ -3758,7 +3796,6 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
     return true;
   }
 
-  SmallPtrSet<Value *, 16> ReadOnlyPtr;
   for (I = Loads.begin(), IE = Loads.end(); I != IE; ++I) {
     LoadInst *LD = cast<LoadInst>(*I);
     Value* Ptr = LD->getPointerOperand();
@@ -3806,7 +3843,7 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
   if (NumComparisons == 0 && NeedRTCheck)
     NeedRTCheck = false;
 
-  // Check that we did not collect too many pointers or found a unsizeable
+  // Check that we did not collect too many pointers or found an unsizeable
   // pointer.
   if (!CanDoRT || NumComparisons > RuntimeMemoryCheckThreshold) {
     PtrRtCheck.reset();
@@ -3834,7 +3871,7 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
     MaxSafeDepDistBytes = DepChecker.getMaxSafeDepDistBytes();
   }
 
-  DEBUG(dbgs() << "LV: We "<< (NeedRTCheck ? "" : "don't") <<
+  DEBUG(dbgs() << "LV: We" << (NeedRTCheck ? "" : " don't") <<
         " need a runtime memory check.\n");
 
   return CanVecMem;
@@ -4210,7 +4247,7 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize,
 
   // Find the trip count.
   unsigned TC = SE->getSmallConstantTripCount(TheLoop, TheLoop->getLoopLatch());
-  DEBUG(dbgs() << "LV: Found trip count:"<<TC<<"\n");
+  DEBUG(dbgs() << "LV: Found trip count: " << TC << '\n');
 
   unsigned WidestType = getWidestType();
   unsigned WidestRegister = TTI.getRegisterBitWidth(true);
@@ -4221,7 +4258,8 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize,
                     WidestRegister : MaxSafeDepDist);
   unsigned MaxVectorSize = WidestRegister / WidestType;
   DEBUG(dbgs() << "LV: The Widest type: " << WidestType << " bits.\n");
-  DEBUG(dbgs() << "LV: The Widest register is:" << WidestRegister << "bits.\n");
+  DEBUG(dbgs() << "LV: The Widest register is: "
+          << WidestRegister << " bits.\n");
 
   if (MaxVectorSize == 0) {
     DEBUG(dbgs() << "LV: The target has no vector registers.\n");
@@ -4257,7 +4295,7 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize,
 
   if (UserVF != 0) {
     assert(isPowerOf2_32(UserVF) && "VF needs to be a power of two");
-    DEBUG(dbgs() << "LV: Using user VF "<<UserVF<<".\n");
+    DEBUG(dbgs() << "LV: Using user VF " << UserVF << ".\n");
 
     Factor.Width = UserVF;
     return Factor;
@@ -4265,13 +4303,13 @@ LoopVectorizationCostModel::selectVectorizationFactor(bool OptForSize,
 
   float Cost = expectedCost(1);
   unsigned Width = 1;
-  DEBUG(dbgs() << "LV: Scalar loop costs: "<< (int)Cost << ".\n");
+  DEBUG(dbgs() << "LV: Scalar loop costs: " << (int)Cost << ".\n");
   for (unsigned i=2; i <= VF; i*=2) {
     // Notice that the vector loop needs to be executed less times, so
     // we need to divide the cost of the vector loops by the width of
     // the vector elements.
     float VectorCost = expectedCost(i) / (float)i;
-    DEBUG(dbgs() << "LV: Vector loop of width "<< i << " costs: " <<
+    DEBUG(dbgs() << "LV: Vector loop of width " << i << " costs: " <<
           (int)VectorCost << ".\n");
     if (VectorCost < Cost) {
       Cost = VectorCost;
@@ -4408,7 +4446,7 @@ LoopVectorizationCostModel::selectUnrollFactor(bool OptForSize,
   }
 
   if (HasReductions) {
-    DEBUG(dbgs() << "LV: Unrolling because of reductions. \n");
+    DEBUG(dbgs() << "LV: Unrolling because of reductions.\n");
     return UF;
   }
 
@@ -4416,14 +4454,14 @@ LoopVectorizationCostModel::selectUnrollFactor(bool OptForSize,
   // We assume that the cost overhead is 1 and we use the cost model
   // to estimate the cost of the loop and unroll until the cost of the
   // loop overhead is about 5% of the cost of the loop.
-  DEBUG(dbgs() << "LV: Loop cost is "<< LoopCost <<" \n");
+  DEBUG(dbgs() << "LV: Loop cost is " << LoopCost << '\n');
   if (LoopCost < SmallLoopCost) {
-    DEBUG(dbgs() << "LV: Unrolling to reduce branch cost. \n");
+    DEBUG(dbgs() << "LV: Unrolling to reduce branch cost.\n");
     unsigned NewUF = SmallLoopCost / (LoopCost + 1);
     return std::min(NewUF, UF);
   }
 
-  DEBUG(dbgs() << "LV: Not Unrolling. \n");
+  DEBUG(dbgs() << "LV: Not Unrolling.\n");
   return 1;
 }
 
@@ -4524,16 +4562,16 @@ LoopVectorizationCostModel::calculateRegisterUsage() {
     MaxUsage = std::max(MaxUsage, OpenIntervals.size());
 
     DEBUG(dbgs() << "LV(REG): At #" << i << " Interval # " <<
-          OpenIntervals.size() <<"\n");
+          OpenIntervals.size() << '\n');
 
     // Add the current instruction to the list of open intervals.
     OpenIntervals.insert(I);
   }
 
   unsigned Invariant = LoopInvariants.size();
-  DEBUG(dbgs() << "LV(REG): Found max usage: " << MaxUsage << " \n");
-  DEBUG(dbgs() << "LV(REG): Found invariant usage: " << Invariant << " \n");
-  DEBUG(dbgs() << "LV(REG): LoopSize: " << R.NumInstructions << " \n");
+  DEBUG(dbgs() << "LV(REG): Found max usage: " << MaxUsage << '\n');
+  DEBUG(dbgs() << "LV(REG): Found invariant usage: " << Invariant << '\n');
+  DEBUG(dbgs() << "LV(REG): LoopSize: " << R.NumInstructions << '\n');
 
   R.LoopInvariantRegs = Invariant;
   R.MaxLocalUsers = MaxUsage;
@@ -4557,8 +4595,8 @@ unsigned LoopVectorizationCostModel::expectedCost(unsigned VF) {
 
       unsigned C = getInstructionCost(it, VF);
       BlockCost += C;
-      DEBUG(dbgs() << "LV: Found an estimated cost of "<< C <<" for VF " <<
-            VF << " For instruction: "<< *it << "\n");
+      DEBUG(dbgs() << "LV: Found an estimated cost of " << C << " for VF " <<
+            VF << " For instruction: " << *it << '\n');
     }
 
     // We assume that if-converted blocks have a 50% chance of being executed.

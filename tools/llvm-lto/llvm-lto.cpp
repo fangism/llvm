@@ -45,6 +45,16 @@ OutputFilename("o", cl::init(""),
   cl::desc("Override output filename"),
   cl::value_desc("filename"));
 
+static cl::list<std::string>
+ExportedSymbols("exported-symbol",
+  cl::desc("Symbol to export from the resulting object file"),
+  cl::ZeroOrMore);
+
+static cl::list<std::string>
+DSOSymbols("dso-symbol",
+  cl::desc("Symbol to put in the symtab in the resulting dso"),
+  cl::ZeroOrMore);
+
 int main(int argc, char **argv) {
   // Print a stack trace if we signal out.
   sys::PrintStackTraceOnErrorSignal();
@@ -82,7 +92,6 @@ int main(int argc, char **argv) {
   Options.UseInitArray = UseInitArray;
 
   unsigned BaseArg = 0;
-  std::string ErrorMessage;
 
   LTOCodeGenerator CodeGen;
 
@@ -108,6 +117,14 @@ int main(int argc, char **argv) {
     }
   }
 
+  // Add all the exported symbols to the table of symbols to preserve.
+  for (unsigned i = 0; i < ExportedSymbols.size(); ++i)
+    CodeGen.addMustPreserveSymbol(ExportedSymbols[i].c_str());
+
+  // Add all the dso symbols to the table of symbols to expose.
+  for (unsigned i = 0; i < DSOSymbols.size(); ++i)
+    CodeGen.addDSOSymbol(DSOSymbols[i].c_str());
+
   if (!OutputFilename.empty()) {
     size_t len = 0;
     std::string ErrorInfo;
@@ -119,7 +136,8 @@ int main(int argc, char **argv) {
       return 1;
     }
 
-    raw_fd_ostream FileStream(OutputFilename.c_str(), ErrorInfo);
+    raw_fd_ostream FileStream(OutputFilename.c_str(), ErrorInfo,
+                              sys::fs::F_Binary);
     if (!ErrorInfo.empty()) {
       errs() << argv[0] << ": error opening the file '" << OutputFilename
              << "': " << ErrorInfo << "\n";

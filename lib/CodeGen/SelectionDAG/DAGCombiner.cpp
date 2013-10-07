@@ -3415,12 +3415,16 @@ SDNode *DAGCombiner::MatchRotate(SDValue LHS, SDValue RHS, SDLoc DL) {
         //   (*ext (rotr x, (sub 32, y)))
         SDValue LArgExtOp0 = LHSShiftArg.getOperand(0);
         EVT LArgVT = LArgExtOp0.getValueType();
-        if (LArgVT.getSizeInBits() == SUBC->getAPIntValue()) {
-          SDValue V =
-              DAG.getNode(HasROTL ? ISD::ROTL : ISD::ROTR, DL, LArgVT,
-                          LArgExtOp0, HasROTL ? LHSShiftAmt : RHSShiftAmt);
-          return DAG.getNode(LHSShiftArg.getOpcode(), DL, VT, V).getNode();
-        }
+        bool HasROTRWithLArg = TLI.isOperationLegalOrCustom(ISD::ROTR, LArgVT);
+        bool HasROTLWithLArg = TLI.isOperationLegalOrCustom(ISD::ROTL, LArgVT);
+        if (HasROTRWithLArg || HasROTLWithLArg) {
+          if (LArgVT.getSizeInBits() == SUBC->getAPIntValue()) {
+            SDValue V =
+                DAG.getNode(HasROTLWithLArg ? ISD::ROTL : ISD::ROTR, DL, LArgVT,
+                            LArgExtOp0, HasROTL ? LHSShiftAmt : RHSShiftAmt);
+            return DAG.getNode(LHSShiftArg.getOpcode(), DL, VT, V).getNode();
+          }     
+        }     
       }
     }
   } else if (LExtOp0.getOpcode() == ISD::SUB &&
@@ -3444,11 +3448,15 @@ SDNode *DAGCombiner::MatchRotate(SDValue LHS, SDValue RHS, SDLoc DL) {
         //   (*ext (rotr x, (sub 32, y)))
         SDValue RArgExtOp0 = RHSShiftArg.getOperand(0);
         EVT RArgVT = RArgExtOp0.getValueType();
-        if (RArgVT.getSizeInBits() == SUBC->getAPIntValue()) {
-          SDValue V =
-              DAG.getNode(HasROTR ? ISD::ROTR : ISD::ROTL, DL, RArgVT,
-                          RArgExtOp0, HasROTR ? RHSShiftAmt : LHSShiftAmt);
-          return DAG.getNode(RHSShiftArg.getOpcode(), DL, VT, V).getNode();
+        bool HasROTRWithRArg = TLI.isOperationLegalOrCustom(ISD::ROTR, RArgVT);
+        bool HasROTLWithRArg = TLI.isOperationLegalOrCustom(ISD::ROTL, RArgVT);
+        if (HasROTRWithRArg || HasROTLWithRArg) {
+          if (RArgVT.getSizeInBits() == SUBC->getAPIntValue()) {
+            SDValue V =
+                DAG.getNode(HasROTRWithRArg ? ISD::ROTR : ISD::ROTL, DL, RArgVT,
+                            RArgExtOp0, HasROTR ? RHSShiftAmt : LHSShiftAmt);
+            return DAG.getNode(RHSShiftArg.getOpcode(), DL, VT, V).getNode();
+          }
         }
       }
     }
@@ -6723,7 +6731,7 @@ SDValue DAGCombiner::visitFP_EXTEND(SDNode *N) {
   }
 
   // fold (fpext (load x)) -> (fpext (fptrunc (extload x)))
-  if (ISD::isNON_EXTLoad(N0.getNode()) && N0.hasOneUse() &&
+  if (ISD::isNormalLoad(N0.getNode()) && N0.hasOneUse() &&
       ((!LegalOperations && !cast<LoadSDNode>(N0)->isVolatile()) ||
        TLI.isLoadExtLegal(ISD::EXTLOAD, N0.getValueType()))) {
     LoadSDNode *LN0 = cast<LoadSDNode>(N0);

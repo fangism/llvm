@@ -35,6 +35,27 @@ static MCInst lowerRILow(const MachineInstr *MI, unsigned Opcode) {
     .addImm(MI->getOperand(2).getImm());
 }
 
+// Return an RI instruction like MI with opcode Opcode, but with the
+// GR64 register operands turned into GRH32s.
+static MCInst lowerRIHigh(const MachineInstr *MI, unsigned Opcode) {
+  return MCInstBuilder(Opcode)
+    .addReg(SystemZMC::getRegAsGRH32(MI->getOperand(0).getReg()))
+    .addReg(SystemZMC::getRegAsGRH32(MI->getOperand(1).getReg()))
+    .addImm(MI->getOperand(2).getImm());
+}
+
+// Return an RI instruction like MI with opcode Opcode, but with the
+// R2 register turned into a GR64.
+static MCInst lowerRIEfLow(const MachineInstr *MI, unsigned Opcode) {
+  return MCInstBuilder(Opcode)
+    .addReg(MI->getOperand(0).getReg())
+    .addReg(MI->getOperand(1).getReg())
+    .addReg(SystemZMC::getRegAsGR64(MI->getOperand(2).getReg()))
+    .addImm(MI->getOperand(3).getImm())
+    .addImm(MI->getOperand(4).getImm())
+    .addImm(MI->getOperand(5).getImm());
+}
+
 void SystemZAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   SystemZMCInstLower Lower(Mang, MF->getContext(), *this);
   MCInst LoweredMI;
@@ -70,6 +91,22 @@ void SystemZAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       .addImm(MI->getOperand(2).getImm());
     break;
 
+  case SystemZ::IIHF64:
+    LoweredMI = MCInstBuilder(SystemZ::IIHF)
+      .addReg(SystemZMC::getRegAsGRH32(MI->getOperand(0).getReg()))
+      .addImm(MI->getOperand(2).getImm());
+    break;
+
+  case SystemZ::RISBHH:
+  case SystemZ::RISBHL:
+    LoweredMI = lowerRIEfLow(MI, SystemZ::RISBHG);
+    break;
+
+  case SystemZ::RISBLH:
+  case SystemZ::RISBLL:
+    LoweredMI = lowerRIEfLow(MI, SystemZ::RISBLG);
+    break;
+
 #define LOWER_LOW(NAME)                                                 \
   case SystemZ::NAME##64: LoweredMI = lowerRILow(MI, SystemZ::NAME); break
 
@@ -84,6 +121,21 @@ void SystemZAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   LOWER_LOW(XILF);
 
 #undef LOWER_LOW
+
+#define LOWER_HIGH(NAME) \
+  case SystemZ::NAME##64: LoweredMI = lowerRIHigh(MI, SystemZ::NAME); break
+
+  LOWER_HIGH(IIHL);
+  LOWER_HIGH(IIHH);
+  LOWER_HIGH(NIHL);
+  LOWER_HIGH(NIHH);
+  LOWER_HIGH(NIHF);
+  LOWER_HIGH(OIHL);
+  LOWER_HIGH(OIHH);
+  LOWER_HIGH(OIHF);
+  LOWER_HIGH(XIHF);
+
+#undef LOWER_HIGH
 
   default:
     Lower.lower(MI, LoweredMI);

@@ -150,11 +150,12 @@ class DbgVariable {
   DbgVariable *AbsVar;               // Corresponding Abstract variable, if any.
   const MachineInstr *MInsn;         // DBG_VALUE instruction of the variable.
   int FrameIndex;
+  DwarfDebug *DD;
 public:
   // AbsVar may be NULL.
-  DbgVariable(DIVariable V, DbgVariable *AV)
+  DbgVariable(DIVariable V, DbgVariable *AV, DwarfDebug *DD)
     : Var(V), TheDIE(0), DotDebugLocOffset(~0U), AbsVar(AV), MInsn(0),
-      FrameIndex(~0) {}
+      FrameIndex(~0), DD(DD) {}
 
   // Accessors.
   DIVariable getVariable()           const { return Var; }
@@ -294,14 +295,11 @@ public:
 
   /// \brief Returns the address pool.
   AddrPool *getAddrPool() { return &AddressPool; }
-
-  /// \brief for a given compile unit DIE, returns offset from beginning of
-  /// debug info.
-  unsigned getCUOffset(DIE *Die);
 };
 
 /// \brief Helper used to pair up a symbol and it's DWARF compile unit.
 struct SymbolCU {
+  SymbolCU(CompileUnit *CU, const MCSymbol *Sym) : Sym(Sym), CU(CU) {}
   const MCSymbol *Sym;
   CompileUnit *CU;
 };
@@ -338,8 +336,8 @@ class DwarfDebug {
   // separated by a zero byte, mapped to a unique id.
   StringMap<unsigned, BumpPtrAllocator&> SourceIdMap;
 
-  // List of all labels used in the output.
-  std::vector<SymbolCU> Labels;
+  // List of all labels used in aranges generation.
+  std::vector<SymbolCU> ArangeLabels;
 
   // Size of each symbol emitted (for those symbols that have a specific size).
   DenseMap <const MCSymbol *, uint64_t> SymSize;
@@ -411,6 +409,7 @@ class DwarfDebug {
   MCSymbol *DwarfDebugLocSectionSym, *DwarfLineSectionSym, *DwarfAddrSectionSym;
   MCSymbol *FunctionBeginSym, *FunctionEndSym;
   MCSymbol *DwarfAbbrevDWOSectionSym, *DwarfStrDWOSectionSym;
+  MCSymbol *DwarfGnuPubNamesSectionSym, *DwarfGnuPubTypesSectionSym;
 
   // As an optimization, there is no need to emit an entry in the directory
   // table for the same directory as DW_AT_comp_dir.
@@ -683,7 +682,7 @@ public:
   void addTypeUnitType(DIE *Die) { TypeUnits.push_back(Die); }
 
   /// \brief Add a label so that arange data can be generated for it.
-  void addLabel(SymbolCU SCU) { Labels.push_back(SCU); }
+  void addArangeLabel(SymbolCU SCU) { ArangeLabels.push_back(SCU); }
 
   /// \brief For symbols that have a size designated (e.g. common symbols),
   /// this tracks that size.
@@ -715,9 +714,8 @@ public:
   /// Returns the Dwarf Version.
   unsigned getDwarfVersion() const { return DwarfVersion; }
 
-  /// Find the MDNode for the given scope reference.
-  template <typename T>
-  T resolve(DIRef<T> Ref) const {
+  /// Find the MDNode for the given reference.
+  template <typename T> T resolve(DIRef<T> Ref) const {
     return Ref.resolve(TypeIdentifierMap);
   }
 

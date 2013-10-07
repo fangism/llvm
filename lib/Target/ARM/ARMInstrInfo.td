@@ -121,7 +121,8 @@ def ARMcall_nolink   : SDNode<"ARMISD::CALL_NOLINK", SDT_ARMcall,
 
 def ARMretflag       : SDNode<"ARMISD::RET_FLAG", SDTNone,
                               [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
-
+def ARMintretflag    : SDNode<"ARMISD::INTRET_FLAG", SDT_ARMcall,
+                              [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 def ARMcmov          : SDNode<"ARMISD::CMOV", SDT_ARMCMov,
                               [SDNPInGlue]>;
 
@@ -192,6 +193,9 @@ def HasV5TE          : Predicate<"Subtarget->hasV5TEOps()">,
 def HasV6            : Predicate<"Subtarget->hasV6Ops()">,
                                  AssemblerPredicate<"HasV6Ops", "armv6">;
 def NoV6             : Predicate<"!Subtarget->hasV6Ops()">;
+def HasV6M           : Predicate<"Subtarget->hasV6MOps()">,
+                                 AssemblerPredicate<"HasV6MOps",
+                                                    "armv6m or armv6t2">;
 def HasV6T2          : Predicate<"Subtarget->hasV6T2Ops()">,
                                  AssemblerPredicate<"HasV6T2Ops", "armv6t2">;
 def NoV6T2           : Predicate<"!Subtarget->hasV6T2Ops()">;
@@ -593,17 +597,6 @@ def imm0_1 : Operand<i32> { let ParserMatchClass = Imm0_1AsmOperand; }
 /// imm0_3 predicate - Immediate in the range [0,3].
 def Imm0_3AsmOperand: ImmAsmOperand { let Name = "Imm0_3"; }
 def imm0_3 : Operand<i32> { let ParserMatchClass = Imm0_3AsmOperand; }
-
-/// imm0_4 predicate - Immediate in the range [0,4].
-def Imm0_4AsmOperand : ImmAsmOperand
-{ 
-  let Name = "Imm0_4"; 
-  let DiagnosticType = "ImmRange0_4";  
-}
-def imm0_4 : Operand<i32>, ImmLeaf<i32, [{ return Imm >= 0 && Imm < 5; }]> {
-  let ParserMatchClass = Imm0_4AsmOperand;
-  let DecoderMethod = "DecodeImm0_4";
-}
 
 /// imm0_7 predicate - Immediate in the range [0,7].
 def Imm0_7AsmOperand: ImmAsmOperand { let Name = "Imm0_7"; }
@@ -1677,11 +1670,11 @@ PseudoInst<(outs), (ins i32imm:$amt, pred:$p), NoItinerary,
            [(ARMcallseq_start timm:$amt)]>;
 }
 
-def HINT : AI<(outs), (ins imm0_4:$imm), MiscFrm, NoItinerary,
+def HINT : AI<(outs), (ins imm0_255:$imm), MiscFrm, NoItinerary,
               "hint", "\t$imm", []>, Requires<[IsARM, HasV6]> {
-  bits<3> imm;
-  let Inst{27-3} = 0b0011001000001111000000000;
-  let Inst{2-0} = imm;
+  bits<8> imm;
+  let Inst{27-8} = 0b00110010000011110000;
+  let Inst{7-0} = imm;
 }
 
 def : InstAlias<"nop$p", (HINT 0, pred:$p)>, Requires<[IsARM, HasV6T2]>;
@@ -1689,6 +1682,9 @@ def : InstAlias<"yield$p", (HINT 1, pred:$p)>, Requires<[IsARM, HasV6T2]>;
 def : InstAlias<"wfe$p", (HINT 2, pred:$p)>, Requires<[IsARM, HasV6T2]>;
 def : InstAlias<"wfi$p", (HINT 3, pred:$p)>, Requires<[IsARM, HasV6T2]>;
 def : InstAlias<"sev$p", (HINT 4, pred:$p)>, Requires<[IsARM, HasV6T2]>;
+def : InstAlias<"sevl$p", (HINT 5, pred:$p)>, Requires<[IsARM, HasV8]>;
+
+def : Pat<(int_arm_sevl), (HINT 5)>;
 
 def SEL : AI<(outs GPR:$Rd), (ins GPR:$Rn, GPR:$Rm), DPFrm, NoItinerary, "sel",
              "\t$Rd, $Rn, $Rm", []>, Requires<[IsARM, HasV6]> {
@@ -1933,6 +1929,12 @@ let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
                Requires<[IsARM, NoV4T]>, Sched<[WriteBr]> {
     let Inst{27-0} = 0b0001101000001111000000001110;
   }
+
+  // Exception return: N.b. doesn't set CPSR as far as we're concerned (it sets
+  // the user-space one).
+  def SUBS_PC_LR : ARMPseudoInst<(outs), (ins i32imm:$offset, pred:$p),
+                                 4, IIC_Br,
+                                 [(ARMintretflag imm:$offset)]>;
 }
 
 // Indirect branches
@@ -5534,4 +5536,5 @@ def : InstAlias<"umull${s}${p} $RdLo, $RdHi, $Rn, $Rm",
 
 // 'it' blocks in ARM mode just validate the predicates. The IT itself
 // is discarded.
-def ITasm : ARMAsmPseudo<"it$mask $cc", (ins it_pred:$cc, it_mask:$mask)>;
+def ITasm : ARMAsmPseudo<"it$mask $cc", (ins it_pred:$cc, it_mask:$mask)>,
+         ComplexDeprecationPredicate<"IT">;
