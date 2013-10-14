@@ -188,6 +188,13 @@ addMSAIntType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
   setOperationAction(ISD::VSELECT, Ty, Legal);
   setOperationAction(ISD::XOR, Ty, Legal);
 
+  if (Ty == MVT::v4i32 || Ty == MVT::v2i64) {
+    setOperationAction(ISD::FP_TO_SINT, Ty, Legal);
+    setOperationAction(ISD::FP_TO_UINT, Ty, Legal);
+    setOperationAction(ISD::SINT_TO_FP, Ty, Legal);
+    setOperationAction(ISD::UINT_TO_FP, Ty, Legal);
+  }
+
   setOperationAction(ISD::SETCC, Ty, Legal);
   setCondCodeAction(ISD::SETNE, Ty, Expand);
   setCondCodeAction(ISD::SETGE, Ty, Expand);
@@ -216,6 +223,7 @@ addMSAFloatType(MVT::SimpleValueType Ty, const TargetRegisterClass *RC) {
     setOperationAction(ISD::FADD,  Ty, Legal);
     setOperationAction(ISD::FDIV,  Ty, Legal);
     setOperationAction(ISD::FLOG2, Ty, Legal);
+    setOperationAction(ISD::FMA,   Ty, Legal);
     setOperationAction(ISD::FMUL,  Ty, Legal);
     setOperationAction(ISD::FRINT, Ty, Legal);
     setOperationAction(ISD::FSQRT, Ty, Legal);
@@ -332,15 +340,11 @@ static bool selectMADD(SDNode *ADDENode, SelectionDAG *CurDAG) {
 
   // replace uses of adde and addc here
   if (!SDValue(ADDCNode, 0).use_empty()) {
-    SDValue LoIdx = CurDAG->getConstant(Mips::sub_lo, MVT::i32);
-    SDValue LoOut = CurDAG->getNode(MipsISD::ExtractLOHI, DL, MVT::i32, MAdd,
-                                    LoIdx);
+    SDValue LoOut = CurDAG->getNode(MipsISD::ExtractLO, DL, MVT::i32, MAdd);
     CurDAG->ReplaceAllUsesOfValueWith(SDValue(ADDCNode, 0), LoOut);
   }
   if (!SDValue(ADDENode, 0).use_empty()) {
-    SDValue HiIdx = CurDAG->getConstant(Mips::sub_hi, MVT::i32);
-    SDValue HiOut = CurDAG->getNode(MipsISD::ExtractLOHI, DL, MVT::i32, MAdd,
-                                    HiIdx);
+    SDValue HiOut = CurDAG->getNode(MipsISD::ExtractHI, DL, MVT::i32, MAdd);
     CurDAG->ReplaceAllUsesOfValueWith(SDValue(ADDENode, 0), HiOut);
   }
 
@@ -408,15 +412,11 @@ static bool selectMSUB(SDNode *SUBENode, SelectionDAG *CurDAG) {
 
   // replace uses of sube and subc here
   if (!SDValue(SUBCNode, 0).use_empty()) {
-    SDValue LoIdx = CurDAG->getConstant(Mips::sub_lo, MVT::i32);
-    SDValue LoOut = CurDAG->getNode(MipsISD::ExtractLOHI, DL, MVT::i32, MSub,
-                                    LoIdx);
+    SDValue LoOut = CurDAG->getNode(MipsISD::ExtractLO, DL, MVT::i32, MSub);
     CurDAG->ReplaceAllUsesOfValueWith(SDValue(SUBCNode, 0), LoOut);
   }
   if (!SDValue(SUBENode, 0).use_empty()) {
-    SDValue HiIdx = CurDAG->getConstant(Mips::sub_hi, MVT::i32);
-    SDValue HiOut = CurDAG->getNode(MipsISD::ExtractLOHI, DL, MVT::i32, MSub,
-                                    HiIdx);
+    SDValue HiOut = CurDAG->getNode(MipsISD::ExtractHI, DL, MVT::i32, MSub);
     CurDAG->ReplaceAllUsesOfValueWith(SDValue(SUBENode, 0), HiOut);
   }
 
@@ -946,11 +946,9 @@ SDValue MipsSETargetLowering::lowerMulDiv(SDValue Op, unsigned NewOpc,
   SDValue Lo, Hi;
 
   if (HasLo)
-    Lo = DAG.getNode(MipsISD::ExtractLOHI, DL, Ty, Mult,
-                     DAG.getConstant(Mips::sub_lo, MVT::i32));
+    Lo = DAG.getNode(MipsISD::ExtractLO, DL, Ty, Mult);
   if (HasHi)
-    Hi = DAG.getNode(MipsISD::ExtractLOHI, DL, Ty, Mult,
-                     DAG.getConstant(Mips::sub_hi, MVT::i32));
+    Hi = DAG.getNode(MipsISD::ExtractHI, DL, Ty, Mult);
 
   if (!HasLo || !HasHi)
     return HasLo ? Lo : Hi;
@@ -969,10 +967,8 @@ static SDValue initAccumulator(SDValue In, SDLoc DL, SelectionDAG &DAG) {
 }
 
 static SDValue extractLOHI(SDValue Op, SDLoc DL, SelectionDAG &DAG) {
-  SDValue Lo = DAG.getNode(MipsISD::ExtractLOHI, DL, MVT::i32, Op,
-                           DAG.getConstant(Mips::sub_lo, MVT::i32));
-  SDValue Hi = DAG.getNode(MipsISD::ExtractLOHI, DL, MVT::i32, Op,
-                           DAG.getConstant(Mips::sub_hi, MVT::i32));
+  SDValue Lo = DAG.getNode(MipsISD::ExtractLO, DL, MVT::i32, Op);
+  SDValue Hi = DAG.getNode(MipsISD::ExtractHI, DL, MVT::i32, Op);
   return DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, Lo, Hi);
 }
 
@@ -1312,6 +1308,14 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_fdiv_d:
     return DAG.getNode(ISD::FDIV, DL, Op->getValueType(0), Op->getOperand(1),
                        Op->getOperand(2));
+  case Intrinsic::mips_ffint_u_w:
+  case Intrinsic::mips_ffint_u_d:
+    return DAG.getNode(ISD::UINT_TO_FP, DL, Op->getValueType(0),
+                       Op->getOperand(1));
+  case Intrinsic::mips_ffint_s_w:
+  case Intrinsic::mips_ffint_s_d:
+    return DAG.getNode(ISD::SINT_TO_FP, DL, Op->getValueType(0),
+                       Op->getOperand(1));
   case Intrinsic::mips_fill_b:
   case Intrinsic::mips_fill_h:
   case Intrinsic::mips_fill_w:
@@ -1329,10 +1333,21 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_flog2_w:
   case Intrinsic::mips_flog2_d:
     return DAG.getNode(ISD::FLOG2, DL, Op->getValueType(0), Op->getOperand(1));
+  case Intrinsic::mips_fmadd_w:
+  case Intrinsic::mips_fmadd_d:
+    return DAG.getNode(ISD::FMA, SDLoc(Op), Op->getValueType(0),
+                       Op->getOperand(1), Op->getOperand(2), Op->getOperand(3));
   case Intrinsic::mips_fmul_w:
   case Intrinsic::mips_fmul_d:
     return DAG.getNode(ISD::FMUL, DL, Op->getValueType(0), Op->getOperand(1),
                        Op->getOperand(2));
+  case Intrinsic::mips_fmsub_w:
+  case Intrinsic::mips_fmsub_d: {
+    EVT ResTy = Op->getValueType(0);
+    return DAG.getNode(ISD::FSUB, SDLoc(Op), ResTy, Op->getOperand(1),
+                       DAG.getNode(ISD::FMUL, SDLoc(Op), ResTy,
+                                   Op->getOperand(2), Op->getOperand(3)));
+  }
   case Intrinsic::mips_frint_w:
   case Intrinsic::mips_frint_d:
     return DAG.getNode(ISD::FRINT, DL, Op->getValueType(0), Op->getOperand(1));
@@ -1343,6 +1358,14 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_fsub_d:
     return DAG.getNode(ISD::FSUB, DL, Op->getValueType(0), Op->getOperand(1),
                        Op->getOperand(2));
+  case Intrinsic::mips_ftrunc_u_w:
+  case Intrinsic::mips_ftrunc_u_d:
+    return DAG.getNode(ISD::FP_TO_UINT, DL, Op->getValueType(0),
+                       Op->getOperand(1));
+  case Intrinsic::mips_ftrunc_s_w:
+  case Intrinsic::mips_ftrunc_s_d:
+    return DAG.getNode(ISD::FP_TO_SINT, DL, Op->getValueType(0),
+                       Op->getOperand(1));
   case Intrinsic::mips_ilvev_b:
   case Intrinsic::mips_ilvev_h:
   case Intrinsic::mips_ilvev_w:
@@ -1378,6 +1401,15 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_ldi_w:
   case Intrinsic::mips_ldi_d:
     return lowerMSASplatImm(Op, 1, DAG);
+  case Intrinsic::mips_maddv_b:
+  case Intrinsic::mips_maddv_h:
+  case Intrinsic::mips_maddv_w:
+  case Intrinsic::mips_maddv_d: {
+    EVT ResTy = Op->getValueType(0);
+    return DAG.getNode(ISD::ADD, SDLoc(Op), ResTy, Op->getOperand(1),
+                       DAG.getNode(ISD::MUL, SDLoc(Op), ResTy,
+                                   Op->getOperand(2), Op->getOperand(3)));
+  }
   case Intrinsic::mips_max_s_b:
   case Intrinsic::mips_max_s_h:
   case Intrinsic::mips_max_s_w:
@@ -1444,6 +1476,15 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_mulv_d:
     return DAG.getNode(ISD::MUL, DL, Op->getValueType(0), Op->getOperand(1),
                        Op->getOperand(2));
+  case Intrinsic::mips_msubv_b:
+  case Intrinsic::mips_msubv_h:
+  case Intrinsic::mips_msubv_w:
+  case Intrinsic::mips_msubv_d: {
+    EVT ResTy = Op->getValueType(0);
+    return DAG.getNode(ISD::SUB, SDLoc(Op), ResTy, Op->getOperand(1),
+                       DAG.getNode(ISD::MUL, SDLoc(Op), ResTy,
+                                   Op->getOperand(2), Op->getOperand(3)));
+  }
   case Intrinsic::mips_nlzc_b:
   case Intrinsic::mips_nlzc_h:
   case Intrinsic::mips_nlzc_w:

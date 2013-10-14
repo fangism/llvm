@@ -522,36 +522,17 @@ RecognizableInstr::filter_ret RecognizableInstr::filter() const {
 
   // Filter out alternate forms of AVX instructions
   if (Name.find("_alt") != Name.npos ||
-      Name.find("XrYr") != Name.npos ||
-      (Name.find("r64r") != Name.npos && Name.find("r64r64") == Name.npos) ||
+      (Name.find("r64r") != Name.npos && Name.find("r64r64") == Name.npos && Name.find("r64r8") == Name.npos) ||
       Name.find("_64mr") != Name.npos ||
-      Name.find("Xrr") != Name.npos ||
       Name.find("rr64") != Name.npos)
     return FILTER_WEAK;
 
   // Special cases.
 
-  if (Name.find("PCMPISTRI") != Name.npos && Name != "PCMPISTRI")
-    return FILTER_WEAK;
-  if (Name.find("PCMPESTRI") != Name.npos && Name != "PCMPESTRI")
-    return FILTER_WEAK;
-
-  if (Name.find("MOV") != Name.npos && Name.find("r0") != Name.npos)
-    return FILTER_WEAK;
-  if (Name.find("MOVZ") != Name.npos && Name.find("MOVZX") == Name.npos &&
-      Name != "MOVZPQILo2PQIrr")
-    return FILTER_WEAK;
-  if (Name.find("Fs") != Name.npos)
-    return FILTER_WEAK;
   if (Name == "PUSH64i16"         ||
       Name == "MOVPQI2QImr"       ||
       Name == "VMOVPQI2QImr"      ||
-      Name == "MMX_MOVD64rrv164"  ||
-      Name == "MOV64ri64i32"      ||
-      Name == "VMASKMOVDQU64"     ||
-      Name == "VEXTRACTPSrr64"    ||
-      Name == "VMOVQd64rr"        ||
-      Name == "VMOVQs64rr")
+      Name == "VMASKMOVDQU64")
     return FILTER_WEAK;
 
   // XACQUIRE and XRELEASE reuse REPNE and REP respectively.
@@ -559,11 +540,6 @@ RecognizableInstr::filter_ret RecognizableInstr::filter() const {
   if (Name == "XACQUIRE_PREFIX" ||
       Name == "XRELEASE_PREFIX")
     return FILTER_WEAK;
-
-  if (HasFROperands && Name.find("MOV") != Name.npos &&
-     ((Name.find("2") != Name.npos && Name.find("32") == Name.npos) ||
-      (Name.find("to") != Name.npos)))
-    return FILTER_STRONG;
 
   return FILTER_NORMAL;
 }
@@ -1237,6 +1213,7 @@ OperandType RecognizableInstr::typeFromString(const std::string &s,
   TYPE("i32i8imm",            TYPE_IMM32)
   TYPE("u32u8imm",            TYPE_IMM32)
   TYPE("GR32",                TYPE_Rv)
+  TYPE("GR32orGR64",          TYPE_R32)
   TYPE("i64mem",              TYPE_Mv)
   TYPE("i64i32imm",           TYPE_IMM64)
   TYPE("i64i8imm",            TYPE_IMM64)
@@ -1347,6 +1324,7 @@ OperandEncoding RecognizableInstr::rmRegisterEncodingFromString
    bool hasOpSizePrefix) {
   ENCODING("GR16",            ENCODING_RM)
   ENCODING("GR32",            ENCODING_RM)
+  ENCODING("GR32orGR64",      ENCODING_RM)
   ENCODING("GR64",            ENCODING_RM)
   ENCODING("GR8",             ENCODING_RM)
   ENCODING("VR128",           ENCODING_RM)
@@ -1370,6 +1348,7 @@ OperandEncoding RecognizableInstr::roRegisterEncodingFromString
    bool hasOpSizePrefix) {
   ENCODING("GR16",            ENCODING_REG)
   ENCODING("GR32",            ENCODING_REG)
+  ENCODING("GR32orGR64",      ENCODING_REG)
   ENCODING("GR64",            ENCODING_REG)
   ENCODING("GR8",             ENCODING_REG)
   ENCODING("VR128",           ENCODING_REG)

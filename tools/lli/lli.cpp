@@ -398,18 +398,18 @@ int main(int argc, char **argv, char * const *envp) {
     return -1;
   }
 
-  // If the program doesn't explicitly call exit, we will need the Exit
-  // function later on to make an explicit call, so get the function now.
-  Constant *Exit = Mod->getOrInsertFunction("exit", Type::getVoidTy(Context),
-                                                    Type::getInt32Ty(Context),
-                                                    NULL);
-
   // Reset errno to zero on entry to main.
   errno = 0;
 
   int Result;
 
   if (!RemoteMCJIT) {
+    // If the program doesn't explicitly call exit, we will need the Exit
+    // function later on to make an explicit call, so get the function now.
+    Constant *Exit = Mod->getOrInsertFunction("exit", Type::getVoidTy(Context),
+                                                      Type::getInt32Ty(Context),
+                                                      NULL);
+
     // Run static constructors.
     if (UseMCJIT && !ForceInterpreter) {
       // Give MCJIT a chance to apply relocations and set page permissions.
@@ -488,15 +488,6 @@ int main(int argc, char **argv, char * const *envp) {
 
     // Create the remote target.
     Target->create();
-
-// FIXME: Don't commit like this.  I don't think these calls are necessary.
-#if 0
-    // Trigger compilation.
-    EE->generateCodeForModule(Mod);
-
-    // Get everything ready to execute.
-    EE->finalizeModule(Mod);
-#endif
 
     // Since we're executing in a (at least simulated) remote address space,
     // we can't use the ExecutionEngine::runFunctionAsMain(). We have to

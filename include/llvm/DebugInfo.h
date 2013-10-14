@@ -230,16 +230,7 @@ template <typename T> class DIRef {
 
 public:
   T resolve(const DITypeIdentifierMap &Map) const;
-  StringRef getName() const {
-    if (!Val)
-      return StringRef();
-
-    if (const MDNode *MD = dyn_cast<MDNode>(Val))
-      return T(MD).getName();
-
-    const MDString *MS = cast<MDString>(Val);
-    return MS->getString();
-  }
+  StringRef getName() const;
   operator Value *() const { return const_cast<Value *>(Val); }
 };
 
@@ -258,6 +249,18 @@ T DIRef<T>::resolve(const DITypeIdentifierMap &Map) const {
   assert(DIDescriptor(Iter->second).isType() &&
          "MDNode in DITypeIdentifierMap should be a DIType.");
   return T(Iter->second);
+}
+
+template <typename T>
+StringRef DIRef<T>::getName() const {
+  if (!Val)
+    return StringRef();
+
+  if (const MDNode *MD = dyn_cast<MDNode>(Val))
+    return T(MD).getName();
+
+  const MDString *MS = cast<MDString>(Val);
+  return MS->getString();
 }
 
 /// Specialize getFieldAs to handle fields that are references to DIScopes.
@@ -431,7 +434,7 @@ class DISubprogram : public DIScope {
 public:
   explicit DISubprogram(const MDNode *N = 0) : DIScope(N) {}
 
-  DIScope getContext() const { return getFieldAs<DIScope>(2); }
+  DIScopeRef getContext() const { return getFieldAs<DIScopeRef>(2); }
   StringRef getName() const { return getStringField(3); }
   StringRef getDisplayName() const { return getStringField(4); }
   StringRef getLinkageName() const { return getStringField(5); }
@@ -536,9 +539,9 @@ class DITemplateTypeParameter : public DIDescriptor {
 public:
   explicit DITemplateTypeParameter(const MDNode *N = 0) : DIDescriptor(N) {}
 
-  DIScope getContext() const { return getFieldAs<DIScope>(1); }
+  DIScopeRef getContext() const { return getFieldAs<DIScopeRef>(1); }
   StringRef getName() const { return getStringField(2); }
-  DIType getType() const { return getFieldAs<DIType>(3); }
+  DITypeRef getType() const { return getFieldAs<DITypeRef>(3); }
   StringRef getFilename() const { return getFieldAs<DIFile>(4).getFilename(); }
   StringRef getDirectory() const {
     return getFieldAs<DIFile>(4).getDirectory();
@@ -553,9 +556,9 @@ class DITemplateValueParameter : public DIDescriptor {
 public:
   explicit DITemplateValueParameter(const MDNode *N = 0) : DIDescriptor(N) {}
 
-  DIScope getContext() const { return getFieldAs<DIScope>(1); }
+  DIScopeRef getContext() const { return getFieldAs<DIScopeRef>(1); }
   StringRef getName() const { return getStringField(2); }
-  DIType getType() const { return getFieldAs<DIType>(3); }
+  DITypeRef getType() const { return getFieldAs<DITypeRef>(3); }
   Value *getValue() const;
   StringRef getFilename() const { return getFieldAs<DIFile>(5).getFilename(); }
   StringRef getDirectory() const {

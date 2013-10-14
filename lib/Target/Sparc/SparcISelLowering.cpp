@@ -1035,6 +1035,9 @@ SparcTargetLowering::LowerCall_64(TargetLowering::CallLoweringInfo &CLI,
   SDLoc DL = CLI.DL;
   SDValue Chain = CLI.Chain;
 
+  // Sparc target does not yet support tail call optimization.
+  CLI.IsTailCall = false;
+
   // Analyze operands of the call, assigning locations to each operand.
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CLI.CallConv, CLI.IsVarArg, DAG.getMachineFunction(),
@@ -1668,6 +1671,7 @@ SDValue SparcTargetLowering::makeAddress(SDValue Op, SelectionDAG &DAG) const {
   switch(getTargetMachine().getCodeModel()) {
   default:
     llvm_unreachable("Unsupported absolute code model");
+  case CodeModel::JITDefault:
   case CodeModel::Small:
     // abs32.
     return makeHiLoPair(Op, SPII::MO_HI, SPII::MO_LO, DAG);

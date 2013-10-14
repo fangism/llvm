@@ -158,7 +158,8 @@ SDValue SITargetLowering::LowerFormalArguments(
     const ISD::InputArg &Arg = Ins[i];
 
     // First check if it's a PS input addr
-    if (Info->ShaderType == ShaderType::PIXEL && !Arg.Flags.isInReg()) {
+    if (Info->ShaderType == ShaderType::PIXEL && !Arg.Flags.isInReg() &&
+        !Arg.Flags.isByVal()) {
 
       assert((PSInputNum <= 15) && "Too many PS inputs!");
 
@@ -887,8 +888,8 @@ void SITargetLowering::ensureSRegLimit(SelectionDAG &DAG, SDValue &Operand,
     return;
   }
 
-  // This is a conservative aproach, it is possible that we can't determine
-  // the correct register class and copy too often, but better save than sorry.
+  // This is a conservative aproach. It is possible that we can't determine the
+  // correct register class and copy too often, but better safe than sorry.
   SDValue RC = DAG.getTargetConstant(RegClass, MVT::i32);
   SDNode *Node = DAG.getMachineNode(TargetOpcode::COPY_TO_REGCLASS, SDLoc(),
                                     Operand.getValueType(), Operand, RC);
@@ -1162,6 +1163,8 @@ void SITargetLowering::AdjustInstrPostInstrSelection(MachineInstr *MI,
   case 3:  RC = &AMDGPU::VReg_96RegClass; break;
   }
 
+  unsigned NewOpcode = TII->getMaskedMIMGOp(MI->getOpcode(), BitsSet);
+  MI->setDesc(TII->get(NewOpcode));
   MachineRegisterInfo &MRI = MI->getParent()->getParent()->getRegInfo();
   MRI.setRegClass(VReg, RC);
 }

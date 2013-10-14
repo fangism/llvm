@@ -33,6 +33,7 @@
 #include "llvm/Transforms/Scalar.h"
 #include <llvm/CodeGen/Passes.h>
 
+
 using namespace llvm;
 
 extern "C" void LLVMInitializeR600Target() {
@@ -123,9 +124,12 @@ bool
 AMDGPUPassConfig::addPreISel() {
   const AMDGPUSubtarget &ST = TM->getSubtarget<AMDGPUSubtarget>();
   addPass(createFlattenCFGPass());
-  if (ST.getGeneration() > AMDGPUSubtarget::NORTHERN_ISLANDS) {
-    addPass(createSITypeRewriter());
+  if (ST.IsIRStructurizerEnabled() ||
+      ST.getGeneration() > AMDGPUSubtarget::NORTHERN_ISLANDS)
     addPass(createStructurizeCFGPass());
+  if (ST.getGeneration() > AMDGPUSubtarget::NORTHERN_ISLANDS) {
+    addPass(createSinkingPass());
+    addPass(createSITypeRewriter());
     addPass(createSIAnnotateControlFlowPass());
   } else {
     addPass(createR600TextureIntrinsicsReplacer());

@@ -1178,5 +1178,39 @@ class NeonI_2VAcross<bit q, bit u, bits<2> size, bits<5> opcode,
   // Inherit Rd in 4-0
 }
 
+// Format AdvSIMD scalar two registers miscellaneous
+class NeonI_Scalar2SameMisc<bit u, bits<2> size, bits<5> opcode, dag outs, dag ins,
+                            string asmstr, list<dag> patterns, InstrItinClass itin>
+  : A64InstRdn<outs, ins, asmstr, patterns, itin> {
+  let Inst{31} = 0b0;
+  let Inst{30} = 0b1;
+  let Inst{29} = u;
+  let Inst{28-24} = 0b11110;
+  let Inst{23-22} = size;
+  let Inst{21-17} = 0b10000;
+  let Inst{16-12} = opcode;
+  let Inst{11-10} = 0b10;
+  // Inherit Rn in 9-5
+  // Inherit Rd in 4-0
+}
+
+// Format AdvSIMD vector load/store multiple N-element structure
+class NeonI_LdStMult<bit q, bit l, bits<4> opcode, bits<2> size,
+                    dag outs, dag ins, string asmstr,
+                    list<dag> patterns, InstrItinClass itin>
+  : A64InstRtn<outs, ins, asmstr, patterns, itin>
+{
+  let Inst{31} = 0b0;
+  let Inst{30} = q;
+  let Inst{29-23} = 0b0011000;
+  let Inst{22} = l;
+  let Inst{21-16} = 0b000000;
+  let Inst{15-12} = opcode;
+  let Inst{11-10} = size;
+  
+  // Inherit Rn in 9-5
+  // Inherit Rt in 4-0
+}
+
 }
 
