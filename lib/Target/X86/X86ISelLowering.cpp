@@ -7627,12 +7627,7 @@ X86TargetLowering::LowerEXTRACT_VECTOR_ELT(SDValue Op,
       MVT MaskVT = MVT::getVectorVT(MaskEltVT, VecVT.getSizeInBits() /
                                     MaskEltVT.getSizeInBits());
       
-      if (Idx.getSimpleValueType() != MaskEltVT)
-        if (Idx.getOpcode() == ISD::ZERO_EXTEND ||
-            Idx.getOpcode() == ISD::SIGN_EXTEND)
-          Idx = Idx.getOperand(0);
-      assert(Idx.getSimpleValueType() == MaskEltVT &&
-             "Unexpected index in insertelement");
+      Idx = DAG.getZExtOrTrunc(Idx, dl, MaskEltVT);
       SDValue Mask = DAG.getNode(X86ISD::VINSERT, dl, MaskVT,
                                 getZeroVector(MaskVT, Subtarget, DAG, dl),
                                 Idx, DAG.getConstant(0, getPointerTy()));
@@ -8210,10 +8205,9 @@ static SDValue LowerToTLSExecModel(GlobalAddressSDNode *GA, SelectionDAG &DAG,
   Value *Ptr = Constant::getNullValue(Type::getInt8PtrTy(*DAG.getContext(),
                                                          is64Bit ? 257 : 256));
 
-  SDValue ThreadPointer = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(),
-                                      DAG.getIntPtrConstant(0),
-                                      MachinePointerInfo(Ptr),
-                                      false, false, false, 0);
+  SDValue ThreadPointer =
+      DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), DAG.getIntPtrConstant(0),
+                  MachinePointerInfo(Ptr), false, false, false, 0);
 
   unsigned char OperandFlags = 0;
   // Most TLS accesses are not RIP relative, even on x86-64.  One exception is
@@ -8235,21 +8229,20 @@ static SDValue LowerToTLSExecModel(GlobalAddressSDNode *GA, SelectionDAG &DAG,
   // emit "addl x@ntpoff,%eax" (local exec)
   // or "addl x@indntpoff,%eax" (initial exec)
   // or "addl x@gotntpoff(%ebx) ,%eax" (initial exec, 32-bit pic)
-  SDValue TGA = DAG.getTargetGlobalAddress(GA->getGlobal(), dl,
-                                           GA->getValueType(0),
-                                           GA->getOffset(), OperandFlags);
+  SDValue TGA =
+      DAG.getTargetGlobalAddress(GA->getGlobal(), dl, GA->getValueType(0),
+                                 GA->getOffset(), OperandFlags);
   SDValue Offset = DAG.getNode(WrapperKind, dl, PtrVT, TGA);
 
   if (model == TLSModel::InitialExec) {
     if (isPIC && !is64Bit) {
       Offset = DAG.getNode(ISD::ADD, dl, PtrVT,
-                          DAG.getNode(X86ISD::GlobalBaseReg, SDLoc(), PtrVT),
+                           DAG.getNode(X86ISD::GlobalBaseReg, SDLoc(), PtrVT),
                            Offset);
     }
 
     Offset = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), Offset,
-                         MachinePointerInfo::getGOT(), false, false, false,
-                         0);
+                         MachinePointerInfo::getGOT(), false, false, false, 0);
   }
 
   // The address of the thread local variable is the add of the thread
@@ -12469,14 +12462,24 @@ static SDValue LowerSDIV(SDValue Op, SelectionDAG &DAG) {
       (SplatValue.isPowerOf2() || (-SplatValue).isPowerOf2())) {
     unsigned lg2 = SplatValue.countTrailingZeros();
     // Splat the sign bit.
-    SDValue Sz = DAG.getConstant(EltTy.getSizeInBits()-1, MVT::i32);
-    SDValue SGN = getTargetVShiftNode(X86ISD::VSRAI, dl, VT, N0, Sz, DAG);
+    SmallVector<SDValue, 16> Sz(NumElts,
+                                DAG.getConstant(EltTy.getSizeInBits() - 1,
+                                                EltTy));
+    SDValue SGN = DAG.getNode(ISD::SRA, dl, VT, N0,
+                              DAG.getNode(ISD::BUILD_VECTOR, dl, VT, &Sz[0],
+                                          NumElts));
     // Add (N0 < 0) ? abs2 - 1 : 0;
-    SDValue Amt = DAG.getConstant(EltTy.getSizeInBits() - lg2, MVT::i32);
-    SDValue SRL = getTargetVShiftNode(X86ISD::VSRLI, dl, VT, SGN, Amt, DAG);
+    SmallVector<SDValue, 16> Amt(NumElts,
+                                 DAG.getConstant(EltTy.getSizeInBits() - lg2,
+                                                 EltTy));
+    SDValue SRL = DAG.getNode(ISD::SRL, dl, VT, SGN,
+                              DAG.getNode(ISD::BUILD_VECTOR, dl, VT, &Amt[0],
+                                          NumElts));
     SDValue ADD = DAG.getNode(ISD::ADD, dl, VT, N0, SRL);
-    SDValue Lg2Amt = DAG.getConstant(lg2, MVT::i32);
-    SDValue SRA = getTargetVShiftNode(X86ISD::VSRAI, dl, VT, ADD, Lg2Amt, DAG);
+    SmallVector<SDValue, 16> Lg2Amt(NumElts, DAG.getConstant(lg2, EltTy));
+    SDValue SRA = DAG.getNode(ISD::SRA, dl, VT, ADD,
+                              DAG.getNode(ISD::BUILD_VECTOR, dl, VT, &Lg2Amt[0],
+                                          NumElts));
 
     // If we're dividing by a positive value, we're done.  Otherwise, we must
     // negate the result.

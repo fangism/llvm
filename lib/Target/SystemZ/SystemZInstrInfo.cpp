@@ -449,7 +449,7 @@ static bool removeIPMBasedCompare(MachineInstr *Compare, unsigned SrcReg,
     return false;
 
   MachineInstr *SRL = getDef(RLL->getOperand(1).getReg(), MRI);
-  if (!SRL || !isShift(SRL, SystemZ::SRL, 28))
+  if (!SRL || !isShift(SRL, SystemZ::SRL, SystemZ::IPM_CC))
     return false;
 
   MachineInstr *IPM = getDef(SRL->getOperand(1).getReg(), MRI);
@@ -747,8 +747,21 @@ SystemZInstrInfo::foldMemoryOperandImpl(MachineFunction &MF,
                                         int FrameIndex) const {
   const MachineFrameInfo *MFI = MF.getFrameInfo();
   unsigned Size = MFI->getObjectSize(FrameIndex);
+  unsigned Opcode = MI->getOpcode();
 
-  // Eary exit for cases we don't care about
+  if (Ops.size() == 2 && Ops[0] == 0 && Ops[1] == 1) {
+    if ((Opcode == SystemZ::LA || Opcode == SystemZ::LAY) &&
+        isInt<8>(MI->getOperand(2).getImm()) &&
+        !MI->getOperand(3).getReg()) {
+      // LA(Y) %reg, CONST(%reg) -> AGSI %mem, CONST
+      return BuildMI(MF, MI->getDebugLoc(), get(SystemZ::AGSI))
+        .addFrameIndex(FrameIndex).addImm(0)
+        .addImm(MI->getOperand(2).getImm());
+    }
+    return 0;
+  }
+
+  // All other cases require a single operand.
   if (Ops.size() != 1)
     return 0;
 
@@ -757,7 +770,16 @@ SystemZInstrInfo::foldMemoryOperandImpl(MachineFunction &MF,
          .getRegClass(MI->getOperand(OpNum).getReg())->getSize() &&
          "Invalid size combination");
 
-  unsigned Opcode = MI->getOpcode();
+  if ((Opcode == SystemZ::AHI || Opcode == SystemZ::AGHI) &&
+      OpNum == 0 &&
+      isInt<8>(MI->getOperand(2).getImm())) {
+    // A(G)HI %reg, CONST -> A(G)SI %mem, CONST
+    Opcode = (Opcode == SystemZ::AHI ? SystemZ::ASI : SystemZ::AGSI);
+    return BuildMI(MF, MI->getDebugLoc(), get(Opcode))
+      .addFrameIndex(FrameIndex).addImm(0)
+      .addImm(MI->getOperand(2).getImm());
+  }
+
   if (Opcode == SystemZ::LGDR || Opcode == SystemZ::LDGR) {
     bool Op0IsGPR = (Opcode == SystemZ::LGDR);
     bool Op1IsGPR = (Opcode == SystemZ::LDGR);
