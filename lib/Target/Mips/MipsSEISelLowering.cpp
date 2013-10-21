@@ -1403,6 +1403,12 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_ldi_w:
   case Intrinsic::mips_ldi_d:
     return lowerMSASplatImm(Op, 1, DAG);
+  case Intrinsic::mips_lsa: {
+    EVT ResTy = Op->getValueType(0);
+    return DAG.getNode(ISD::ADD, SDLoc(Op), ResTy, Op->getOperand(1),
+                       DAG.getNode(ISD::SHL, SDLoc(Op), ResTy,
+                                   Op->getOperand(2), Op->getOperand(3)));
+  }
   case Intrinsic::mips_maddv_b:
   case Intrinsic::mips_maddv_h:
   case Intrinsic::mips_maddv_w:
@@ -1665,10 +1671,6 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_W_CHAIN(SDValue Op,
   case Intrinsic::mips_ld_h:
   case Intrinsic::mips_ld_w:
   case Intrinsic::mips_ld_d:
-  case Intrinsic::mips_ldx_b:
-  case Intrinsic::mips_ldx_h:
-  case Intrinsic::mips_ldx_w:
-  case Intrinsic::mips_ldx_d:
    return lowerMSALoadIntr(Op, DAG, Intr);
   }
 }
@@ -1697,10 +1699,6 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_VOID(SDValue Op,
   case Intrinsic::mips_st_h:
   case Intrinsic::mips_st_w:
   case Intrinsic::mips_st_d:
-  case Intrinsic::mips_stx_b:
-  case Intrinsic::mips_stx_h:
-  case Intrinsic::mips_stx_w:
-  case Intrinsic::mips_stx_d:
     return lowerMSAStoreIntr(Op, DAG, Intr);
   }
 }

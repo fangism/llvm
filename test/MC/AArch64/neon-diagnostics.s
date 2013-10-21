@@ -4440,3 +4440,120 @@
 // CHECK-ERROR: error: invalid operand for instruction
 // CHECK-ERROR:        usqadd d0, b1
 // CHECK-ERROR:                   ^
+
+//----------------------------------------------------------------------
+// Scalar Absolute Value
+//----------------------------------------------------------------------
+
+    abs d29, s24
+
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        abs d29, s24
+// CHECK-ERROR:                 ^
+
+//----------------------------------------------------------------------
+// Scalar Negate
+//----------------------------------------------------------------------
+
+    neg d29, s24
+
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        neg d29, s24
+// CHECK-ERROR:                 ^
+
+//----------------------------------------------------------------------
+// Signed Saturating Doubling Multiply-Add Long
+//----------------------------------------------------------------------
+
+    sqdmlal s17, h27, s12
+    sqdmlal d19, s24, d12
+
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqdmlal s17, h27, s12
+// CHECK-ERROR:                          ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqdmlal d19, s24, d12
+// CHECK-ERROR:                          ^
+
+//----------------------------------------------------------------------
+// Signed Saturating Doubling Multiply-Subtract Long
+//----------------------------------------------------------------------
+
+    sqdmlsl s14, h12, s25
+    sqdmlsl d12, s23, d13
+
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqdmlsl s14, h12, s25
+// CHECK-ERROR:                          ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqdmlsl d12, s23, d13
+// CHECK-ERROR:                          ^
+
+//----------------------------------------------------------------------
+// Signed Saturating Doubling Multiply Long
+//----------------------------------------------------------------------
+
+    sqdmull s12, h22, s12
+    sqdmull d15, s22, d12
+
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqdmull s12, h22, s12
+// CHECK-ERROR:                          ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqdmull d15, s22, d12
+// CHECK-ERROR:                          ^
+
+//----------------------------------------------------------------------
+// Scalar Signed Saturating Extract Unsigned Narrow
+//----------------------------------------------------------------------
+
+    sqxtun b19, b14
+    sqxtun h21, h15
+    sqxtun s20, s12
+
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqxtun b19, b14
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqxtun h21, h15
+// CHECK-ERROR:                    ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqxtun s20, s12
+// CHECK-ERROR:                    ^
+
+//----------------------------------------------------------------------
+// Scalar Signed Saturating Extract Signed Narrow
+//----------------------------------------------------------------------
+
+    sqxtn b18, b18
+    sqxtn h20, h17
+    sqxtn s19, s14
+
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqxtn b18, b18
+// CHECK-ERROR:                   ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqxtn h20, h17
+// CHECK-ERROR:                   ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        sqxtn s19, s14
+// CHECK-ERROR:                   ^
+
+
+//----------------------------------------------------------------------
+// Scalar Unsigned Saturating Extract Narrow
+//----------------------------------------------------------------------
+
+    uqxtn b18, b18
+    uqxtn h20, h17
+    uqxtn s19, s14
+
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        uqxtn b18, b18
+// CHECK-ERROR:                   ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        uqxtn h20, h17
+// CHECK-ERROR:                   ^
+// CHECK-ERROR: error: invalid operand for instruction
+// CHECK-ERROR:        uqxtn s19, s14
+// CHECK-ERROR:                   ^

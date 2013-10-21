@@ -3231,6 +3231,30 @@ multiclass Neon_Scalar3Same_SD_size_patterns<SDPatternOperator opnode,
             (INSTD FPR64:$Rn, FPR64:$Rm)>;
 }
 
+// Scalar Three Different
+
+multiclass NeonI_Scalar3Diff_HS_size<bit u, bits<4> opcode, string asmop> {
+  def shh : NeonI_Scalar3Diff<u, 0b01, opcode,
+                              (outs FPR32:$Rd), (ins FPR16:$Rn, FPR16:$Rm),
+                              !strconcat(asmop, " $Rd, $Rn, $Rm"),
+                              [],
+                              NoItinerary>;
+  def dss : NeonI_Scalar3Diff<u, 0b10, opcode,
+                              (outs FPR64:$Rd), (ins FPR32:$Rn, FPR32:$Rm),
+                              !strconcat(asmop, " $Rd, $Rn, $Rm"),
+                              [],
+                              NoItinerary>;
+}
+
+multiclass Neon_Scalar3Diff_HS_size_patterns<SDPatternOperator opnode,
+                                             Instruction INSTH,
+                                             Instruction INSTS> {
+  def : Pat<(v1i32 (opnode (v1i16 FPR16:$Rn), (v1i16 FPR16:$Rm))),
+            (INSTH FPR16:$Rn, FPR16:$Rm)>;
+  def : Pat<(v1i64 (opnode (v1i32 FPR32:$Rn), (v1i32 FPR32:$Rm))),
+            (INSTS FPR32:$Rn, FPR32:$Rm)>;
+}
+
 // Scalar Two Registers Miscellaneous
 
 multiclass NeonI_Scalar2SameMisc_SD_size<bit u, bit size_high, bits<5> opcode,
@@ -3245,7 +3269,15 @@ multiclass NeonI_Scalar2SameMisc_SD_size<bit u, bit size_high, bits<5> opcode,
                           [], NoItinerary>;
 }
 
-multiclass NeonI_Scalar2SameMisc_BHSD_size<bit u, bits<5> opcode, string asmop>{
+multiclass NeonI_Scalar2SameMisc_D_size<bit u, bits<5> opcode, string asmop> {
+  def dd: NeonI_Scalar2SameMisc<u, 0b11, opcode,
+                         (outs FPR64:$Rd), (ins FPR64:$Rn),
+                         !strconcat(asmop, " $Rd, $Rn"),
+                         [], NoItinerary>;
+}
+
+multiclass NeonI_Scalar2SameMisc_BHSD_size<bit u, bits<5> opcode, string asmop>
+  : NeonI_Scalar2SameMisc_D_size<u, opcode, asmop> {
   def bb : NeonI_Scalar2SameMisc<u, 0b00, opcode,
                           (outs FPR8:$Rd), (ins FPR8:$Rn),
                           !strconcat(asmop, " $Rd, $Rn"),
@@ -3258,10 +3290,22 @@ multiclass NeonI_Scalar2SameMisc_BHSD_size<bit u, bits<5> opcode, string asmop>{
                           (outs FPR32:$Rd), (ins FPR32:$Rn),
                           !strconcat(asmop, " $Rd, $Rn"),
                           [], NoItinerary>;
-  def dd: NeonI_Scalar2SameMisc<u, 0b11, opcode,
-                         (outs FPR64:$Rd), (ins FPR64:$Rn),
-                         !strconcat(asmop, " $Rd, $Rn"),
-                         [], NoItinerary>;
+}
+
+multiclass NeonI_Scalar2SameMisc_narrow_HSD_size<bit u, bits<5> opcode,
+                                                 string asmop> {
+  def bh : NeonI_Scalar2SameMisc<u, 0b00, opcode,
+                          (outs FPR8:$Rd), (ins FPR16:$Rn),
+                          !strconcat(asmop, " $Rd, $Rn"),
+                          [], NoItinerary>;
+  def hs : NeonI_Scalar2SameMisc<u, 0b01, opcode,
+                          (outs FPR16:$Rd), (ins FPR32:$Rn),
+                          !strconcat(asmop, " $Rd, $Rn"),
+                          [], NoItinerary>;
+  def sd : NeonI_Scalar2SameMisc<u, 0b10, opcode,
+                          (outs FPR32:$Rd), (ins FPR64:$Rn),
+                          !strconcat(asmop, " $Rd, $Rn"),
+                          [], NoItinerary>;
 }
 
 multiclass NeonI_Scalar2SameMisc_accum_BHSD_size<bit u, bits<5> opcode,
@@ -3318,19 +3362,38 @@ class Neon_Scalar2SameMisc_cmpz_D_size_patterns<SDPatternOperator opnode,
   : Pat<(v1i64 (opnode (v1i64 VPR64:$Rn), (v1i64 (bitconvert (v8i8 Neon_immAllZeros))))),
         (INSTD VPR64:$Rn, 0)>;
 
+multiclass Neon_Scalar2SameMisc_D_size_patterns<SDPatternOperator opnode,
+                                                Instruction INSTD> {
+  def : Pat<(v1i64 (opnode (v1i64 FPR64:$Rn))),
+            (INSTD FPR64:$Rn)>;
+}
+
 multiclass Neon_Scalar2SameMisc_BHSD_size_patterns<SDPatternOperator opnode,
                                                    Instruction INSTB,
                                                    Instruction INSTH,
                                                    Instruction INSTS,
-                                                   Instruction INSTD> {
+                                                   Instruction INSTD>
+  : Neon_Scalar2SameMisc_D_size_patterns<opnode, INSTD> {
   def : Pat<(v1i8 (opnode (v1i8 FPR8:$Rn))),
             (INSTB FPR8:$Rn)>;
   def : Pat<(v1i16 (opnode (v1i16 FPR16:$Rn))),
             (INSTH FPR16:$Rn)>;
   def : Pat<(v1i32 (opnode (v1i32 FPR32:$Rn))),
             (INSTS FPR32:$Rn)>;
-  def : Pat<(v1i64 (opnode (v1i64 FPR64:$Rn))),
+}
+
+multiclass Neon_Scalar2SameMisc_narrow_HSD_size_patterns<
+                                                       SDPatternOperator opnode,
+                                                       Instruction INSTH,
+                                                       Instruction INSTS,
+                                                       Instruction INSTD> {
+  def : Pat<(v1i8 (opnode (v1i16 FPR16:$Rn))),
+            (INSTH FPR16:$Rn)>;
+  def : Pat<(v1i16 (opnode (v1i32 FPR32:$Rn))),
+            (INSTS FPR32:$Rn)>;
+  def : Pat<(v1i32 (opnode (v1i64 FPR64:$Rn))),
             (INSTD FPR64:$Rn)>;
+
 }
 
 multiclass Neon_Scalar2SameMisc_accum_BHSD_size_patterns<
@@ -3489,6 +3552,21 @@ defm : Neon_Scalar3Same_BHSD_size_patterns<int_aarch64_neon_vqrshlu, UQRSHLbbb,
 defm : Neon_Scalar3Same_D_size_patterns<int_arm_neon_vqrshifts, SQRSHLddd>;
 defm : Neon_Scalar3Same_D_size_patterns<int_arm_neon_vqrshiftu, UQRSHLddd>;
 
+// Signed Saturating Doubling Multiply-Add Long
+defm SQDMLAL : NeonI_Scalar3Diff_HS_size<0b0, 0b1001, "sqdmlal">;
+defm : Neon_Scalar3Diff_HS_size_patterns<int_aarch64_neon_vqdmlal,
+                                         SQDMLALshh, SQDMLALdss>;
+
+// Signed Saturating Doubling Multiply-Subtract Long
+defm SQDMLSL : NeonI_Scalar3Diff_HS_size<0b0, 0b1011, "sqdmlsl">;
+defm : Neon_Scalar3Diff_HS_size_patterns<int_aarch64_neon_vqdmlsl,
+                                         SQDMLSLshh, SQDMLSLdss>;
+
+// Signed Saturating Doubling Multiply Long
+defm SQDMULL : NeonI_Scalar3Diff_HS_size<0b0, 0b1101, "sqdmull">;
+defm : Neon_Scalar3Diff_HS_size_patterns<int_aarch64_neon_vqdmull,
+                                         SQDMULLshh, SQDMULLdss>;
+
 // Scalar Signed Integer Convert To Floating-point
 defm SCVTF  : NeonI_Scalar2SameMisc_SD_size<0b0, 0b0, 0b11101, "scvtf">;
 defm : Neon_Scalar2SameMisc_cvt_SD_size_patterns<int_aarch64_neon_vcvtf32_s32,
@@ -3567,10 +3645,18 @@ def CMLTddi: NeonI_Scalar2SameMisc_cmpz_D_size<0b0, 0b01010, "cmlt">;
 def : Neon_Scalar2SameMisc_cmpz_D_size_patterns<int_aarch64_neon_vcltz,
                                                 CMLTddi>;
 
+// Scalar Absolute Value
+defm ABS : NeonI_Scalar2SameMisc_D_size<0b0, 0b01011, "abs">;
+defm : Neon_Scalar2SameMisc_D_size_patterns<int_aarch64_neon_vabs, ABSdd>;
+
 // Scalar Signed Saturating Absolute Value
 defm SQABS : NeonI_Scalar2SameMisc_BHSD_size<0b0, 0b00111, "sqabs">;
 defm : Neon_Scalar2SameMisc_BHSD_size_patterns<int_arm_neon_vqabs,
                                                SQABSbb, SQABShh, SQABSss, SQABSdd>;
+
+// Scalar Negate
+defm NEG : NeonI_Scalar2SameMisc_D_size<0b1, 0b01011, "neg">;
+defm : Neon_Scalar2SameMisc_D_size_patterns<int_aarch64_neon_vneg, NEGdd>;
 
 // Scalar Signed Saturating Negate
 defm SQNEG : NeonI_Scalar2SameMisc_BHSD_size<0b1, 0b00111, "sqneg">;
@@ -3588,6 +3674,24 @@ defm USQADD : NeonI_Scalar2SameMisc_accum_BHSD_size<0b1, 0b00011, "usqadd">;
 defm : Neon_Scalar2SameMisc_accum_BHSD_size_patterns<int_aarch64_neon_vsqadd,
                                                      USQADDbb, USQADDhh,
                                                      USQADDss, USQADDdd>;
+
+// Scalar Signed Saturating Extract Unsigned Narrow
+defm SQXTUN : NeonI_Scalar2SameMisc_narrow_HSD_size<0b1, 0b10010, "sqxtun">;
+defm : Neon_Scalar2SameMisc_narrow_HSD_size_patterns<int_arm_neon_vqmovnsu,
+                                                     SQXTUNbh, SQXTUNhs,
+                                                     SQXTUNsd>;
+
+// Scalar Signed Saturating Extract Narrow
+defm SQXTN  : NeonI_Scalar2SameMisc_narrow_HSD_size<0b0, 0b10100, "sqxtn">;
+defm : Neon_Scalar2SameMisc_narrow_HSD_size_patterns<int_arm_neon_vqmovns,
+                                                     SQXTNbh, SQXTNhs,
+                                                     SQXTNsd>;
+
+// Scalar Unsigned Saturating Extract Narrow
+defm UQXTN  : NeonI_Scalar2SameMisc_narrow_HSD_size<0b1, 0b10100, "uqxtn">;
+defm : Neon_Scalar2SameMisc_narrow_HSD_size_patterns<int_arm_neon_vqmovnu,
+                                                     UQXTNbh, UQXTNhs,
+                                                     UQXTNsd>;
 
 // Scalar Reduce Pairwise
 

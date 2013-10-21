@@ -3734,14 +3734,32 @@ static bool SwitchToLookupTable(SwitchInst *SI,
                                             CommonDest->getParent(),
                                             CommonDest);
 
-  // Check whether the condition value is within the case range, and branch to
-  // the new BB.
+  // Compute the table index value.
   Builder.SetInsertPoint(SI);
   Value *TableIndex = Builder.CreateSub(SI->getCondition(), MinCaseVal,
                                         "switch.tableidx");
-  Value *Cmp = Builder.CreateICmpULT(TableIndex, ConstantInt::get(
-      MinCaseVal->getType(), TableSize));
-  Builder.CreateCondBr(Cmp, LookupBB, SI->getDefaultDest());
+
+  // Compute the maximum table size representable by the integer type we are
+  // switching upon.
+  unsigned CaseSize = MinCaseVal->getType()->getPrimitiveSizeInBits();
+  uint64_t MaxTableSize = CaseSize > 63? UINT64_MAX : 1ULL << CaseSize;
+  assert(MaxTableSize >= TableSize &&
+         "It is impossible for a switch to have more entries than the max "
+         "representable value of its input integer type's size.");
+
+  // If we have a fully covered lookup table, unconditionally branch to the
+  // lookup table BB. Otherwise, check if the condition value is within the case
+  // range. If it is so, branch to the new BB. Otherwise branch to SI's default
+  // destination.
+  const bool GeneratingCoveredLookupTable = MaxTableSize == TableSize;
+  if (GeneratingCoveredLookupTable) {
+    Builder.CreateBr(LookupBB);
+    SI->getDefaultDest()->removePredecessor(SI->getParent());
+  } else {
+    Value *Cmp = Builder.CreateICmpULT(TableIndex, ConstantInt::get(
+                                         MinCaseVal->getType(), TableSize));
+    Builder.CreateCondBr(Cmp, LookupBB, SI->getDefaultDest());
+  }
 
   // Populate the BB that does the lookups.
   Builder.SetInsertPoint(LookupBB);
@@ -3770,9 +3788,11 @@ static bool SwitchToLookupTable(SwitchInst *SI,
     Builder.CreateBr(CommonDest);
 
   // Remove the switch.
-  for (unsigned i = 0; i < SI->getNumSuccessors(); ++i) {
+  for (unsigned i = 0, e = SI->getNumSuccessors(); i < e; ++i) {
     BasicBlock *Succ = SI->getSuccessor(i);
-    if (Succ == SI->getDefaultDest()) continue;
+
+    if (Succ == SI->getDefaultDest())
+      continue;
     Succ->removePredecessor(SI->getParent());
   }
   SI->eraseFromParent();
