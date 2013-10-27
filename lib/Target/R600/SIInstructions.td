@@ -1560,9 +1560,12 @@ def : BitConvert <f64, i64, VReg_64>;
 
 def : BitConvert <v2f32, v2i32, VReg_64>;
 def : BitConvert <v2i32, v2f32, VReg_64>;
+def : BitConvert <v2i32, i64, VReg_64>;
 
 def : BitConvert <v4f32, v4i32, VReg_128>;
 def : BitConvert <v4i32, v4f32, VReg_128>;
+def : BitConvert <v4i32, i128,  VReg_128>;
+def : BitConvert <i128, v4i32,  VReg_128>;
 
 def : BitConvert <v8i32, v32i8, SReg_256>;
 def : BitConvert <v32i8, v8i32, SReg_256>;
@@ -1820,7 +1823,10 @@ defm : SMRD_Pattern <S_LOAD_DWORD_IMM, S_LOAD_DWORD_SGPR, i32>;
 defm : SMRD_Pattern <S_LOAD_DWORDX2_IMM, S_LOAD_DWORDX2_SGPR, i64>;
 defm : SMRD_Pattern <S_LOAD_DWORDX2_IMM, S_LOAD_DWORDX2_SGPR, v2i32>;
 defm : SMRD_Pattern <S_LOAD_DWORDX4_IMM, S_LOAD_DWORDX4_SGPR, i128>;
+defm : SMRD_Pattern <S_LOAD_DWORDX4_IMM, S_LOAD_DWORDX4_SGPR, v4i32>;
 defm : SMRD_Pattern <S_LOAD_DWORDX8_IMM, S_LOAD_DWORDX8_SGPR, v32i8>;
+defm : SMRD_Pattern <S_LOAD_DWORDX8_IMM, S_LOAD_DWORDX8_SGPR, v8i32>;
+defm : SMRD_Pattern <S_LOAD_DWORDX16_IMM, S_LOAD_DWORDX16_SGPR, v16i32>;
 
 //===----------------------------------------------------------------------===//
 // MUBUF Patterns
@@ -1957,6 +1963,25 @@ def : Pat<
 def : Pat<
   (i1 (setcc f32:$src0, f32:$src1, SETUO)),
   (V_CMP_U_F32_e64 $src0, $src1)
+>;
+
+//============================================================================//
+// Miscellaneous Patterns
+//===----------------------------------------------------------------------===//
+
+def : Pat <
+  (i64 (trunc i128:$x)),
+  (INSERT_SUBREG (INSERT_SUBREG (i64 (IMPLICIT_DEF)),
+    (i32 (EXTRACT_SUBREG $x, sub0)), sub0),
+    (i32 (EXTRACT_SUBREG $x, sub1)), sub1)
+>;
+
+def : Pat <
+  (or i64:$a, i64:$b),
+  (INSERT_SUBREG
+    (INSERT_SUBREG (IMPLICIT_DEF),
+      (V_OR_B32_e32 (EXTRACT_SUBREG $a, sub0), (EXTRACT_SUBREG $b, sub0)), sub0),
+    (V_OR_B32_e32 (EXTRACT_SUBREG $a, sub1), (EXTRACT_SUBREG $b, sub1)), sub1)
 >;
 
 //============================================================================//

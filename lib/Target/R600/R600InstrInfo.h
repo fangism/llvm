@@ -82,6 +82,8 @@ namespace llvm {
   bool usesTextureCache(const MachineInstr *MI) const;
 
   bool mustBeLastInClause(unsigned Opcode) const;
+  bool usesAddressRegister(MachineInstr *MI) const;
+  bool definesAddressRegister(MachineInstr *MI) const;
   bool readsLDSSrcReg(const MachineInstr *MI) const;
 
   /// \returns The operand index for the given source number.  Legal values
@@ -135,9 +137,6 @@ namespace llvm {
   /// \breif Vector instructions are instructions that must fill all
   /// instruction slots within an instruction group.
   bool isVector(const MachineInstr &MI) const;
-
-  virtual MachineInstr * getMovImmInstr(MachineFunction *MF, unsigned DstReg,
-                                        int64_t Imm) const;
 
   virtual unsigned getIEQOpcode() const;
   virtual bool isMov(unsigned Opcode) const;
@@ -206,10 +205,7 @@ namespace llvm {
   virtual unsigned calculateIndirectAddress(unsigned RegIndex,
                                             unsigned Channel) const;
 
-  virtual const TargetRegisterClass *getIndirectAddrStoreRegClass(
-                                                      unsigned SourceReg) const;
-
-  virtual const TargetRegisterClass *getIndirectAddrLoadRegClass() const;
+  virtual const TargetRegisterClass *getIndirectAddrRegClass() const;
 
   virtual MachineInstrBuilder buildIndirectWrite(MachineBasicBlock *MBB,
                                   MachineBasicBlock::iterator I,
@@ -220,8 +216,6 @@ namespace llvm {
                                   MachineBasicBlock::iterator I,
                                   unsigned ValueReg, unsigned Address,
                                   unsigned OffsetReg) const;
-
-  virtual const TargetRegisterClass *getSuperIndirectRegClass() const;
 
   unsigned getMaxAlusPerClause() const;
 
@@ -248,6 +242,10 @@ namespace llvm {
                                   MachineBasicBlock::iterator I,
                                   unsigned DstReg,
                                   uint64_t Imm) const;
+
+  MachineInstr *buildMovInstr(MachineBasicBlock *MBB,
+                              MachineBasicBlock::iterator I,
+                              unsigned DstReg, unsigned SrcReg) const;
 
   /// \brief Get the index of Op in the MachineInstr.
   ///

@@ -570,14 +570,18 @@ public:
   /// otherwise it will assert.
   EVT getValueType(Type *Ty, bool AllowUnknown = false) const {
     // Lower scalar pointers to native pointer types.
-    if (Ty->isPointerTy()) return getPointerTy(Ty->getPointerAddressSpace());
+    if (PointerType *PTy = dyn_cast<PointerType>(Ty))
+      return getPointerTy(PTy->getAddressSpace());
 
     if (Ty->isVectorTy()) {
       VectorType *VTy = cast<VectorType>(Ty);
       Type *Elm = VTy->getElementType();
       // Lower vectors of pointers to native pointer types.
-      if (Elm->isPointerTy())
-        Elm = EVT(PointerTy).getTypeForEVT(Ty->getContext());
+      if (PointerType *PT = dyn_cast<PointerType>(Elm)) {
+        EVT PointerTy(getPointerTy(PT->getAddressSpace()));
+        Elm = PointerTy.getTypeForEVT(Ty->getContext());
+      }
+
       return EVT::getVectorVT(Ty->getContext(), EVT::getEVT(Elm, false),
                        VTy->getNumElements());
     }
@@ -1294,10 +1298,6 @@ private:
   const TargetMachine &TM;
   const DataLayout *TD;
   const TargetLoweringObjectFile &TLOF;
-
-  /// The type to use for pointers for the default address space, usually i32 or
-  /// i64.
-  MVT PointerTy;
 
   /// True if this is a little endian target.
   bool IsLittleEndian;

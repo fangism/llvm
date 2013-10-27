@@ -130,10 +130,6 @@ namespace llvm {
     ///
     SmallVector<DIEValue*, 12> Values;
 
-#ifndef NDEBUG
-    // Private data for print()
-    mutable unsigned IndentCount;
-#endif
   public:
     explicit DIE(unsigned Tag)
         : Offset(0), Size(0), Abbrev((dwarf::Tag)Tag, dwarf::DW_CHILDREN_no),
@@ -142,6 +138,7 @@ namespace llvm {
 
     // Accessors.
     DIEAbbrev &getAbbrev() { return Abbrev; }
+    const DIEAbbrev &getAbbrev() const { return Abbrev; }
     unsigned getAbbrevNumber() const { return Abbrev.getNumber(); }
     dwarf::Tag getTag() const { return Abbrev.getTag(); }
     unsigned getOffset() const { return Offset; }

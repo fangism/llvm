@@ -801,6 +801,7 @@ struct LoopVectorizeHints {
         Vals.push_back(LoopID->getOperand(i));
 
     Vals.push_back(createHint(Context, Twine(Prefix(), "width").str(), Width));
+    Vals.push_back(createHint(Context, Twine(Prefix(), "unroll").str(), 1));
 
     MDNode *NewLoopID = MDNode::get(Context, Vals);
     // Set operand 0 to refer to the loop id itself.
@@ -1069,7 +1070,7 @@ Value *InnerLoopVectorizer::getConsecutiveVector(Value* Val, int StartIdx,
 int LoopVectorizationLegality::isConsecutivePtr(Value *Ptr) {
   assert(Ptr->getType()->isPointerTy() && "Unexpected non ptr");
   // Make sure that the pointer does not point to structs.
-  if (cast<PointerType>(Ptr->getType())->getElementType()->isAggregateType())
+  if (Ptr->getType()->getPointerElementType()->isAggregateType())
     return 0;
 
   // If this value is a pointer induction variable we know it is consecutive.
@@ -1785,6 +1786,9 @@ InnerLoopVectorizer::createEmptyLoop(LoopVectorizationLegality *Legal) {
   LoopExitBlock = ExitBlock;
   LoopVectorBody = VecBody;
   LoopScalarBody = OldBasicBlock;
+
+  LoopVectorizeHints Hints(Lp, true);
+  Hints.setAlreadyVectorized(Lp);
 }
 
 /// This function returns the identity element (or neutral element) for
@@ -2690,14 +2694,14 @@ bool LoopVectorizationLegality::canVectorizeWithIfConvert() {
     return false;
 
   assert(TheLoop->getNumBlocks() > 1 && "Single block loops are vectorizable");
-  std::vector<BasicBlock*> &LoopBlocks = TheLoop->getBlocksVector();
 
   // A list of pointers that we can safely read and write to.
   SmallPtrSet<Value *, 8> SafePointes;
 
   // Collect safe addresses.
-  for (unsigned i = 0, e = LoopBlocks.size(); i < e; ++i) {
-    BasicBlock *BB = LoopBlocks[i];
+  for (Loop::block_iterator BI = TheLoop->block_begin(),
+         BE = TheLoop->block_end(); BI != BE; ++BI) {
+    BasicBlock *BB = *BI;
 
     if (blockNeedsPredication(BB))
       continue;
@@ -2711,8 +2715,9 @@ bool LoopVectorizationLegality::canVectorizeWithIfConvert() {
   }
 
   // Collect the blocks that need predication.
-  for (unsigned i = 0, e = LoopBlocks.size(); i < e; ++i) {
-    BasicBlock *BB = LoopBlocks[i];
+  for (Loop::block_iterator BI = TheLoop->block_begin(),
+         BE = TheLoop->block_end(); BI != BE; ++BI) {
+    BasicBlock *BB = *BI;
 
     // We don't support switch statements inside loops.
     if (!isa<BranchInst>(BB->getTerminator()))
@@ -2961,8 +2966,9 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
       }
 
       // Check that the instruction return type is vectorizable.
-      if (!VectorType::isValidElementType(it->getType()) &&
-          !it->getType()->isVoidTy()) {
+      // Also, we can't vectorize extractelement instructions.
+      if ((!VectorType::isValidElementType(it->getType()) &&
+           !it->getType()->isVoidTy()) || isa<ExtractElementInst>(it)) {
         DEBUG(dbgs() << "LV: Found unvectorizable type.\n");
         return false;
       }

@@ -315,6 +315,9 @@ def muladd : PatFrag<(ops node:$wd, node:$ws, node:$wt),
 def mulsub : PatFrag<(ops node:$wd, node:$ws, node:$wt),
                      (sub node:$wd, (mul node:$ws, node:$wt))>;
 
+def mul_fexp2 : PatFrag<(ops node:$ws, node:$wt),
+                        (fmul node:$ws, (fexp2 node:$wt))>;
+
 // Immediates
 def immSExt5 : ImmLeaf<i32, [{return isInt<5>(Imm);}]>;
 def immSExt10: ImmLeaf<i32, [{return isInt<10>(Imm);}]>;
@@ -432,12 +435,12 @@ class BNEGI_H_ENC : MSA_BIT_H_FMT<0b101, 0b001001>;
 class BNEGI_W_ENC : MSA_BIT_W_FMT<0b101, 0b001001>;
 class BNEGI_D_ENC : MSA_BIT_D_FMT<0b101, 0b001001>;
 
-class BNZ_B_ENC : MSA_I10_FMT<0b000, 0b00, 0b001100>;
-class BNZ_H_ENC : MSA_I10_FMT<0b000, 0b01, 0b001100>;
-class BNZ_W_ENC : MSA_I10_FMT<0b000, 0b10, 0b001100>;
-class BNZ_D_ENC : MSA_I10_FMT<0b000, 0b11, 0b001100>;
+class BNZ_B_ENC : MSA_CBRANCH_FMT<0b111, 0b00>;
+class BNZ_H_ENC : MSA_CBRANCH_FMT<0b111, 0b01>;
+class BNZ_W_ENC : MSA_CBRANCH_FMT<0b111, 0b10>;
+class BNZ_D_ENC : MSA_CBRANCH_FMT<0b111, 0b11>;
 
-class BNZ_V_ENC : MSA_VEC_FMT<0b01000, 0b011110>;
+class BNZ_V_ENC : MSA_CBRANCH_V_FMT<0b01000>;
 
 class BSEL_V_ENC : MSA_VEC_FMT<0b00110, 0b011110>;
 
@@ -453,12 +456,12 @@ class BSETI_H_ENC : MSA_BIT_H_FMT<0b100, 0b001001>;
 class BSETI_W_ENC : MSA_BIT_W_FMT<0b100, 0b001001>;
 class BSETI_D_ENC : MSA_BIT_D_FMT<0b100, 0b001001>;
 
-class BZ_B_ENC : MSA_I10_FMT<0b001, 0b00, 0b001100>;
-class BZ_H_ENC : MSA_I10_FMT<0b001, 0b01, 0b001100>;
-class BZ_W_ENC : MSA_I10_FMT<0b001, 0b10, 0b001100>;
-class BZ_D_ENC : MSA_I10_FMT<0b001, 0b11, 0b001100>;
+class BZ_B_ENC : MSA_CBRANCH_FMT<0b110, 0b00>;
+class BZ_H_ENC : MSA_CBRANCH_FMT<0b110, 0b01>;
+class BZ_W_ENC : MSA_CBRANCH_FMT<0b110, 0b10>;
+class BZ_D_ENC : MSA_CBRANCH_FMT<0b110, 0b11>;
 
-class BZ_V_ENC : MSA_VECS10_FMT<0b01001, 0b011110>;
+class BZ_V_ENC : MSA_CBRANCH_V_FMT<0b01011>;
 
 class CEQ_B_ENC : MSA_3R_FMT<0b000, 0b00, 0b001111>;
 class CEQ_H_ENC : MSA_3R_FMT<0b000, 0b01, 0b001111>;
@@ -768,7 +771,7 @@ class LDI_H_ENC  : MSA_I10_FMT<0b010, 0b01, 0b001100>;
 class LDI_W_ENC  : MSA_I10_FMT<0b010, 0b10, 0b001100>;
 class LDI_D_ENC  : MSA_I10_FMT<0b010, 0b11, 0b001100>;
 
-class LSA_ENC : SPECIAL_LSA_FMT;
+class LSA_ENC : SPECIAL_LSA_FMT<0b000101>;
 
 class MADD_Q_H_ENC : MSA_3RF_FMT<0b0101, 0b0, 0b011100>;
 class MADD_Q_W_ENC : MSA_3RF_FMT<0b0101, 0b1, 0b011100>;
@@ -1258,10 +1261,10 @@ class MSA_3RF_4RF_DESC_BASE<string instr_asm, SDPatternOperator OpNode,
                             InstrItinClass itin = NoItinerary> :
   MSA_3R_4R_DESC_BASE<instr_asm, OpNode, ROWD, ROWS, ROWT, itin>;
 
-class MSA_CBRANCH_DESC_BASE<string instr_asm, RegisterClass RCWD> {
+class MSA_CBRANCH_DESC_BASE<string instr_asm, RegisterOperand ROWD> {
   dag OutOperandList = (outs);
-  dag InOperandList = (ins RCWD:$wd, brtarget:$offset);
-  string AsmString = !strconcat(instr_asm, "\t$wd, $offset");
+  dag InOperandList = (ins ROWD:$wt, brtarget:$offset);
+  string AsmString = !strconcat(instr_asm, "\t$wt, $offset");
   list<dag> Pattern = [];
   InstrItinClass Itinerary = IIBranch;
   bit isBranch = 1;
@@ -1511,12 +1514,12 @@ class BNEGI_W_DESC : MSA_BIT_W_DESC_BASE<"bnegi.w", int_mips_bnegi_w,
 class BNEGI_D_DESC : MSA_BIT_D_DESC_BASE<"bnegi.d", int_mips_bnegi_d,
                                          MSA128DOpnd>;
 
-class BNZ_B_DESC : MSA_CBRANCH_DESC_BASE<"bnz.b", MSA128B>;
-class BNZ_H_DESC : MSA_CBRANCH_DESC_BASE<"bnz.h", MSA128H>;
-class BNZ_W_DESC : MSA_CBRANCH_DESC_BASE<"bnz.w", MSA128W>;
-class BNZ_D_DESC : MSA_CBRANCH_DESC_BASE<"bnz.d", MSA128D>;
+class BNZ_B_DESC : MSA_CBRANCH_DESC_BASE<"bnz.b", MSA128BOpnd>;
+class BNZ_H_DESC : MSA_CBRANCH_DESC_BASE<"bnz.h", MSA128HOpnd>;
+class BNZ_W_DESC : MSA_CBRANCH_DESC_BASE<"bnz.w", MSA128WOpnd>;
+class BNZ_D_DESC : MSA_CBRANCH_DESC_BASE<"bnz.d", MSA128DOpnd>;
 
-class BNZ_V_DESC : MSA_CBRANCH_DESC_BASE<"bnz.v", MSA128B>;
+class BNZ_V_DESC : MSA_CBRANCH_DESC_BASE<"bnz.v", MSA128BOpnd>;
 
 class BSEL_V_DESC {
   dag OutOperandList = (outs MSA128BOpnd:$wd);
@@ -1556,12 +1559,12 @@ class BSETI_W_DESC : MSA_BIT_W_DESC_BASE<"bseti.w", int_mips_bseti_w,
 class BSETI_D_DESC : MSA_BIT_D_DESC_BASE<"bseti.d", int_mips_bseti_d,
                                          MSA128DOpnd>;
 
-class BZ_B_DESC : MSA_CBRANCH_DESC_BASE<"bz.b", MSA128B>;
-class BZ_H_DESC : MSA_CBRANCH_DESC_BASE<"bz.h", MSA128H>;
-class BZ_W_DESC : MSA_CBRANCH_DESC_BASE<"bz.w", MSA128W>;
-class BZ_D_DESC : MSA_CBRANCH_DESC_BASE<"bz.d", MSA128D>;
+class BZ_B_DESC : MSA_CBRANCH_DESC_BASE<"bz.b", MSA128BOpnd>;
+class BZ_H_DESC : MSA_CBRANCH_DESC_BASE<"bz.h", MSA128HOpnd>;
+class BZ_W_DESC : MSA_CBRANCH_DESC_BASE<"bz.w", MSA128WOpnd>;
+class BZ_D_DESC : MSA_CBRANCH_DESC_BASE<"bz.d", MSA128DOpnd>;
 
-class BZ_V_DESC : MSA_CBRANCH_DESC_BASE<"bz.v", MSA128B>;
+class BZ_V_DESC : MSA_CBRANCH_DESC_BASE<"bz.v", MSA128BOpnd>;
 
 class CEQ_B_DESC : MSA_3R_DESC_BASE<"ceq.b", vseteq_v16i8, MSA128BOpnd>,
                    IsCommutable;
@@ -1811,10 +1814,19 @@ class FEXDO_H_DESC : MSA_3RF_DESC_BASE<"fexdo.h", int_mips_fexdo_h,
 class FEXDO_W_DESC : MSA_3RF_DESC_BASE<"fexdo.w", int_mips_fexdo_w,
                                        MSA128WOpnd, MSA128DOpnd, MSA128DOpnd>;
 
-class FEXP2_W_DESC : MSA_3RF_DESC_BASE<"fexp2.w", int_mips_fexp2_w,
-                                       MSA128WOpnd>;
-class FEXP2_D_DESC : MSA_3RF_DESC_BASE<"fexp2.d", int_mips_fexp2_d,
-                                       MSA128DOpnd>;
+// The fexp2.df instruction multiplies the first operand by 2 to the power of
+// the second operand. We therefore need a pseudo-insn in order to invent the
+// 1.0 when we only need to match ISD::FEXP2.
+class FEXP2_W_DESC : MSA_3RF_DESC_BASE<"fexp2.w", mul_fexp2, MSA128WOpnd>;
+class FEXP2_D_DESC : MSA_3RF_DESC_BASE<"fexp2.d", mul_fexp2, MSA128DOpnd>;
+let usesCustomInserter = 1 in {
+  class FEXP2_W_1_PSEUDO_DESC :
+      MipsPseudo<(outs MSA128W:$wd), (ins MSA128W:$ws),
+                 [(set MSA128W:$wd, (fexp2 MSA128W:$ws))]>;
+  class FEXP2_D_1_PSEUDO_DESC :
+      MipsPseudo<(outs MSA128D:$wd), (ins MSA128D:$ws),
+                 [(set MSA128D:$wd, (fexp2 MSA128D:$ws))]>;
+}
 
 class FEXUPL_W_DESC : MSA_2RF_DESC_BASE<"fexupl.w", int_mips_fexupl_w,
                                         MSA128WOpnd, MSA128HOpnd>;
@@ -2059,11 +2071,12 @@ class LDI_W_DESC : MSA_I10_LDI_DESC_BASE<"ldi.w", MSA128WOpnd>;
 class LDI_D_DESC : MSA_I10_LDI_DESC_BASE<"ldi.d", MSA128DOpnd>;
 
 class LSA_DESC {
-  dag OutOperandList = (outs GPR32:$rd);
-  dag InOperandList = (ins GPR32:$rs, GPR32:$rt, uimm2:$sa);
+  dag OutOperandList = (outs GPR32Opnd:$rd);
+  dag InOperandList = (ins GPR32Opnd:$rs, GPR32Opnd:$rt, uimm2:$sa);
   string AsmString = "lsa\t$rd, $rs, $rt, $sa";
-  list<dag> Pattern = [(set GPR32:$rd, (add GPR32:$rs, (shl GPR32:$rt,
-                                                            immZExt2Lsa:$sa)))];
+  list<dag> Pattern = [(set GPR32Opnd:$rd, (add GPR32Opnd:$rs,
+                                                (shl GPR32Opnd:$rt,
+                                                     immZExt2Lsa:$sa)))];
   InstrItinClass Itinerary = NoItinerary;
 }
 
@@ -2757,6 +2770,8 @@ def FEXDO_W : FEXDO_W_ENC, FEXDO_W_DESC;
 
 def FEXP2_W : FEXP2_W_ENC, FEXP2_W_DESC;
 def FEXP2_D : FEXP2_D_ENC, FEXP2_D_DESC;
+def FEXP2_W_1_PSEUDO : FEXP2_W_1_PSEUDO_DESC;
+def FEXP2_D_1_PSEUDO : FEXP2_D_1_PSEUDO_DESC;
 
 def FEXUPL_W : FEXUPL_W_ENC, FEXUPL_W_DESC;
 def FEXUPL_D : FEXUPL_D_ENC, FEXUPL_D_DESC;

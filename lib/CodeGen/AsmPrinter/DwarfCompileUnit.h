@@ -42,7 +42,7 @@ class CompileUnit {
   /// Node - MDNode for the compile unit.
   const MDNode *Node;
 
-  /// Die - Compile unit debug information entry.
+  /// CUDie - Compile unit debug information entry.
   ///
   const OwningPtr<DIE> CUDie;
 
@@ -328,20 +328,20 @@ private:
   void constructArrayTypeDIE(DIE &Buffer, DICompositeType *CTy);
 
   /// constructEnumTypeDIE - Construct enum type DIE from DIEnumerator.
-  DIE *constructEnumTypeDIE(DIEnumerator ETy, DIE &Buffer);
+  void constructEnumTypeDIE(DIE &Buffer, DIEnumerator ETy);
 
-  /// createMemberDIE - Create new member DIE.
-  DIE *createMemberDIE(DIDerivedType DT, DIE &Buffer);
+  /// constructMemberDIE - Construct member DIE from DIDerivedType.
+  void constructMemberDIE(DIE &Buffer, DIDerivedType DT);
 
-  /// getOrCreateTemplateTypeParameterDIE - Find existing DIE or create new DIE
-  /// for the given DITemplateTypeParameter.
-  DIE *getOrCreateTemplateTypeParameterDIE(DITemplateTypeParameter TP,
-                                           DIE &Buffer);
+  /// constructTemplateTypeParameterDIE - Construct new DIE for the given
+  /// DITemplateTypeParameter.
+  void constructTemplateTypeParameterDIE(DIE &Buffer,
+                                         DITemplateTypeParameter TP);
 
-  /// getOrCreateTemplateValueParameterDIE - Find existing DIE or create
-  /// new DIE for the given DITemplateValueParameter.
-  DIE *getOrCreateTemplateValueParameterDIE(DITemplateValueParameter TVP,
-                                            DIE &Buffer);
+  /// constructTemplateValueParameterDIE - Construct new DIE for the given
+  /// DITemplateValueParameter.
+  void constructTemplateValueParameterDIE(DIE &Buffer,
+                                          DITemplateValueParameter TVP);
 
   /// getOrCreateStaticMemberDIE - Create new static data member DIE.
   DIE *getOrCreateStaticMemberDIE(DIDerivedType DT);

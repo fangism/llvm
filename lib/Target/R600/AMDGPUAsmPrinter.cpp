@@ -196,8 +196,10 @@ void AMDGPUAsmPrinter::EmitProgramInfoSI(MachineFunction &MF) {
           VCCUsed = true;
           continue;
         }
+
         switch (reg) {
         default: break;
+        case AMDGPU::SCC:
         case AMDGPU::EXEC:
         case AMDGPU::M0:
           continue;
@@ -230,6 +232,9 @@ void AMDGPUAsmPrinter::EmitProgramInfoSI(MachineFunction &MF) {
         } else if (AMDGPU::VReg_256RegClass.contains(reg)) {
           isSGPR = false;
           width = 8;
+        } else if (AMDGPU::SReg_512RegClass.contains(reg)) {
+          isSGPR = true;
+          width = 16;
         } else if (AMDGPU::VReg_512RegClass.contains(reg)) {
           isSGPR = false;
           width = 16;

@@ -969,7 +969,6 @@ void DwarfDebug::computeInlinedDIEs() {
 // Collect info for variables that were optimized out.
 void DwarfDebug::collectDeadVariables() {
   const Module *M = MMI->getModule();
-  DenseMap<const MDNode *, LexicalScope *> DeadFnScopeMap;
 
   if (NamedMDNode *CU_Nodes = M->getNamedMetadata("llvm.dbg.cu")) {
     for (unsigned i = 0, e = CU_Nodes->getNumOperands(); i != e; ++i) {
@@ -987,30 +986,25 @@ void DwarfDebug::collectDeadVariables() {
         if (Variables.getNumElements() == 0)
           continue;
 
-        LexicalScope *Scope =
-            new LexicalScope(NULL, DIDescriptor(SP), NULL, false);
-        DeadFnScopeMap[SP] = Scope;
-
         // Construct subprogram DIE and add variables DIEs.
         CompileUnit *SPCU = CUMap.lookup(TheCU);
         assert(SPCU && "Unable to find Compile Unit!");
-	// FIXME: See the comment in constructSubprogramDIE about duplicate
-	// subprogram DIEs.
-	constructSubprogramDIE(SPCU, SP);
-	DIE *SPDIE = SPCU->getDIE(SP);
+        // FIXME: See the comment in constructSubprogramDIE about duplicate
+        // subprogram DIEs.
+        constructSubprogramDIE(SPCU, SP);
+        DIE *SPDIE = SPCU->getDIE(SP);
         for (unsigned vi = 0, ve = Variables.getNumElements(); vi != ve; ++vi) {
           DIVariable DV(Variables.getElement(vi));
           if (!DV.isVariable())
             continue;
           DbgVariable NewVar(DV, NULL, this);
           if (DIE *VariableDIE =
-                  SPCU->constructVariableDIE(&NewVar, Scope->isAbstractScope()))
+                  SPCU->constructVariableDIE(&NewVar, false))
             SPDIE->addChild(VariableDIE);
         }
       }
     }
   }
-  DeleteContainerSeconds(DeadFnScopeMap);
 }
 
 // Type Signature [7.27] and ODR Hash code.
@@ -1068,7 +1062,7 @@ void DwarfDebug::finalizeModuleInfo() {
     if (GenerateODRHash && shouldAddODRHash(CUMap.begin()->second, Die))
       CUMap.begin()->second->addUInt(Die, dwarf::DW_AT_GNU_odr_signature,
                                      dwarf::DW_FORM_data8,
-                                     Hash.computeDIEODRSignature(Die));
+                                     Hash.computeDIEODRSignature(*Die));
   }
 
   // Handle anything that needs to be done on a per-cu basis.
@@ -1086,7 +1080,7 @@ void DwarfDebug::finalizeModuleInfo() {
       uint64_t ID = 0;
       if (GenerateCUHash) {
         DIEHash CUHash;
-        ID = CUHash.computeCUSignature(TheCU->getCUDie());
+        ID = CUHash.computeCUSignature(*TheCU->getCUDie());
       }
       // This should be a unique identifier when we want to build .dwp files.
       TheCU->addUInt(TheCU->getCUDie(), dwarf::DW_AT_GNU_dwo_id,
@@ -1965,9 +1959,10 @@ DwarfUnits::computeSizeAndOffset(DIE *Die, unsigned Offset) {
   return Offset;
 }
 
-// Compute the size and offset of all the DIEs.
+// Compute the size and offset for each DIE.
 void DwarfUnits::computeSizeAndOffsets() {
-  // Offset from the beginning of debug info section.
+  // Iterate over each compile unit and set the size and offsets for each
+  // DIE within each compile unit. All offsets are CU relative.
   for (SmallVectorImpl<CompileUnit *>::iterator I = CUs.begin(),
          E = CUs.end(); I != E; ++I) {
     unsigned Offset =
@@ -2055,13 +2050,6 @@ void DwarfDebug::emitDIE(DIE *Die, std::vector<DIEAbbrev *> *Abbrevs) {
       Asm->OutStreamer.AddComment(dwarf::AttributeString(Attr));
 
     switch (Attr) {
-    case dwarf::DW_AT_abstract_origin: {
-      DIEEntry *E = cast<DIEEntry>(Values[i]);
-      DIE *Origin = E->getEntry();
-      unsigned Addr = Origin->getOffset();
-      Asm->EmitInt32(Addr);
-      break;
-    }
     case dwarf::DW_AT_ranges: {
       // DW_AT_range Value encodes offset in debug_range section.
       DIEInteger *V = cast<DIEInteger>(Values[i]);

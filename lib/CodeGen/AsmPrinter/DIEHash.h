@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/MD5.h"
 
 namespace llvm {
@@ -83,24 +84,24 @@ class DIEHash {
 
 public:
   /// \brief Computes the ODR signature.
-  uint64_t computeDIEODRSignature(DIE *Die);
+  uint64_t computeDIEODRSignature(const DIE &Die);
 
   /// \brief Computes the CU signature.
-  uint64_t computeCUSignature(DIE *Die);
+  uint64_t computeCUSignature(const DIE &Die);
 
   /// \brief Computes the type signature.
-  uint64_t computeTypeSignature(DIE *Die);
+  uint64_t computeTypeSignature(const DIE &Die);
 
   // Helper routines to process parts of a DIE.
 private:
   /// \brief Adds the parent context of \param Die to the hash.
-  void addParentContext(DIE *Die);
+  void addParentContext(const DIE &Die);
 
   /// \brief Adds the attributes of \param Die to the hash.
-  void addAttributes(DIE *Die);
+  void addAttributes(const DIE &Die);
 
   /// \brief Computes the full DWARF4 7.27 hash of the DIE.
-  void computeHash(DIE *Die);
+  void computeHash(const DIE &Die);
 
   // Routines that add DIEValues to the hash.
 private:
@@ -115,15 +116,31 @@ private:
 
   /// \brief Collects the attributes of DIE \param Die into the \param Attrs
   /// structure.
-  void collectAttributes(DIE *Die, DIEAttrs &Attrs);
+  void collectAttributes(const DIE &Die, DIEAttrs &Attrs);
 
   /// \brief Hashes the attributes in \param Attrs in order.
-  void hashAttributes(const DIEAttrs &Attrs);
+  void hashAttributes(const DIEAttrs &Attrs, dwarf::Tag Tag);
 
   /// \brief Hashes an individual attribute.
-  void hashAttribute(AttrEntry Attr);
+  void hashAttribute(AttrEntry Attr, dwarf::Tag Tag);
+
+  /// \brief Hashes an attribute that refers to another DIE.
+  void hashDIEEntry(dwarf::Attribute Attribute, dwarf::Tag Tag,
+                    const DIE &Entry);
+
+  /// \brief Hashes a reference to a named type in such a way that is
+  /// independent of whether that type is described by a declaration or a
+  /// definition.
+  void hashShallowTypeReference(dwarf::Attribute Attribute, const DIE &Entry,
+                                StringRef Name);
+
+  /// \brief Hashes a reference to a previously referenced type DIE.
+  void hashRepeatedTypeReference(dwarf::Attribute Attribute, unsigned DieNumber);
+
+  void hashNestedType(const DIE &Die, StringRef Name);
 
 private:
   MD5 Hash;
+  DenseMap<const DIE *, unsigned> Numbering;
 };
 }

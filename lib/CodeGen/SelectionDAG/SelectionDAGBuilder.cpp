@@ -1268,7 +1268,7 @@ void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
 
         for (unsigned i = 0; i < NumParts; ++i) {
           Outs.push_back(ISD::OutputArg(Flags, Parts[i].getValueType(),
-                                        /*isfixed=*/true, 0, 0));
+                                        VT, /*isfixed=*/true, 0, 0));
           OutVals.push_back(Parts[i]);
         }
       }
@@ -2448,7 +2448,7 @@ bool SelectionDAGBuilder::handleBitTestsSwitchCase(CaseRec& CR,
   MachineFunction *CurMF = FuncInfo.MF;
 
   // If target does not have legal shift left, do not emit bit tests at all.
-  if (!TLI->isOperationLegal(ISD::SHL, TLI->getPointerTy()))
+  if (!TLI->isOperationLegal(ISD::SHL, PTy))
     return false;
 
   size_t numCmps = 0;
@@ -3229,10 +3229,12 @@ void SelectionDAGBuilder::visitExtractValue(const ExtractValueInst &I) {
 }
 
 void SelectionDAGBuilder::visitGetElementPtr(const User &I) {
-  SDValue N = getValue(I.getOperand(0));
+  Value *Op0 = I.getOperand(0);
   // Note that the pointer operand may be a vector of pointers. Take the scalar
   // element which holds a pointer.
-  Type *Ty = I.getOperand(0)->getType()->getScalarType();
+  Type *Ty = Op0->getType()->getScalarType();
+  unsigned AS = Ty->getPointerAddressSpace();
+  SDValue N = getValue(Op0);
 
   for (GetElementPtrInst::const_op_iterator OI = I.op_begin()+1, E = I.op_end();
        OI != E; ++OI) {
@@ -3248,10 +3250,6 @@ void SelectionDAGBuilder::visitGetElementPtr(const User &I) {
 
       Ty = StTy->getElementType(Field);
     } else {
-      uint32_t AS = 0;
-      if (PointerType *PtrType = dyn_cast<PointerType>(Ty)) {
-        AS = PtrType->getAddressSpace();
-      }
       Ty = cast<SequentialType>(Ty)->getElementType();
 
       // If this is a constant subscript, handle it quickly.
@@ -6740,6 +6738,7 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
     for (unsigned i = 0; i != NumRegs; ++i) {
       ISD::InputArg MyFlags;
       MyFlags.VT = RegisterVT;
+      MyFlags.ArgVT = VT;
       MyFlags.Used = CLI.IsReturnValueUsed;
       if (CLI.RetSExt)
         MyFlags.Flags.setSExt();
@@ -6829,7 +6828,7 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
 
       for (unsigned j = 0; j != NumParts; ++j) {
         // if it isn't first piece, alignment must be 1
-        ISD::OutputArg MyFlags(Flags, Parts[j].getValueType(),
+        ISD::OutputArg MyFlags(Flags, Parts[j].getValueType(), VT,
                                i < CLI.NumFixedArgs,
                                i, j*Parts[j].getValueType().getStoreSize());
         if (NumParts > 1 && j == 0)
@@ -6968,7 +6967,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
     ISD::ArgFlagsTy Flags;
     Flags.setSRet();
     MVT RegisterVT = TLI->getRegisterType(*DAG.getContext(), ValueVTs[0]);
-    ISD::InputArg RetArg(Flags, RegisterVT, true, 0, 0);
+    ISD::InputArg RetArg(Flags, RegisterVT, ValueVTs[0], true, 0, 0);
     Ins.push_back(RetArg);
   }
 
@@ -6979,6 +6978,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
     SmallVector<EVT, 4> ValueVTs;
     ComputeValueVTs(*TLI, I->getType(), ValueVTs);
     bool isArgValueUsed = !I->use_empty();
+    unsigned PartBase = 0;
     for (unsigned Value = 0, NumValues = ValueVTs.size();
          Value != NumValues; ++Value) {
       EVT VT = ValueVTs[Value];
@@ -7016,8 +7016,8 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
       MVT RegisterVT = TLI->getRegisterType(*CurDAG->getContext(), VT);
       unsigned NumRegs = TLI->getNumRegisters(*CurDAG->getContext(), VT);
       for (unsigned i = 0; i != NumRegs; ++i) {
-        ISD::InputArg MyFlags(Flags, RegisterVT, isArgValueUsed,
-                              Idx-1, i*RegisterVT.getStoreSize());
+        ISD::InputArg MyFlags(Flags, RegisterVT, VT, isArgValueUsed,
+                              Idx-1, PartBase+i*RegisterVT.getStoreSize());
         if (NumRegs > 1 && i == 0)
           MyFlags.Flags.setSplit();
         // if it isn't first piece, alignment must be 1
@@ -7025,6 +7025,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
           MyFlags.Flags.setOrigAlign(1);
         Ins.push_back(MyFlags);
       }
+      PartBase += VT.getStoreSize();
     }
   }
 

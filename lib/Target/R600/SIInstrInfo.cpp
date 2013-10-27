@@ -197,15 +197,11 @@ MachineInstr *SIInstrInfo::commuteInstruction(MachineInstr *MI,
   return MI;
 }
 
-MachineInstr * SIInstrInfo::getMovImmInstr(MachineFunction *MF, unsigned DstReg,
-                                           int64_t Imm) const {
-  MachineInstr * MI = MF->CreateMachineInstr(get(AMDGPU::V_MOV_B32_e32), DebugLoc());
-  MachineInstrBuilder MIB(*MF, MI);
-  MIB.addReg(DstReg, RegState::Define);
-  MIB.addImm(Imm);
-
-  return MI;
-
+MachineInstr *SIInstrInfo::buildMovInstr(MachineBasicBlock *MBB,
+                                         MachineBasicBlock::iterator I,
+                                         unsigned DstReg,
+                                         unsigned SrcReg) const {
+  llvm_unreachable("Not Implemented");
 }
 
 bool SIInstrInfo::isMov(unsigned Opcode) const {
@@ -357,12 +353,7 @@ int SIInstrInfo::getIndirectIndexEnd(const MachineFunction &MF) const {
   llvm_unreachable("Unimplemented");
 }
 
-const TargetRegisterClass *SIInstrInfo::getIndirectAddrStoreRegClass(
-                                                     unsigned SourceReg) const {
-  llvm_unreachable("Unimplemented");
-}
-
-const TargetRegisterClass *SIInstrInfo::getIndirectAddrLoadRegClass() const {
+const TargetRegisterClass *SIInstrInfo::getIndirectAddrRegClass() const {
   llvm_unreachable("Unimplemented");
 }
 
@@ -379,9 +370,5 @@ MachineInstrBuilder SIInstrInfo::buildIndirectRead(
                                    MachineBasicBlock::iterator I,
                                    unsigned ValueReg,
                                    unsigned Address, unsigned OffsetReg) const {
-  llvm_unreachable("Unimplemented");
-}
-
-const TargetRegisterClass *SIInstrInfo::getSuperIndirectRegClass() const {
   llvm_unreachable("Unimplemented");
 }
