@@ -274,7 +274,7 @@ typedef enum {
   LLVMLinkOnceAnyLinkage, /**< Keep one copy of function when linking (inline)*/
   LLVMLinkOnceODRLinkage, /**< Same, but only replaced by something
                             equivalent. */
-  LLVMLinkOnceODRAutoHideLinkage, /**< Like LinkOnceODR, but possibly hidden. */
+  LLVMLinkOnceODRAutoHideLinkage, /**< Obsolete */
   LLVMWeakAnyLinkage,     /**< Keep one copy of function when linking (weak) */
   LLVMWeakODRLinkage,     /**< Same, but only replaced by something
                             equivalent. */
@@ -432,6 +432,13 @@ void LLVMInstallFatalErrorHandler(LLVMFatalErrorHandler Handler);
  * behavior to the default.
  */
 void LLVMResetFatalErrorHandler(void);
+
+/**
+ * Enable LLVM's built-in stack trace code. This intercepts the OS's crash
+ * signals and prints which component of LLVM you were in at the time if the
+ * crash.
+ */
+void LLVMEnablePrettyStackTrace(void);
 
 /**
  * @defgroup LLVMCCoreContext Contexts
@@ -1665,8 +1672,33 @@ const char *LLVMGetSection(LLVMValueRef Global);
 void LLVMSetSection(LLVMValueRef Global, const char *Section);
 LLVMVisibility LLVMGetVisibility(LLVMValueRef Global);
 void LLVMSetVisibility(LLVMValueRef Global, LLVMVisibility Viz);
-unsigned LLVMGetAlignment(LLVMValueRef Global);
-void LLVMSetAlignment(LLVMValueRef Global, unsigned Bytes);
+
+/**
+ * @defgroup LLVMCCoreValueWithAlignment Values with alignment
+ *
+ * Functions in this group only apply to values with alignment, i.e.
+ * global variables, load and store instructions.
+ */
+
+/**
+ * Obtain the preferred alignment of the value.
+ * @see llvm::LoadInst::getAlignment()
+ * @see llvm::StoreInst::getAlignment()
+ * @see llvm::GlobalValue::getAlignment()
+ */
+unsigned LLVMGetAlignment(LLVMValueRef V);
+
+/**
+ * Set the preferred alignment of the value.
+ * @see llvm::LoadInst::setAlignment()
+ * @see llvm::StoreInst::setAlignment()
+ * @see llvm::GlobalValue::setAlignment()
+ */
+void LLVMSetAlignment(LLVMValueRef V, unsigned Bytes);
+
+/**
+  * @}
+  */
 
 /**
  * @defgroup LLVMCoreValueConstantGlobalVariable Global Variables

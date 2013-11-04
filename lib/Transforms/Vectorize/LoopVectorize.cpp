@@ -48,6 +48,7 @@
 #include "llvm/Transforms/Vectorize.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/EquivalenceClasses.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -493,6 +494,8 @@ public:
       Pointers.clear();
       Starts.clear();
       Ends.clear();
+      IsWritePtr.clear();
+      DependencySetId.clear();
     }
 
     /// Insert a pointer and calculate the start and end SCEVs.
@@ -1067,6 +1070,31 @@ Value *InnerLoopVectorizer::getConsecutiveVector(Value* Val, int StartIdx,
   return Builder.CreateAdd(Val, Cv, "induction");
 }
 
+/// \brief Find the operand of the GEP that should be checked for consecutive
+/// stores. This ignores trailing indices that have no effect on the final
+/// pointer.
+static unsigned getGEPInductionOperand(DataLayout *DL,
+                                       const GetElementPtrInst *Gep) {
+  unsigned LastOperand = Gep->getNumOperands() - 1;
+  unsigned GEPAllocSize = DL->getTypeAllocSize(
+      cast<PointerType>(Gep->getType()->getScalarType())->getElementType());
+
+  // Walk backwards and try to peel off zeros.
+  while (LastOperand > 1 && match(Gep->getOperand(LastOperand), m_Zero())) {
+    // Find the type we're currently indexing into.
+    gep_type_iterator GEPTI = gep_type_begin(Gep);
+    std::advance(GEPTI, LastOperand - 1);
+
+    // If it's a type with the same allocation size as the result of the GEP we
+    // can peel off the zero index.
+    if (DL->getTypeAllocSize(*GEPTI) != GEPAllocSize)
+      break;
+    --LastOperand;
+  }
+
+  return LastOperand;
+}
+
 int LoopVectorizationLegality::isConsecutivePtr(Value *Ptr) {
   assert(Ptr->getType()->isPointerTy() && "Unexpected non ptr");
   // Make sure that the pointer does not point to structs.
@@ -1088,8 +1116,6 @@ int LoopVectorizationLegality::isConsecutivePtr(Value *Ptr) {
     return 0;
 
   unsigned NumOperands = Gep->getNumOperands();
-  Value *LastIndex = Gep->getOperand(NumOperands - 1);
-
   Value *GpPtr = Gep->getPointerOperand();
   // If this GEP value is a consecutive pointer induction variable and all of
   // the indices are constant then we know it is consecutive. We can
@@ -1113,14 +1139,18 @@ int LoopVectorizationLegality::isConsecutivePtr(Value *Ptr) {
       return -1;
   }
 
-  // Check that all of the gep indices are uniform except for the last.
-  for (unsigned i = 0; i < NumOperands - 1; ++i)
-    if (!SE->isLoopInvariant(SE->getSCEV(Gep->getOperand(i)), TheLoop))
+  unsigned InductionOperand = getGEPInductionOperand(DL, Gep);
+
+  // Check that all of the gep indices are uniform except for our induction
+  // operand.
+  for (unsigned i = 0; i != NumOperands; ++i)
+    if (i != InductionOperand &&
+        !SE->isLoopInvariant(SE->getSCEV(Gep->getOperand(i)), TheLoop))
       return 0;
 
-  // We can emit wide load/stores only if the last index is the induction
-  // variable.
-  const SCEV *Last = SE->getSCEV(LastIndex);
+  // We can emit wide load/stores only if the last non-zero index is the
+  // induction variable.
+  const SCEV *Last = SE->getSCEV(Gep->getOperand(InductionOperand));
   if (const SCEVAddRecExpr *AR = dyn_cast<SCEVAddRecExpr>(Last)) {
     const SCEV *Step = AR->getStepRecurrence(*SE);
 
@@ -1217,7 +1247,7 @@ void InnerLoopVectorizer::vectorizeMemoryInstruction(Instruction *Instr,
     // The last index does not have to be the induction. It can be
     // consecutive and be a function of the index. For example A[I+1];
     unsigned NumOperands = Gep->getNumOperands();
-    unsigned LastOperand = NumOperands - 1;
+    unsigned InductionOperand = getGEPInductionOperand(DL, Gep);
     // Create the new GEP with the new induction variable.
     GetElementPtrInst *Gep2 = cast<GetElementPtrInst>(Gep->clone());
 
@@ -1226,9 +1256,9 @@ void InnerLoopVectorizer::vectorizeMemoryInstruction(Instruction *Instr,
       Instruction *GepOperandInst = dyn_cast<Instruction>(GepOperand);
 
       // Update last index or loop invariant instruction anchored in loop.
-      if (i == LastOperand ||
+      if (i == InductionOperand ||
           (GepOperandInst && OrigLoop->contains(GepOperandInst))) {
-        assert((i == LastOperand ||
+        assert((i == InductionOperand ||
                SE->isLoopInvariant(SE->getSCEV(GepOperandInst), OrigLoop)) &&
                "Must be last index or loop invariant");
 
@@ -2026,6 +2056,54 @@ Value *createMinMaxOp(IRBuilder<> &Builder,
   return Select;
 }
 
+namespace {
+struct CSEDenseMapInfo {
+  static bool canHandle(Instruction *I) {
+    return isa<InsertElementInst>(I) || isa<ExtractElementInst>(I) ||
+           isa<ShuffleVectorInst>(I) || isa<GetElementPtrInst>(I);
+  }
+  static inline Instruction *getEmptyKey() {
+    return DenseMapInfo<Instruction *>::getEmptyKey();
+  }
+  static inline Instruction *getTombstoneKey() {
+    return DenseMapInfo<Instruction *>::getTombstoneKey();
+  }
+  static unsigned getHashValue(Instruction *I) {
+    assert(canHandle(I) && "Unknown instruction!");
+    return hash_combine(I->getOpcode(), hash_combine_range(I->value_op_begin(),
+                                                           I->value_op_end()));
+  }
+  static bool isEqual(Instruction *LHS, Instruction *RHS) {
+    if (LHS == getEmptyKey() || RHS == getEmptyKey() ||
+        LHS == getTombstoneKey() || RHS == getTombstoneKey())
+      return LHS == RHS;
+    return LHS->isIdenticalTo(RHS);
+  }
+};
+}
+
+///\brief Perform cse of induction variable instructions.
+static void cse(BasicBlock *BB) {
+  // Perform simple cse.
+  SmallDenseMap<Instruction *, Instruction *, 4, CSEDenseMapInfo> CSEMap;
+  for (BasicBlock::iterator I = BB->begin(), E = BB->end(); I != E;) {
+    Instruction *In = I++;
+
+    if (!CSEDenseMapInfo::canHandle(In))
+      continue;
+
+    // Check if we can replace this instruction with any of the
+    // visited instructions.
+    if (Instruction *V = CSEMap.lookup(In)) {
+      In->replaceAllUsesWith(V);
+      In->eraseFromParent();
+      continue;
+    }
+
+    CSEMap[In] = In;
+  }
+}
+
 void
 InnerLoopVectorizer::vectorizeLoop(LoopVectorizationLegality *Legal) {
   //===------------------------------------------------===//
@@ -2243,8 +2321,11 @@ InnerLoopVectorizer::vectorizeLoop(LoopVectorizationLegality *Legal) {
     (RdxPhi)->setIncomingValue(SelfEdgeBlockIdx, ReducedPartRdx);
     (RdxPhi)->setIncomingValue(IncomingEdgeBlockIdx, RdxDesc.LoopExitInstr);
   }// end of for each redux variable.
- 
+
   fixLCSSAPHIs();
+
+  // Remove redundant induction instructions.
+  cse(LoopVectorBody);
 }
 
 void InnerLoopVectorizer::fixLCSSAPHIs() {
@@ -3059,7 +3140,7 @@ public:
   /// non-intersection.
   bool canCheckPtrAtRT(LoopVectorizationLegality::RuntimePointerCheck &RtCheck,
                        unsigned &NumComparisons, ScalarEvolution *SE,
-                       Loop *TheLoop);
+                       Loop *TheLoop, bool ShouldCheckStride = false);
 
   /// \brief Goes over all memory accesses, checks whether a RT check is needed
   /// and builds sets of dependent accesses.
@@ -3073,6 +3154,7 @@ public:
   bool isRTCheckNeeded() { return IsRTCheckNeeded; }
 
   bool isDependencyCheckNeeded() { return !CheckDeps.empty(); }
+  void resetDepChecks() { CheckDeps.clear(); }
 
   MemAccessInfoSet &getDependenciesToCheck() { return CheckDeps; }
 
@@ -3127,10 +3209,15 @@ static bool hasComputableBounds(ScalarEvolution *SE, Value *Ptr) {
   return AR->isAffine();
 }
 
+/// \brief Check the stride of the pointer and ensure that it does not wrap in
+/// the address space.
+static int isStridedPtr(ScalarEvolution *SE, DataLayout *DL, Value *Ptr,
+                        const Loop *Lp);
+
 bool AccessAnalysis::canCheckPtrAtRT(
                        LoopVectorizationLegality::RuntimePointerCheck &RtCheck,
                         unsigned &NumComparisons, ScalarEvolution *SE,
-                        Loop *TheLoop) {
+                        Loop *TheLoop, bool ShouldCheckStride) {
   // Find pointers with computable bounds. We are going to use this information
   // to place a runtime bound check.
   unsigned NumReadPtrChecks = 0;
@@ -3158,7 +3245,10 @@ bool AccessAnalysis::canCheckPtrAtRT(
     else
       ++NumReadPtrChecks;
 
-    if (hasComputableBounds(SE, Ptr)) {
+    if (hasComputableBounds(SE, Ptr) &&
+        // When we run after a failing dependency check we have to make sure we
+        // don't have wrapping pointers.
+        (!ShouldCheckStride || isStridedPtr(SE, DL, Ptr, TheLoop) == 1)) {
       // The id of the dependence set.
       unsigned DepId;
 
@@ -3340,8 +3430,9 @@ public:
   typedef PointerIntPair<Value *, 1, bool> MemAccessInfo;
   typedef SmallPtrSet<MemAccessInfo, 8> MemAccessInfoSet;
 
-  MemoryDepChecker(ScalarEvolution *Se, DataLayout *Dl, const Loop *L) :
-    SE(Se), DL(Dl), InnermostLoop(L), AccessIdx(0) {}
+  MemoryDepChecker(ScalarEvolution *Se, DataLayout *Dl, const Loop *L)
+      : SE(Se), DL(Dl), InnermostLoop(L), AccessIdx(0),
+        ShouldRetryWithRuntimeCheck(false) {}
 
   /// \brief Register the location (instructions are given increasing numbers)
   /// of a write access.
@@ -3371,6 +3462,10 @@ public:
   /// the accesses safely with.
   unsigned getMaxSafeDepDistBytes() { return MaxSafeDepDistBytes; }
 
+  /// \brief In same cases when the dependency check fails we can still
+  /// vectorize the loop with a dynamic array access check.
+  bool shouldRetryWithRuntimeCheck() { return ShouldRetryWithRuntimeCheck; }
+
 private:
   ScalarEvolution *SE;
   DataLayout *DL;
@@ -3387,6 +3482,10 @@ private:
 
   // We can access this many bytes in parallel safely.
   unsigned MaxSafeDepDistBytes;
+
+  /// \brief If we see a non constant dependence distance we can still try to
+  /// vectorize this loop with runtime checks.
+  bool ShouldRetryWithRuntimeCheck;
 
   /// \brief Check whether there is a plausible dependence between the two
   /// accesses.
@@ -3585,6 +3684,7 @@ bool MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
   const SCEVConstant *C = dyn_cast<SCEVConstant>(Dist);
   if (!C) {
     DEBUG(dbgs() << "LV: Dependence because of non constant distance\n");
+    ShouldRetryWithRuntimeCheck = true;
     return true;
   }
 
@@ -3874,6 +3974,29 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
     CanVecMem = DepChecker.areDepsSafe(DependentAccesses,
                                        Accesses.getDependenciesToCheck());
     MaxSafeDepDistBytes = DepChecker.getMaxSafeDepDistBytes();
+
+    if (!CanVecMem && DepChecker.shouldRetryWithRuntimeCheck()) {
+      DEBUG(dbgs() << "LV: Retrying with memory checks\n");
+      NeedRTCheck = true;
+
+      // Clear the dependency checks. We assume they are not needed.
+      Accesses.resetDepChecks();
+
+      PtrRtCheck.reset();
+      PtrRtCheck.Need = true;
+
+      CanDoRT = Accesses.canCheckPtrAtRT(PtrRtCheck, NumComparisons, SE,
+                                         TheLoop, true);
+      // Check that we did not collect too many pointers or found an unsizeable
+      // pointer.
+      if (!CanDoRT || NumComparisons > RuntimeMemoryCheckThreshold) {
+        DEBUG(dbgs() << "LV: Can't vectorize with memory checks\n");
+        PtrRtCheck.reset();
+        return false;
+      }
+
+      CanVecMem = true;
+    }
   }
 
   DEBUG(dbgs() << "LV: We" << (NeedRTCheck ? "" : " don't") <<

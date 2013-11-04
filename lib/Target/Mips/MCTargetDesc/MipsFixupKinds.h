@@ -128,6 +128,9 @@ namespace Mips {
     // resulting in - R_MIPS_CALL_LO16
     fixup_Mips_CALL_LO16,
 
+    // resulting in - R_MICROMIPS_26_S1
+    fixup_MICROMIPS_26_S1,
+
     // resulting in - R_MICROMIPS_HI16
     fixup_MICROMIPS_HI16,
 
@@ -136,6 +139,9 @@ namespace Mips {
 
     // resulting in - R_MICROMIPS_GOT16
     fixup_MICROMIPS_GOT16,
+
+    // resulting in - R_MICROMIPS_PC16_S1
+    fixup_MICROMIPS_PC16_S1,
 
     // resulting in - R_MICROMIPS_CALL16
     fixup_MICROMIPS_CALL16,

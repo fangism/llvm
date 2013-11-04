@@ -12,6 +12,20 @@ def mem_mm_12 : Operand<i32> {
   let OperandType = "OPERAND_MEMORY";
 }
 
+def jmptarget_mm : Operand<OtherVT> {
+  let EncoderMethod = "getJumpTargetOpValueMM";
+}
+
+def calltarget_mm : Operand<iPTR> {
+  let EncoderMethod = "getJumpTargetOpValueMM";
+}
+
+def brtarget_mm : Operand<OtherVT> {
+  let EncoderMethod = "getBranchTargetOpValueMM";
+  let OperandType   = "OPERAND_PCREL";
+  let DecoderMethod = "DecodeBranchTargetMM";
+}
+
 let canFoldAsLoad = 1 in
 class LoadLeftRightMM<string opstr, SDNode OpNode, RegisterOperand RO,
                       Operand MemOpnd> :
@@ -155,4 +169,36 @@ let DecoderNamespace = "MicroMips", Predicates = [InMicroMips] in {
                EXT_FM_MM<0x2c>;
   def INS_MM : MMRel, InsBase<"ins", GPR32Opnd, uimm5, MipsIns>,
                EXT_FM_MM<0x0c>;
+
+  /// Jump Instructions
+  let DecoderMethod = "DecodeJumpTargetMM" in {
+    def J_MM        : MMRel, JumpFJ<jmptarget_mm, "j", br, bb, "j">,
+                      J_FM_MM<0x35>;
+    def JAL_MM      : MMRel, JumpLink<"jal", calltarget_mm>, J_FM_MM<0x3d>;
+    def TAILCALL_MM : MMRel, JumpFJ<calltarget_mm, "j", MipsTailCall, imm,
+                                    "tcall">, J_FM_MM<0x3d>, IsTailCall;
+  }
+  def JR_MM   : MMRel, IndirectBranch<"jr", GPR32Opnd>, JR_FM_MM<0x3c>;
+  def JALR_MM : MMRel, JumpLinkReg<"jalr", GPR32Opnd>, JALR_FM_MM<0x03c>;
+  def TAILCALL_R_MM : MMRel, JumpFR<"tcallr", GPR32Opnd, MipsTailCall>,
+                      JR_FM_MM<0x3c>, IsTailCall;
+  def RET_MM : MMRel, RetBase<"ret", GPR32Opnd>, JR_FM_MM<0x3c>;
+
+  /// Branch Instructions
+  def BEQ_MM  : MMRel, CBranch<"beq", brtarget_mm, seteq, GPR32Opnd>,
+                BEQ_FM_MM<0x25>;
+  def BNE_MM  : MMRel, CBranch<"bne", brtarget_mm, setne, GPR32Opnd>,
+                BEQ_FM_MM<0x2d>;
+  def BGEZ_MM : MMRel, CBranchZero<"bgez", brtarget_mm, setge, GPR32Opnd>,
+                BGEZ_FM_MM<0x2>;
+  def BGTZ_MM : MMRel, CBranchZero<"bgtz", brtarget_mm, setgt, GPR32Opnd>,
+                BGEZ_FM_MM<0x6>;
+  def BLEZ_MM : MMRel, CBranchZero<"blez", brtarget_mm, setle, GPR32Opnd>,
+                BGEZ_FM_MM<0x4>;
+  def BLTZ_MM : MMRel, CBranchZero<"bltz", brtarget_mm, setlt, GPR32Opnd>,
+                BGEZ_FM_MM<0x0>;
+  def BGEZAL_MM : MMRel, BGEZAL_FT<"bgezal", brtarget_mm, GPR32Opnd>,
+                  BGEZAL_FM_MM<0x03>;
+  def BLTZAL_MM : MMRel, BGEZAL_FT<"bltzal", brtarget_mm, GPR32Opnd>,
+                  BGEZAL_FM_MM<0x01>;
 }

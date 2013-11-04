@@ -267,13 +267,6 @@ linkage:
     ``linkonce_odr`` and ``weak_odr`` linkage types to indicate that the
     global will only be merged with equivalent globals. These linkage
     types are otherwise the same as their non-``odr`` versions.
-``linkonce_odr_auto_hide``
-    Similar to "``linkonce_odr``", but nothing in the translation unit
-    takes the address of this definition. For instance, functions that
-    had an inline definition, but the compiler decided not to inline it.
-    ``linkonce_odr_auto_hide`` may have only ``default`` visibility. The
-    symbols are removed by the linker from the final linked image
-    (executable or dynamic library).
 ``external``
     If none of the above identifiers are used, the global is externally
     visible, meaning that it participates in linkage and can be used to
@@ -445,9 +438,13 @@ Global Variables
 ----------------
 
 Global variables define regions of memory allocated at compilation time
-instead of run-time. Global variables may optionally be initialized, may
-have an explicit section to be placed in, and may have an optional
-explicit alignment specified.
+instead of run-time.
+
+Global variables definitions must be initialized, may have an explicit section
+to be placed in, and may have an optional explicit alignment specified.
+
+Global variables in other translation units can also be declared, in which
+case they don't have an initializer.
 
 A variable may be defined as ``thread_local``, which means that it will
 not be shared by threads (each thread will have a separated copy of the
@@ -528,6 +525,12 @@ with an initializer, section, and alignment:
 .. code-block:: llvm
 
     @G = addrspace(5) constant float 1.0, section "foo", align 4
+
+The following example just declares a global variable
+
+.. code-block:: llvm
+
+   @G = external global i32
 
 The following example defines a thread-local global with the
 ``initialexec`` TLS model:
@@ -612,9 +615,9 @@ Syntax::
 
 The linkage must be one of ``private``, ``linker_private``,
 ``linker_private_weak``, ``internal``, ``linkonce``, ``weak``,
-``linkonce_odr``, ``weak_odr``, ``linkonce_odr_auto_hide``, ``external``. Note
-that some system linkers might not correctly handle dropping a weak symbol that
-is aliased by a non weak alias.
+``linkonce_odr``, ``weak_odr``, ``external``. Note that some system linkers
+might not correctly handle dropping a weak symbol that is aliased by a non weak
+alias.
 
 .. _namedmetadatastructure:
 
@@ -887,7 +890,7 @@ example:
 ``minsize``
     This attribute suggests that optimization passes and code generator
     passes make choices that keep the code size of this function as small
-    as possible and perform optimizations that may sacrifice runtime 
+    as possible and perform optimizations that may sacrifice runtime
     performance in order to minimize the size of the generated code.
 ``naked``
     This attribute disables prologue / epilogue emission for the
@@ -932,12 +935,12 @@ example:
     unwind, its runtime behavior is undefined.
 ``optnone``
     This function attribute indicates that the function is not optimized
-    by any optimization or code generator passes with the 
+    by any optimization or code generator passes with the
     exception of interprocedural optimization passes.
     This attribute cannot be used together with the ``alwaysinline``
     attribute; this attribute is also incompatible
     with the ``minsize`` attribute and the ``optsize`` attribute.
-    
+
     The inliner should never inline this function in any situation.
     Only functions with the ``alwaysinline`` attribute are valid
     candidates for inlining inside the body of this function.
@@ -955,7 +958,7 @@ example:
     (including ``byval`` arguments) and never changes any state visible
     to callers. This means that it cannot unwind exceptions by calling
     the ``C++`` exception throwing methods.
-    
+
     On an argument, this attribute indicates that the function does not
     dereference that pointer argument, even though it may read or write the
     memory that the pointer points to if accessed through other pointers.
@@ -969,7 +972,7 @@ example:
     called with the same set of arguments and global state. It cannot
     unwind an exception by calling the ``C++`` exception throwing
     methods.
-    
+
     On an argument, this attribute indicates that the function does not write
     through this pointer argument, even though it may write to the memory that
     the pointer points to.
@@ -8808,7 +8811,7 @@ level without an intrinsic, one would need to create additional basic blocks to
 handle the success/failure cases. This makes it difficult to stop the stack
 protector check from disrupting sibling tail calls in Codegen. With this
 intrinsic, we are able to generate the stack protector basic blocks late in
-codegen after the tail call decision has occured.
+codegen after the tail call decision has occurred.
 
 '``llvm.objectsize``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

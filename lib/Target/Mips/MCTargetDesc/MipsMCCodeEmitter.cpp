@@ -84,11 +84,23 @@ public:
    unsigned getJumpTargetOpValue(const MCInst &MI, unsigned OpNo,
                                  SmallVectorImpl<MCFixup> &Fixups) const;
 
+  // getBranchJumpOpValueMM - Return binary encoding of the microMIPS jump
+  // target operand. If the machine operand requires relocation,
+  // record the relocation and return zero.
+  unsigned getJumpTargetOpValueMM(const MCInst &MI, unsigned OpNo,
+                                  SmallVectorImpl<MCFixup> &Fixups) const;
+
    // getBranchTargetOpValue - Return binary encoding of the branch
    // target operand. If the machine operand requires relocation,
    // record the relocation and return zero.
   unsigned getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
                                   SmallVectorImpl<MCFixup> &Fixups) const;
+
+  // getBranchTargetOpValue - Return binary encoding of the microMIPS branch
+  // target operand. If the machine operand requires relocation,
+  // record the relocation and return zero.
+  unsigned getBranchTargetOpValueMM(const MCInst &MI, unsigned OpNo,
+                                    SmallVectorImpl<MCFixup> &Fixups) const;
 
    // getMachineOpValue - Return binary encoding of operand. If the machin
    // operand requires relocation, record the relocation and return zero.
@@ -270,6 +282,28 @@ getBranchTargetOpValue(const MCInst &MI, unsigned OpNo,
   return 0;
 }
 
+/// getBranchTargetOpValue - Return binary encoding of the microMIPS branch
+/// target operand. If the machine operand requires relocation,
+/// record the relocation and return zero.
+unsigned MipsMCCodeEmitter::
+getBranchTargetOpValueMM(const MCInst &MI, unsigned OpNo,
+                         SmallVectorImpl<MCFixup> &Fixups) const {
+
+  const MCOperand &MO = MI.getOperand(OpNo);
+
+  // If the destination is an immediate, divide by 2.
+  if (MO.isImm()) return MO.getImm() >> 1;
+
+  assert(MO.isExpr() &&
+         "getBranchTargetOpValueMM expects only expressions or immediates");
+
+  const MCExpr *Expr = MO.getExpr();
+  Fixups.push_back(MCFixup::Create(0, Expr,
+                   MCFixupKind(Mips::
+                               fixup_MICROMIPS_PC16_S1)));
+  return 0;
+}
+
 /// getJumpTargetOpValue - Return binary encoding of the jump
 /// target operand. If the machine operand requires relocation,
 /// record the relocation and return zero.
@@ -287,6 +321,23 @@ getJumpTargetOpValue(const MCInst &MI, unsigned OpNo,
   const MCExpr *Expr = MO.getExpr();
   Fixups.push_back(MCFixup::Create(0, Expr,
                                    MCFixupKind(Mips::fixup_Mips_26)));
+  return 0;
+}
+
+unsigned MipsMCCodeEmitter::
+getJumpTargetOpValueMM(const MCInst &MI, unsigned OpNo,
+                       SmallVectorImpl<MCFixup> &Fixups) const {
+
+  const MCOperand &MO = MI.getOperand(OpNo);
+  // If the destination is an immediate, divide by 2.
+  if (MO.isImm()) return MO.getImm() >> 1;
+
+  assert(MO.isExpr() &&
+         "getJumpTargetOpValueMM expects only expressions or an immediate");
+
+  const MCExpr *Expr = MO.getExpr();
+  Fixups.push_back(MCFixup::Create(0, Expr,
+                                   MCFixupKind(Mips::fixup_MICROMIPS_26_S1)));
   return 0;
 }
 

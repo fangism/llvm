@@ -206,14 +206,6 @@ static bool CanReuseExtract(ArrayRef<Value *> VL) {
   return true;
 }
 
-static bool all_equal(SmallVectorImpl<Value *> &V) {
-  Value *First = V[0];
-  for (int i = 1, e = V.size(); i != e; ++i)
-    if (V[i] != First)
-      return false;
-  return true;
-}
-
 static void reorderInputsAccordingToOpcode(ArrayRef<Value *> VL,
                                            SmallVectorImpl<Value *> &Left,
                                            SmallVectorImpl<Value *> &Right) {
@@ -301,8 +293,8 @@ static void reorderInputsAccordingToOpcode(ArrayRef<Value *> VL,
     Right.push_back(V1);
   }
 
-  bool LeftBroadcast = all_equal(Left);
-  bool RightBroadcast = all_equal(Right);
+  bool LeftBroadcast = isSplat(Left);
+  bool RightBroadcast = isSplat(Right);
 
   // Don't reorder if the operands where good to begin with.
   if (!(LeftBroadcast || RightBroadcast) &&
@@ -1013,9 +1005,24 @@ int BoUpSLP::getEntryCost(TreeEntry *E) {
         TTI->getCmpSelInstrCost(Opcode, ScalarTy, Builder.getInt1Ty());
         VecCost = TTI->getCmpSelInstrCost(Opcode, VecTy, MaskTy);
       } else {
-        ScalarCost = VecTy->getNumElements() *
-        TTI->getArithmeticInstrCost(Opcode, ScalarTy);
-        VecCost = TTI->getArithmeticInstrCost(Opcode, VecTy);
+        // Certain instructions can be cheaper to vectorize if they have a
+        // constant second vector operand.
+        TargetTransformInfo::OperandValueKind Op1VK =
+            TargetTransformInfo::OK_AnyValue;
+        TargetTransformInfo::OperandValueKind Op2VK =
+            TargetTransformInfo::OK_UniformConstantValue;
+
+        // Check whether all second operands are constant.
+        for (unsigned i = 0; i < VL.size(); ++i)
+          if (!isa<ConstantInt>(cast<Instruction>(VL[i])->getOperand(1))) {
+            Op2VK = TargetTransformInfo::OK_AnyValue;
+            break;
+          }
+
+        ScalarCost =
+            VecTy->getNumElements() *
+            TTI->getArithmeticInstrCost(Opcode, ScalarTy, Op1VK, Op2VK);
+        VecCost = TTI->getArithmeticInstrCost(Opcode, VecTy, Op1VK, Op2VK);
       }
       return VecCost - ScalarCost;
     }
@@ -1023,14 +1030,14 @@ int BoUpSLP::getEntryCost(TreeEntry *E) {
       // Cost of wide load - cost of scalar loads.
       int ScalarLdCost = VecTy->getNumElements() *
       TTI->getMemoryOpCost(Instruction::Load, ScalarTy, 1, 0);
-      int VecLdCost = TTI->getMemoryOpCost(Instruction::Load, ScalarTy, 1, 0);
+      int VecLdCost = TTI->getMemoryOpCost(Instruction::Load, VecTy, 1, 0);
       return VecLdCost - ScalarLdCost;
     }
     case Instruction::Store: {
       // We know that we can merge the stores. Calculate the cost.
       int ScalarStCost = VecTy->getNumElements() *
       TTI->getMemoryOpCost(Instruction::Store, ScalarTy, 1, 0);
-      int VecStCost = TTI->getMemoryOpCost(Instruction::Store, ScalarTy, 1, 0);
+      int VecStCost = TTI->getMemoryOpCost(Instruction::Store, VecTy, 1, 0);
       return VecStCost - ScalarStCost;
     }
     default:
@@ -1613,9 +1620,22 @@ Value *BoUpSLP::vectorizeTree() {
   return VectorizableTree[0].VectorizedValue;
 }
 
+class DTCmp {
+  const DominatorTree *DT;
+
+public:
+  DTCmp(const DominatorTree *DT) : DT(DT) {}
+  bool operator()(const BasicBlock *A, const BasicBlock *B) const {
+    return DT->dominates(A, B);
+  }
+};
+
 void BoUpSLP::optimizeGatherSequence() {
   DEBUG(dbgs() << "SLP: Optimizing " << GatherSeq.size()
         << " gather sequences instructions.\n");
+  // Keep a list of visited BBs to run CSE on. It is typically small.
+  SmallPtrSet<BasicBlock *, 4> VisitedBBs;
+  SmallVector<BasicBlock *, 4> CSEWorkList;
   // LICM InsertElementInst sequences.
   for (SetVector<Instruction *>::iterator it = GatherSeq.begin(),
        e = GatherSeq.end(); it != e; ++it) {
@@ -1623,6 +1643,9 @@ void BoUpSLP::optimizeGatherSequence() {
 
     if (!Insert)
       continue;
+
+    if (VisitedBBs.insert(Insert->getParent()))
+      CSEWorkList.push_back(Insert->getParent());
 
     // Check if this block is inside a loop.
     Loop *L = LI->getLoopFor(Insert->getParent());
@@ -1648,44 +1671,45 @@ void BoUpSLP::optimizeGatherSequence() {
     Insert->moveBefore(PreHeader->getTerminator());
   }
 
+  // Sort blocks by domination. This ensures we visit a block after all blocks
+  // dominating it are visited.
+  std::stable_sort(CSEWorkList.begin(), CSEWorkList.end(), DTCmp(DT));
+
   // Perform O(N^2) search over the gather sequences and merge identical
   // instructions. TODO: We can further optimize this scan if we split the
   // instructions into different buckets based on the insert lane.
-  SmallPtrSet<Instruction*, 16> Visited;
-  SmallVector<Instruction*, 16> ToRemove;
-  ReversePostOrderTraversal<Function*> RPOT(F);
-  for (ReversePostOrderTraversal<Function*>::rpo_iterator I = RPOT.begin(),
-       E = RPOT.end(); I != E; ++I) {
+  SmallVector<Instruction *, 16> Visited;
+  for (SmallVectorImpl<BasicBlock *>::iterator I = CSEWorkList.begin(),
+                                               E = CSEWorkList.end();
+       I != E; ++I) {
+    assert((I == CSEWorkList.begin() || !DT->dominates(*I, *llvm::prior(I))) &&
+           "Worklist not sorted properly!");
     BasicBlock *BB = *I;
-    // For all instructions in the function:
-    for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e; ++it) {
-      Instruction *In = it;
+    // For all instructions in blocks containing gather sequences:
+    for (BasicBlock::iterator it = BB->begin(), e = BB->end(); it != e;) {
+      Instruction *In = it++;
       if ((!isa<InsertElementInst>(In) && !isa<ExtractElementInst>(In)) ||
           !GatherSeq.count(In))
         continue;
 
       // Check if we can replace this instruction with any of the
       // visited instructions.
-      for (SmallPtrSet<Instruction*, 16>::iterator v = Visited.begin(),
-           ve = Visited.end(); v != ve; ++v) {
+      for (SmallVectorImpl<Instruction *>::iterator v = Visited.begin(),
+                                                    ve = Visited.end();
+           v != ve; ++v) {
         if (In->isIdenticalTo(*v) &&
             DT->dominates((*v)->getParent(), In->getParent())) {
           In->replaceAllUsesWith(*v);
-          ToRemove.push_back(In);
+          In->eraseFromParent();
           In = 0;
           break;
         }
       }
-      if (In)
-        Visited.insert(In);
+      if (In) {
+        assert(std::find(Visited.begin(), Visited.end(), In) == Visited.end());
+        Visited.push_back(In);
+      }
     }
-  }
-
-  // Erase all of the instructions that we RAUWed.
-  for (SmallVectorImpl<Instruction *>::iterator v = ToRemove.begin(),
-       ve = ToRemove.end(); v != ve; ++v) {
-    assert((*v)->getNumUses() == 0 && "Can't remove instructions with uses");
-    (*v)->eraseFromParent();
   }
 }
 

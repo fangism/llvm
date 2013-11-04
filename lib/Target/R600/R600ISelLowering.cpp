@@ -1211,9 +1211,9 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
   int ConstantBlock = ConstantAddressBlock(LoadNode->getAddressSpace());
   if (ConstantBlock > -1 && LoadNode->getExtensionType() != ISD::SEXTLOAD) {
     SDValue Result;
-    if (dyn_cast<ConstantExpr>(LoadNode->getSrcValue()) ||
-        dyn_cast<Constant>(LoadNode->getSrcValue()) ||
-        dyn_cast<ConstantSDNode>(Ptr)) {
+    if (isa<ConstantExpr>(LoadNode->getSrcValue()) ||
+        isa<Constant>(LoadNode->getSrcValue()) ||
+        isa<ConstantSDNode>(Ptr)) {
       SDValue Slots[4];
       for (unsigned i = 0; i < 4; i++) {
         // We want Const position encoded with the following formula :
@@ -1253,13 +1253,13 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
     return DAG.getMergeValues(MergedValues, 2, DL);
   }
 
-  // For most operations returning SDValue() will result int he node being
-  // expanded by the DAG Legalizer.  This is not the case for ISD::LOAD, so
-  // we need to manually expand loads that may be legal in some address spaces
-  // and illegal in others.  SEXT loads from CONSTANT_BUFFER_0 are supported
-  // for compute shaders, since the data is sign extended when it is uploaded
-  // to the buffer.  Howerver SEXT loads from other addresspaces are not
-  // supported, so we need to expand them here.
+  // For most operations returning SDValue() will result in the node being
+  // expanded by the DAG Legalizer. This is not the case for ISD::LOAD, so we
+  // need to manually expand loads that may be legal in some address spaces and
+  // illegal in others. SEXT loads from CONSTANT_BUFFER_0 are supported for
+  // compute shaders, since the data is sign extended when it is uploaded to the
+  // buffer. However SEXT loads from other address spaces are not supported, so
+  // we need to expand them here.
   if (LoadNode->getExtensionType() == ISD::SEXTLOAD) {
     EVT MemVT = LoadNode->getMemoryVT();
     assert(!MemVT.isVector() && (MemVT == MVT::i16 || MemVT == MVT::i8));
@@ -1525,8 +1525,8 @@ SDValue R600TargetLowering::PerformDAGCombine(SDNode *N,
     break;
   }
 
-  // insert_vector_elt (build_vector elt0, …, eltN), NewEltIdx, idx
-  // => build_vector elt0, …, NewEltIdx, …, eltN
+  // insert_vector_elt (build_vector elt0, ... , eltN), NewEltIdx, idx
+  // => build_vector elt0, ... , NewEltIdx, ... , eltN
   case ISD::INSERT_VECTOR_ELT: {
     SDValue InVec = N->getOperand(0);
     SDValue InVal = N->getOperand(1);
@@ -1834,7 +1834,7 @@ SDNode *R600TargetLowering::PostISelFolding(MachineSDNode *Node,
   std::vector<SDValue> Ops;
   for(SDNode::op_iterator I = Node->op_begin(), E = Node->op_end();
               I != E; ++I)
-	  Ops.push_back(*I);
+          Ops.push_back(*I);
 
   if (Opcode == AMDGPU::DOT_4) {
     int OperandIdx[] = {
@@ -1846,7 +1846,7 @@ SDNode *R600TargetLowering::PostISelFolding(MachineSDNode *Node,
       TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_Y),
       TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_Z),
       TII->getOperandIdx(Opcode, AMDGPU::OpName::src1_W)
-	};
+        };
     int NegIdx[] = {
       TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_neg_X),
       TII->getOperandIdx(Opcode, AMDGPU::OpName::src0_neg_Y),
@@ -1899,7 +1899,7 @@ SDNode *R600TargetLowering::PostISelFolding(MachineSDNode *Node,
     std::vector<SDValue> Ops;
     unsigned NumOp = Src.getNumOperands();
     for(unsigned i = 0; i < NumOp; ++i)
-  	  Ops.push_back(Src.getOperand(i));
+          Ops.push_back(Src.getOperand(i));
     Ops[ClampIdx - 1] = DAG.getTargetConstant(1, MVT::i32);
     return DAG.getMachineNode(Src.getMachineOpcode(), SDLoc(Node),
         Node->getVTList(), Ops);

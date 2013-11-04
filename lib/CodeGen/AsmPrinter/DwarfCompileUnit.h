@@ -120,6 +120,9 @@ public:
     return AccelTypes;
   }
 
+  unsigned getDebugInfoOffset() const { return DebugInfoOffset; }
+  void setDebugInfoOffset(unsigned DbgInfoOff) { DebugInfoOffset = DbgInfoOff; }
+
   /// hasContent - Return true if this compile unit has something to write out.
   ///
   bool hasContent() const { return !CUDie->getChildren().empty(); }
@@ -152,15 +155,19 @@ public:
   void addAccelType(StringRef Name, std::pair<DIE *, unsigned> Die);
 
   /// getDIE - Returns the debug information entry map slot for the
-  /// specified debug variable.
-  DIE *getDIE(const MDNode *N) const { return MDNodeToDieMap.lookup(N); }
+  /// specified debug variable. We delegate the request to DwarfDebug
+  /// when the MDNode can be part of the type system, since DIEs for
+  /// the type system can be shared across CUs and the mappings are
+  /// kept in DwarfDebug.
+  DIE *getDIE(const MDNode *N) const;
 
   DIEBlock *getDIEBlock() { return new (DIEValueAllocator) DIEBlock(); }
 
-  /// insertDIE - Insert DIE into the map.
-  void insertDIE(const MDNode *N, DIE *D) {
-    MDNodeToDieMap.insert(std::make_pair(N, D));
-  }
+  /// insertDIE - Insert DIE into the map. We delegate the request to DwarfDebug
+  /// when the MDNode can be part of the type system, since DIEs for
+  /// the type system can be shared across CUs and the mappings are
+  /// kept in DwarfDebug.
+  void insertDIE(const MDNode *N, DIE *D);
 
   /// addDie - Adds or interns the DIE to the compile unit.
   ///
@@ -221,6 +228,10 @@ public:
   ///
   void addDIEEntry(DIE *Die, dwarf::Attribute Attribute, DIE *Entry);
 
+  /// addDIEEntry - Add a DIE attribute data and value.
+  ///
+  void addDIEEntry(DIE *Die, dwarf::Attribute Attribute, DIEEntry *Entry);
+
   /// addBlock - Add block data.
   ///
   void addBlock(DIE *Die, dwarf::Attribute Attribute, DIEBlock *Block);
@@ -280,9 +291,6 @@ public:
   void addVariableAddress(const DbgVariable &DV, DIE *Die,
                           MachineLocation Location);
 
-  /// addToContextOwner - Add Die into the list of its context owner's children.
-  void addToContextOwner(DIE *Die, DIScope Context);
-
   /// addType - Add a new type attribute to the specified entity. This takes
   /// and attribute parameter because DW_AT_friend attributes are also
   /// type references.
@@ -310,6 +318,21 @@ public:
 
   /// constructVariableDIE - Construct a DIE for the given DbgVariable.
   DIE *constructVariableDIE(DbgVariable *DV, bool isScopeAbstract);
+
+  /// Create a DIE with the given Tag, add the DIE to its parent, and
+  /// call insertDIE if MD is not null.
+  DIE *createAndAddDIE(unsigned Tag, DIE &Parent, const MDNode *MD = NULL);
+
+  /// Compute the size of a header for this unit, not including the initial
+  /// length field.
+  unsigned getHeaderSize() const {
+    return sizeof(int16_t) + // DWARF version number
+           sizeof(int32_t) + // Offset Into Abbrev. Section
+           sizeof(int8_t);   // Pointer Size (in bytes)
+  }
+
+  /// Emit the header for this unit, not including the initial length field.
+  void emitHeader(const MCSection *ASection, const MCSymbol *ASectionSym);
 
 private:
   /// constructTypeDIE - Construct basic type die from DIBasicType.
@@ -345,6 +368,9 @@ private:
 
   /// getOrCreateStaticMemberDIE - Create new static data member DIE.
   DIE *getOrCreateStaticMemberDIE(DIDerivedType DT);
+
+  /// Offset of the CUDie from beginning of debug info section.
+  unsigned DebugInfoOffset;
 
   /// getLowerBoundDefault - Return the default lower bound for an array. If the
   /// DWARF version doesn't handle the language, return -1.

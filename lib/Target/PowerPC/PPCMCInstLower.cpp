@@ -78,7 +78,7 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
     if (MO.isGlobal()) {
       StubSym =
       MachineModuleInfoImpl::
-      StubValueTy(AP.Mang->getSymbol(MO.getGlobal()),
+      StubValueTy(AP.getSymbol(MO.getGlobal()),
                   !MO.getGlobal()->hasInternalLinkage());
     } else {
       Name.erase(Name.end()-5, Name.end());
@@ -105,7 +105,7 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
     if (StubSym.getPointer() == 0) {
       assert(MO.isGlobal() && "Extern symbol not handled yet");
       StubSym = MachineModuleInfoImpl::
-                   StubValueTy(AP.Mang->getSymbol(MO.getGlobal()),
+                   StubValueTy(AP.getSymbol(MO.getGlobal()),
                                !MO.getGlobal()->hasInternalLinkage());
     }
     return Sym;

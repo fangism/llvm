@@ -226,7 +226,7 @@ class DwarfUnits {
   FoldingSet<DIEAbbrev> *AbbreviationsSet;
 
   // A list of all the unique abbreviations in use.
-  std::vector<DIEAbbrev *> *Abbreviations;
+  std::vector<DIEAbbrev *> &Abbreviations;
 
   // A pointer to all units in the section.
   SmallVector<CompileUnit *, 1> CUs;
@@ -249,7 +249,7 @@ class DwarfUnits {
 
 public:
   DwarfUnits(AsmPrinter *AP, FoldingSet<DIEAbbrev> *AS,
-             std::vector<DIEAbbrev *> *A, const char *Pref,
+             std::vector<DIEAbbrev *> &A, const char *Pref,
              BumpPtrAllocator &DA)
       : Asm(AP), AbbreviationsSet(AS), Abbreviations(A), StringPool(DA),
         NextStringPoolNumber(0), StringPref(Pref), AddressPool(),
@@ -328,6 +328,14 @@ class DwarfDebug {
 
   // Maps subprogram MDNode with its corresponding CompileUnit.
   DenseMap <const MDNode *, CompileUnit *> SPMap;
+
+  // Maps a CU DIE with its corresponding CompileUnit.
+  DenseMap <const DIE *, CompileUnit *> CUDieMap;
+
+  /// Maps MDNodes for type sysstem with the corresponding DIEs. These DIEs can
+  /// be shared across CUs, that is why we keep the map here instead
+  /// of in CompileUnit.
+  DenseMap<const MDNode *, DIE *> MDTypeNodeToDieMap;
 
   // Used to uniquely define abbreviations.
   FoldingSet<DIEAbbrev> AbbreviationsSet;
@@ -659,6 +667,13 @@ public:
   //
   DwarfDebug(AsmPrinter *A, Module *M);
 
+  void insertDIE(const MDNode *TypeMD, DIE *Die) {
+    MDTypeNodeToDieMap.insert(std::make_pair(TypeMD, Die));
+  }
+  DIE *getDIE(const MDNode *TypeMD) {
+    return MDTypeNodeToDieMap.lookup(TypeMD);
+  }
+
   /// \brief Emit all Dwarf sections that should come prior to the
   /// content.
   void beginModule();
@@ -696,7 +711,7 @@ public:
                                unsigned CUID);
 
   /// \brief Recursively Emits a debug information entry.
-  void emitDIE(DIE *Die, std::vector<DIEAbbrev *> *Abbrevs);
+  void emitDIE(DIE *Die, ArrayRef<DIEAbbrev *> Abbrevs);
 
   // Experimental DWARF5 features.
 

@@ -50,10 +50,13 @@ AArch64TargetLowering::AArch64TargetLowering(AArch64TargetMachine &TM)
   // Scalar register <-> type mapping
   addRegisterClass(MVT::i32, &AArch64::GPR32RegClass);
   addRegisterClass(MVT::i64, &AArch64::GPR64RegClass);
-  addRegisterClass(MVT::f16, &AArch64::FPR16RegClass);
-  addRegisterClass(MVT::f32, &AArch64::FPR32RegClass);
-  addRegisterClass(MVT::f64, &AArch64::FPR64RegClass);
-  addRegisterClass(MVT::f128, &AArch64::FPR128RegClass);
+
+  if (Subtarget->hasFPARMv8()) {
+    addRegisterClass(MVT::f16, &AArch64::FPR16RegClass);
+    addRegisterClass(MVT::f32, &AArch64::FPR32RegClass);
+    addRegisterClass(MVT::f64, &AArch64::FPR64RegClass);
+    addRegisterClass(MVT::f128, &AArch64::FPR128RegClass);
+  }
 
   if (Subtarget->hasNEON()) {
     // And the vectors
@@ -961,24 +964,31 @@ AArch64TargetLowering::SaveVarArgRegisters(CCState &CCInfo, SelectionDAG &DAG,
     }
   }
 
+  if (getSubtarget()->hasFPARMv8()) {
   unsigned FPRSaveSize = 16 * (NumFPRArgRegs - FirstVariadicFPR);
   int FPRIdx = 0;
-  if (FPRSaveSize != 0) {
-    FPRIdx = MFI->CreateStackObject(FPRSaveSize, 16, false);
+    // According to the AArch64 Procedure Call Standard, section B.1/B.3, we
+    // can omit a register save area if we know we'll never use registers of
+    // that class.
+    if (FPRSaveSize != 0) {
+      FPRIdx = MFI->CreateStackObject(FPRSaveSize, 16, false);
 
-    SDValue FIN = DAG.getFrameIndex(FPRIdx, getPointerTy());
+      SDValue FIN = DAG.getFrameIndex(FPRIdx, getPointerTy());
 
-    for (unsigned i = FirstVariadicFPR; i < NumFPRArgRegs; ++i) {
-      unsigned VReg = MF.addLiveIn(AArch64FPRArgRegs[i],
-                                   &AArch64::FPR128RegClass);
-      SDValue Val = DAG.getCopyFromReg(Chain, DL, VReg, MVT::f128);
-      SDValue Store = DAG.getStore(Val.getValue(1), DL, Val, FIN,
-                                   MachinePointerInfo::getStack(i * 16),
-                                   false, false, 0);
-      MemOps.push_back(Store);
-      FIN = DAG.getNode(ISD::ADD, DL, getPointerTy(), FIN,
-                        DAG.getConstant(16, getPointerTy()));
+      for (unsigned i = FirstVariadicFPR; i < NumFPRArgRegs; ++i) {
+        unsigned VReg = MF.addLiveIn(AArch64FPRArgRegs[i],
+            &AArch64::FPR128RegClass);
+        SDValue Val = DAG.getCopyFromReg(Chain, DL, VReg, MVT::f128);
+        SDValue Store = DAG.getStore(Val.getValue(1), DL, Val, FIN,
+            MachinePointerInfo::getStack(i * 16),
+            false, false, 0);
+        MemOps.push_back(Store);
+        FIN = DAG.getNode(ISD::ADD, DL, getPointerTy(), FIN,
+            DAG.getConstant(16, getPointerTy()));
+      }
     }
+    FuncInfo->setVariadicFPRIdx(FPRIdx);
+    FuncInfo->setVariadicFPRSize(FPRSaveSize);
   }
 
   int StackIdx = MFI->CreateFixedObject(8, CCInfo.getNextStackOffset(), true);
@@ -986,8 +996,6 @@ AArch64TargetLowering::SaveVarArgRegisters(CCState &CCInfo, SelectionDAG &DAG,
   FuncInfo->setVariadicStackIdx(StackIdx);
   FuncInfo->setVariadicGPRIdx(GPRIdx);
   FuncInfo->setVariadicGPRSize(GPRSaveSize);
-  FuncInfo->setVariadicFPRIdx(FPRIdx);
-  FuncInfo->setVariadicFPRSize(FPRSaveSize);
 
   if (!MemOps.empty()) {
     Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, &MemOps[0],
@@ -1958,6 +1966,45 @@ AArch64TargetLowering::LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG,
   return LowerF128ToCall(Op, DAG, LC);
 }
 
+SDValue AArch64TargetLowering::LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const{
+  MachineFunction &MF = DAG.getMachineFunction();
+  MachineFrameInfo *MFI = MF.getFrameInfo();
+  MFI->setReturnAddressIsTaken(true);
+
+  EVT VT = Op.getValueType();
+  SDLoc dl(Op);
+  unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
+  if (Depth) {
+    SDValue FrameAddr = LowerFRAMEADDR(Op, DAG);
+    SDValue Offset = DAG.getConstant(8, MVT::i64);
+    return DAG.getLoad(VT, dl, DAG.getEntryNode(),
+                       DAG.getNode(ISD::ADD, dl, VT, FrameAddr, Offset),
+                       MachinePointerInfo(), false, false, false, 0);
+  }
+
+  // Return X30, which contains the return address. Mark it an implicit live-in.
+  unsigned Reg = MF.addLiveIn(AArch64::X30, getRegClassFor(MVT::i64));
+  return DAG.getCopyFromReg(DAG.getEntryNode(), dl, Reg, MVT::i64);
+}
+
+
+SDValue AArch64TargetLowering::LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG)
+                                              const {
+  MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
+  MFI->setFrameAddressIsTaken(true);
+
+  EVT VT = Op.getValueType();
+  SDLoc dl(Op);
+  unsigned Depth = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
+  unsigned FrameReg = AArch64::X29;
+  SDValue FrameAddr = DAG.getCopyFromReg(DAG.getEntryNode(), dl, FrameReg, VT);
+  while (Depth--)
+    FrameAddr = DAG.getLoad(VT, dl, DAG.getEntryNode(), FrameAddr,
+                            MachinePointerInfo(),
+                            false, false, false, 0);
+  return FrameAddr;
+}
+
 SDValue
 AArch64TargetLowering::LowerGlobalAddressELFLarge(SDValue Op,
                                                   SelectionDAG &DAG) const {
@@ -2703,6 +2750,8 @@ AArch64TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::UINT_TO_FP: return LowerINT_TO_FP(Op, DAG, false);
   case ISD::FP_ROUND: return LowerFP_ROUND(Op, DAG);
   case ISD::FP_EXTEND: return LowerFP_EXTEND(Op, DAG);
+  case ISD::RETURNADDR:    return LowerRETURNADDR(Op, DAG);
+  case ISD::FRAMEADDR:     return LowerFRAMEADDR(Op, DAG);
 
   case ISD::BlockAddress: return LowerBlockAddress(Op, DAG);
   case ISD::BRCOND: return LowerBRCOND(Op, DAG);
@@ -3451,12 +3500,15 @@ AArch64TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG,
   unsigned SplatBitSize;
   bool HasAnyUndefs;
 
+  unsigned UseNeonMov = VT.getSizeInBits() >= 64;
+
   // Note we favor lowering MOVI over MVNI.
   // This has implications on the definition of patterns in TableGen to select
   // BIC immediate instructions but not ORR immediate instructions.
   // If this lowering order is changed, TableGen patterns for BIC immediate and
   // ORR immediate instructions have to be updated.
-  if (BVN->isConstantSplat(SplatBits, SplatUndef, SplatBitSize, HasAnyUndefs)) {
+  if (UseNeonMov &&
+      BVN->isConstantSplat(SplatBits, SplatUndef, SplatBitSize, HasAnyUndefs)) {
     if (SplatBitSize <= 64) {
       // First attempt to use vector immediate-form MOVI
       EVT NeonMovVT;

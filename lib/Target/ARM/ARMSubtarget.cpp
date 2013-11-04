@@ -108,10 +108,12 @@ void ARMSubtarget::initializeEnvironment() {
   AvoidMOVsShifterOperand = false;
   HasRAS = false;
   HasMPExtension = false;
+  HasVirtualization = false;
   FPOnlySP = false;
   HasPerfMon = false;
   HasTrustZone = false;
   HasCrypto = false;
+  HasCRC = false;
   AllowsUnalignedMem = false;
   Thumb2DSP = false;
   UseNaClTrap = false;
@@ -277,6 +279,11 @@ ARMSubtarget::GVIsIndirectSymbol(const GlobalValue *GV,
 
 unsigned ARMSubtarget::getMispredictionPenalty() const {
   return SchedModel->MispredictPenalty;
+}
+
+bool ARMSubtarget::hasSinCos() const {
+  return getTargetTriple().getOS() == Triple::IOS &&
+    !getTargetTriple().isOSVersionLT(7, 0);
 }
 
 bool ARMSubtarget::enablePostRAScheduler(

@@ -150,6 +150,10 @@ protected:
   /// extension (ARMv7 only).
   bool HasMPExtension;
 
+  /// HasVirtualization - True if the subtarget supports the Virtualization
+  /// extension.
+  bool HasVirtualization;
+
   /// FPOnlySP - If true, the floating point unit only supports single
   /// precision.
   bool FPOnlySP;
@@ -164,6 +168,9 @@ protected:
 
   /// HasCrypto - if true, processor supports Cryptography extensions
   bool HasCrypto;
+
+  /// HasCRC - if true, processor supports CRC instructions
+  bool HasCRC;
 
   /// AllowsUnalignedMem - If true, the subtarget allows unaligned memory
   /// accesses for some types.  For details, see
@@ -256,6 +263,8 @@ public:
   bool hasFPARMv8() const { return HasFPARMv8; }
   bool hasNEON() const { return HasNEON;  }
   bool hasCrypto() const { return HasCrypto; }
+  bool hasCRC() const { return HasCRC; }
+  bool hasVirtualization() const { return HasVirtualization; }
   bool useNEONForSinglePrecisionFP() const {
     return hasNEON() && UseNEONForSinglePrecisionFP; }
 
@@ -321,6 +330,10 @@ public:
   const std::string & getCPUString() const { return CPUString; }
 
   unsigned getMispredictionPenalty() const;
+  
+  /// This function returns true if the target has sincos() routine in its
+  /// compiler runtime or math libraries.
+  bool hasSinCos() const;
 
   /// enablePostRAScheduler - True at 'More' optimization.
   bool enablePostRAScheduler(CodeGenOpt::Level OptLevel,
