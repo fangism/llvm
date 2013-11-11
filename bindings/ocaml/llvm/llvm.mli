@@ -323,6 +323,8 @@ module ValueKind : sig
   | BlockAddress
   | ConstantAggregateZero
   | ConstantArray
+  | ConstantDataArray
+  | ConstantDataVector
   | ConstantExpr
   | ConstantFP
   | ConstantInt
@@ -651,6 +653,9 @@ val set_value_name : string -> llvalue -> unit
 (** [dump_value v] prints the .ll representation of the value [v] to standard
     error. See the method [llvm::Value::dump]. *)
 val dump_value : llvalue -> unit
+
+(** [string_of_llvalue v] returns a string describing the value [v]. *)
+val string_of_llvalue : llvalue -> string
 
 (** [replace_all_uses_with old new] replaces all uses of the value [old]
     with the value [new]. See the method [llvm::Value::replaceAllUsesWith]. *)
@@ -1118,10 +1123,12 @@ val const_trunc_or_bitcast : llvalue -> lltype -> llvalue
     See the method [llvm::ConstantExpr::getPointerCast]. *)
 val const_pointercast : llvalue -> lltype -> llvalue
 
-(** [const_intcast c ty] returns a constant zext, bitcast, or trunc for integer
-    -> integer casts of constant [c] to type [ty].
-    See the method [llvm::ConstantExpr::getIntCast]. *)
-val const_intcast : llvalue -> lltype -> llvalue
+(** [const_intcast c ty ~is_signed] returns a constant sext/zext, bitcast,
+    or trunc for integer -> integer casts of constant [c] to type [ty].
+    When converting a narrower value to a wider one, whether sext or zext
+    will be used is controlled by [is_signed].
+    See the method [llvm::ConstantExpr::getIntegerCast]. *)
+val const_intcast : llvalue -> lltype -> is_signed:bool -> llvalue
 
 (** [const_fpcast c ty] returns a constant fpext, bitcast, or fptrunc for fp ->
     fp casts of constant [c] to type [ty].

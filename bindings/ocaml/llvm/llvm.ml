@@ -260,6 +260,8 @@ module ValueKind = struct
   | BlockAddress
   | ConstantAggregateZero
   | ConstantArray
+  | ConstantDataArray
+  | ConstantDataVector
   | ConstantExpr
   | ConstantFP
   | ConstantInt
@@ -380,6 +382,7 @@ external type_of : llvalue -> lltype = "llvm_type_of"
 external value_name : llvalue -> string = "llvm_value_name"
 external set_value_name : string -> llvalue -> unit = "llvm_set_value_name"
 external dump_value : llvalue -> unit = "llvm_dump_value"
+external string_of_llvalue : llvalue -> string = "llvm_string_of_llvalue"
 external replace_all_uses_with : llvalue -> llvalue -> unit
                                = "llvm_replace_all_uses_with"
 
@@ -529,7 +532,8 @@ external const_trunc_or_bitcast : llvalue -> lltype -> llvalue
                               = "LLVMConstTruncOrBitCast"
 external const_pointercast : llvalue -> lltype -> llvalue
                            = "LLVMConstPointerCast"
-external const_intcast : llvalue -> lltype -> llvalue = "LLVMConstIntCast"
+external const_intcast : llvalue -> lltype -> is_signed:bool -> llvalue
+                       = "llvm_const_intcast"
 external const_fpcast : llvalue -> lltype -> llvalue = "LLVMConstFPCast"
 external const_select : llvalue -> llvalue -> llvalue -> llvalue
                       = "LLVMConstSelect"

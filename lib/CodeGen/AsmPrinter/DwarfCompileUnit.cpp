@@ -170,7 +170,8 @@ void CompileUnit::addSInt(DIEBlock *Die, Optional<dwarf::Form> Form,
 /// more predictable sizes. In the case of split dwarf we emit an index
 /// into another table which gets us the static offset into the string
 /// table.
-void CompileUnit::addString(DIE *Die, dwarf::Attribute Attribute, StringRef String) {
+void CompileUnit::addString(DIE *Die, dwarf::Attribute Attribute,
+                            StringRef String) {
   DIEValue *Value;
   dwarf::Form Form;
   if (!DD->useSplitDwarf()) {
@@ -215,8 +216,8 @@ void CompileUnit::addExpr(DIEBlock *Die, dwarf::Form Form, const MCExpr *Expr) {
 
 /// addLabel - Add a Dwarf label attribute data and value.
 ///
-void CompileUnit::addLabel(DIE *Die, dwarf::Attribute Attribute, dwarf::Form Form,
-                           const MCSymbol *Label) {
+void CompileUnit::addLabel(DIE *Die, dwarf::Attribute Attribute,
+                           dwarf::Form Form, const MCSymbol *Label) {
   DIEValue *Value = new (DIEValueAllocator) DIELabel(Label);
   Die->addValue(Attribute, Form, Value);
 }
@@ -265,15 +266,17 @@ void CompileUnit::addOpAddress(DIEBlock *Die, const MCSymbol *Sym) {
 
 /// addDelta - Add a label delta attribute data and value.
 ///
-void CompileUnit::addDelta(DIE *Die, dwarf::Attribute Attribute, dwarf::Form Form,
-                           const MCSymbol *Hi, const MCSymbol *Lo) {
+void CompileUnit::addDelta(DIE *Die, dwarf::Attribute Attribute,
+                           dwarf::Form Form, const MCSymbol *Hi,
+                           const MCSymbol *Lo) {
   DIEValue *Value = new (DIEValueAllocator) DIEDelta(Hi, Lo);
   Die->addValue(Attribute, Form, Value);
 }
 
 /// addDIEEntry - Add a DIE attribute data and value.
 ///
-void CompileUnit::addDIEEntry(DIE *Die, dwarf::Attribute Attribute, DIE *Entry) {
+void CompileUnit::addDIEEntry(DIE *Die, dwarf::Attribute Attribute,
+                              DIE *Entry) {
   addDIEEntry(Die, Attribute, createDIEEntry(Entry));
 }
 
@@ -771,8 +774,7 @@ void CompileUnit::addConstantFPValue(DIE *Die, const MachineOperand &MO) {
 
   // Output the constant to DWARF one byte at a time.
   for (; Start != Stop; Start += Incr)
-    addUInt(Block, dwarf::DW_FORM_data1,
-            (unsigned char)0xFF & FltPtr[Start]);
+    addUInt(Block, dwarf::DW_FORM_data1, (unsigned char)0xFF & FltPtr[Start]);
 
   addBlock(Die, dwarf::DW_AT_const_value, Block);
 }
@@ -1133,23 +1135,11 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
 
   switch (Tag) {
   case dwarf::DW_TAG_array_type:
-    constructArrayTypeDIE(Buffer, &CTy);
+    constructArrayTypeDIE(Buffer, CTy);
     break;
-  case dwarf::DW_TAG_enumeration_type: {
-    DIArray Elements = CTy.getTypeArray();
-
-    // Add enumerators to enumeration type.
-    for (unsigned i = 0, N = Elements.getNumElements(); i < N; ++i) {
-      DIDescriptor Enum(Elements.getElement(i));
-      if (Enum.isEnumerator())
-        constructEnumTypeDIE(Buffer, DIEnumerator(Enum));
-    }
-    DIType DTy = resolve(CTy.getTypeDerivedFrom());
-    if (DTy) {
-      addType(&Buffer, DTy);
-      addFlag(&Buffer, dwarf::DW_AT_enum_class);
-    }
-  } break;
+  case dwarf::DW_TAG_enumeration_type:
+    constructEnumTypeDIE(Buffer, CTy);
+    break;
   case dwarf::DW_TAG_subroutine_type: {
     // Add return type. A void return won't have a type.
     DIArray Elements = CTy.getTypeArray();
@@ -1460,8 +1450,8 @@ DIE *CompileUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
     addUInt(Block, dwarf::DW_FORM_data1, dwarf::DW_OP_constu);
     addUInt(Block, dwarf::DW_FORM_udata, SP.getVirtualIndex());
     addBlock(SPDie, dwarf::DW_AT_vtable_elem_location, Block);
-    ContainingTypeMap.insert(std::make_pair(SPDie,
-                                            resolve(SP.getContainingType())));
+    ContainingTypeMap.insert(
+        std::make_pair(SPDie, resolve(SP.getContainingType())));
   }
 
   if (!SP.isDefinition()) {
@@ -1683,16 +1673,17 @@ void CompileUnit::constructSubrangeDIE(DIE &Buffer, DISubrange SR,
   if (Count != -1 && Count != 0)
     // FIXME: An unbounded array should reference the expression that defines
     // the array.
-    addUInt(DW_Subrange, dwarf::DW_AT_upper_bound, None, LowerBound + Count - 1);
+    addUInt(DW_Subrange, dwarf::DW_AT_upper_bound, None,
+            LowerBound + Count - 1);
 }
 
 /// constructArrayTypeDIE - Construct array type DIE from DICompositeType.
-void CompileUnit::constructArrayTypeDIE(DIE &Buffer, DICompositeType *CTy) {
-  if (CTy->isVector())
+void CompileUnit::constructArrayTypeDIE(DIE &Buffer, DICompositeType CTy) {
+  if (CTy.isVector())
     addFlag(&Buffer, dwarf::DW_AT_GNU_vector);
 
   // Emit the element type.
-  addType(&Buffer, resolve(CTy->getTypeDerivedFrom()));
+  addType(&Buffer, resolve(CTy.getTypeDerivedFrom()));
 
   // Get an anonymous type for index type.
   // FIXME: This type should be passed down from the front end
@@ -1709,7 +1700,7 @@ void CompileUnit::constructArrayTypeDIE(DIE &Buffer, DICompositeType *CTy) {
   }
 
   // Add subranges to array type.
-  DIArray Elements = CTy->getTypeArray();
+  DIArray Elements = CTy.getTypeArray();
   for (unsigned i = 0, N = Elements.getNumElements(); i < N; ++i) {
     DIDescriptor Element = Elements.getElement(i);
     if (Element.getTag() == dwarf::DW_TAG_subrange_type)
@@ -1717,13 +1708,27 @@ void CompileUnit::constructArrayTypeDIE(DIE &Buffer, DICompositeType *CTy) {
   }
 }
 
-/// constructEnumTypeDIE - Construct enum type DIE from DIEnumerator.
-void CompileUnit::constructEnumTypeDIE(DIE &Buffer, DIEnumerator ETy) {
-  DIE *Enumerator = createAndAddDIE(dwarf::DW_TAG_enumerator, Buffer);
-  StringRef Name = ETy.getName();
-  addString(Enumerator, dwarf::DW_AT_name, Name);
-  int64_t Value = ETy.getEnumValue();
-  addSInt(Enumerator, dwarf::DW_AT_const_value, dwarf::DW_FORM_sdata, Value);
+/// constructEnumTypeDIE - Construct an enum type DIE from DICompositeType.
+void CompileUnit::constructEnumTypeDIE(DIE &Buffer, DICompositeType CTy) {
+  DIArray Elements = CTy.getTypeArray();
+
+  // Add enumerators to enumeration type.
+  for (unsigned i = 0, N = Elements.getNumElements(); i < N; ++i) {
+    DIDescriptor Enum(Elements.getElement(i));
+    DIEnumerator ETy = DIEnumerator(Enum);
+    if (Enum.isEnumerator()) {
+      DIE *Enumerator = createAndAddDIE(dwarf::DW_TAG_enumerator, Buffer);
+      StringRef Name = ETy.getName();
+      addString(Enumerator, dwarf::DW_AT_name, Name);
+      int64_t Value = ETy.getEnumValue();
+      addSInt(Enumerator, dwarf::DW_AT_const_value, dwarf::DW_FORM_sdata, Value);
+    }
+  }
+  DIType DTy = resolve(CTy.getTypeDerivedFrom());
+  if (DTy) {
+    addType(&Buffer, DTy);
+    addFlag(&Buffer, dwarf::DW_AT_enum_class);
+  }
 }
 
 /// constructContainingTypeDIEs - Construct DIEs for types that contain
@@ -1830,7 +1835,6 @@ void CompileUnit::constructMemberDIE(DIE &Buffer, DIDerivedType DT) {
   DIEBlock *MemLocationDie = new (DIEValueAllocator) DIEBlock();
   addUInt(MemLocationDie, dwarf::DW_FORM_data1, dwarf::DW_OP_plus_uconst);
 
-
   if (DT.getTag() == dwarf::DW_TAG_inheritance && DT.isVirtual()) {
 
     // For C++, virtual base classes are not at fixed offset. Use following
@@ -1875,8 +1879,7 @@ void CompileUnit::constructMemberDIE(DIE &Buffer, DIDerivedType DT) {
     } else
       // This is not a bitfield.
       OffsetInBytes = DT.getOffsetInBits() >> 3;
-    addUInt(MemberDie, dwarf::DW_AT_data_member_location, None,
-            OffsetInBytes);
+    addUInt(MemberDie, dwarf::DW_AT_data_member_location, None, OffsetInBytes);
   }
 
   if (DT.isProtected())

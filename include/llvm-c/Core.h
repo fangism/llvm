@@ -301,6 +301,8 @@ typedef enum {
   LLVMCCallConv           = 0,
   LLVMFastCallConv        = 8,
   LLVMColdCallConv        = 9,
+  LLVMWebKitJSCallConv    = 12,
+  LLVMAnyRegCallConv      = 13,
   LLVMX86StdcallCallConv  = 64,
   LLVMX86FastcallCallConv = 65
 } LLVMCallConv;
@@ -1110,6 +1112,9 @@ LLVMTypeRef LLVMX86MMXType(void);
       macro(BlockAddress)                   \
       macro(ConstantAggregateZero)          \
       macro(ConstantArray)                  \
+      macro(ConstantDataSequential)         \
+        macro(ConstantDataArray)            \
+        macro(ConstantDataVector)           \
       macro(ConstantExpr)                   \
       macro(ConstantFP)                     \
       macro(ConstantInt)                    \
@@ -1207,6 +1212,14 @@ void LLVMSetValueName(LLVMValueRef Val, const char *Name);
  * @see llvm::Value::dump()
  */
 void LLVMDumpValue(LLVMValueRef Val);
+
+/**
+ * Return a string representation of the value. Use
+ * LLVMDisposeMessage to free the string.
+ *
+ * @see llvm::Value::print()
+ */
+char *LLVMPrintValueToString(LLVMValueRef Val);
 
 /**
  * Replace all uses of a value with another one.

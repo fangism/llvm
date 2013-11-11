@@ -454,6 +454,8 @@ enum ValueKind {
   BlockAddress,
   ConstantAggregateZero,
   ConstantArray,
+  ConstantDataArray,
+  ConstantDataVector,
   ConstantExpr,
   ConstantFP,
   ConstantInt,
@@ -479,6 +481,8 @@ CAMLprim value llvm_classify_value(LLVMValueRef Val) {
     DEFINE_CASE(Val, BlockAddress);
     DEFINE_CASE(Val, ConstantAggregateZero);
     DEFINE_CASE(Val, ConstantArray);
+    DEFINE_CASE(Val, ConstantDataArray);
+    DEFINE_CASE(Val, ConstantDataVector);
     DEFINE_CASE(Val, ConstantExpr);
     DEFINE_CASE(Val, ConstantFP);
     DEFINE_CASE(Val, ConstantInt);
@@ -521,6 +525,17 @@ CAMLprim value llvm_set_value_name(value Name, LLVMValueRef Val) {
 CAMLprim value llvm_dump_value(LLVMValueRef Val) {
   LLVMDumpValue(Val);
   return Val_unit;
+}
+
+/* llvalue -> string */
+CAMLprim value llvm_string_of_llvalue(LLVMTypeRef M) {
+  char* TypeCStr;
+  TypeCStr = LLVMPrintValueToString(M);
+
+  value TypeStr = caml_copy_string(TypeCStr);
+  LLVMDisposeMessage(TypeCStr);
+
+  return TypeStr;
 }
 
 /* llvalue -> llvalue -> unit */
@@ -771,6 +786,12 @@ CAMLprim LLVMValueRef llvm_const_in_bounds_gep(LLVMValueRef ConstantVal,
                               Wosize_val(Indices));
 }
 
+/* llvalue -> lltype -> is_signed:bool -> llvalue */
+CAMLprim LLVMValueRef llvm_const_intcast(LLVMValueRef CV, LLVMTypeRef T,
+                                         value IsSigned) {
+  return LLVMConstIntCast(CV, T, Bool_val(IsSigned));
+}
+
 /* llvalue -> int array -> llvalue */
 CAMLprim LLVMValueRef llvm_const_extractvalue(LLVMValueRef Aggregate,
                                               value Indices) {
@@ -930,7 +951,8 @@ CAMLprim LLVMValueRef llvm_declare_qualified_global(LLVMTypeRef Ty, value Name,
                               LLVMPointerType(Ty, Int_val(AddressSpace)));
     return GlobalVar;
   }
-  return LLVMAddGlobal(M, Ty, String_val(Name));
+  return LLVMAddGlobalInAddressSpace(M, Ty, String_val(Name),
+                                     Int_val(AddressSpace));
 }
 
 /* string -> llmodule -> llvalue option */
@@ -1387,7 +1409,7 @@ static void llvm_finalize_builder(value B) {
 }
 
 static struct custom_operations builder_ops = {
-  (char *) "IRBuilder",
+  (char *) "LLVMIRBuilder",
   llvm_finalize_builder,
   custom_compare_default,
   custom_hash_default,

@@ -249,8 +249,8 @@ public:
 
   virtual bool isMaterializable(const GlobalValue *GV) const;
   virtual bool isDematerializable(const GlobalValue *GV) const;
-  virtual bool Materialize(GlobalValue *GV, std::string *ErrInfo = 0);
-  virtual bool MaterializeModule(Module *M, std::string *ErrInfo = 0);
+  virtual error_code Materialize(GlobalValue *GV);
+  virtual error_code MaterializeModule(Module *M);
   virtual void Dematerialize(GlobalValue *GV);
 
   /// @brief Main interface to parsing a bitcode buffer.
@@ -366,7 +366,7 @@ private:
   error_code InitStream();
   error_code InitStreamFromBuffer();
   error_code InitLazyStream();
-  bool FindFunctionInStream(Function *F,
+  error_code FindFunctionInStream(Function *F,
          DenseMap<Function*, uint64_t>::iterator DeferredFunctionInfoIterator);
 };
 

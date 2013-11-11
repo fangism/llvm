@@ -20,12 +20,17 @@ module DataLayout = struct
   external add : t -> [<Llvm.PassManager.any] Llvm.PassManager.t -> unit
                = "llvm_targetdata_add"
   external as_string : t -> string = "llvm_targetdata_as_string"
-  external dispose : t -> unit = "llvm_targetdata_dispose"
 end
 
 external byte_order : DataLayout.t -> Endian.t = "llvm_byte_order"
 external pointer_size : DataLayout.t -> int = "llvm_pointer_size"
-external intptr_type : DataLayout.t -> Llvm.lltype = "LLVMIntPtrType"
+external intptr_type : DataLayout.t -> Llvm.llcontext -> Llvm.lltype
+                     = "llvm_intptr_type"
+external qualified_pointer_size : DataLayout.t -> int -> int
+                                = "llvm_qualified_pointer_size"
+external qualified_intptr_type : DataLayout.t -> Llvm.llcontext ->
+                                 int -> Llvm.lltype
+                               = "llvm_qualified_intptr_type"
 external size_in_bits : DataLayout.t -> Llvm.lltype -> Int64.t
                       = "llvm_size_in_bits"
 external store_size : DataLayout.t -> Llvm.lltype -> Int64.t = "llvm_store_size"

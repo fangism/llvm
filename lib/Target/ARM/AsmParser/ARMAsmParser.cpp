@@ -2872,8 +2872,9 @@ static int MatchCoprocessorOperandName(StringRef Name, char CoprocOp) {
       return -1;
     switch (Name[2]) {
     default:  return -1;
-    case '0': return 10;
-    case '1': return 11;
+    // p10 and p11 are invalid for coproc instructions (reserved for FP/NEON)
+    case '0': return CoprocOp == 'p'? -1: 10;
+    case '1': return CoprocOp == 'p'? -1: 11;
     case '2': return 12;
     case '3': return 13;
     case '4': return 14;
@@ -3548,7 +3549,7 @@ parseInstSyncBarrierOptOperand(SmallVectorImpl<MCParsedAsmOperand*> &Operands) {
   if (Tok.is(AsmToken::Identifier)) {
     StringRef OptStr = Tok.getString();
 
-    if (OptStr.lower() == "sy")
+    if (OptStr.equals_lower("sy"))
       Opt = ARM_ISB::SY;
     else
       return MatchOperand_NoMatch;

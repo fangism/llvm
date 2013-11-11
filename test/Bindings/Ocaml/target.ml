@@ -46,7 +46,9 @@ let test_target_data () =
   assert_equal (DataLayout.as_string td) layout;
   assert_equal (byte_order td) Endian.Little;
   assert_equal (pointer_size td) 4;
-  assert_equal (intptr_type td) i32_type;
+  assert_equal (intptr_type td context) i32_type;
+  assert_equal (qualified_pointer_size td 0) 4;
+  assert_equal (qualified_intptr_type td context 0) i32_type;
   assert_equal (size_in_bits td sty) (Int64.of_int 96);
   assert_equal (store_size td sty) (Int64.of_int 12);
   assert_equal (abi_size td sty) (Int64.of_int 12);
@@ -54,8 +56,7 @@ let test_target_data () =
   assert_equal (preferred_align td sty) 8;
   assert_equal (preferred_align_of_global td (declare_global sty "g" m)) 8;
   assert_equal (element_at_offset td sty (Int64.of_int 1)) 0;
-  assert_equal (offset_of_element td sty 1) (Int64.of_int 4);
-  DataLayout.dispose td
+  assert_equal (offset_of_element td sty 1) (Int64.of_int 4)
 
 
 (*===-- Driver ------------------------------------------------------------===*)
