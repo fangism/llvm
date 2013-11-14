@@ -1288,6 +1288,77 @@ lowerMSASplatImm(SDValue Op, unsigned ImmOp, SelectionDAG &DAG) {
                           Op->getOperand(ImmOp), DAG);
 }
 
+static SDValue lowerMSABinaryBitImmIntr(SDValue Op, SelectionDAG &DAG,
+                                        unsigned Opc, SDValue Imm,
+                                        bool BigEndian) {
+  EVT VecTy = Op->getValueType(0);
+  SDValue Exp2Imm;
+  SDLoc DL(Op);
+
+  // The DAG Combiner can't constant fold bitcasted vectors so we must do it
+  // here.
+  if (VecTy == MVT::v2i64) {
+    if (ConstantSDNode *CImm = dyn_cast<ConstantSDNode>(Imm)) {
+      APInt BitImm = APInt(64, 1) << CImm->getAPIntValue();
+
+      SDValue BitImmHiOp = DAG.getConstant(BitImm.lshr(32).trunc(32), MVT::i32);
+      SDValue BitImmOp = DAG.getConstant(BitImm.trunc(32), MVT::i32);
+      Exp2Imm = DAG.getNode(ISD::BITCAST, DL, MVT::v2i64,
+                            DAG.getNode(ISD::BUILD_VECTOR, DL, MVT::v4i32,
+                                        BitImmHiOp, BitImmOp,
+                                        BitImmHiOp, BitImmOp));
+    }
+  }
+
+  if (Exp2Imm.getNode() == NULL) {
+    // We couldnt constant fold, do a vector shift instead
+    SDValue One = lowerMSASplatImm(DL, VecTy, DAG.getConstant(1, MVT::i32),
+                                   DAG);
+    Exp2Imm = lowerMSASplatImm(DL, VecTy, Imm, DAG);
+    Exp2Imm = DAG.getNode(ISD::SHL, DL, VecTy, One, Exp2Imm);
+  }
+
+  return DAG.getNode(Opc, DL, VecTy, Op->getOperand(1), Exp2Imm);
+}
+
+static SDValue lowerMSABitClear(SDValue Op, SelectionDAG &DAG) {
+  EVT ResTy = Op->getValueType(0);
+  EVT ViaVecTy = ResTy == MVT::v2i64 ? MVT::v4i32 : ResTy;
+  SDLoc DL(Op);
+  SDValue One = lowerMSASplatImm(DL, ResTy, DAG.getConstant(1, MVT::i32), DAG);
+  SDValue Bit = DAG.getNode(ISD::SHL, DL, ResTy, One, Op->getOperand(2));
+
+  SDValue AllOnes = DAG.getConstant(-1, MVT::i32);
+  SDValue AllOnesOperands[16] = { AllOnes, AllOnes, AllOnes, AllOnes,
+                                  AllOnes, AllOnes, AllOnes, AllOnes,
+                                  AllOnes, AllOnes, AllOnes, AllOnes,
+                                  AllOnes, AllOnes, AllOnes, AllOnes };
+  AllOnes = DAG.getNode(ISD::BUILD_VECTOR, DL, ViaVecTy, AllOnesOperands,
+                        ViaVecTy.getVectorNumElements());
+  if (ResTy != ViaVecTy)
+    AllOnes = DAG.getNode(ISD::BITCAST, DL, ResTy, AllOnes);
+
+  Bit = DAG.getNode(ISD::XOR, DL, ResTy, Bit, AllOnes);
+
+  return DAG.getNode(ISD::AND, DL, ResTy, Op->getOperand(1), Bit);
+}
+
+static SDValue lowerMSABitClearImm(SDValue Op, SelectionDAG &DAG) {
+  SDLoc DL(Op);
+  EVT ResTy = Op->getValueType(0);
+  SDValue SHAmount = Op->getOperand(2);
+  EVT ImmTy = SHAmount->getValueType(0);
+  SDValue Bit =
+      DAG.getNode(ISD::SHL, DL, ImmTy, DAG.getConstant(1, ImmTy), SHAmount);
+  SDValue BitMask = DAG.getNOT(DL, Bit, ImmTy);
+
+  assert(ResTy.getVectorNumElements() <= 16);
+
+  BitMask = lowerMSASplatImm(DL, ResTy, BitMask, DAG);
+
+  return DAG.getNode(ISD::AND, DL, ResTy, Op->getOperand(1), BitMask);
+}
+
 SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
                                                       SelectionDAG &DAG) const {
   SDLoc DL(Op);
@@ -1345,6 +1416,16 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::mips_andi_b:
     return DAG.getNode(ISD::AND, DL, Op->getValueType(0), Op->getOperand(1),
                        lowerMSASplatImm(Op, 2, DAG));
+  case Intrinsic::mips_bclr_b:
+  case Intrinsic::mips_bclr_h:
+  case Intrinsic::mips_bclr_w:
+  case Intrinsic::mips_bclr_d:
+    return lowerMSABitClear(Op, DAG);
+  case Intrinsic::mips_bclri_b:
+  case Intrinsic::mips_bclri_h:
+  case Intrinsic::mips_bclri_w:
+  case Intrinsic::mips_bclri_d:
+    return lowerMSABitClearImm(Op, DAG);
   case Intrinsic::mips_binsli_b:
   case Intrinsic::mips_binsli_h:
   case Intrinsic::mips_binsli_w:
@@ -1383,6 +1464,24 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
     return DAG.getNode(ISD::VSELECT, DL, Op->getValueType(0),
                        lowerMSASplatImm(Op, 3, DAG), Op->getOperand(1),
                        Op->getOperand(2));
+  case Intrinsic::mips_bneg_b:
+  case Intrinsic::mips_bneg_h:
+  case Intrinsic::mips_bneg_w:
+  case Intrinsic::mips_bneg_d: {
+    EVT VecTy = Op->getValueType(0);
+    SDValue One = lowerMSASplatImm(DL, VecTy, DAG.getConstant(1, MVT::i32),
+                                   DAG);
+
+    return DAG.getNode(ISD::XOR, DL, VecTy, Op->getOperand(1),
+                       DAG.getNode(ISD::SHL, DL, VecTy, One,
+                                   Op->getOperand(2)));
+  }
+  case Intrinsic::mips_bnegi_b:
+  case Intrinsic::mips_bnegi_h:
+  case Intrinsic::mips_bnegi_w:
+  case Intrinsic::mips_bnegi_d:
+    return lowerMSABinaryBitImmIntr(Op, DAG, ISD::XOR, Op->getOperand(2),
+                                    !Subtarget->isLittle());
   case Intrinsic::mips_bnz_b:
   case Intrinsic::mips_bnz_h:
   case Intrinsic::mips_bnz_w:
@@ -1400,6 +1499,24 @@ SDValue MipsSETargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
     return DAG.getNode(ISD::VSELECT, DL, Op->getValueType(0),
                        Op->getOperand(1), Op->getOperand(2),
                        lowerMSASplatImm(Op, 3, DAG));
+  case Intrinsic::mips_bset_b:
+  case Intrinsic::mips_bset_h:
+  case Intrinsic::mips_bset_w:
+  case Intrinsic::mips_bset_d: {
+    EVT VecTy = Op->getValueType(0);
+    SDValue One = lowerMSASplatImm(DL, VecTy, DAG.getConstant(1, MVT::i32),
+                                   DAG);
+
+    return DAG.getNode(ISD::OR, DL, VecTy, Op->getOperand(1),
+                       DAG.getNode(ISD::SHL, DL, VecTy, One,
+                                   Op->getOperand(2)));
+  }
+  case Intrinsic::mips_bseti_b:
+  case Intrinsic::mips_bseti_h:
+  case Intrinsic::mips_bseti_w:
+  case Intrinsic::mips_bseti_d:
+    return lowerMSABinaryBitImmIntr(Op, DAG, ISD::OR, Op->getOperand(2),
+                                    !Subtarget->isLittle());
   case Intrinsic::mips_bz_b:
   case Intrinsic::mips_bz_h:
   case Intrinsic::mips_bz_w:

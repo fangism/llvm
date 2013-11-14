@@ -75,7 +75,6 @@ def ADDRDWord : ComplexPattern<i32, 1, "SelectADDRDWord", [], []>;
 def ADDRVTX_READ : ComplexPattern<i32, 2, "SelectADDRVTX_READ", [], []>;
 def ADDRGA_CONST_OFFSET : ComplexPattern<i32, 1, "SelectGlobalValueConstantOffset", [], []>;
 def ADDRGA_VAR_OFFSET : ComplexPattern<i32, 2, "SelectGlobalValueVariableOffset", [], []>;
-def ADDRIndirect : ComplexPattern<iPTR, 2, "SelectADDRIndirect", [], []>;
 
 
 def R600_Pred : PredicateOperand<i32, (ops R600_Predicate),
@@ -418,7 +417,7 @@ def INTERP_VEC_LOAD :  AMDGPUShaderInst <
   (outs R600_Reg128:$dst),
   (ins i32imm:$src0),
   "INTERP_LOAD $src0 : $dst",
-  []>;
+  [(set R600_Reg128:$dst, (int_R600_interp_const imm:$src0))]>;
 
 def INTERP_XY : R600_2OP <0xD6, "INTERP_XY", []> {
   let bank_swizzle = 5;

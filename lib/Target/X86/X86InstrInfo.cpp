@@ -3165,7 +3165,8 @@ static unsigned getLoadStoreRegOpcode(unsigned Reg,
     assert(X86::RFP80RegClass.hasSubClassEq(RC) && "Unknown 10-byte regclass");
     return load ? X86::LD_Fp80m : X86::ST_FpP80m;
   case 16: {
-    assert(X86::VR128RegClass.hasSubClassEq(RC) && "Unknown 16-byte regclass");
+    assert((X86::VR128RegClass.hasSubClassEq(RC) ||
+            X86::VR128XRegClass.hasSubClassEq(RC))&& "Unknown 16-byte regclass");
     // If stack is realigned we can use aligned stores.
     if (isStackAligned)
       return load ?
@@ -3177,7 +3178,8 @@ static unsigned getLoadStoreRegOpcode(unsigned Reg,
         (HasAVX ? X86::VMOVUPSmr : X86::MOVUPSmr);
   }
   case 32:
-    assert(X86::VR256RegClass.hasSubClassEq(RC) && "Unknown 32-byte regclass");
+    assert((X86::VR256RegClass.hasSubClassEq(RC) ||
+            X86::VR256XRegClass.hasSubClassEq(RC)) && "Unknown 32-byte regclass");
     // If stack is realigned we can use aligned stores.
     if (isStackAligned)
       return load ? X86::VMOVAPSYrm : X86::VMOVAPSYmr;
@@ -4206,11 +4208,26 @@ static MachineInstr* foldPatchpoint(MachineFunction &MF,
     MF.CreateMachineInstr(TII.get(MI->getOpcode()), MI->getDebugLoc(), true);
   MachineInstrBuilder MIB(MF, NewMI);
 
-  bool isPatchPoint = MI->getOpcode() == TargetOpcode::PATCHPOINT;
-  StartIdx = isPatchPoint ?
-             StartIdx + MI->getOperand(StartIdx+3).getImm() + 5 :
-             StartIdx + 2;
+  switch (MI->getOpcode()) {
+  case TargetOpcode::STACKMAP:
+    StartIdx += 2; // Skip ID, nShadowBytes.
+    break;
+  case TargetOpcode::PATCHPOINT:
+    // Skip ID, numBytes, Target, numArgs.
+    // For PatchPoint, the call args are not foldable.
+    StartIdx += MI->getOperand(StartIdx+3).getImm() + 4;
+    break;
+  default:
+    llvm_unreachable("unexpected stackmap opcode");
+  }
 
+  // Return false if any operands requested for folding are not foldable (not
+  // part of the stackmap's live values).
+  for (SmallVectorImpl<unsigned>::const_iterator I = Ops.begin(), E = Ops.end();
+       I != E; ++I) {
+    if (*I < StartIdx)
+      return 0;
+  }
   // No need to fold return, the meta data, and function arguments
   for (unsigned i = 0; i < StartIdx; ++i)
     MIB.addOperand(MI->getOperand(i));
@@ -4283,6 +4300,12 @@ MachineInstr* X86InstrInfo::foldMemoryOperandImpl(MachineFunction &MF,
                                                   MachineInstr *MI,
                                            const SmallVectorImpl<unsigned> &Ops,
                                                   MachineInstr *LoadMI) const {
+  // If loading from a FrameIndex, fold directly from the FrameIndex.
+  unsigned NumOps = LoadMI->getDesc().getNumOperands();
+  int FrameIndex;
+  if (isLoadFromStackSlot(LoadMI, FrameIndex))
+    return foldMemoryOperandImpl(MF, MI, Ops, FrameIndex);
+
   // Check switch flag
   if (NoFusing) return NULL;
 
@@ -4408,7 +4431,6 @@ MachineInstr* X86InstrInfo::foldMemoryOperandImpl(MachineFunction &MF,
       return NULL;
 
     // Folding a normal load. Just copy the load's address operands.
-    unsigned NumOps = LoadMI->getDesc().getNumOperands();
     for (unsigned i = NumOps - X86::AddrNumOperands; i != NumOps; ++i)
       MOs.push_back(LoadMI->getOperand(i));
     break;

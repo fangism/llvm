@@ -863,28 +863,29 @@ void CompileUnit::addTemplateParams(DIE &Buffer, DIArray TParams) {
 
 /// getOrCreateContextDIE - Get context owner's DIE.
 DIE *CompileUnit::getOrCreateContextDIE(DIScope Context) {
+  if (!Context || Context.isFile())
+    return getCUDie();
   if (Context.isType())
     return getOrCreateTypeDIE(DIType(Context));
-  else if (Context.isNameSpace())
+  if (Context.isNameSpace())
     return getOrCreateNameSpace(DINameSpace(Context));
-  else if (Context.isSubprogram())
+  if (Context.isSubprogram())
     return getOrCreateSubprogramDIE(DISubprogram(Context));
-  else
-    return getDIE(Context);
+  return getDIE(Context);
 }
 
 /// getOrCreateTypeDIE - Find existing DIE or create new DIE for the
 /// given DIType.
 DIE *CompileUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
-  DIType Ty(TyNode);
-  if (!Ty.isType())
+  if (!TyNode)
     return NULL;
+
+  DIType Ty(TyNode);
+  assert(Ty.isType());
 
   // Construct the context before querying for the existence of the DIE in case
   // such construction creates the DIE.
   DIE *ContextDIE = getOrCreateContextDIE(resolve(Ty.getContext()));
-  if (!ContextDIE)
-    ContextDIE = CUDie.get();
 
   DIE *TyDIE = getDIE(Ty);
   if (TyDIE)
@@ -1356,10 +1357,6 @@ DIE *CompileUnit::getOrCreateNameSpace(DINameSpace NS) {
   // Construct the context before querying for the existence of the DIE in case
   // such construction creates the DIE.
   DIE *ContextDIE = getOrCreateContextDIE(NS.getContext());
-  if (!ContextDIE)
-    // If the context is null, DIE should belong to the CU we call construct
-    // function on.
-    ContextDIE = CUDie.get();
 
   DIE *NDie = getDIE(NS);
   if (NDie)
@@ -1382,8 +1379,6 @@ DIE *CompileUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   // such construction creates the DIE (as is the case for member function
   // declarations).
   DIE *ContextDIE = getOrCreateContextDIE(resolve(SP.getContext()));
-  if (!ContextDIE)
-    ContextDIE = CUDie.get();
 
   DIE *SPDie = getDIE(SP);
   if (SPDie)
@@ -1542,8 +1537,6 @@ void CompileUnit::createGlobalVariableDIE(const MDNode *N) {
     // Construct the context before querying for the existence of the DIE in
     // case such construction creates the DIE.
     DIE *ContextDIE = getOrCreateContextDIE(GVContext);
-    if (!ContextDIE)
-      ContextDIE = CUDie.get();
 
     // Add to map.
     VariableDIE = createAndAddDIE(GV.getTag(), *ContextDIE, N);
@@ -1914,7 +1907,8 @@ DIE *CompileUnit::getOrCreateStaticMemberDIE(const DIDerivedType DT) {
   // Construct the context before querying for the existence of the DIE in case
   // such construction creates the DIE.
   DIE *ContextDIE = getOrCreateContextDIE(resolve(DT.getContext()));
-  assert(ContextDIE && "Static member should belong to a non-CU context.");
+  assert(dwarf::isType(ContextDIE->getTag()) &&
+         "Static member should belong to a type.");
 
   DIE *StaticMemberDIE = getDIE(DT);
   if (StaticMemberDIE)

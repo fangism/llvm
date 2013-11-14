@@ -989,6 +989,161 @@ TEST(YAMLIO, TestSequenceDocListWriteAndRead) {
   }
 }
 
+//===----------------------------------------------------------------------===//
+//  Test document tags
+//===----------------------------------------------------------------------===//
+
+struct MyDouble {
+  MyDouble() : value(0.0) { }
+  MyDouble(double x) : value(x) { }
+  double value;
+};
+
+LLVM_YAML_IS_DOCUMENT_LIST_VECTOR(MyDouble)
+
+
+namespace llvm {
+namespace yaml {
+  template <>
+  struct MappingTraits<MyDouble> {
+    static void mapping(IO &io, MyDouble &d) {
+      if (io.mapTag("!decimal", true)) {
+        mappingDecimal(io, d);
+      } else if (io.mapTag("!fraction")) {
+        mappingFraction(io, d);
+      }
+    }
+    static void mappingDecimal(IO &io, MyDouble &d) {
+      io.mapRequired("value", d.value);
+    }
+    static void mappingFraction(IO &io, MyDouble &d) {
+        double num, denom;
+        io.mapRequired("numerator",      num);
+        io.mapRequired("denominator",    denom);
+        // convert fraction to double
+        d.value = num/denom;
+    }
+  };
+ }
+}
+
+
+//
+// Test the reading of two different tagged yaml documents.
+//
+TEST(YAMLIO, TestTaggedDocuments) {
+  std::vector<MyDouble> docList;
+  Input yin("--- !decimal\nvalue:  3.0\n"
+            "--- !fraction\nnumerator:  9.0\ndenominator:  2\n...\n");
+  yin >> docList;
+  EXPECT_FALSE(yin.error());
+  EXPECT_EQ(docList.size(), 2UL);
+  EXPECT_EQ(docList[0].value, 3.0);
+  EXPECT_EQ(docList[1].value, 4.5);
+}
+
+
+
+//
+// Test writing then reading back tagged documents
+//
+TEST(YAMLIO, TestTaggedDocumentsWriteAndRead) {
+  std::string intermediate;
+  {
+    MyDouble a(10.25);
+    MyDouble b(-3.75);
+    std::vector<MyDouble> docList;
+    docList.push_back(a);
+    docList.push_back(b);
+
+    llvm::raw_string_ostream ostr(intermediate);
+    Output yout(ostr);
+    yout << docList;
+  }
+
+  {
+    Input yin(intermediate);
+    std::vector<MyDouble> docList2;
+    yin >> docList2;
+
+    EXPECT_FALSE(yin.error());
+    EXPECT_EQ(docList2.size(), 2UL);
+    EXPECT_EQ(docList2[0].value, 10.25);
+    EXPECT_EQ(docList2[1].value, -3.75);
+  }
+}
+
+
+//===----------------------------------------------------------------------===//
+//  Test dyn_cast<> on IO object 
+//===----------------------------------------------------------------------===//
+
+struct DynCast {
+  int value;
+};
+typedef std::vector<DynCast> DynCastSequence;
+
+LLVM_YAML_IS_SEQUENCE_VECTOR(DynCast)
+
+namespace llvm {
+namespace yaml {
+  template <>
+  struct MappingTraits<DynCast> {
+    static void mapping(IO &io, DynCast& info) {
+      // Change 10 to 13 when writing yaml.
+      if (Output *output = dyn_cast<Output>(&io)) {
+        (void)output;
+        if (info.value == 10)
+          info.value = 13;
+      }
+      io.mapRequired("value", info.value);
+      // Change 20 to 23 when parsing yaml.
+      if (Input *input = dyn_cast<Input>(&io)) {
+        (void)input;
+        if (info.value == 20)
+          info.value = 23;
+      }
+    }
+  };
+}
+}
+
+//
+// Test writing then reading back a sequence of mappings
+//
+TEST(YAMLIO, TestDynCast) {
+  std::string intermediate;
+  {
+    DynCast entry1;
+    entry1.value = 10;
+    DynCast entry2;
+    entry2.value = 20;
+    DynCast entry3;
+    entry3.value = 30;
+    DynCastSequence seq;
+    seq.push_back(entry1);
+    seq.push_back(entry2);
+    seq.push_back(entry3);
+
+    llvm::raw_string_ostream ostr(intermediate);
+    Output yout(ostr);
+    yout << seq;
+  }
+
+  {
+    Input yin(intermediate);
+    DynCastSequence seq2;
+    yin >> seq2;
+
+    EXPECT_FALSE(yin.error());
+    EXPECT_EQ(seq2.size(), 3UL);
+    EXPECT_EQ(seq2[0].value, 13);   // Verify changed to 13.
+    EXPECT_EQ(seq2[1].value, 23);   // Verify changed to 23.
+    EXPECT_EQ(seq2[2].value, 30);   // Verify stays same.
+  }
+}
+
+
 
 //===----------------------------------------------------------------------===//
 //  Test error handling

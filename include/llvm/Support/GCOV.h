@@ -25,7 +25,6 @@ namespace llvm {
 
 class GCOVFunction;
 class GCOVBlock;
-class GCOVLines;
 class FileInfo;
 
 namespace GCOV {
@@ -152,27 +151,35 @@ public:
     return true;
   }
 
-  uint32_t readInt() {
-    uint32_t Result;
+  bool readInt(uint32_t &Val) {
+    if (Buffer->getBuffer().size() < Cursor+4) {
+      errs() << "Unexpected end of memory buffer: " << Cursor+4 << ".\n";
+      return false;
+    }
     StringRef Str = Buffer->getBuffer().slice(Cursor, Cursor+4);
-    assert (Str.empty() == false && "Unexpected memory buffer end!");
     Cursor += 4;
-    Result = *(const uint32_t *)(Str.data());
-    return Result;
+    Val = *(const uint32_t *)(Str.data());
+    return true;
   }
 
-  uint64_t readInt64() {
-    uint64_t Lo = readInt();
-    uint64_t Hi = readInt();
-    uint64_t Result = Lo | (Hi << 32);
-    return Result;
+  bool readInt64(uint64_t &Val) {
+    uint32_t Lo, Hi;
+    if (!readInt(Lo) || !readInt(Hi)) return false;
+    Val = ((uint64_t)Hi << 32) | Lo;
+    return true;
   }
 
-  StringRef readString() {
-    uint32_t Len = readInt() * 4;
-    StringRef Str = Buffer->getBuffer().slice(Cursor, Cursor+Len);
+  bool readString(StringRef &Str) {
+    uint32_t Len;
+    if (!readInt(Len)) return false;
+    Len *= 4;
+    if (Buffer->getBuffer().size() < Cursor+Len) {
+      errs() << "Unexpected end of memory buffer: " << Cursor+Len << ".\n";
+      return false;
+    }
+    Str = Buffer->getBuffer().slice(Cursor, Cursor+Len).split('\0').first;
     Cursor += Len;
-    return Str.split('\0').first;
+    return true;
   }
 
   uint64_t getCursor() const { return Cursor; }
@@ -203,6 +210,7 @@ public:
   GCOVFunction() : Ident(0), LineNumber(0) {}
   ~GCOVFunction();
   bool read(GCOVBuffer &Buffer, GCOV::GCOVFormat Format);
+  StringRef getFilename() const { return Filename; }
   void dump();
   void collectLineCounts(FileInfo &FI);
 private:
@@ -216,31 +224,21 @@ private:
 /// GCOVBlock - Collects block information.
 class GCOVBlock {
 public:
-  GCOVBlock(uint32_t N) : Number(N), Counter(0) {}
+  GCOVBlock(GCOVFunction &P, uint32_t N) :
+    Parent(P), Number(N), Counter(0), Edges(), Lines() {}
   ~GCOVBlock();
   void addEdge(uint32_t N) { Edges.push_back(N); }
-  void addLine(StringRef Filename, uint32_t LineNo);
+  void addLine(uint32_t N) { Lines.push_back(N); }
   void addCount(uint64_t N) { Counter += N; }
   size_t getNumEdges() { return Edges.size(); }
   void dump();
   void collectLineCounts(FileInfo &FI);
 private:
+  GCOVFunction &Parent;
   uint32_t Number;
   uint64_t Counter;
   SmallVector<uint32_t, 16> Edges;
-  StringMap<GCOVLines *> Lines;
-};
-
-/// GCOVLines - A wrapper around a vector of int to keep track of line nos.
-class GCOVLines {
-public:
-  ~GCOVLines() { Lines.clear(); }
-  void add(uint32_t N) { Lines.push_back(N); }
-  void collectLineCounts(FileInfo &FI, StringRef Filename, uint64_t Count);
-  void dump();
-
-private:
-  SmallVector<uint32_t, 4> Lines;
+  SmallVector<uint32_t, 16> Lines;
 };
 
 typedef DenseMap<uint32_t, uint64_t> LineCounts;

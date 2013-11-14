@@ -1019,6 +1019,25 @@ class NeonI_Perm<bit q, bits<2> size, bits<3> opcode,
   // Inherit Rd in 4-0
 }
 
+// Format AdvSIMD table lookup
+class NeonI_TBL<bit q, bits<2> op2, bits<2> len, bit op,
+                dag outs, dag ins, string asmstr,
+                list<dag> patterns, InstrItinClass itin>
+  : A64InstRdnm<outs, ins, asmstr, patterns, itin> {
+  let Inst{31} = 0b0;
+  let Inst{30} = q;
+  let Inst{29-24} = 0b001110;
+  let Inst{23-22} = op2;
+  let Inst{21} = 0b0;
+  // Inherit Rm in 20-16
+  let Inst{15} = 0b0;
+  let Inst{14-13} = len;
+  let Inst{12} = op;
+  let Inst{11-10} = 0b00;
+  // Inherit Rn in 9-5
+  // Inherit Rd in 4-0
+}
+
 // Format AdvSIMD 3 vector registers with same vector type
 class NeonI_3VSame<bit q, bit u, bits<2> size, bits<5> opcode,
                    dag outs, dag ins, string asmstr,
@@ -1359,5 +1378,33 @@ class NeonI_Crypto_3VSHA<bits<2> size, bits<3> opcode,
   // Inherit Rd in 4-0
 }
 
+// Format AdvSIMD scalar x indexed element
+class NeonI_ScalarXIndexedElem<bit u, bit szhi, bit szlo,
+                               bits<4> opcode, dag outs, dag ins,
+                               string asmstr, list<dag> patterns,
+                               InstrItinClass itin>
+  : A64InstRdnm<outs, ins, asmstr, patterns, itin>
+{
+  let Inst{31} = 0b0;
+  let Inst{30} = 0b1;
+  let Inst{29} = u;
+  let Inst{28-24} = 0b11111;
+  let Inst{23} = szhi;
+  let Inst{22} = szlo;
+  // l in Inst{21}
+  // m in Instr{20}
+  // Inherit Rm in 19-16
+  let Inst{15-12} = opcode;
+  // h in Inst{11}
+  let Inst{10} = 0b0;
+  // Inherit Rn in 9-5
+  // Inherit Rd in 4-0
+}
+// Format AdvSIMD scalar copy - insert from element to scalar
+class NeonI_ScalarCopy<dag outs, dag ins, string asmstr,
+                       list<dag> patterns, InstrItinClass itin>
+  : NeonI_copy<0b1, 0b0, 0b0000, outs, ins, asmstr, patterns, itin> {
+  let Inst{28} = 0b1;
+}
 }
 

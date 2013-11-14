@@ -22,6 +22,39 @@ def int_aarch64_neon_vacgeq :
 def int_aarch64_neon_vacgtq :
   Intrinsic<[llvm_v2i64_ty], [llvm_v2f64_ty, llvm_v2f64_ty], [IntrNoMem]>;
 
+// Vector saturating accumulate
+def int_aarch64_neon_suqadd : Neon_2Arg_Intrinsic;
+def int_aarch64_neon_usqadd : Neon_2Arg_Intrinsic;
+
+// Vector Bitwise reverse
+def int_aarch64_neon_rbit : Neon_1Arg_Intrinsic;
+
+// Vector extract and narrow
+def int_aarch64_neon_xtn : 
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+
+// Vector floating-point convert
+def int_aarch64_neon_frintn : Neon_1Arg_Intrinsic;
+def int_aarch64_neon_fsqrt : Neon_1Arg_Intrinsic;
+def int_aarch64_neon_fcvtxn :
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+def int_aarch64_neon_fcvtns : 
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+def int_aarch64_neon_fcvtnu :
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+def int_aarch64_neon_fcvtps :
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+def int_aarch64_neon_fcvtpu :
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+def int_aarch64_neon_fcvtms :
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+def int_aarch64_neon_fcvtmu :
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+def int_aarch64_neon_fcvtas :
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+def int_aarch64_neon_fcvtau :
+  Intrinsic<[llvm_anyvector_ty], [llvm_anyvector_ty], [IntrNoMem]>;
+
 // Vector maxNum (Floating Point)
 def int_aarch64_neon_vmaxnm : Neon_2Arg_Intrinsic;
 
@@ -83,6 +116,51 @@ def int_aarch64_neon_vmaxv  : Neon_Across_Intrinsic;
 def int_aarch64_neon_vminv  : Neon_Across_Intrinsic;
 def int_aarch64_neon_vmaxnmv : Neon_Across_Intrinsic;
 def int_aarch64_neon_vminnmv : Neon_Across_Intrinsic;
+
+// Vector Table Lookup.
+def int_aarch64_neon_vtbl1 :
+  Intrinsic<[llvm_anyvector_ty],
+            [llvm_anyvector_ty, LLVMMatchType<0>], [IntrNoMem]>;
+
+def int_aarch64_neon_vtbl2 :
+  Intrinsic<[llvm_anyvector_ty],
+            [llvm_anyvector_ty, LLVMMatchType<1>, LLVMMatchType<0>],
+            [IntrNoMem]>;
+
+def int_aarch64_neon_vtbl3 :
+  Intrinsic<[llvm_anyvector_ty],
+            [llvm_anyvector_ty, LLVMMatchType<1>, LLVMMatchType<1>,
+            LLVMMatchType<0>], [IntrNoMem]>;
+
+def int_aarch64_neon_vtbl4 :
+  Intrinsic<[llvm_anyvector_ty],
+            [llvm_anyvector_ty, LLVMMatchType<1>, LLVMMatchType<1>,
+            LLVMMatchType<1>, LLVMMatchType<0>], [IntrNoMem]>;
+
+// Vector Table Extension.
+// Some elements of the destination vector may not be updated, so the original
+// value of that vector is passed as the first argument.  The next 1-4
+// arguments after that are the table.
+def int_aarch64_neon_vtbx1 :
+  Intrinsic<[llvm_anyvector_ty],
+            [LLVMMatchType<0>, llvm_anyvector_ty, LLVMMatchType<0>],
+            [IntrNoMem]>;
+
+def int_aarch64_neon_vtbx2 :
+  Intrinsic<[llvm_anyvector_ty],
+            [LLVMMatchType<0>, llvm_anyvector_ty, LLVMMatchType<1>,
+            LLVMMatchType<0>], [IntrNoMem]>;
+
+def int_aarch64_neon_vtbx3 :
+  Intrinsic<[llvm_anyvector_ty],
+            [LLVMMatchType<0>, llvm_anyvector_ty, LLVMMatchType<1>,
+            LLVMMatchType<1>, LLVMMatchType<0>], [IntrNoMem]>;
+
+def int_aarch64_neon_vtbx4 :
+  Intrinsic<[llvm_anyvector_ty],
+            [LLVMMatchType<0>, llvm_anyvector_ty,  LLVMMatchType<1>,
+            LLVMMatchType<1>,  LLVMMatchType<1>, LLVMMatchType<0>],
+            [IntrNoMem]>;
 
 // Scalar Add
 def int_aarch64_neon_vaddds :
@@ -232,10 +310,6 @@ class Neon_3Arg_ShiftImm_Intrinsic
 def int_aarch64_neon_vshrds_n : Neon_2Arg_ShiftImm_Intrinsic;
 def int_aarch64_neon_vshrdu_n : Neon_2Arg_ShiftImm_Intrinsic;
 
-// Scalar Rounding Shift Right (Immediate)
-def int_aarch64_neon_vrshrds_n : Neon_2Arg_ShiftImm_Intrinsic;
-def int_aarch64_neon_vrshrdu_n : Neon_2Arg_ShiftImm_Intrinsic;
-
 // Scalar Shift Right and Accumulate (Immediate)
 def int_aarch64_neon_vsrads_n : Neon_3Arg_ShiftImm_Intrinsic;
 def int_aarch64_neon_vsradu_n : Neon_3Arg_ShiftImm_Intrinsic;
@@ -253,12 +327,6 @@ def int_aarch64_neon_vqshlu_n : Neon_N2V_Intrinsic;
 
 // Scalar Signed Saturating Shift Left Unsigned (Immediate)
 def int_aarch64_neon_vqshlus_n : Neon_N2V_Intrinsic;
-
-// Shift Right And Insert (Immediate)
-def int_aarch64_neon_vsrid_n : Neon_3Arg_ShiftImm_Intrinsic;
-
-// Shift Left And Insert (Immediate)
-def int_aarch64_neon_vslid_n : Neon_3Arg_ShiftImm_Intrinsic;
 
 // Scalar Signed Fixed-point Convert To Floating-Point (Immediate)
 def int_aarch64_neon_vcvtf32_n_s32 :

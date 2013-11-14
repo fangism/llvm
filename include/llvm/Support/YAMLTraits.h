@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/YAMLParser.h"
@@ -317,7 +318,7 @@ public:
   IO(void *Ctxt=NULL);
   virtual ~IO();
 
-  virtual bool outputting() = 0;
+  virtual bool outputting() const = 0;
 
   virtual unsigned beginSequence() = 0;
   virtual bool preflightElement(unsigned, void *&) = 0;
@@ -330,6 +331,7 @@ public:
   virtual void postflightFlowElement(void*) = 0;
   virtual void endFlowSequence() = 0;
 
+  virtual bool mapTag(StringRef Tag, bool Default=false) = 0;
   virtual void beginMapping() = 0;
   virtual void endMapping() = 0;
   virtual bool preflightKey(const char*, bool, bool, bool &, void *&) = 0;
@@ -404,8 +406,7 @@ public:
   void mapOptional(const char* Key, T& Val, const T& Default) {
     this->processKeyWithDefault(Key, Val, Default, false);
   }
-
-
+  
 private:
   template <typename T>
   void processKeyWithDefault(const char *Key, T &Val, const T& DefaultValue,
@@ -694,8 +695,11 @@ public:
   // To set alternate error reporting.
   void setDiagHandler(llvm::SourceMgr::DiagHandlerTy Handler, void *Ctxt = 0);
 
+  static bool classof(const IO *io) { return !io->outputting(); }
+
 private:
-  virtual bool outputting();
+  virtual bool outputting() const;
+  virtual bool mapTag(StringRef, bool);
   virtual void beginMapping();
   virtual void endMapping();
   virtual bool preflightKey(const char *, bool, bool, bool &, void *&);
@@ -818,7 +822,10 @@ public:
   Output(llvm::raw_ostream &, void *Ctxt=NULL);
   virtual ~Output();
 
-  virtual bool outputting();
+  static bool classof(const IO *io) { return io->outputting(); }
+  
+  virtual bool outputting() const;
+  virtual bool mapTag(StringRef, bool);
   virtual void beginMapping();
   virtual void endMapping();
   virtual bool preflightKey(const char *key, bool, bool, bool &, void *&);

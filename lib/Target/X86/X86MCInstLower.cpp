@@ -593,18 +593,6 @@ ReSimplify:
   case X86::MOVSX64rr32:
     SimplifyMOVSX(OutMI);
     break;
-
-  case X86::MORESTACK_RET:
-    OutMI.setOpcode(X86::RET);
-    break;
-
-  case X86::MORESTACK_RET_RESTORE_R10:
-    OutMI.setOpcode(X86::MOV64rr);
-    OutMI.addOperand(MCOperand::CreateReg(X86::R10));
-    OutMI.addOperand(MCOperand::CreateReg(X86::RAX));
-
-    AsmPrinter.OutStreamer.EmitInstruction(MCInstBuilder(X86::RET));
-    break;
   }
 }
 
@@ -777,6 +765,8 @@ static void LowerSTACKMAP(MCStreamer &OutStreamer,
     OutStreamer.EmitInstruction(MCInstBuilder(X86::NOOP));
 }
 
+// Lower a patchpoint of the form:
+// [<def>], <id>, <numBytes>, <target>, <numArgs>
 static void LowerPATCHPOINT(MCStreamer &OutStreamer,
                             X86MCInstLower &MCInstLowering,
                             StackMaps &SM,
@@ -825,17 +815,20 @@ static void LowerPATCHPOINT(MCStreamer &OutStreamer,
                     getStackMapEndMOP(MI.operands_begin(), MI.operands_end()),
                     isAnyRegCC && hasDef);
 
-  // Emit MOV to materialize the target address and the CALL to target.
-  // This is encoded with 12-13 bytes, depending on which register is used.
-  // We conservatively assume that it is 12 bytes and emit in worst case one
-  // extra NOP byte.
-  unsigned EncodedBytes = 12;
-  OutStreamer.EmitInstruction(MCInstBuilder(X86::MOV64ri)
-                              .addReg(MI.getOperand(ScratchIdx).getReg())
-                              .addImm(MI.getOperand(StartIdx + 2).getImm()));
-  OutStreamer.EmitInstruction(MCInstBuilder(X86::CALL64r)
-                              .addReg(MI.getOperand(ScratchIdx).getReg()));
-
+  unsigned EncodedBytes = 0;
+  int64_t CallTarget = MI.getOperand(StartIdx + 2).getImm();
+  if (CallTarget) {
+    // Emit MOV to materialize the target address and the CALL to target.
+    // This is encoded with 12-13 bytes, depending on which register is used.
+    // We conservatively assume that it is 12 bytes and emit in worst case one
+    // extra NOP byte.
+    EncodedBytes = 12;
+    OutStreamer.EmitInstruction(MCInstBuilder(X86::MOV64ri)
+                                .addReg(MI.getOperand(ScratchIdx).getReg())
+                                .addImm(CallTarget));
+    OutStreamer.EmitInstruction(MCInstBuilder(X86::CALL64r)
+                                .addReg(MI.getOperand(ScratchIdx).getReg()));
+  }
   // Emit padding.
   unsigned NumNOPBytes = MI.getOperand(StartIdx + 1).getImm();
   assert(NumNOPBytes >= EncodedBytes &&
@@ -940,6 +933,18 @@ void X86AsmPrinter::EmitInstruction(const MachineInstr *MI) {
 
   case TargetOpcode::PATCHPOINT:
     return LowerPATCHPOINT(OutStreamer, MCInstLowering, SM, *MI);
+
+  case X86::MORESTACK_RET:
+    OutStreamer.EmitInstruction(MCInstBuilder(X86::RET));
+    return;
+
+  case X86::MORESTACK_RET_RESTORE_R10:
+    // Return, then restore R10.
+    OutStreamer.EmitInstruction(MCInstBuilder(X86::RET));
+    OutStreamer.EmitInstruction(MCInstBuilder(X86::MOV64rr)
+      .addReg(X86::R10)
+      .addReg(X86::RAX));
+    return;
   }
 
   MCInst TmpInst;

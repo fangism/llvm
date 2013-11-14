@@ -461,6 +461,11 @@ bool MipsAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
         return false;
       }
     }
+    case 'w':
+      // Print MSA registers for the 'f' constraint
+      // In LLVM, the 'w' modifier doesn't need to do anything.
+      // We can just call printOperand as normal.
+      break;
     }
   }
 
@@ -565,6 +570,15 @@ void MipsAsmPrinter::printUnsignedImm(const MachineInstr *MI, int opNum,
   const MachineOperand &MO = MI->getOperand(opNum);
   if (MO.isImm())
     O << (unsigned short int)MO.getImm();
+  else
+    printOperand(MI, opNum, O);
+}
+
+void MipsAsmPrinter::printUnsignedImm8(const MachineInstr *MI, int opNum,
+                                       raw_ostream &O) {
+  const MachineOperand &MO = MI->getOperand(opNum);
+  if (MO.isImm())
+    O << (unsigned short int)(unsigned char)MO.getImm();
   else
     printOperand(MI, opNum, O);
 }

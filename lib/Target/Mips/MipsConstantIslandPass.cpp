@@ -25,6 +25,7 @@
 
 #include "Mips.h"
 #include "MCTargetDesc/MipsBaseInfo.h"
+#include "Mips16InstrInfo.h"
 #include "MipsMachineFunction.h"
 #include "MipsTargetMachine.h"
 #include "llvm/ADT/Statistic.h"
@@ -237,7 +238,7 @@ namespace {
   bool IsPIC;
   unsigned ABI;
   const MipsSubtarget *STI;
-  const MipsInstrInfo *TII;
+  const Mips16InstrInfo *TII;
   MipsFunctionInfo *MFI;
   MachineFunction *MF;
   MachineConstantPool *MCP;
@@ -359,7 +360,7 @@ bool MipsConstantIslands::runOnMachineFunction(MachineFunction &mf) {
       !MipsSubtarget::useConstantIslands()) {
     return false;
   }
-  TII = (const MipsInstrInfo*)MF->getTarget().getInstrInfo();
+  TII = (const Mips16InstrInfo*)MF->getTarget().getInstrInfo();
   MFI = MF->getInfo<MipsFunctionInfo>();
   DEBUG(dbgs() << "constant island processing " << "\n");
   //
@@ -416,13 +417,11 @@ bool MipsConstantIslands::runOnMachineFunction(MachineFunction &mf) {
 
     DEBUG(dbgs() << "Beginning BR iteration #" << NoBRIters << '\n');
     bool BRChange = false;
-#ifdef IN_PROGRESS
     for (unsigned i = 0, e = ImmBranches.size(); i != e; ++i)
       BRChange |= fixupImmediateBr(ImmBranches[i]);
     if (BRChange && ++NoBRIters > 30)
       report_fatal_error("Branch Fix Up pass failed to converge!");
     DEBUG(dumpBBs());
-#endif
     if (!CPChange && !BRChange)
       break;
     MadeChange = true;
@@ -587,7 +586,6 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
         continue;
 
       int Opc = I->getOpcode();
-#ifdef IN_PROGRESS
       if (I->isBranch()) {
         bool isCond = false;
         unsigned Bits = 0;
@@ -595,13 +593,21 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
         int UOpc = Opc;
         switch (Opc) {
         default:
-          continue;  // Ignore other JT branches
+          continue;  // Ignore other branches for now
+        case Mips::Bimm16:
+          Bits = 11;
+          Scale = 2;
+          isCond = false;
+          break;
+        case Mips::BimmX16:
+          Bits = 16;
+          Scale = 2;
+          isCond = false;
         }
         // Record this immediate branch.
         unsigned MaxOffs = ((1 << (Bits-1))-1) * Scale;
         ImmBranches.push_back(ImmBranch(I, MaxOffs, isCond, UOpc));
       }
-#endif
 
       if (Opc == Mips::CONSTPOOL_ENTRY)
         continue;
@@ -743,7 +749,7 @@ MachineBasicBlock *MipsConstantIslands::splitBlockBeforeInstr
   // Note the new unconditional branch is not being recorded.
   // There doesn't seem to be meaningful DebugInfo available; this doesn't
   // correspond to anything in the source.
-  BuildMI(OrigBB, DebugLoc(), TII->get(Mips::BimmX16)).addMBB(NewBB);
+  BuildMI(OrigBB, DebugLoc(), TII->get(Mips::Bimm16)).addMBB(NewBB);
   ++NumSplit;
 
   // Update the CFG.  All succs of OrigBB are now succs of NewBB.
@@ -887,7 +893,7 @@ static bool BBIsJumpedOver(MachineBasicBlock *MBB) {
   MachineBasicBlock *Succ = *MBB->succ_begin();
   MachineBasicBlock *Pred = *MBB->pred_begin();
   MachineInstr *PredMI = &Pred->back();
-  if (PredMI->getOpcode() == Mips::BimmX16)
+  if (PredMI->getOpcode() == Mips::Bimm16)
     return PredMI->getOperand(0).getMBB() == Succ;
   return false;
 }
@@ -1032,6 +1038,8 @@ int MipsConstantIslands::findLongFormInRangeCPEntry
 /// the specific unconditional branch instruction.
 static inline unsigned getUnconditionalBrDisp(int Opc) {
   switch (Opc) {
+  case Mips::Bimm16:
+    return ((1<<10)-1)*2;
   case Mips::BimmX16:
     return ((1<<16)-1)*2;
   default:
@@ -1119,7 +1127,7 @@ void MipsConstantIslands::createNewWater(unsigned CPUserIndex,
       // but if the preceding conditional branch is out of range, the targets
       // will be exchanged, and the altered branch may be out of range, so the
       // machinery has to know about it.
-      int UncondBr = Mips::BimmX16;
+      int UncondBr = Mips::Bimm16;
       BuildMI(UserMBB, DebugLoc(), TII->get(UncondBr)).addMBB(NewMBB);
       unsigned MaxDisp = getUnconditionalBrDisp(UncondBr);
       ImmBranches.push_back(ImmBranch(&UserMBB->back(),
