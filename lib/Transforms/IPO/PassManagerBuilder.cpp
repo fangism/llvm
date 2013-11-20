@@ -54,6 +54,10 @@ static cl::opt<bool> UseNewSROA("use-new-sroa",
   cl::init(true), cl::Hidden,
   cl::desc("Enable the new, experimental SROA pass"));
 
+static cl::opt<bool>
+RunLoopRerolling("reroll-loops", cl::Hidden,
+                 cl::desc("Run the loop rerolling pass"));
+
 PassManagerBuilder::PassManagerBuilder() {
     OptLevel = 2;
     SizeLevel = 0;
@@ -65,6 +69,7 @@ PassManagerBuilder::PassManagerBuilder() {
     SLPVectorize = RunSLPVectorization;
     LoopVectorize = RunLoopVectorization;
     LateVectorize = LateVectorization;
+    RerollLoops = RunLoopRerolling;
 }
 
 PassManagerBuilder::~PassManagerBuilder() {
@@ -216,6 +221,8 @@ void PassManagerBuilder::populateModulePassManager(PassManagerBase &MPM) {
 
   addExtensionsToPM(EP_ScalarOptimizerLate, MPM);
 
+  if (RerollLoops)
+    MPM.add(createLoopRerollPass());
   if (SLPVectorize)
     MPM.add(createSLPVectorizerPass());   // Vectorize parallel scalar chains.
 

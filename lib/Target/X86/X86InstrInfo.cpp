@@ -36,7 +36,7 @@
 #include "llvm/Target/TargetOptions.h"
 #include <limits>
 
-#define GET_INSTRINFO_CTOR
+#define GET_INSTRINFO_CTOR_DTOR
 #include "X86GenInstrInfo.inc"
 
 using namespace llvm;
@@ -91,6 +91,9 @@ struct X86OpTblEntry {
   uint16_t MemOp;
   uint16_t Flags;
 };
+
+// Pin the vtable to this file.
+void X86InstrInfo::anchor() {}
 
 X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
   : X86GenInstrInfo((tm.getSubtarget<X86Subtarget>().is64Bit()
@@ -4204,10 +4207,6 @@ static MachineInstr* foldPatchpoint(MachineFunction &MF,
                 !MI->getOperand(0).isImplicit();
   unsigned StartIdx = hasDef ? 1 : 0;
 
-  MachineInstr *NewMI =
-    MF.CreateMachineInstr(TII.get(MI->getOpcode()), MI->getDebugLoc(), true);
-  MachineInstrBuilder MIB(MF, NewMI);
-
   switch (MI->getOpcode()) {
   case TargetOpcode::STACKMAP:
     StartIdx += 2; // Skip ID, nShadowBytes.
@@ -4228,6 +4227,11 @@ static MachineInstr* foldPatchpoint(MachineFunction &MF,
     if (*I < StartIdx)
       return 0;
   }
+
+  MachineInstr *NewMI =
+    MF.CreateMachineInstr(TII.get(MI->getOpcode()), MI->getDebugLoc(), true);
+  MachineInstrBuilder MIB(MF, NewMI);
+
   // No need to fold return, the meta data, and function arguments
   for (unsigned i = 0; i < StartIdx; ++i)
     MIB.addOperand(MI->getOperand(i));
@@ -4235,9 +4239,20 @@ static MachineInstr* foldPatchpoint(MachineFunction &MF,
   for (unsigned i = StartIdx; i < MI->getNumOperands(); ++i) {
     MachineOperand &MO = MI->getOperand(i);
     if (std::find(Ops.begin(), Ops.end(), i) != Ops.end()) {
+      assert(MO.getReg() && "patchpoint can only fold a vreg operand");
+      // Compute the spill slot size and offset.
+      const TargetRegisterClass *RC = MF.getRegInfo().getRegClass(MO.getReg());
+      unsigned SpillSize;
+      unsigned SpillOffset;
+      bool Valid = TII.getStackSlotRange(RC, MO.getSubReg(), SpillSize,
+                                         SpillOffset, &MF.getTarget());
+      if (!Valid)
+        report_fatal_error("cannot spill patchpoint subregister operand");
+
       MIB.addOperand(MachineOperand::CreateImm(StackMaps::IndirectMemRefOp));
+      MIB.addOperand(MachineOperand::CreateImm(SpillSize));
       MIB.addOperand(MachineOperand::CreateFI(FrameIndex));
-      addOffset(MIB, 0);
+      addOffset(MIB, SpillOffset);
     }
     else
       MIB.addOperand(MO);

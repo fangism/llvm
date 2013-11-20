@@ -426,6 +426,7 @@ struct FunctionStackPoisoner : public InstVisitor<FunctionStackPoisoner> {
   // Stores a place and arguments of poisoning/unpoisoning call for alloca.
   struct AllocaPoisonCall {
     IntrinsicInst *InsBefore;
+    AllocaInst *AI;
     uint64_t Size;
     bool DoPoison;
   };
@@ -504,7 +505,7 @@ struct FunctionStackPoisoner : public InstVisitor<FunctionStackPoisoner> {
     AllocaInst *AI = findAllocaForValue(II.getArgOperand(1));
     if (!AI) return;
     bool DoPoison = (ID == Intrinsic::lifetime_end);
-    AllocaPoisonCall APC = {&II, SizeValue, DoPoison};
+    AllocaPoisonCall APC = {&II, AI, SizeValue, DoPoison};
     AllocaPoisonCallVec.push_back(APC);
   }
 
@@ -1187,7 +1188,7 @@ bool AddressSanitizer::InjectCoverage(Function &F) {
   IRBuilder<> IRB(F.getEntryBlock().getFirstInsertionPt());
   Type *Int8Ty = IRB.getInt8Ty();
   GlobalVariable *Guard = new GlobalVariable(
-      *F.getParent(), Int8Ty, false, F.getLinkage(),
+      *F.getParent(), Int8Ty, false, GlobalValue::PrivateLinkage,
       Constant::getNullValue(Int8Ty), "__asan_gen_cov_" + F.getName());
   LoadInst *Load = IRB.CreateLoad(Guard);
   Load->setAtomic(Monotonic);
@@ -1523,11 +1524,10 @@ void FunctionStackPoisoner::poisonStack() {
   bool HavePoisonedAllocas = false;
   for (size_t i = 0, n = AllocaPoisonCallVec.size(); i < n; i++) {
     const AllocaPoisonCall &APC = AllocaPoisonCallVec[i];
-    IntrinsicInst *II = APC.InsBefore;
-    AllocaInst *AI = findAllocaForValue(II->getArgOperand(1));
-    assert(AI);
-    IRBuilder<> IRB(II);
-    poisonAlloca(AI, APC.Size, IRB, APC.DoPoison);
+    assert(APC.InsBefore);
+    assert(APC.AI);
+    IRBuilder<> IRB(APC.InsBefore);
+    poisonAlloca(APC.AI, APC.Size, IRB, APC.DoPoison);
     HavePoisonedAllocas |= APC.DoPoison;
   }
 

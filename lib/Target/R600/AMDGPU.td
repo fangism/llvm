@@ -21,12 +21,17 @@ def FeatureDumpCode : SubtargetFeature <"DumpCode",
         "true",
         "Dump MachineInstrs in the CodeEmitter">;
 
-def FeatureIRStructurizer : SubtargetFeature <"EnableIRStructurizer",
+def FeatureIRStructurizer : SubtargetFeature <"disable-irstructurizer",
         "EnableIRStructurizer",
-        "true",
-        "Enable IR Structurizer">;
+        "false",
+        "Disable IR Structurizer">;
 
 // Target features
+
+def FeatureIfCvt : SubtargetFeature <"disable-ifcvt",
+        "EnableIfCvt",
+        "false",
+        "Disable the if conversion pass">;
 
 def FeatureFP64     : SubtargetFeature<"fp64",
         "FP64",

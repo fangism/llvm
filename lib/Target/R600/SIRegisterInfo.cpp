@@ -90,6 +90,7 @@ bool SIRegisterInfo::isSGPRClass(const TargetRegisterClass *RC) const {
 bool SIRegisterInfo::hasVGPRs(const TargetRegisterClass *RC) const {
   return getCommonSubClass(&AMDGPU::VReg_32RegClass, RC) ||
          getCommonSubClass(&AMDGPU::VReg_64RegClass, RC) ||
+         getCommonSubClass(&AMDGPU::VReg_96RegClass, RC) ||
          getCommonSubClass(&AMDGPU::VReg_128RegClass, RC) ||
          getCommonSubClass(&AMDGPU::VReg_256RegClass, RC) ||
          getCommonSubClass(&AMDGPU::VReg_512RegClass, RC);
@@ -99,6 +100,8 @@ const TargetRegisterClass *SIRegisterInfo::getEquivalentVGPRClass(
                                          const TargetRegisterClass *SRC) const {
     if (hasVGPRs(SRC)) {
       return SRC;
+    } else if (SRC == &AMDGPU::SCCRegRegClass) {
+      return &AMDGPU::VCCRegRegClass;
     } else if (getCommonSubClass(SRC, &AMDGPU::SGPR_32RegClass)) {
       return &AMDGPU::VReg_32RegClass;
     } else if (getCommonSubClass(SRC, &AMDGPU::SGPR_64RegClass)) {

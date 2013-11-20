@@ -129,7 +129,7 @@
 // prevent a user from accidentally including gtest-internal-inl.h in
 // his code.
 #define GTEST_IMPLEMENTATION_ 1
-#include "gtest/internal/gtest-internal-inl.h"
+#include "src/gtest-internal-inl.h"
 #undef GTEST_IMPLEMENTATION_
 
 #if GTEST_OS_WINDOWS
@@ -4861,6 +4861,16 @@ void InitGoogleTest(int* argc, char** argv) {
 // UNICODE mode.
 void InitGoogleTest(int* argc, wchar_t** argv) {
   internal::InitGoogleTestImpl(argc, argv);
+}
+
+// Pin the vtables to this file.
+Environment::~Environment() {}
+TestPartResultReporterInterface::~TestPartResultReporterInterface() {}
+TestEventListener::~TestEventListener() {}
+void EmptyTestEventListener::anchor() {}
+namespace internal {
+OsStackTraceGetterInterface::~OsStackTraceGetterInterface() {}
+ParameterizedTestCaseInfoBase::~ParameterizedTestCaseInfoBase() {}
 }
 
 }  // namespace testing

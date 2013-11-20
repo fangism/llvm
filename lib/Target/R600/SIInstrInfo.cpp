@@ -367,12 +367,16 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr *MI,
   return true;
 }
 
-unsigned SIInstrInfo::getVALUOp(const MachineInstr &MI) const {
+unsigned SIInstrInfo::getVALUOp(const MachineInstr &MI) {
   switch (MI.getOpcode()) {
   default: return AMDGPU::INSTRUCTION_LIST_END;
   case AMDGPU::REG_SEQUENCE: return AMDGPU::REG_SEQUENCE;
   case AMDGPU::COPY: return AMDGPU::COPY;
   case AMDGPU::PHI: return AMDGPU::PHI;
+  case AMDGPU::S_ADD_I32: return AMDGPU::V_ADD_I32_e32;
+  case AMDGPU::S_ADDC_U32: return AMDGPU::V_ADDC_U32_e32;
+  case AMDGPU::S_SUB_I32: return AMDGPU::V_SUB_I32_e32;
+  case AMDGPU::S_SUBB_U32: return AMDGPU::V_SUBB_U32_e32;
   case AMDGPU::S_ASHR_I32: return AMDGPU::V_ASHR_I32_e32;
   case AMDGPU::S_ASHR_I64: return AMDGPU::V_ASHR_I64;
   case AMDGPU::S_LSHL_B32: return AMDGPU::V_LSHL_B32_e32;
@@ -421,7 +425,8 @@ void SIInstrInfo::legalizeOpWithMove(MachineInstr *MI, unsigned OpIdx) const {
     Opcode = AMDGPU::S_MOV_B32;
   }
 
-  unsigned Reg = MRI.createVirtualRegister(RI.getRegClass(RCID));
+  const TargetRegisterClass *VRC = RI.getEquivalentVGPRClass(RC);
+  unsigned Reg = MRI.createVirtualRegister(VRC);
   BuildMI(*MI->getParent(), I, MI->getParent()->findDebugLoc(I), get(Opcode),
           Reg).addOperand(MO);
   MO.ChangeToRegister(Reg, false);
@@ -438,7 +443,23 @@ void SIInstrInfo::legalizeOperands(MachineInstr *MI) const {
 
   // Legalize VOP2
   if (isVOP2(MI->getOpcode()) && Src1Idx != -1) {
+    MachineOperand &Src0 = MI->getOperand(Src0Idx);
     MachineOperand &Src1 = MI->getOperand(Src1Idx);
+
+    // If the instruction implicitly reads VCC, we can't have any SGPR operands,
+    // so move any.
+    bool ReadsVCC = MI->readsRegister(AMDGPU::VCC, &RI);
+    if (ReadsVCC && Src0.isReg() &&
+        RI.isSGPRClass(MRI.getRegClass(Src0.getReg()))) {
+      legalizeOpWithMove(MI, Src0Idx);
+      return;
+    }
+
+    if (ReadsVCC && Src1.isReg() &&
+        RI.isSGPRClass(MRI.getRegClass(Src1.getReg()))) {
+      legalizeOpWithMove(MI, Src1Idx);
+      return;
+    }
 
     // Legalize VOP2 instructions where src1 is not a VGPR. An SGPR input must
     // be the first operand, and there can only be one.
@@ -452,6 +473,7 @@ void SIInstrInfo::legalizeOperands(MachineInstr *MI) const {
     }
   }
 
+  // XXX - Do any VOP3 instructions read VCC?
   // Legalize VOP3
   if (isVOP3(MI->getOpcode())) {
     int VOP3Idx[3] = {Src0Idx, Src1Idx, Src2Idx};
@@ -465,6 +487,8 @@ void SIInstrInfo::legalizeOperands(MachineInstr *MI) const {
       if (MO.isReg()) {
         if (!RI.isSGPRClass(MRI.getRegClass(MO.getReg())))
           continue; // VGPRs are legal
+
+        assert(MO.getReg() != AMDGPU::SCC && "SCC operand to VOP3 instruction");
 
         if (SGPRReg == AMDGPU::NoRegister || SGPRReg == MO.getReg()) {
           SGPRReg = MO.getReg();
@@ -543,18 +567,27 @@ void SIInstrInfo::moveToVALU(MachineInstr &TopInst) const {
     const MCInstrDesc &NewDesc = get(NewOpcode);
     Inst->setDesc(NewDesc);
 
+    // Remove any references to SCC. Vector instructions can't read from it, and
+    // We're just about to add the implicit use / defs of VCC, and we don't want
+    // both.
+    for (unsigned i = Inst->getNumOperands() - 1; i > 0; --i) {
+      MachineOperand &Op = Inst->getOperand(i);
+      if (Op.isReg() && Op.getReg() == AMDGPU::SCC)
+        Inst->RemoveOperand(i);
+    }
+
     // Add the implict and explicit register definitions.
     if (NewDesc.ImplicitUses) {
       for (unsigned i = 0; NewDesc.ImplicitUses[i]; ++i) {
-        Inst->addOperand(MachineOperand::CreateReg(NewDesc.ImplicitUses[i],
-                                                   false, true));
+        unsigned Reg = NewDesc.ImplicitUses[i];
+        Inst->addOperand(MachineOperand::CreateReg(Reg, false, true));
       }
     }
 
     if (NewDesc.ImplicitDefs) {
       for (unsigned i = 0; NewDesc.ImplicitDefs[i]; ++i) {
-        Inst->addOperand(MachineOperand::CreateReg(NewDesc.ImplicitDefs[i],
-                                                   true, true));
+        unsigned Reg = NewDesc.ImplicitDefs[i];
+        Inst->addOperand(MachineOperand::CreateReg(Reg, true, true));
       }
     }
 

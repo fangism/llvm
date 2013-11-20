@@ -157,7 +157,10 @@ class MipsAsmParser : public MCTargetAsmParser {
   MipsAsmParser::OperandMatchResultTy
   parseInvNum(SmallVectorImpl<MCParsedAsmOperand *> &Operands);
 
-  bool searchSymbolAlias(SmallVectorImpl<MCParsedAsmOperand *> &Operands,
+  MipsAsmParser::OperandMatchResultTy
+  parseLSAImm(SmallVectorImpl<MCParsedAsmOperand *> &Operands);
+
+  bool searchSymbolAlias(SmallVectorImpl<MCParsedAsmOperand*> &Operands,
                          unsigned RegKind);
 
   bool ParseOperand(SmallVectorImpl<MCParsedAsmOperand *> &,
@@ -190,8 +193,6 @@ class MipsAsmParser : public MCTargetAsmParser {
 
   bool isEvaluated(const MCExpr *Expr);
   bool parseDirectiveSet();
-  bool parseDirectiveMipsHackStocg();
-  bool parseDirectiveMipsHackELFFlags();
 
   bool parseSetAtDirective();
   bool parseSetNoAtDirective();
@@ -299,7 +300,8 @@ private:
     k_PostIndexRegister,
     k_Register,
     k_PtrReg,
-    k_Token
+    k_Token,
+    k_LSAImm
   } Kind;
 
   MipsOperand(KindTy K) : MCParsedAsmOperand(), Kind(K) {}
@@ -374,6 +376,7 @@ public:
   bool isMem() const { return Kind == k_Memory; }
   bool isPtrReg() const { return Kind == k_PtrReg; }
   bool isInvNum() const { return Kind == k_Immediate; }
+  bool isLSAImm() const { return Kind == k_LSAImm; }
 
   StringRef getToken() const {
     assert(Kind == k_Token && "Invalid access!");
@@ -396,7 +399,7 @@ public:
   }
 
   const MCExpr *getImm() const {
-    assert((Kind == k_Immediate) && "Invalid access!");
+    assert((Kind == k_Immediate || Kind == k_LSAImm) && "Invalid access!");
     return Imm.Val;
   }
 
@@ -443,8 +446,16 @@ public:
     return Op;
   }
 
-  static MipsOperand *CreateMem(unsigned Base, const MCExpr *Off, SMLoc S,
-                                SMLoc E) {
+  static MipsOperand *CreateLSAImm(const MCExpr *Val, SMLoc S, SMLoc E) {
+    MipsOperand *Op = new MipsOperand(k_LSAImm);
+    Op->Imm.Val = Val;
+    Op->StartLoc = S;
+    Op->EndLoc = E;
+    return Op;
+  }
+
+  static MipsOperand *CreateMem(unsigned Base, const MCExpr *Off,
+                                SMLoc S, SMLoc E) {
     MipsOperand *Op = new MipsOperand(k_Memory);
     Op->Mem.Base = Base;
     Op->Mem.Off = Off;
@@ -2058,6 +2069,45 @@ MipsAsmParser::parseInvNum(SmallVectorImpl<MCParsedAsmOperand *> &Operands) {
   return MatchOperand_Success;
 }
 
+MipsAsmParser::OperandMatchResultTy
+MipsAsmParser::parseLSAImm(SmallVectorImpl<MCParsedAsmOperand *> &Operands) {
+  switch (getLexer().getKind()) {
+  default:
+    return MatchOperand_NoMatch;
+  case AsmToken::LParen:
+  case AsmToken::Plus:
+  case AsmToken::Minus:
+  case AsmToken::Integer:
+    break;
+  }
+
+  const MCExpr *Expr;
+  SMLoc S = Parser.getTok().getLoc();
+
+  if (getParser().parseExpression(Expr))
+    return MatchOperand_ParseFail;
+
+  int64_t Val;
+  if (!Expr->EvaluateAsAbsolute(Val)) {
+    Error(S, "expected immediate value");
+    return MatchOperand_ParseFail;
+  }
+
+  // The LSA instruction allows a 2-bit unsigned immediate. For this reason
+  // and because the CPU always adds one to the immediate field, the allowed
+  // range becomes 1..4. We'll only check the range here and will deal
+  // with the addition/subtraction when actually decoding/encoding
+  // the instruction.
+  if (Val < 1 || Val > 4) {
+    Error(S, "immediate not in range (1..4)");
+    return MatchOperand_ParseFail;
+  }
+
+  Operands.push_back(MipsOperand::CreateLSAImm(Expr, S,
+                                               Parser.getTok().getLoc()));
+  return MatchOperand_Success;
+}
+
 MCSymbolRefExpr::VariantKind MipsAsmParser::getVariantKind(StringRef Symbol) {
 
   MCSymbolRefExpr::VariantKind VK =
@@ -2318,34 +2368,6 @@ bool MipsAsmParser::parseDirectiveSet() {
   return true;
 }
 
-bool MipsAsmParser::parseDirectiveMipsHackStocg() {
-  MCAsmParser &Parser = getParser();
-  StringRef Name;
-  if (Parser.parseIdentifier(Name))
-    reportParseError("expected identifier");
-
-  MCSymbol *Sym = getContext().GetOrCreateSymbol(Name);
-  if (getLexer().isNot(AsmToken::Comma))
-    return TokError("unexpected token");
-  Lex();
-
-  int64_t Flags = 0;
-  if (Parser.parseAbsoluteExpression(Flags))
-    return TokError("unexpected token");
-
-  getTargetStreamer().emitMipsHackSTOCG(Sym, Flags);
-  return false;
-}
-
-bool MipsAsmParser::parseDirectiveMipsHackELFFlags() {
-  int64_t Flags = 0;
-  if (Parser.parseAbsoluteExpression(Flags))
-    return TokError("unexpected token");
-
-  getTargetStreamer().emitMipsHackELFFlags(Flags);
-  return false;
-}
-
 /// parseDirectiveWord
 ///  ::= .word [ expression (, expression)* ]
 bool MipsAsmParser::parseDirectiveWord(unsigned Size, SMLoc L) {
@@ -2435,12 +2457,6 @@ bool MipsAsmParser::ParseDirective(AsmToken DirectiveID) {
     parseDirectiveWord(4, DirectiveID.getLoc());
     return false;
   }
-
-  if (IDVal == ".mips_hack_stocg")
-    return parseDirectiveMipsHackStocg();
-
-  if (IDVal == ".mips_hack_elf_flags")
-    return parseDirectiveMipsHackELFFlags();
 
   return true;
 }

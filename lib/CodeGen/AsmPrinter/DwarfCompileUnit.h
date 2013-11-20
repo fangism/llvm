@@ -40,7 +40,7 @@ class CompileUnit {
   unsigned UniqueID;
 
   /// Node - MDNode for the compile unit.
-  const MDNode *Node;
+  DICompileUnit Node;
 
   /// CUDie - Compile unit debug information entry.
   ///
@@ -94,14 +94,14 @@ class CompileUnit {
   DIEInteger *DIEIntegerOne;
 
 public:
-  CompileUnit(unsigned UID, DIE *D, const MDNode *N, AsmPrinter *A,
+  CompileUnit(unsigned UID, DIE *D, DICompileUnit CU, AsmPrinter *A,
               DwarfDebug *DW, DwarfUnits *DWU);
   ~CompileUnit();
 
   // Accessors.
   unsigned getUniqueID() const { return UniqueID; }
-  uint16_t getLanguage() const { return DICompileUnit(Node).getLanguage(); }
-  const MDNode *getNode() const { return Node; }
+  uint16_t getLanguage() const { return Node.getLanguage(); }
+  DICompileUnit getNode() const { return Node; }
   DIE *getCUDie() const { return CUDie.get(); }
   const StringMap<DIE *> &getGlobalNames() const { return GlobalNames; }
   const StringMap<DIE *> &getGlobalTypes() const { return GlobalTypes; }
@@ -159,7 +159,7 @@ public:
   /// when the MDNode can be part of the type system, since DIEs for
   /// the type system can be shared across CUs and the mappings are
   /// kept in DwarfDebug.
-  DIE *getDIE(const MDNode *N) const;
+  DIE *getDIE(DIDescriptor D) const;
 
   DIEBlock *getDIEBlock() { return new (DIEValueAllocator) DIEBlock(); }
 
@@ -167,7 +167,7 @@ public:
   /// when the MDNode can be part of the type system, since DIEs for
   /// the type system can be shared across CUs and the mappings are
   /// kept in DwarfDebug.
-  void insertDIE(const MDNode *N, DIE *D);
+  void insertDIE(DIDescriptor Desc, DIE *D);
 
   /// addDie - Adds or interns the DIE to the compile unit.
   ///
@@ -310,18 +310,18 @@ public:
   DIE *getOrCreateContextDIE(DIScope Context);
 
   /// createGlobalVariableDIE - create global variable DIE.
-  void createGlobalVariableDIE(const MDNode *N);
+  void createGlobalVariableDIE(DIGlobalVariable GV);
 
   /// constructContainingTypeDIEs - Construct DIEs for types that contain
   /// vtables.
   void constructContainingTypeDIEs();
 
   /// constructVariableDIE - Construct a DIE for the given DbgVariable.
-  DIE *constructVariableDIE(DbgVariable *DV, bool isScopeAbstract);
+  DIE *constructVariableDIE(DbgVariable &DV, bool isScopeAbstract);
 
   /// Create a DIE with the given Tag, add the DIE to its parent, and
   /// call insertDIE if MD is not null.
-  DIE *createAndAddDIE(unsigned Tag, DIE &Parent, const MDNode *MD = NULL);
+  DIE *createAndAddDIE(unsigned Tag, DIE &Parent, DIDescriptor N = DIDescriptor());
 
   /// Compute the size of a header for this unit, not including the initial
   /// length field.

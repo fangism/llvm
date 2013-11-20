@@ -39,9 +39,6 @@
 
 using namespace llvm;
 
-static cl::opt<bool> PrintHackDirectives("print-hack-directives",
-                                         cl::init(false), cl::Hidden);
-
 static std::string ParseMipsTriple(StringRef TT, StringRef CPU) {
   std::string MipsArchFeature;
   size_t DashPosition = 0;
@@ -131,67 +128,6 @@ static MCInstPrinter *createMipsMCInstPrinter(const Target &T,
   return new MipsInstPrinter(MAI, MII, MRI);
 }
 
-namespace {
-class MipsTargetAsmStreamer : public MipsTargetStreamer {
-  formatted_raw_ostream &OS;
-
-public:
-  MipsTargetAsmStreamer(formatted_raw_ostream &OS);
-  virtual void emitMipsHackELFFlags(unsigned Flags);
-  virtual void emitMipsHackSTOCG(MCSymbol *Sym, unsigned Val);
-};
-
-MipsTargetAsmStreamer::MipsTargetAsmStreamer(formatted_raw_ostream &OS)
-    : OS(OS) {}
-
-void MipsTargetAsmStreamer::emitMipsHackELFFlags(unsigned Flags) {
-  if (!PrintHackDirectives)
-    return;
-
-  OS << "\t.mips_hack_elf_flags 0x";
-  OS.write_hex(Flags);
-  OS << '\n';
-}
-void MipsTargetAsmStreamer::emitMipsHackSTOCG(MCSymbol *Sym, unsigned Val) {
-  if (!PrintHackDirectives)
-    return;
-
-  OS << "\t.mips_hack_stocg ";
-  OS << Sym->getName();
-  OS << ", ";
-  OS << Val;
-  OS << '\n';
-}
-
-class MipsTargetELFStreamer : public MipsTargetStreamer {
-public:
-  MCELFStreamer &getStreamer();
-  MipsTargetELFStreamer();
-  virtual void emitMipsHackELFFlags(unsigned Flags);
-  virtual void emitMipsHackSTOCG(MCSymbol *Sym, unsigned Val);
-};
-
-MipsTargetELFStreamer::MipsTargetELFStreamer() {}
-
-MCELFStreamer &MipsTargetELFStreamer::getStreamer() {
-  return static_cast<MCELFStreamer &>(*Streamer);
-}
-
-void MipsTargetELFStreamer::emitMipsHackELFFlags(unsigned Flags) {
-  MCAssembler &MCA = getStreamer().getAssembler();
-  MCA.setELFHeaderEFlags(Flags);
-}
-
-// Set a symbol's STO flags
-void MipsTargetELFStreamer::emitMipsHackSTOCG(MCSymbol *Sym, unsigned Val) {
-  MCSymbolData &Data = getStreamer().getOrCreateSymbolData(Sym);
-  // The "other" values are stored in the last 6 bits of the second byte
-  // The traditional defines for STO values assume the full byte and thus
-  // the shift to pack it.
-  MCELF::setOther(Data, Val >> 2);
-}
-}
-
 static MCStreamer *createMCStreamer(const Target &T, StringRef TT,
                                     MCContext &Context, MCAsmBackend &MAB,
                                     raw_ostream &OS, MCCodeEmitter *Emitter,
@@ -205,7 +141,7 @@ createMCAsmStreamer(MCContext &Ctx, formatted_raw_ostream &OS,
                     bool isVerboseAsm, bool useLoc, bool useCFI,
                     bool useDwarfDirectory, MCInstPrinter *InstPrint,
                     MCCodeEmitter *CE, MCAsmBackend *TAB, bool ShowInst) {
-  MipsTargetAsmStreamer *S = new MipsTargetAsmStreamer(OS);
+  MipsTargetAsmStreamer *S = new MipsTargetAsmStreamer();
 
   return llvm::createAsmStreamer(Ctx, S, OS, isVerboseAsm, useLoc, useCFI,
                                  useDwarfDirectory, InstPrint, CE, TAB,

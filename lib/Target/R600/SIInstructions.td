@@ -974,16 +974,13 @@ defm V_MBCNT_LO_U32_B32 : VOP2_32 <0x00000023, "V_MBCNT_LO_U32_B32", []>;
 defm V_MBCNT_HI_U32_B32 : VOP2_32 <0x00000024, "V_MBCNT_HI_U32_B32", []>;
 
 let isCommutable = 1, Defs = [VCC] in { // Carry-out goes to VCC
-defm V_ADD_I32 : VOP2b_32 <0x00000025, "V_ADD_I32",
-  [(set i32:$dst, (add (i32 VSrc_32:$src0), (i32 VReg_32:$src1)))]
->;
-
-defm V_SUB_I32 : VOP2b_32 <0x00000026, "V_SUB_I32",
-  [(set i32:$dst, (sub i32:$src0, i32:$src1))]
->;
+// No patterns so that the scalar instructions are always selected.
+// The scalar versions will be replaced with vector when needed later.
+defm V_ADD_I32 : VOP2b_32 <0x00000025, "V_ADD_I32", []>;
+defm V_SUB_I32 : VOP2b_32 <0x00000026, "V_SUB_I32", []>;
 defm V_SUBREV_I32 : VOP2b_32 <0x00000027, "V_SUBREV_I32", [], "V_SUB_I32">;
 
-let Uses = [VCC] in { // Carry-out comes from VCC
+let Uses = [VCC] in { // Carry-in comes from VCC
 defm V_ADDC_U32 : VOP2b_32 <0x00000028, "V_ADDC_U32", []>;
 defm V_SUBB_U32 : VOP2b_32 <0x00000029, "V_SUBB_U32", []>;
 defm V_SUBBREV_U32 : VOP2b_32 <0x0000002a, "V_SUBBREV_U32", [], "V_SUBB_U32">;
@@ -1129,12 +1126,31 @@ def V_DIV_FMAS_F64 : VOP3_64 <0x00000170, "V_DIV_FMAS_F64", []>;
 //def V_QSAD_U8 : VOP3_U8 <0x00000172, "V_QSAD_U8", []>;
 //def V_MQSAD_U8 : VOP3_U8 <0x00000173, "V_MQSAD_U8", []>;
 def V_TRIG_PREOP_F64 : VOP3_64 <0x00000174, "V_TRIG_PREOP_F64", []>;
+
+let Defs = [SCC] in { // Carry out goes to SCC
+let isCommutable = 1 in {
 def S_ADD_U32 : SOP2_32 <0x00000000, "S_ADD_U32", []>;
+def S_ADD_I32 : SOP2_32 <0x00000002, "S_ADD_I32",
+  [(set i32:$dst, (add SSrc_32:$src0, SSrc_32:$src1))]
+>;
+} // End isCommutable = 1
+
 def S_SUB_U32 : SOP2_32 <0x00000001, "S_SUB_U32", []>;
-def S_ADD_I32 : SOP2_32 <0x00000002, "S_ADD_I32", []>;
-def S_SUB_I32 : SOP2_32 <0x00000003, "S_SUB_I32", []>;
-def S_ADDC_U32 : SOP2_32 <0x00000004, "S_ADDC_U32", []>;
-def S_SUBB_U32 : SOP2_32 <0x00000005, "S_SUBB_U32", []>;
+def S_SUB_I32 : SOP2_32 <0x00000003, "S_SUB_I32",
+  [(set i32:$dst, (sub SSrc_32:$src0, SSrc_32:$src1))]
+>;
+
+let Uses = [SCC] in { // Carry in comes from SCC
+let isCommutable = 1 in {
+def S_ADDC_U32 : SOP2_32 <0x00000004, "S_ADDC_U32",
+  [(set i32:$dst, (adde (i32 SSrc_32:$src0), (i32 SSrc_32:$src1)))]>;
+} // End isCommutable = 1
+
+def S_SUBB_U32 : SOP2_32 <0x00000005, "S_SUBB_U32",
+  [(set i32:$dst, (sube (i32 SSrc_32:$src0), (i32 SSrc_32:$src1)))]>;
+} // End Uses = [SCC]
+} // End Defs = [SCC]
+
 def S_MIN_I32 : SOP2_32 <0x00000006, "S_MIN_I32", []>;
 def S_MIN_U32 : SOP2_32 <0x00000007, "S_MIN_U32", []>;
 def S_MAX_I32 : SOP2_32 <0x00000008, "S_MAX_I32", []>;
@@ -2036,6 +2052,13 @@ def : Pat <
 def : Pat <
   (i32 (trunc i64:$a)),
   (EXTRACT_SUBREG $a, sub0)
+>;
+
+// V_ADD_I32_e32/S_ADD_I32 produces carry in VCC/SCC. For the vector
+// case, the sgpr-copies pass will fix this to use the vector version.
+def : Pat <
+  (i32 (addc i32:$src0, i32:$src1)),
+  (S_ADD_I32 $src0, $src1)
 >;
 
 def : Pat <

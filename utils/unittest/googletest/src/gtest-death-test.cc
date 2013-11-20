@@ -63,7 +63,7 @@
 // prevent a user from accidentally including gtest-internal-inl.h in
 // his code.
 #define GTEST_IMPLEMENTATION_ 1
-#include "gtest/internal/gtest-internal-inl.h"
+#include "src/gtest-internal-inl.h"
 #undef GTEST_IMPLEMENTATION_
 
 namespace testing {
@@ -299,6 +299,9 @@ DeathTest::DeathTest() {
                    "TEST_F construct");
   }
 }
+
+// Pin the vtable to this file.
+DeathTest::~DeathTest() {}
 
 // Creates and returns a death test by dispatching to the current
 // death test factory.
@@ -1090,6 +1093,9 @@ bool DefaultDeathTestFactory::Create(const char* statement, const RE* regex,
 
   return true;
 }
+
+// Pin the vtable to this file.
+DeathTestFactory::~DeathTestFactory() {}
 
 // Splits a given string on a given delimiter, populating a given
 // vector with the fields.  GTEST_HAS_DEATH_TEST implies that we have

@@ -65,6 +65,21 @@ def uimm2 : Operand<i32> {
   let PrintMethod = "printUnsignedImm";
 }
 
+// The immediate of an LSA instruction needs special handling
+// as the encoded value should be subtracted by one.
+def uimm2LSAAsmOperand : AsmOperandClass {
+  let Name = "LSAImm";
+  let ParserMethod = "parseLSAImm";
+  let RenderMethod = "addImmOperands";
+}
+
+def LSAImm : Operand<i32> {
+  let PrintMethod = "printUnsignedImm";
+  let EncoderMethod = "getLSAImmEncoding";
+  let DecoderMethod = "DecodeLSAImm";
+  let ParserMatchClass = uimm2LSAAsmOperand;
+}
+
 def uimm3 : Operand<i32> {
   let PrintMethod = "printUnsignedImm8";
 }
@@ -521,7 +536,7 @@ class BNZ_H_ENC : MSA_CBRANCH_FMT<0b111, 0b01>;
 class BNZ_W_ENC : MSA_CBRANCH_FMT<0b111, 0b10>;
 class BNZ_D_ENC : MSA_CBRANCH_FMT<0b111, 0b11>;
 
-class BNZ_V_ENC : MSA_CBRANCH_V_FMT<0b01000>;
+class BNZ_V_ENC : MSA_CBRANCH_V_FMT<0b01111>;
 
 class BSEL_V_ENC : MSA_VEC_FMT<0b00110, 0b011110>;
 
@@ -2283,7 +2298,7 @@ class LDI_D_DESC : MSA_I10_LDI_DESC_BASE<"ldi.d", MSA128DOpnd>;
 
 class LSA_DESC {
   dag OutOperandList = (outs GPR32Opnd:$rd);
-  dag InOperandList = (ins GPR32Opnd:$rs, GPR32Opnd:$rt, uimm2:$sa);
+  dag InOperandList = (ins GPR32Opnd:$rs, GPR32Opnd:$rt, LSAImm:$sa);
   string AsmString = "lsa\t$rd, $rs, $rt, $sa";
   list<dag> Pattern = [(set GPR32Opnd:$rd, (add GPR32Opnd:$rs,
                                                 (shl GPR32Opnd:$rt,

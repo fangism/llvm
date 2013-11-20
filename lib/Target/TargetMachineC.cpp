@@ -72,17 +72,15 @@ LLVMTargetRef LLVMGetNextTarget(LLVMTargetRef T) {
   return wrap(unwrap(T)->getNext());
 }
 
-LLVMBool LLVMGetTargetFromName(const char *Name, LLVMTargetRef *T) {
+LLVMTargetRef LLVMGetTargetFromName(const char *Name) {
+  StringRef NameRef = Name;
   for (TargetRegistry::iterator IT = TargetRegistry::begin(),
                                 IE = TargetRegistry::end(); IT != IE; ++IT) {
-    if (IT->getName() == Name) {
-      *T = wrap(&*IT);
-
-      return 0;
-    }
+    if (IT->getName() == NameRef)
+      return wrap(&*IT);
   }
   
-  return 1;
+  return NULL;
 }
 
 LLVMBool LLVMGetTargetFromTriple(const char* TripleStr, LLVMTargetRef *T,
@@ -121,9 +119,10 @@ LLVMBool LLVMTargetHasAsmBackend(LLVMTargetRef T) {
   return unwrap(T)->hasMCAsmBackend();
 }
 
-LLVMTargetMachineRef LLVMCreateTargetMachine(LLVMTargetRef T, char* Triple,
-  char* CPU, char* Features, LLVMCodeGenOptLevel Level, LLVMRelocMode Reloc,
-  LLVMCodeModel CodeModel) {
+LLVMTargetMachineRef LLVMCreateTargetMachine(LLVMTargetRef T,
+        const char* Triple, const char* CPU, const char* Features,
+        LLVMCodeGenOptLevel Level, LLVMRelocMode Reloc,
+        LLVMCodeModel CodeModel) {
   Reloc::Model RM;
   switch (Reloc){
     case LLVMRelocStatic:

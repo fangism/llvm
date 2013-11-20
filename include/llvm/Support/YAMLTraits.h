@@ -685,15 +685,17 @@ private:
 ///
 class Input : public IO {
 public:
-  // Construct a yaml Input object from a StringRef and optional user-data.
-  Input(StringRef InputContent, void *Ctxt=NULL);
+  // Construct a yaml Input object from a StringRef and optional
+  // user-data. The DiagHandler can be specified to provide
+  // alternative error reporting.
+  Input(StringRef InputContent,
+        void *Ctxt = NULL,
+        SourceMgr::DiagHandlerTy DiagHandler = NULL,
+        void *DiagHandlerCtxt = NULL);
   ~Input();
-  
+
   // Check if there was an syntax or semantic error during parsing.
   llvm::error_code error();
-
-  // To set alternate error reporting.
-  void setDiagHandler(llvm::SourceMgr::DiagHandlerTy Handler, void *Ctxt = 0);
 
   static bool classof(const IO *io) { return !io->outputting(); }
 
@@ -723,6 +725,7 @@ private:
   virtual bool canElideEmptySequence();
 
   class HNode {
+    virtual void anchor();
   public:
     HNode(Node *n) : _node(n) { }
     virtual ~HNode() { }
@@ -732,9 +735,9 @@ private:
   };
 
   class EmptyHNode : public HNode {
+    virtual void anchor();
   public:
     EmptyHNode(Node *n) : HNode(n) { }
-    virtual ~EmptyHNode() {}
     static inline bool classof(const HNode *n) {
       return NullNode::classof(n->_node);
     }
@@ -742,9 +745,9 @@ private:
   };
 
   class ScalarHNode : public HNode {
+    virtual void anchor();
   public:
     ScalarHNode(Node *n, StringRef s) : HNode(n), _value(s) { }
-    virtual ~ScalarHNode() { }
 
     StringRef value() const { return _value; }
 
@@ -968,8 +971,8 @@ template <typename T>
 inline
 typename llvm::enable_if_c<has_SequenceTraits<T>::value,Input &>::type
 operator>>(Input &yin, T &docSeq) {
-  yin.setCurrentDocument();
-  yamlize(yin, docSeq, true);
+  if (yin.setCurrentDocument())
+    yamlize(yin, docSeq, true);
   return yin;
 }
 

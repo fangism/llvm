@@ -125,8 +125,7 @@ bool
 AMDGPUPassConfig::addPreISel() {
   const AMDGPUSubtarget &ST = TM->getSubtarget<AMDGPUSubtarget>();
   addPass(createFlattenCFGPass());
-  if (ST.IsIRStructurizerEnabled() ||
-      ST.getGeneration() > AMDGPUSubtarget::NORTHERN_ISLANDS)
+  if (ST.IsIRStructurizerEnabled())
     addPass(createStructurizeCFGPass());
   if (ST.getGeneration() > AMDGPUSubtarget::NORTHERN_ISLANDS) {
     addPass(createSinkingPass());
@@ -169,7 +168,8 @@ bool AMDGPUPassConfig::addPreSched2() {
 
   if (ST.getGeneration() <= AMDGPUSubtarget::NORTHERN_ISLANDS)
     addPass(createR600EmitClauseMarkers(*TM));
-  addPass(&IfConverterID);
+  if (ST.isIfCvtEnabled())
+    addPass(&IfConverterID);
   if (ST.getGeneration() <= AMDGPUSubtarget::NORTHERN_ISLANDS)
     addPass(createR600ClauseMergePass(*TM));
   return false;

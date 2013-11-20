@@ -941,9 +941,10 @@ example:
     attribute; this attribute is also incompatible
     with the ``minsize`` attribute and the ``optsize`` attribute.
 
-    The inliner should never inline this function in any situation.
+    This attribute requires the ``noinline`` attribute to be specified on
+    the function as well, so the function is never inlined into any caller.
     Only functions with the ``alwaysinline`` attribute are valid
-    candidates for inlining inside the body of this function.
+    candidates for inlining into the body of this function.
 ``optsize``
     This attribute suggests that optimization passes and code generator
     passes make choices that keep the code size of this function low,
@@ -2382,6 +2383,10 @@ The following is the syntax for constant expressions:
     Convert a constant, CST, to another TYPE. The constraints of the
     operands are the same as those for the :ref:`bitcast
     instruction <i_bitcast>`.
+``addrspacecast (CST to TYPE)``
+    Convert a constant pointer or constant vector of pointer, CST, to another
+    TYPE in a different address space. The constraints of the operands are the
+    same as those for the :ref:`addrspacecast instruction <i_addrspacecast>`.
 ``getelementptr (CSTPTR, IDX0, IDX1, ...)``, ``getelementptr inbounds (CSTPTR, IDX0, IDX1, ...)``
     Perform the :ref:`getelementptr operation <i_getelementptr>` on
     constants. As with the :ref:`getelementptr <i_getelementptr>`
@@ -5726,9 +5731,9 @@ is always a *no-op cast* because no bits change with this
 conversion. The conversion is done as if the ``value`` had been stored
 to memory and read back as type ``ty2``. Pointer (or vector of
 pointers) types may only be converted to other pointer (or vector of
-pointers) types with this instruction if the pointer sizes are
-equal. To convert pointers to other types, use the :ref:`inttoptr
-<i_inttoptr>` or :ref:`ptrtoint <i_ptrtoint>` instructions first.
+pointers) types with the same address space through this instruction.
+To convert pointers to other types, use the :ref:`inttoptr <i_inttoptr>`
+or :ref:`ptrtoint <i_ptrtoint>` instructions first.
 
 Example:
 """"""""
@@ -5739,6 +5744,51 @@ Example:
       %Y = bitcast i32* %x to sint*          ; yields sint*:%x
       %Z = bitcast <2 x int> %V to i64;        ; yields i64: %V
       %Z = bitcast <2 x i32*> %V to <2 x i64*> ; yields <2 x i64*>
+
+.. _i_addrspacecast:
+
+'``addrspacecast .. to``' Instruction
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      <result> = addrspacecast <pty> <ptrval> to <pty2>       ; yields pty2
+
+Overview:
+"""""""""
+
+The '``addrspacecast``' instruction converts ``ptrval`` from ``pty`` in
+address space ``n`` to type ``pty2`` in address space ``m``.
+
+Arguments:
+""""""""""
+
+The '``addrspacecast``' instruction takes a pointer or vector of pointer value
+to cast and a pointer type to cast it to, which must have a different
+address space.
+
+Semantics:
+""""""""""
+
+The '``addrspacecast``' instruction converts the pointer value
+``ptrval`` to type ``pty2``. It can be a *no-op cast* or a complex
+value modification, depending on the target and the address space
+pair. Pointer conversions within the same address space must be
+performed with the ``bitcast`` instruction. Note that if the address space
+conversion is legal then both result and operand refer to the same memory
+location.
+
+Example:
+""""""""
+
+.. code-block:: llvm
+
+      %X = addrspacecast i32* %x to i32 addrspace(1)*    ; yields i32 addrspace(1)*:%x
+      %Y = addrspacecast i32 addrspace(1)* %y to i64 addrspace(2)*    ; yields i64 addrspace(2)*:%y
+      %Z = addrspacecast <4 x i32*> %z to <4 x float addrspace(3)*>   ; yields <4 x float addrspace(3)*>:%z
 
 .. _otherops:
 

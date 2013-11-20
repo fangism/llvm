@@ -72,6 +72,7 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
@@ -180,16 +181,14 @@ bool SIFixSGPRCopies::isVGPRToSGPRCopy(const MachineInstr &Copy,
   unsigned SrcReg = Copy.getOperand(1).getReg();
   unsigned SrcSubReg = Copy.getOperand(1).getSubReg();
   const TargetRegisterClass *DstRC = MRI.getRegClass(DstReg);
+  const TargetRegisterClass *SrcRC;
 
   if (!TargetRegisterInfo::isVirtualRegister(SrcReg) ||
       DstRC == &AMDGPU::M0RegRegClass)
     return false;
 
-  const TargetRegisterClass *SrcRC = TRI->getSubRegClass(
-      MRI.getRegClass(SrcReg), SrcSubReg);
-
-  return TRI->isSGPRClass(DstRC) &&
-         !TRI->getCommonSubClass(DstRC, SrcRC);
+  SrcRC = inferRegClassFromDef(TRI, MRI, SrcReg, SrcSubReg);
+  return TRI->isSGPRClass(DstRC) && TRI->hasVGPRs(SrcRC);
 }
 
 bool SIFixSGPRCopies::runOnMachineFunction(MachineFunction &MF) {
@@ -255,7 +254,6 @@ bool SIFixSGPRCopies::runOnMachineFunction(MachineFunction &MF) {
         DEBUG(MI.print(dbgs()));
 
         TII->moveToVALU(MI);
-        TII->legalizeOperands(&MI);
         break;
       }
       }

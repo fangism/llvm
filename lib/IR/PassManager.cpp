@@ -47,11 +47,12 @@ void AnalysisManager::invalidateAll(Function *F) {
   FunctionAnalysisResultListT &ResultsList = FunctionAnalysisResultLists[F];
   for (FunctionAnalysisResultListT::iterator I = ResultsList.begin(),
                                              E = ResultsList.end();
-       I != E; ++I)
+       I != E;)
     if (I->second->invalidate(F)) {
-      FunctionAnalysisResultListT::iterator Old = I--;
-      InvalidatedPassIDs.push_back(Old->first);
-      ResultsList.erase(Old);
+      InvalidatedPassIDs.push_back(I->first);
+      I = ResultsList.erase(I);
+    } else {
+      ++I;
     }
   while (!InvalidatedPassIDs.empty())
     FunctionAnalysisResults.erase(
@@ -80,11 +81,12 @@ void AnalysisManager::invalidateAll(Module *M) {
     FunctionAnalysisResultListT &ResultsList = FI->second;
     for (FunctionAnalysisResultListT::iterator I = ResultsList.begin(),
                                                E = ResultsList.end();
-         I != E; ++I)
+         I != E;)
       if (I->second->invalidate(F)) {
-        FunctionAnalysisResultListT::iterator Old = I--;
-        InvalidatedPassIDs.push_back(Old->first);
-        ResultsList.erase(Old);
+        InvalidatedPassIDs.push_back(I->first);
+        I = ResultsList.erase(I);
+      } else {
+        ++I;
       }
     while (!InvalidatedPassIDs.empty())
       FunctionAnalysisResults.erase(
@@ -146,10 +148,10 @@ void AnalysisManager::invalidateImpl(void *PassID, Function *F) {
   assert(F->getParent() == M &&
          "Invalidating a pass over a function from another module!");
 
-  FunctionAnalysisResultMapT::iterator RI = FunctionAnalysisResults.find(std::make_pair(PassID, F));
+  FunctionAnalysisResultMapT::iterator RI =
+      FunctionAnalysisResults.find(std::make_pair(PassID, F));
   if (RI == FunctionAnalysisResults.end())
     return;
 
   FunctionAnalysisResultLists[F].erase(RI->second);
 }
-
