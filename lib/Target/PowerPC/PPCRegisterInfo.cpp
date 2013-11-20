@@ -284,8 +284,8 @@ void PPCRegisterInfo::lowerDynamicAlloc(MachineBasicBlock::iterator II) const {
   unsigned Reg = MF.getRegInfo().createVirtualRegister(LP64 ? G8RC : GPRC);
   
   if (MaxAlign < TargetAlign && isInt<16>(FrameSize)) {
-    BuildMI(MBB, II, dl, TII.get(PPC::ADDI), Reg)
-      .addReg(PPC::R31)
+    BuildMI(MBB, II, dl, TII.get(LP64 ? PPC::ADDI8 : PPC::ADDI), Reg)
+      .addReg(getFrameRegister(MF))
       .addImm(FrameSize);
   } else if (LP64) {
     BuildMI(MBB, II, dl, TII.get(PPC::LD), Reg)
