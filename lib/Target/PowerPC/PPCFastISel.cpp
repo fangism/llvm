@@ -61,7 +61,7 @@ using namespace llvm;
 namespace {
 
 typedef struct Address {
-  enum {
+  enum BaseTypeEnum {
     RegBase,
     FrameIndexBase
   } BaseType;
