@@ -36,15 +36,19 @@ class DbgVariable;
 /// with a source file.
 class CompileUnit {
   /// UniqueID - a numeric ID unique among all CUs in the module
-  ///
   unsigned UniqueID;
 
   /// Node - MDNode for the compile unit.
   DICompileUnit Node;
 
+  /// Language - Language for the translation unit associated with this CU.
+  uint16_t Language;
+
   /// CUDie - Compile unit debug information entry.
-  ///
   const OwningPtr<DIE> CUDie;
+
+  /// Offset of the CUDie from beginning of debug info section.
+  unsigned DebugInfoOffset;
 
   /// Asm - Target of Dwarf emission.
   AsmPrinter *Asm;
@@ -65,19 +69,22 @@ class CompileUnit {
   DenseMap<const MDNode *, DIEEntry *> MDNodeToDIEEntryMap;
 
   /// GlobalNames - A map of globally visible named entities for this unit.
-  ///
-  StringMap<DIE *> GlobalNames;
+  StringMap<const DIE *> GlobalNames;
 
   /// GlobalTypes - A map of globally visible types for this unit.
-  ///
-  StringMap<DIE *> GlobalTypes;
+  StringMap<const DIE *> GlobalTypes;
 
   /// AccelNames - A map of names for the name accelerator table.
-  ///
-  StringMap<std::vector<DIE *> > AccelNames;
-  StringMap<std::vector<DIE *> > AccelObjC;
-  StringMap<std::vector<DIE *> > AccelNamespace;
-  StringMap<std::vector<std::pair<DIE *, unsigned> > > AccelTypes;
+  StringMap<std::vector<const DIE *> > AccelNames;
+
+  /// AccelObjC - A map of objc spec for the objc accelerator table.
+  StringMap<std::vector<const DIE *> > AccelObjC;
+
+  /// AccelNamespace - A map of names for the namespace accelerator table.
+  StringMap<std::vector<const DIE *> > AccelNamespace;
+
+  /// AccelTypes - A map of names for the type accelerator table.
+  StringMap<std::vector<std::pair<const DIE *, unsigned> > > AccelTypes;
 
   /// DIEBlocks - A list of all the DIEBlocks in use.
   std::vector<DIEBlock *> DIEBlocks;
@@ -96,26 +103,28 @@ class CompileUnit {
 public:
   CompileUnit(unsigned UID, DIE *D, DICompileUnit CU, AsmPrinter *A,
               DwarfDebug *DW, DwarfUnits *DWU);
+  CompileUnit(unsigned UID, DIE *D, uint16_t Language, AsmPrinter *A,
+              DwarfDebug *DW, DwarfUnits *DWU);
   ~CompileUnit();
 
   // Accessors.
   unsigned getUniqueID() const { return UniqueID; }
-  uint16_t getLanguage() const { return Node.getLanguage(); }
+  uint16_t getLanguage() const { return Language; }
   DICompileUnit getNode() const { return Node; }
   DIE *getCUDie() const { return CUDie.get(); }
-  const StringMap<DIE *> &getGlobalNames() const { return GlobalNames; }
-  const StringMap<DIE *> &getGlobalTypes() const { return GlobalTypes; }
+  const StringMap<const DIE *> &getGlobalNames() const { return GlobalNames; }
+  const StringMap<const DIE *> &getGlobalTypes() const { return GlobalTypes; }
 
-  const StringMap<std::vector<DIE *> > &getAccelNames() const {
+  const StringMap<std::vector<const DIE *> > &getAccelNames() const {
     return AccelNames;
   }
-  const StringMap<std::vector<DIE *> > &getAccelObjC() const {
+  const StringMap<std::vector<const DIE *> > &getAccelObjC() const {
     return AccelObjC;
   }
-  const StringMap<std::vector<DIE *> > &getAccelNamespace() const {
+  const StringMap<std::vector<const DIE *> > &getAccelNamespace() const {
     return AccelNamespace;
   }
-  const StringMap<std::vector<std::pair<DIE *, unsigned> > > &
+  const StringMap<std::vector<std::pair<const DIE *, unsigned> > > &
   getAccelTypes() const {
     return AccelTypes;
   }
@@ -124,7 +133,6 @@ public:
   void setDebugInfoOffset(unsigned DbgInfoOff) { DebugInfoOffset = DbgInfoOff; }
 
   /// hasContent - Return true if this compile unit has something to write out.
-  ///
   bool hasContent() const { return !CUDie->getChildren().empty(); }
 
   /// getParentContextString - Get a string containing the language specific
@@ -136,23 +144,22 @@ public:
   void addGlobalName(StringRef Name, DIE *Die, DIScope Context);
 
   /// addGlobalType - Add a new global type to the compile unit.
-  ///
   void addGlobalType(DIType Ty);
 
   /// addPubTypes - Add a set of types from the subprogram to the global types.
   void addPubTypes(DISubprogram SP);
 
   /// addAccelName - Add a new name to the name accelerator table.
-  void addAccelName(StringRef Name, DIE *Die);
+  void addAccelName(StringRef Name, const DIE *Die);
 
   /// addAccelObjC - Add a new name to the ObjC accelerator table.
-  void addAccelObjC(StringRef Name, DIE *Die);
+  void addAccelObjC(StringRef Name, const DIE *Die);
 
   /// addAccelNamespace - Add a new name to the namespace accelerator table.
-  void addAccelNamespace(StringRef Name, DIE *Die);
+  void addAccelNamespace(StringRef Name, const DIE *Die);
 
   /// addAccelType - Add a new type to the type accelerator table.
-  void addAccelType(StringRef Name, std::pair<DIE *, unsigned> Die);
+  void addAccelType(StringRef Name, std::pair<const DIE *, unsigned> Die);
 
   /// getDIE - Returns the debug information entry map slot for the
   /// specified debug variable. We delegate the request to DwarfDebug
@@ -161,6 +168,7 @@ public:
   /// kept in DwarfDebug.
   DIE *getDIE(DIDescriptor D) const;
 
+  /// getDIEBlock - Returns a fresh newly allocated DIEBlock.
   DIEBlock *getDIEBlock() { return new (DIEValueAllocator) DIEBlock(); }
 
   /// insertDIE - Insert DIE into the map. We delegate the request to DwarfDebug
@@ -177,63 +185,60 @@ public:
   void addFlag(DIE *Die, dwarf::Attribute Attribute);
 
   /// addUInt - Add an unsigned integer attribute data and value.
-  ///
   void addUInt(DIE *Die, dwarf::Attribute Attribute, Optional<dwarf::Form> Form,
                uint64_t Integer);
 
   void addUInt(DIEBlock *Block, dwarf::Form Form, uint64_t Integer);
 
   /// addSInt - Add an signed integer attribute data and value.
-  ///
   void addSInt(DIE *Die, dwarf::Attribute Attribute, Optional<dwarf::Form> Form,
                int64_t Integer);
 
   void addSInt(DIEBlock *Die, Optional<dwarf::Form> Form, int64_t Integer);
 
   /// addString - Add a string attribute data and value.
-  ///
   void addString(DIE *Die, dwarf::Attribute Attribute, const StringRef Str);
 
   /// addLocalString - Add a string attribute data and value.
-  ///
-  void addLocalString(DIE *Die, dwarf::Attribute Attribute, const StringRef Str);
+  void addLocalString(DIE *Die, dwarf::Attribute Attribute,
+                      const StringRef Str);
 
   /// addExpr - Add a Dwarf expression attribute data and value.
-  ///
   void addExpr(DIEBlock *Die, dwarf::Form Form, const MCExpr *Expr);
 
   /// addLabel - Add a Dwarf label attribute data and value.
-  ///
   void addLabel(DIE *Die, dwarf::Attribute Attribute, dwarf::Form Form,
                 const MCSymbol *Label);
 
   void addLabel(DIEBlock *Die, dwarf::Form Form, const MCSymbol *Label);
 
+  /// addSectionLabel - Add a Dwarf section label attribute data and value.
+  ///
+  void addSectionLabel(DIE *Die, dwarf::Attribute Attribute, const MCSymbol *Label);
+
+  /// addSectionOffset - Add an offset into a section attribute data and value.
+  ///
+  void addSectionOffset(DIE *Die, dwarf::Attribute Attribute, uint64_t Integer);
+
   /// addLabelAddress - Add a dwarf label attribute data and value using
   /// either DW_FORM_addr or DW_FORM_GNU_addr_index.
-  ///
   void addLabelAddress(DIE *Die, dwarf::Attribute Attribute, MCSymbol *Label);
 
   /// addOpAddress - Add a dwarf op address data and value using the
   /// form given and an op of either DW_FORM_addr or DW_FORM_GNU_addr_index.
-  ///
   void addOpAddress(DIEBlock *Die, const MCSymbol *Label);
 
-  /// addDelta - Add a label delta attribute data and value.
-  ///
-  void addDelta(DIE *Die, dwarf::Attribute Attribute, dwarf::Form Form, const MCSymbol *Hi,
-                const MCSymbol *Lo);
+  /// addSectionDelta - Add a label delta attribute data and value.
+  void addSectionDelta(DIE *Die, dwarf::Attribute Attribute, const MCSymbol *Hi,
+                       const MCSymbol *Lo);
 
   /// addDIEEntry - Add a DIE attribute data and value.
-  ///
   void addDIEEntry(DIE *Die, dwarf::Attribute Attribute, DIE *Entry);
 
   /// addDIEEntry - Add a DIE attribute data and value.
-  ///
   void addDIEEntry(DIE *Die, dwarf::Attribute Attribute, DIEEntry *Entry);
 
   /// addBlock - Add block data.
-  ///
   void addBlock(DIE *Die, dwarf::Attribute Attribute, DIEBlock *Block);
 
   /// addSourceLine - Add location information to specified debug information
@@ -247,8 +252,8 @@ public:
 
   /// addAddress - Add an address attribute to a die based on the location
   /// provided.
-  void addAddress(DIE *Die, dwarf::Attribute Attribute, const MachineLocation &Location,
-                  bool Indirect = false);
+  void addAddress(DIE *Die, dwarf::Attribute Attribute,
+                  const MachineLocation &Location, bool Indirect = false);
 
   /// addConstantValue - Add constant value entry in variable DIE.
   void addConstantValue(DIE *Die, const MachineOperand &MO, DIType Ty);
@@ -272,8 +277,8 @@ public:
   /// and generate the DWARF information necessary to find the actual variable
   /// (navigating the extra location information encoded in the type) based on
   /// the starting location.  Add the DWARF information to the die.
-  ///
-  void addComplexAddress(const DbgVariable &DV, DIE *Die, dwarf::Attribute Attribute,
+  void addComplexAddress(const DbgVariable &DV, DIE *Die,
+                         dwarf::Attribute Attribute,
                          const MachineLocation &Location);
 
   // FIXME: Should be reformulated in terms of addComplexAddress.
@@ -282,8 +287,8 @@ public:
   /// actual Block variable (navigating the Block struct) based on the
   /// starting location.  Add the DWARF information to the die.  Obsolete,
   /// please use addComplexAddress instead.
-  ///
-  void addBlockByrefAddress(const DbgVariable &DV, DIE *Die, dwarf::Attribute Attribute,
+  void addBlockByrefAddress(const DbgVariable &DV, DIE *Die,
+                            dwarf::Attribute Attribute,
                             const MachineLocation &Location);
 
   /// addVariableAddress - Add DW_AT_location attribute for a
@@ -294,7 +299,8 @@ public:
   /// addType - Add a new type attribute to the specified entity. This takes
   /// and attribute parameter because DW_AT_friend attributes are also
   /// type references.
-  void addType(DIE *Entity, DIType Ty, dwarf::Attribute Attribute = dwarf::DW_AT_type);
+  void addType(DIE *Entity, DIType Ty,
+               dwarf::Attribute Attribute = dwarf::DW_AT_type);
 
   /// getOrCreateNameSpace - Create a DIE for DINameSpace.
   DIE *getOrCreateNameSpace(DINameSpace NS);
@@ -305,6 +311,9 @@ public:
   /// getOrCreateTypeDIE - Find existing DIE or create new DIE for the
   /// given DIType.
   DIE *getOrCreateTypeDIE(const MDNode *N);
+
+  /// getOrCreateContextDIE - Get context owner's DIE.
+  DIE *createTypeDIE(DICompositeType Ty);
 
   /// getOrCreateContextDIE - Get context owner's DIE.
   DIE *getOrCreateContextDIE(DIScope Context);
@@ -321,7 +330,12 @@ public:
 
   /// Create a DIE with the given Tag, add the DIE to its parent, and
   /// call insertDIE if MD is not null.
-  DIE *createAndAddDIE(unsigned Tag, DIE &Parent, DIDescriptor N = DIDescriptor());
+  DIE *createAndAddDIE(unsigned Tag, DIE &Parent,
+                       DIDescriptor N = DIDescriptor());
+
+  /// constructTypeDIEImpl - Construct type DIE that is not a type unit
+  /// reference from a DICompositeType.
+  void constructTypeDIEImpl(DIE &Buffer, DICompositeType CTy);
 
   /// Compute the size of a header for this unit, not including the initial
   /// length field.
@@ -369,9 +383,6 @@ private:
   /// getOrCreateStaticMemberDIE - Create new static data member DIE.
   DIE *getOrCreateStaticMemberDIE(DIDerivedType DT);
 
-  /// Offset of the CUDie from beginning of debug info section.
-  unsigned DebugInfoOffset;
-
   /// getLowerBoundDefault - Return the default lower bound for an array. If the
   /// DWARF version doesn't handle the language, return -1.
   int64_t getDefaultLowerBound() const;
@@ -403,6 +414,10 @@ private:
   template <typename T> T resolve(DIRef<T> Ref) const {
     return DD->resolve(Ref);
   }
+
+  /// If this is a named finished type then include it in the list of types for
+  /// the accelerator tables.
+  void updateAcceleratorTables(DIType Ty, const DIE *TyDIE);
 };
 
 } // end llvm namespace

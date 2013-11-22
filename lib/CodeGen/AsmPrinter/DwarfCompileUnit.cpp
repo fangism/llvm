@@ -29,16 +29,28 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
+
+static cl::opt<bool> GenerateTypeUnits("generate-type-units", cl::Hidden,
+                                       cl::desc("Generate DWARF4 type units."),
+                                       cl::init(false));
 
 /// CompileUnit - Compile unit constructor.
 CompileUnit::CompileUnit(unsigned UID, DIE *D, DICompileUnit Node,
                          AsmPrinter *A, DwarfDebug *DW, DwarfUnits *DWU)
-    : UniqueID(UID), Node(Node), CUDie(D), Asm(A), DD(DW), DU(DWU),
-      IndexTyDie(0), DebugInfoOffset(0) {
+    : UniqueID(UID), Node(Node), Language(Node.getLanguage()), CUDie(D),
+      DebugInfoOffset(0), Asm(A), DD(DW), DU(DWU), IndexTyDie(0) {
   DIEIntegerOne = new (DIEValueAllocator) DIEInteger(1);
   insertDIE(Node, D);
+}
+
+CompileUnit::CompileUnit(unsigned UID, DIE *D, uint16_t Language, AsmPrinter *A,
+                         DwarfDebug *DD, DwarfUnits *DU)
+    : UniqueID(UID), Node(NULL), Language(Language), CUDie(D),
+      DebugInfoOffset(0), Asm(A), DD(DD), DU(DU), IndexTyDie(0) {
+  DIEIntegerOne = new (DIEValueAllocator) DIEInteger(1);
 }
 
 /// ~CompileUnit - Destructor for compile unit.
@@ -100,10 +112,16 @@ int64_t CompileUnit::getDefaultLowerBound() const {
 
 /// Check whether the DIE for this MDNode can be shared across CUs.
 static bool isShareableAcrossCUs(DIDescriptor D) {
-  // When the MDNode can be part of the type system, the DIE can be
-  // shared across CUs.
-  return D.isType() ||
-         (D.isSubprogram() && !DISubprogram(D).isDefinition());
+  // When the MDNode can be part of the type system, the DIE can be shared
+  // across CUs.
+  // Combining type units and cross-CU DIE sharing is lower value (since
+  // cross-CU DIE sharing is used in LTO and removes type redundancy at that
+  // level already) but may be implementable for some value in projects
+  // building multiple independent libraries with LTO and then linking those
+  // together.
+  return (D.isType() ||
+          (D.isSubprogram() && !DISubprogram(D).isDefinition())) &&
+         !GenerateTypeUnits;
 }
 
 /// getDIE - Returns the debug information entry map slot for the
@@ -227,6 +245,26 @@ void CompileUnit::addLabel(DIEBlock *Die, dwarf::Form Form,
   addLabel(Die, (dwarf::Attribute)0, Form, Label);
 }
 
+/// addSectionLabel - Add a Dwarf section label attribute data and value.
+///
+void CompileUnit::addSectionLabel(DIE *Die, dwarf::Attribute Attribute,
+                                  const MCSymbol *Label) {
+  if (DD->getDwarfVersion() >= 4)
+    addLabel(Die, Attribute, dwarf::DW_FORM_sec_offset, Label);
+  else
+    addLabel(Die, Attribute, dwarf::DW_FORM_data4, Label);
+}
+
+/// addSectionOffset - Add an offset into a section attribute data and value.
+///
+void CompileUnit::addSectionOffset(DIE *Die, dwarf::Attribute Attribute,
+                                   uint64_t Integer) {
+  if (DD->getDwarfVersion() >= 4)
+    addUInt(Die, Attribute, dwarf::DW_FORM_sec_offset, Integer);
+  else
+    addUInt(Die, Attribute, dwarf::DW_FORM_data4, Integer);
+}
+
 /// addLabelAddress - Add a dwarf label attribute data and value using
 /// DW_FORM_addr or DW_FORM_GNU_addr_index.
 ///
@@ -264,13 +302,15 @@ void CompileUnit::addOpAddress(DIEBlock *Die, const MCSymbol *Sym) {
   }
 }
 
-/// addDelta - Add a label delta attribute data and value.
+/// addSectionDelta - Add a section label delta attribute data and value.
 ///
-void CompileUnit::addDelta(DIE *Die, dwarf::Attribute Attribute,
-                           dwarf::Form Form, const MCSymbol *Hi,
-                           const MCSymbol *Lo) {
+void CompileUnit::addSectionDelta(DIE *Die, dwarf::Attribute Attribute,
+                                  const MCSymbol *Hi, const MCSymbol *Lo) {
   DIEValue *Value = new (DIEValueAllocator) DIEDelta(Hi, Lo);
-  Die->addValue(Attribute, Form, Value);
+  if (DD->getDwarfVersion() >= 4)
+    Die->addValue(Attribute, dwarf::DW_FORM_sec_offset, Value);
+  else
+    Die->addValue(Attribute, dwarf::DW_FORM_data4, Value);
 }
 
 /// addDIEEntry - Add a DIE attribute data and value.
@@ -282,8 +322,8 @@ void CompileUnit::addDIEEntry(DIE *Die, dwarf::Attribute Attribute,
 
 void CompileUnit::addDIEEntry(DIE *Die, dwarf::Attribute Attribute,
                               DIEEntry *Entry) {
-  const DIE *DieCU = Die->getCompileUnitOrNull();
-  const DIE *EntryCU = Entry->getEntry()->getCompileUnitOrNull();
+  const DIE *DieCU = Die->getUnitOrNull();
+  const DIE *EntryCU = Entry->getEntry()->getUnitOrNull();
   if (!DieCU)
     // We assume that Die belongs to this CU, if it is not linked to any CU yet.
     DieCU = getCUDie();
@@ -872,6 +912,22 @@ DIE *CompileUnit::getOrCreateContextDIE(DIScope Context) {
   return getDIE(Context);
 }
 
+DIE *CompileUnit::createTypeDIE(DICompositeType Ty) {
+  DIE *ContextDIE = getOrCreateContextDIE(resolve(Ty.getContext()));
+
+  DIE *TyDIE = getDIE(Ty);
+  if (TyDIE)
+    return TyDIE;
+
+  // Create new type.
+  TyDIE = createAndAddDIE(Ty.getTag(), *ContextDIE, Ty);
+
+  constructTypeDIEImpl(*TyDIE, Ty);
+
+  updateAcceleratorTables(Ty, TyDIE);
+  return TyDIE;
+}
+
 /// getOrCreateTypeDIE - Find existing DIE or create new DIE for the
 /// given DIType.
 DIE *CompileUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
@@ -901,8 +957,13 @@ DIE *CompileUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
     assert(Ty.isDerivedType() && "Unknown kind of DIType");
     constructTypeDIE(*TyDIE, DIDerivedType(Ty));
   }
-  // If this is a named finished type then include it in the list of types
-  // for the accelerator tables.
+
+  updateAcceleratorTables(Ty, TyDIE);
+
+  return TyDIE;
+}
+
+void CompileUnit::updateAcceleratorTables(DIType Ty, const DIE *TyDIE) {
   if (!Ty.getName().empty() && !Ty.isForwardDecl()) {
     bool IsImplementation = 0;
     if (Ty.isCompositeType()) {
@@ -914,8 +975,6 @@ DIE *CompileUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
     unsigned Flags = IsImplementation ? dwarf::DW_FLAG_type_implementation : 0;
     addAccelType(Ty.getName(), std::make_pair(TyDIE, Flags));
   }
-
-  return TyDIE;
 }
 
 /// addType - Add a new type attribute to the specified entity.
@@ -947,27 +1006,28 @@ void CompileUnit::addType(DIE *Entity, DIType Ty, dwarf::Attribute Attribute) {
 // DIE to the proper table while ensuring that the name that we're going
 // to reference is in the string table. We do this since the names we
 // add may not only be identical to the names in the DIE.
-void CompileUnit::addAccelName(StringRef Name, DIE *Die) {
+void CompileUnit::addAccelName(StringRef Name, const DIE *Die) {
   DU->getStringPoolEntry(Name);
-  std::vector<DIE *> &DIEs = AccelNames[Name];
+  std::vector<const DIE *> &DIEs = AccelNames[Name];
   DIEs.push_back(Die);
 }
 
-void CompileUnit::addAccelObjC(StringRef Name, DIE *Die) {
+void CompileUnit::addAccelObjC(StringRef Name, const DIE *Die) {
   DU->getStringPoolEntry(Name);
-  std::vector<DIE *> &DIEs = AccelObjC[Name];
+  std::vector<const DIE *> &DIEs = AccelObjC[Name];
   DIEs.push_back(Die);
 }
 
-void CompileUnit::addAccelNamespace(StringRef Name, DIE *Die) {
+void CompileUnit::addAccelNamespace(StringRef Name, const DIE *Die) {
   DU->getStringPoolEntry(Name);
-  std::vector<DIE *> &DIEs = AccelNamespace[Name];
+  std::vector<const DIE *> &DIEs = AccelNamespace[Name];
   DIEs.push_back(Die);
 }
 
-void CompileUnit::addAccelType(StringRef Name, std::pair<DIE *, unsigned> Die) {
+void CompileUnit::addAccelType(StringRef Name,
+                               std::pair<const DIE *, unsigned> Die) {
   DU->getStringPoolEntry(Name);
-  std::vector<std::pair<DIE *, unsigned> > &DIEs = AccelTypes[Name];
+  std::vector<std::pair<const DIE *, unsigned> > &DIEs = AccelTypes[Name];
   DIEs.push_back(Die);
 }
 
@@ -1109,6 +1169,9 @@ static bool isTypeUnitScoped(DIType Ty, const DwarfDebug *DD) {
 
 /// Return true if the type should be split out into a type unit.
 static bool shouldCreateTypeUnit(DICompositeType CTy, const DwarfDebug *DD) {
+  if (!GenerateTypeUnits)
+    return false;
+
   uint16_t Tag = CTy.getTag();
 
   switch (Tag) {
@@ -1127,7 +1190,16 @@ static bool shouldCreateTypeUnit(DICompositeType CTy, const DwarfDebug *DD) {
 
 /// constructTypeDIE - Construct type DIE from DICompositeType.
 void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
-  // Get core information.
+  // If this is a type applicable to a type unit it then add it to the
+  // list of types we'll compute a hash for later.
+  if (shouldCreateTypeUnit(CTy, DD))
+    DD->addTypeUnitType(&Buffer, CTy);
+  else
+    constructTypeDIEImpl(Buffer, CTy);
+}
+
+void CompileUnit::constructTypeDIEImpl(DIE &Buffer, DICompositeType CTy) {
+  // Add name if not anonymous or intermediate type.
   StringRef Name = CTy.getName();
 
   uint64_t Size = CTy.getSizeInBits() >> 3;
@@ -1293,10 +1365,6 @@ void CompileUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
       addUInt(&Buffer, dwarf::DW_AT_APPLE_runtime_class, dwarf::DW_FORM_data1,
               RLang);
   }
-  // If this is a type applicable to a type unit it then add it to the
-  // list of types we'll compute a hash for later.
-  if (shouldCreateTypeUnit(CTy, DD))
-    DD->addTypeUnitType(&Buffer);
 }
 
 /// constructTemplateTypeParameterDIE - Construct new DIE for the given
@@ -1507,7 +1575,6 @@ static const ConstantExpr *getMergedGlobalExpr(const Value *V) {
 
 /// createGlobalVariableDIE - create global variable DIE.
 void CompileUnit::createGlobalVariableDIE(DIGlobalVariable GV) {
-
   // Check for pre-existence.
   if (getDIE(GV))
     return;
@@ -1712,7 +1779,8 @@ void CompileUnit::constructEnumTypeDIE(DIE &Buffer, DICompositeType CTy) {
       StringRef Name = Enum.getName();
       addString(Enumerator, dwarf::DW_AT_name, Name);
       int64_t Value = Enum.getEnumValue();
-      addSInt(Enumerator, dwarf::DW_AT_const_value, dwarf::DW_FORM_sdata, Value);
+      addSInt(Enumerator, dwarf::DW_AT_const_value, dwarf::DW_FORM_sdata,
+              Value);
     }
   }
   DIType DTy = resolve(CTy.getTypeDerivedFrom());
@@ -1768,10 +1836,8 @@ DIE *CompileUnit::constructVariableDIE(DbgVariable &DV, bool isScopeAbstract) {
 
   unsigned Offset = DV.getDotDebugLocOffset();
   if (Offset != ~0U) {
-    addLabel(VariableDie, dwarf::DW_AT_location,
-             DD->getDwarfVersion() >= 4 ? dwarf::DW_FORM_sec_offset
-                                        : dwarf::DW_FORM_data4,
-             Asm->GetTempSymbol("debug_loc", Offset));
+    addSectionLabel(VariableDie, dwarf::DW_AT_location,
+                    Asm->GetTempSymbol("debug_loc", Offset));
     DV.setDIE(VariableDie);
     return VariableDie;
   }

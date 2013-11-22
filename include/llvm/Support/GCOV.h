@@ -45,15 +45,15 @@ public:
   
   /// readGCOVFormat - Read GCOV signature at the beginning of buffer.
   GCOV::GCOVFormat readGCOVFormat() {
-    StringRef Magic = Buffer->getBuffer().slice(0, 12);
-    Cursor = 12;
-    if (Magic == "oncg*404MVLL")
+    StringRef Magic = Buffer->getBuffer().slice(0, 8);
+    Cursor = 8;
+    if (Magic == "oncg*404")
       return GCOV::GCNO_404;
-    else if (Magic == "oncg*204MVLL")
+    else if (Magic == "oncg*204")
       return GCOV::GCNO_402;
-    else if (Magic == "adcg*404MVLL")
+    else if (Magic == "adcg*404")
       return GCOV::GCDA_404;
-    else if (Magic == "adcg*204MVLL")
+    else if (Magic == "adcg*204")
       return GCOV::GCDA_402;
     
     Cursor = 0;
@@ -193,12 +193,13 @@ private:
 /// (.gcno and .gcda).
 class GCOVFile {
 public:
-  GCOVFile() : Functions(), RunCount(0), ProgramCount(0) {}
+  GCOVFile() : Checksum(0), Functions(), RunCount(0), ProgramCount(0) {}
   ~GCOVFile();
   bool read(GCOVBuffer &Buffer);
-  void dump();
+  void dump() const;
   void collectLineCounts(FileInfo &FI);
 private:
+  uint32_t Checksum;
   SmallVector<GCOVFunction *, 16> Functions;
   uint32_t RunCount;
   uint32_t ProgramCount;
@@ -211,7 +212,7 @@ public:
   ~GCOVFunction();
   bool read(GCOVBuffer &Buffer, GCOV::GCOVFormat Format);
   StringRef getFilename() const { return Filename; }
-  void dump();
+  void dump() const;
   void collectLineCounts(FileInfo &FI);
 private:
   uint32_t Ident;
@@ -230,8 +231,8 @@ public:
   void addEdge(uint32_t N) { Edges.push_back(N); }
   void addLine(uint32_t N) { Lines.push_back(N); }
   void addCount(uint64_t N) { Counter += N; }
-  size_t getNumEdges() { return Edges.size(); }
-  void dump();
+  size_t getNumEdges() const { return Edges.size(); }
+  void dump() const;
   void collectLineCounts(FileInfo &FI);
 private:
   GCOVFunction &Parent;
@@ -249,7 +250,7 @@ public:
   }
   void setRunCount(uint32_t Runs) { RunCount = Runs; }
   void setProgramCount(uint32_t Programs) { ProgramCount = Programs; }
-  void print(raw_fd_ostream &OS, StringRef gcnoFile, StringRef gcdaFile);
+  void print(raw_fd_ostream &OS, StringRef gcnoFile, StringRef gcdaFile) const;
 private:
   StringMap<LineCounts> LineInfo;
   uint32_t RunCount;
