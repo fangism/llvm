@@ -179,7 +179,8 @@
 #define LLVM_ATTRIBUTE_USED
 #endif
 
-#if __has_attribute(warn_unused_result) || __GNUC_PREREQ(3, 4)
+// gcc-4.0 spews tons of warning noise, so requiring 4.1 should silence them
+#if __has_attribute(warn_unused_result) || __GNUC_PREREQ(4, 1)
 #define LLVM_ATTRIBUTE_UNUSED_RESULT __attribute__((__warn_unused_result__))
 #else
 #define LLVM_ATTRIBUTE_UNUSED_RESULT
