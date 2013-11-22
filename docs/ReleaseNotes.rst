@@ -5,12 +5,6 @@ LLVM 3.4 Release Notes
 .. contents::
     :local:
 
-.. warning::
-   These are in-progress notes for the upcoming LLVM 3.4 release.  You may
-   prefer the `LLVM 3.3 Release Notes <http://llvm.org/releases/3.3/docs
-   /ReleaseNotes.html>`_.
-
-
 Introduction
 ============
 
@@ -134,6 +128,37 @@ to concurrency and offers many classical paradigms.
 combined with LLVM as backend to produce efficient native code. LDC targets
 x86/x86_64 systems like Linux, OS X, FreeBSD and Windows and also Linux/PPC64.
 Ports to other architectures like ARM and AArch64 are underway.
+
+DXR
+---
+
+`DXR <https://wiki.mozilla.org/DXR>`_ is Mozilla's code search and navigation
+tool, aimed at making sense of large projects like Firefox. It supports
+full-text and regex searches as well as structural queries like "Find all the
+callers of this function." Behind the scenes, it uses a custom trigram index,
+the re2 library, and structural data collected by a clang compiler plugin.
+
+Likely
+------
+
+`Likely <http://www.liblikely.org/>`_ is an open source domain specific
+language for image recognition.  Algorithms are just-in-time compiled using
+LLVM's MCJIT infrastructure to execute on single or multi-threaded CPUs as well
+as OpenCL SPIR or CUDA enabled GPUs. Likely exploits the observation that while
+image processing and statistical learning kernels must be written generically
+to handle any matrix datatype, at runtime they tend to be executed repeatedly
+on the same type.
+
+WebCL Validator
+---------------
+
+`WebCL Validator <https://github.com/KhronosGroup/webcl-validator>`_ implements
+validation for WebCL C language which is a subset of OpenCL ES 1.1. Validator
+checks the correctness of WebCL C, and implements memory protection for it as a
+source-2-source transformation. The transformation converts WebCL to memory
+protected OpenCL. The protected OpenCL cannot access any memory ranges which
+were not allocated for it, and its memory is always initialized to prevent
+information leakage from other programs.
 
 
 Additional Information
