@@ -1,8 +1,8 @@
 ; REQUIRES: object-emission
 
 ; RUN: llc %s -o %t -filetype=obj -O0 -generate-type-units -generate-odr-hash -mtriple=x86_64-unknown-linux-gnu
-; RUN: llvm-dwarfdump -debug-dump=info %t | FileCheck %s
-;
+; RUN: llvm-dwarfdump %t | FileCheck %s
+
 ; Generated from:
 ; struct bar {};
 
@@ -42,6 +42,8 @@
 ; };
 
 ; wombat wom;
+
+; CHECK-LABEL: .debug_info contents:
 
 ; Check that we generate a hash for bar and the value.
 ; CHECK-LABEL: DW_AT_GNU_odr_signature [DW_FORM_data8] (0x200520c0d5b90eff)
@@ -88,6 +90,30 @@
 ; CHECK-LABEL: DW_AT_GNU_odr_signature [DW_FORM_data8] (0x685bcc220141e9d7)
 ; CHECK: DW_TAG_structure_type
 ; CHECK-NEXT: debug_str{{.*}}"wombat"
+
+; Use the unit size as a rough hash/identifier for the unit we're dealing with
+; it happens to be unambiguous at the moment, but it's hardly ideal.
+; CHECK-LABEL: .debug_pubtypes contents:
+; Don't emit pubtype entries for type DIEs in the compile unit that just indirect to a type unit.
+; CHECK-NEXT: unit_size = 0x00000174
+; CHECK-NEXT: Offset Name
+; Type unit for 'bar'
+; CHECK-NEXT: unit_size = 0x0000001f
+; CHECK-NEXT: Offset Name
+; CHECK-NEXT: "bar"
+; CHECK-NEXT: unit_size = 0x00000059
+; CHECK-NEXT: Offset Name
+; CHECK-NEXT: "int"
+; CHECK-NEXT: "echidna::capybara::mongoose::fluffy"
+; CHECK-NEXT: unit_size = 0x0000002f
+; CHECK-NEXT: Offset Name
+; CHECK-NEXT: "walrus"
+; CHECK-NEXT: unit_size = 0x0000003f
+; CHECK-NEXT: Offset Name
+; CHECK-NEXT: "int"
+; CHECK-NEXT: unit_size = 0x00000036
+; CHECK-NEXT: Offset Name
+; CHECK-NEXT: "wombat"
 
 %struct.bar = type { i8 }
 %"class.echidna::capybara::mongoose::fluffy" = type { i32, i32 }

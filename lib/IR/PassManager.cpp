@@ -23,7 +23,33 @@ PreservedAnalyses ModulePassManager::run(Module *M, ModuleAnalysisManager *AM) {
   return PA;
 }
 
-void ModuleAnalysisManager::invalidate(Module *M, const PreservedAnalyses &PA) {
+const ModuleAnalysisManager::ResultConceptT &
+ModuleAnalysisManager::getResultImpl(void *PassID, Module *M) {
+  ModuleAnalysisResultMapT::iterator RI;
+  bool Inserted;
+  llvm::tie(RI, Inserted) = ModuleAnalysisResults.insert(std::make_pair(
+      PassID, polymorphic_ptr<detail::AnalysisResultConcept<Module *> >()));
+
+  // If we don't have a cached result for this module, look up the pass and run
+  // it to produce a result, which we then add to the cache.
+  if (Inserted)
+    RI->second = lookupPass(PassID).run(M, this);
+
+  return *RI->second;
+}
+
+const ModuleAnalysisManager::ResultConceptT *
+ModuleAnalysisManager::getCachedResultImpl(void *PassID, Module *M) const {
+  ModuleAnalysisResultMapT::const_iterator RI = ModuleAnalysisResults.find(PassID);
+  return RI == ModuleAnalysisResults.end() ? 0 : &*RI->second;
+}
+
+void ModuleAnalysisManager::invalidateImpl(void *PassID, Module *M) {
+  ModuleAnalysisResults.erase(PassID);
+}
+
+void ModuleAnalysisManager::invalidateImpl(Module *M,
+                                           const PreservedAnalyses &PA) {
   // FIXME: This is a total hack based on the fact that erasure doesn't
   // invalidate iteration for DenseMap.
   for (ModuleAnalysisResultMapT::iterator I = ModuleAnalysisResults.begin(),
@@ -31,30 +57,6 @@ void ModuleAnalysisManager::invalidate(Module *M, const PreservedAnalyses &PA) {
        I != E; ++I)
     if (I->second->invalidate(M, PA))
       ModuleAnalysisResults.erase(I);
-}
-
-const detail::AnalysisResultConcept<Module *> &
-ModuleAnalysisManager::getResultImpl(void *PassID, Module *M) {
-  ModuleAnalysisResultMapT::iterator RI;
-  bool Inserted;
-  llvm::tie(RI, Inserted) = ModuleAnalysisResults.insert(std::make_pair(
-      PassID, polymorphic_ptr<detail::AnalysisResultConcept<Module *> >()));
-
-  if (Inserted) {
-    // We don't have a cached result for this result. Look up the pass and run
-    // it to produce a result, which we then add to the cache.
-    ModuleAnalysisPassMapT::const_iterator PI =
-        ModuleAnalysisPasses.find(PassID);
-    assert(PI != ModuleAnalysisPasses.end() &&
-           "Analysis passes must be registered prior to being queried!");
-    RI->second = PI->second->run(M, this);
-  }
-
-  return *RI->second;
-}
-
-void ModuleAnalysisManager::invalidateImpl(void *PassID, Module *M) {
-  ModuleAnalysisResults.erase(PassID);
 }
 
 PreservedAnalyses FunctionPassManager::run(Function *F, FunctionAnalysisManager *AM) {
@@ -68,7 +70,55 @@ PreservedAnalyses FunctionPassManager::run(Function *F, FunctionAnalysisManager 
   return PA;
 }
 
-void FunctionAnalysisManager::invalidate(Function *F, const PreservedAnalyses &PA) {
+bool FunctionAnalysisManager::empty() const {
+  assert(FunctionAnalysisResults.empty() ==
+             FunctionAnalysisResultLists.empty() &&
+         "The storage and index of analysis results disagree on how many there "
+         "are!");
+  return FunctionAnalysisResults.empty();
+}
+
+void FunctionAnalysisManager::clear() {
+  FunctionAnalysisResults.clear();
+  FunctionAnalysisResultLists.clear();
+}
+
+const FunctionAnalysisManager::ResultConceptT &
+FunctionAnalysisManager::getResultImpl(void *PassID, Function *F) {
+  FunctionAnalysisResultMapT::iterator RI;
+  bool Inserted;
+  llvm::tie(RI, Inserted) = FunctionAnalysisResults.insert(std::make_pair(
+      std::make_pair(PassID, F), FunctionAnalysisResultListT::iterator()));
+
+  // If we don't have a cached result for this function, look up the pass and
+  // run it to produce a result, which we then add to the cache.
+  if (Inserted) {
+    FunctionAnalysisResultListT &ResultList = FunctionAnalysisResultLists[F];
+    ResultList.push_back(std::make_pair(PassID, lookupPass(PassID).run(F, this)));
+    RI->second = llvm::prior(ResultList.end());
+  }
+
+  return *RI->second->second;
+}
+
+const FunctionAnalysisManager::ResultConceptT *
+FunctionAnalysisManager::getCachedResultImpl(void *PassID, Function *F) const {
+  FunctionAnalysisResultMapT::const_iterator RI =
+      FunctionAnalysisResults.find(std::make_pair(PassID, F));
+  return RI == FunctionAnalysisResults.end() ? 0 : &*RI->second->second;
+}
+
+void FunctionAnalysisManager::invalidateImpl(void *PassID, Function *F) {
+  FunctionAnalysisResultMapT::iterator RI =
+      FunctionAnalysisResults.find(std::make_pair(PassID, F));
+  if (RI == FunctionAnalysisResults.end())
+    return;
+
+  FunctionAnalysisResultLists[F].erase(RI->second);
+}
+
+void FunctionAnalysisManager::invalidateImpl(Function *F,
+                                             const PreservedAnalyses &PA) {
   // Clear all the invalidated results associated specifically with this
   // function.
   SmallVector<void *, 8> InvalidatedPassIDs;
@@ -87,50 +137,6 @@ void FunctionAnalysisManager::invalidate(Function *F, const PreservedAnalyses &P
         std::make_pair(InvalidatedPassIDs.pop_back_val(), F));
 }
 
-bool FunctionAnalysisManager::empty() const {
-  assert(FunctionAnalysisResults.empty() ==
-             FunctionAnalysisResultLists.empty() &&
-         "The storage and index of analysis results disagree on how many there "
-         "are!");
-  return FunctionAnalysisResults.empty();
-}
-
-void FunctionAnalysisManager::clear() {
-  FunctionAnalysisResults.clear();
-  FunctionAnalysisResultLists.clear();
-}
-
-const detail::AnalysisResultConcept<Function *> &
-FunctionAnalysisManager::getResultImpl(void *PassID, Function *F) {
-  FunctionAnalysisResultMapT::iterator RI;
-  bool Inserted;
-  llvm::tie(RI, Inserted) = FunctionAnalysisResults.insert(std::make_pair(
-      std::make_pair(PassID, F), FunctionAnalysisResultListT::iterator()));
-
-  if (Inserted) {
-    // We don't have a cached result for this result. Look up the pass and run
-    // it to produce a result, which we then add to the cache.
-    FunctionAnalysisPassMapT::const_iterator PI =
-        FunctionAnalysisPasses.find(PassID);
-    assert(PI != FunctionAnalysisPasses.end() &&
-           "Analysis passes must be registered prior to being queried!");
-    FunctionAnalysisResultListT &ResultList = FunctionAnalysisResultLists[F];
-    ResultList.push_back(std::make_pair(PassID, PI->second->run(F, this)));
-    RI->second = llvm::prior(ResultList.end());
-  }
-
-  return *RI->second->second;
-}
-
-void FunctionAnalysisManager::invalidateImpl(void *PassID, Function *F) {
-  FunctionAnalysisResultMapT::iterator RI =
-      FunctionAnalysisResults.find(std::make_pair(PassID, F));
-  if (RI == FunctionAnalysisResults.end())
-    return;
-
-  FunctionAnalysisResultLists[F].erase(RI->second);
-}
-
 char FunctionAnalysisManagerModuleProxy::PassID;
 
 FunctionAnalysisManagerModuleProxy::Result
@@ -147,19 +153,15 @@ FunctionAnalysisManagerModuleProxy::Result::~Result() {
 
 bool FunctionAnalysisManagerModuleProxy::Result::invalidate(
     Module *M, const PreservedAnalyses &PA) {
-  // If this proxy isn't marked as preserved, then it is has an invalid set of
-  // Function objects in the cache making it impossible to incrementally
-  // preserve them. Just clear the entire manager.
-  if (!PA.preserved(ID())) {
+  // If this proxy isn't marked as preserved, then we can't even invalidate
+  // individual function analyses, there may be an invalid set of Function
+  // objects in the cache making it impossible to incrementally preserve them.
+  // Just clear the entire manager.
+  if (!PA.preserved(ID()))
     FAM.clear();
-    return false;
-  }
-
-  // The set of functions was preserved some how, so just directly invalidate
-  // any analysis results not preserved.
-  for (Module::iterator I = M->begin(), E = M->end(); I != E; ++I)
-    FAM.invalidate(I, PA);
 
   // Return false to indicate that this result is still a valid proxy.
   return false;
 }
+
+char ModuleAnalysisManagerFunctionProxy::PassID;

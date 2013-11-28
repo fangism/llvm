@@ -13166,19 +13166,27 @@ SDValue X86TargetLowering::LowerSIGN_EXTEND_INREG(SDValue Op,
       // fall through
     case MVT::v4i32:
     case MVT::v8i16: {
-      // (sext (vzext x)) -> (vsext x)
       SDValue Op0 = Op.getOperand(0);
       SDValue Op00 = Op0.getOperand(0);
       SDValue Tmp1;
       // Hopefully, this VECTOR_SHUFFLE is just a VZEXT.
       if (Op0.getOpcode() == ISD::BITCAST &&
-          Op00.getOpcode() == ISD::VECTOR_SHUFFLE)
+          Op00.getOpcode() == ISD::VECTOR_SHUFFLE) {
+        // (sext (vzext x)) -> (vsext x)
         Tmp1 = LowerVectorIntExtend(Op00, Subtarget, DAG);
-      if (Tmp1.getNode()) {
-        SDValue Tmp1Op0 = Tmp1.getOperand(0);
-        assert(Tmp1Op0.getOpcode() == X86ISD::VZEXT &&
-               "This optimization is invalid without a VZEXT.");
-        return DAG.getNode(X86ISD::VSEXT, dl, VT, Tmp1Op0.getOperand(0));
+        if (Tmp1.getNode()) {
+          EVT ExtraEltVT = ExtraVT.getVectorElementType();
+          // This folding is only valid when the in-reg type is a vector of i8,
+          // i16, or i32.
+          if (ExtraEltVT == MVT::i8 || ExtraEltVT == MVT::i16 ||
+              ExtraEltVT == MVT::i32) {
+            SDValue Tmp1Op0 = Tmp1.getOperand(0);
+            assert(Tmp1Op0.getOpcode() == X86ISD::VZEXT &&
+                   "This optimization is invalid without a VZEXT.");
+            return DAG.getNode(X86ISD::VSEXT, dl, VT, Tmp1Op0.getOperand(0));
+          }
+          Op0 = Tmp1;
+        }
       }
 
       // If the above didn't work, then just use Shift-Left + Shift-Right.
@@ -15811,6 +15819,51 @@ X86TargetLowering::emitEHSjLjLongJmp(MachineInstr *MI,
   return MBB;
 }
 
+/// Convert any TargetFrameIndex operands into the x86-specific pattern of five
+/// memory operands that is recognized by PrologEpilogInserter.
+MachineBasicBlock *
+X86TargetLowering::emitPatchPoint(MachineInstr *MI,
+                                  MachineBasicBlock *MBB) const {
+  const TargetMachine &TM = getTargetMachine();
+  const X86InstrInfo *TII = static_cast<const X86InstrInfo*>(TM.getInstrInfo());
+
+  // MI changes inside this loop as we grow operands.
+  for(unsigned OperIdx = 0; OperIdx != MI->getNumOperands(); ++OperIdx) {
+    MachineOperand &MO = MI->getOperand(OperIdx);
+    if (!MO.isFI())
+      continue;
+
+    // foldMemoryOperand builds a new MI after replacing a single FI operand
+    // with the canonical set of five x86 addressing-mode operands.
+    int FI = MO.getIndex();
+    MachineFunction &MF = *MBB->getParent();
+    SmallVector<unsigned, 1> FIOps(1, OperIdx);
+    MachineInstr *NewMI = TII->foldMemoryOperandImpl(MF, MI, FIOps, FI);
+    assert(NewMI && "Cannot fold frame index operand into stackmap.");
+
+    // Inherit previous memory operands.
+    NewMI->setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
+    assert(NewMI->mayLoad() && "Folded a stackmap use to a non-load!");
+
+    // Add a new memory operand for this FI.
+    const MachineFrameInfo &MFI = *MF.getFrameInfo();
+    assert(MFI.getObjectOffset(FI) != -1);
+    MachineMemOperand *MMO =
+      MF.getMachineMemOperand(MachinePointerInfo::getFixedStack(FI),
+                              MachineMemOperand::MOLoad,
+                              TM.getDataLayout()->getPointerSize(),
+                              MFI.getObjectAlignment(FI));
+    NewMI->addMemOperand(MF, MMO);
+
+    // Replace the instruction and update the operand index.
+    MBB->insert(MachineBasicBlock::iterator(MI), NewMI);
+    OperIdx += (NewMI->getNumOperands() - MI->getNumOperands()) - 1;
+    MI->eraseFromParent();
+    MI = NewMI;
+  }
+  return MBB;
+}
+
 MachineBasicBlock *
 X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
                                                MachineBasicBlock *BB) const {
@@ -16038,6 +16091,10 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
   case X86::EH_SjLj_LongJmp32:
   case X86::EH_SjLj_LongJmp64:
     return emitEHSjLjLongJmp(MI, BB);
+
+  case TargetOpcode::STACKMAP:
+  case TargetOpcode::PATCHPOINT:
+    return emitPatchPoint(MI, BB);
   }
 }
 
@@ -17943,12 +18000,12 @@ static SDValue PerformOrCombine(SDNode *N, SelectionDAG &DAG,
   MachineFunction &MF = DAG.getMachineFunction();
   bool OptForSize = MF.getFunction()->getAttributes().
     hasAttribute(AttributeSet::FunctionIndex, Attribute::OptimizeForSize);
- 
-  // SHLD/SHRD instructions have lower register pressure, but on some 
-  // platforms they have higher latency than the equivalent 
-  // series of shifts/or that would otherwise be generated. 
+
+  // SHLD/SHRD instructions have lower register pressure, but on some
+  // platforms they have higher latency than the equivalent
+  // series of shifts/or that would otherwise be generated.
   // Don't fold (or (x << c) | (y >> (64 - c))) if SHLD/SHRD instructions
-  // have higer latencies and we are not optimizing for size.  
+  // have higher latencies and we are not optimizing for size.
   if (!OptForSize && Subtarget->isSHLDSlow())
     return SDValue();
 

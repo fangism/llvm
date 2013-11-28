@@ -484,7 +484,7 @@ void AsmPrinter::EmitFunctionHeader() {
   // Emit pre-function debug and/or EH information.
   if (DE) {
     NamedRegionTimer T(EHTimerName, DWARFGroupName, TimePassesIsEnabled);
-    DE->BeginFunction(MF);
+    DE->beginFunction(MF);
   }
   if (DD) {
     NamedRegionTimer T(DbgTimerName, DWARFGroupName, TimePassesIsEnabled);
@@ -818,7 +818,7 @@ void AsmPrinter::EmitFunctionBody() {
   }
   if (DE) {
     NamedRegionTimer T(EHTimerName, DWARFGroupName, TimePassesIsEnabled);
-    DE->EndFunction();
+    DE->endFunction();
   }
   MMI->EndFunction();
 
@@ -910,7 +910,7 @@ bool AsmPrinter::doFinalization(Module &M) {
   if (DE) {
     {
       NamedRegionTimer T(EHTimerName, DWARFGroupName, TimePassesIsEnabled);
-      DE->EndModule();
+      DE->endModule();
     }
     delete DE; DE = 0;
   }
@@ -1452,8 +1452,8 @@ void AsmPrinter::EmitLabelOffsetDifference(const MCSymbol *Hi, uint64_t Offset,
 /// where the size in bytes of the directive is specified by Size and Label
 /// specifies the label.  This implicitly uses .set if it is available.
 void AsmPrinter::EmitLabelPlusOffset(const MCSymbol *Label, uint64_t Offset,
-                                      unsigned Size, bool IsSectionRelative)
-  const {
+                                     unsigned Size,
+                                     bool IsSectionRelative) const {
   if (MAI->needsDwarfSectionOffsetDirective() && IsSectionRelative) {
     OutStreamer.EmitCOFFSecRel32(Label);
     return;
@@ -1462,13 +1462,11 @@ void AsmPrinter::EmitLabelPlusOffset(const MCSymbol *Label, uint64_t Offset,
   // Emit Label+Offset (or just Label if Offset is zero)
   const MCExpr *Expr = MCSymbolRefExpr::Create(Label, OutContext);
   if (Offset)
-    Expr = MCBinaryExpr::CreateAdd(Expr,
-                                   MCConstantExpr::Create(Offset, OutContext),
-                                   OutContext);
+    Expr = MCBinaryExpr::CreateAdd(
+        Expr, MCConstantExpr::Create(Offset, OutContext), OutContext);
 
   OutStreamer.EmitValue(Expr, Size);
 }
-
 
 //===----------------------------------------------------------------------===//
 
@@ -2035,14 +2033,10 @@ MCSymbol *AsmPrinter::GetJTSetSymbol(unsigned UID, unsigned MBBID) const {
    Twine(UID) + "_set_" + Twine(MBBID));
 }
 
-/// GetSymbolWithGlobalValueBase - Return the MCSymbol for a symbol with
-/// global value name as its base, with the specified suffix, and where the
-/// symbol is forced to have private linkage if ForcePrivate is true.
 MCSymbol *AsmPrinter::GetSymbolWithGlobalValueBase(const GlobalValue *GV,
-                                                   StringRef Suffix,
-                                                   bool ForcePrivate) const {
+                                                   StringRef Suffix) const {
   SmallString<60> NameStr;
-  Mang->getNameWithPrefix(NameStr, GV, ForcePrivate);
+  Mang->getNameWithPrefix(NameStr, GV, true);
   NameStr.append(Suffix.begin(), Suffix.end());
   return OutContext.GetOrCreateSymbol(NameStr.str());
 }

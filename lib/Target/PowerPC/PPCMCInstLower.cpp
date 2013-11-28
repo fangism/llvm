@@ -43,8 +43,7 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
   if (!MO.isGlobal()) {
     STACKTRACE_INDENT_PRINT("!MO.isGlobal()" << endl);
     assert(MO.isSymbol() && "Isn't a symbol reference");
-    Name += AP.MAI->getGlobalPrefix();
-    Name += MO.getSymbolName();
+    AP.Mang->getNameWithPrefix(Name, MO.getSymbolName());
   } else {    
     STACKTRACE_INDENT_PRINT("MO.isGlobal()" << endl);
     const GlobalValue *GV = MO.getGlobal();

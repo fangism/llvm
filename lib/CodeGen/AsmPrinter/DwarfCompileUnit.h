@@ -143,12 +143,6 @@ public:
   ///
   void addGlobalName(StringRef Name, DIE *Die, DIScope Context);
 
-  /// addGlobalType - Add a new global type to the compile unit.
-  void addGlobalType(DIType Ty);
-
-  /// addPubTypes - Add a set of types from the subprogram to the global types.
-  void addPubTypes(DISubprogram SP);
-
   /// addAccelName - Add a new name to the name accelerator table.
   void addAccelName(StringRef Name, const DIE *Die);
 
@@ -214,7 +208,8 @@ public:
 
   /// addSectionLabel - Add a Dwarf section label attribute data and value.
   ///
-  void addSectionLabel(DIE *Die, dwarf::Attribute Attribute, const MCSymbol *Label);
+  void addSectionLabel(DIE *Die, dwarf::Attribute Attribute,
+                       const MCSymbol *Label);
 
   /// addSectionOffset - Add an offset into a section attribute data and value.
   ///
@@ -333,10 +328,6 @@ public:
   DIE *createAndAddDIE(unsigned Tag, DIE &Parent,
                        DIDescriptor N = DIDescriptor());
 
-  /// constructTypeDIEImpl - Construct type DIE that is not a type unit
-  /// reference from a DICompositeType.
-  void constructTypeDIEImpl(DIE &Buffer, DICompositeType CTy);
-
   /// Compute the size of a header for this unit, not including the initial
   /// length field.
   unsigned getHeaderSize() const {
@@ -417,7 +408,7 @@ private:
 
   /// If this is a named finished type then include it in the list of types for
   /// the accelerator tables.
-  void updateAcceleratorTables(DIType Ty, const DIE *TyDIE);
+  void updateAcceleratorTables(DIScope Context, DIType Ty, const DIE *TyDIE);
 };
 
 } // end llvm namespace
