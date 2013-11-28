@@ -594,9 +594,11 @@ static SDValue performORCombine(SDNode *N, SelectionDAG &DAG,
       Cond = Op0Op0;
       IfSet = Op0Op1;
 
-      if (isVSplat(Op1Op0, InvMask, IsLittleEndian) && Mask == ~InvMask)
+      if (isVSplat(Op1Op0, InvMask, IsLittleEndian) &&
+          Mask.getBitWidth() == InvMask.getBitWidth() && Mask == ~InvMask)
         IfClr = Op1Op1;
-      else if (isVSplat(Op1Op1, InvMask, IsLittleEndian) && Mask == ~InvMask)
+      else if (isVSplat(Op1Op1, InvMask, IsLittleEndian) &&
+               Mask.getBitWidth() == InvMask.getBitWidth() && Mask == ~InvMask)
         IfClr = Op1Op0;
 
       IsConstantMask = true;
@@ -609,9 +611,11 @@ static SDValue performORCombine(SDNode *N, SelectionDAG &DAG,
       Cond = Op0Op1;
       IfSet = Op0Op0;
 
-      if (isVSplat(Op1Op0, InvMask, IsLittleEndian) && Mask == ~InvMask)
+      if (isVSplat(Op1Op0, InvMask, IsLittleEndian) &&
+          Mask.getBitWidth() == InvMask.getBitWidth() && Mask == ~InvMask)
         IfClr = Op1Op1;
-      else if (isVSplat(Op1Op1, InvMask, IsLittleEndian) && Mask == ~InvMask)
+      else if (isVSplat(Op1Op1, InvMask, IsLittleEndian) &&
+               Mask.getBitWidth() == InvMask.getBitWidth() && Mask == ~InvMask)
         IfClr = Op1Op0;
 
       IsConstantMask = true;
@@ -750,6 +754,9 @@ static SDValue performDSPShiftCombine(unsigned Opc, SDNode *N, EVT Ty,
   bool HasAnyUndefs;
   unsigned EltSize = Ty.getVectorElementType().getSizeInBits();
   BuildVectorSDNode *BV = dyn_cast<BuildVectorSDNode>(N->getOperand(1));
+
+  if (!Subtarget->hasDSP())
+    return SDValue();
 
   if (!BV ||
       !BV->isConstantSplat(SplatValue, SplatUndef, SplatBitSize, HasAnyUndefs,
@@ -2203,7 +2210,10 @@ SDValue MipsSETargetLowering::lowerBUILD_VECTOR(SDValue Op,
       return SDValue();
 
     // If the value fits into a simm10 then we can use ldi.[bhwd]
-    if (SplatValue.isSignedIntN(10))
+    // However, if it isn't an integer type we will have to bitcast from an
+    // integer type first. Also, if there are any undefs, we must lower them
+    // to defined values first.
+    if (ResTy.isInteger() && !HasAnyUndefs && SplatValue.isSignedIntN(10))
       return Op;
 
     EVT ViaVecTy;
