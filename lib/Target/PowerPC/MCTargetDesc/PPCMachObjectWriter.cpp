@@ -88,8 +88,9 @@ static unsigned getRelocType(const MCValue &Target,
   const MCSymbolRefExpr::VariantKind Modifier =
       Target.isAbsolute() ? MCSymbolRefExpr::VK_None
                           : Target.getSymA()->getKind();
-  // determine the type of the relocation
-  unsigned Type = MachO::GENERIC_RELOC_VANILLA;
+  // Determine the type of the relocation.
+  // Default to vanilla.
+  unsigned Type = MachO::PPC_RELOC_VANILLA ;
   if (IsPCRel) { // relative to PC
     switch ((unsigned)FixupKind) {
     default:
@@ -197,7 +198,7 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(
   const uint32_t FixupOffset = getFixupOffset(Layout, Fragment, Fixup);
   const MCFixupKind FK = Fixup.getKind();
   const unsigned IsPCRel = Writer->isFixupKindPCRel(Asm, FK);
-  const unsigned Type = getRelocType(Target, FK, IsPCRel);
+  unsigned Type = getRelocType(Target, FK, IsPCRel);
 
   // Is this a local or SECTDIFF relocation entry?
   // SECTDIFF relocation entries have symbol subtractions,
@@ -225,7 +226,17 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(
       report_fatal_error("symbol '" + B->getSymbol().getName() +
                          "' can not be undefined in a subtraction expression");
 
-    // FIXME: is Type correct? see include/llvm/Support/MachO.h
+    // Select the appropriate difference relocation type.
+    //
+    // Note that there is no longer any semantic difference between these two
+    // relocation types from the linkers point of view, this is done solely for
+    // pedantic compatibility with 'as'.
+
+    // FIXME: Determine if there's ever a time when this override is not
+    // appropriate.
+    if (FK == FK_Data_4 && Type == MachO::PPC_RELOC_VANILLA)
+      Type = A_SD->isExternal() ? (unsigned)MachO::PPC_RELOC_SECTDIFF
+                                : (unsigned)MachO::PPC_RELOC_LOCAL_SECTDIFF;
     Value2 = Writer->getSymbolAddress(B_SD, Layout);
     FixedValue -= Writer->getSectionAddress(B_SD->getFragment()->getParent());
   }
@@ -233,15 +244,15 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(
 
   // Relocations are written out in reverse order, so the PAIR comes first.
   if (Type == MachO::PPC_RELOC_SECTDIFF ||
+      Type == MachO::PPC_RELOC_LOCAL_SECTDIFF ||
       Type == MachO::PPC_RELOC_HI16_SECTDIFF ||
       Type == MachO::PPC_RELOC_LO16_SECTDIFF ||
       Type == MachO::PPC_RELOC_HA16_SECTDIFF ||
-      Type == MachO::PPC_RELOC_LO14_SECTDIFF ||
-      Type == MachO::PPC_RELOC_LOCAL_SECTDIFF) {
-    // X86 had this piece, but ARM does not
+      Type == MachO::PPC_RELOC_LO14_SECTDIFF) {
+
     // If the offset is too large to fit in a scattered relocation,
     // we're hosed. It's an unfortunate limitation of the MachO format.
-    if (FixupOffset > 0xffffff) {
+    if (FixupOffset > 0x00ffffff) {
       char Buffer[32];
       format("0x%x", FixupOffset).print(Buffer, sizeof(Buffer));
       Asm.getContext().FatalError(Fixup.getLoc(),
@@ -256,6 +267,9 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(
     // see PPCMCExpr::EvaluateAsRelocatableImpl()
     uint32_t other_half = 0;
     switch (Type) {
+    case MachO::PPC_RELOC_SECTDIFF:
+    case MachO::PPC_RELOC_LOCAL_SECTDIFF:
+      break;
     case MachO::PPC_RELOC_LO16_SECTDIFF:
       other_half = (FixedValue >> 16) & 0xffff;
       // applyFixupOffset longer extracts the high part because it now assumes
@@ -280,7 +294,7 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(
     }
 
     MachO::any_relocation_info MRE;
-    makeScatteredRelocationInfo(MRE, other_half, MachO::GENERIC_RELOC_PAIR,
+    makeScatteredRelocationInfo(MRE, other_half, MachO::PPC_RELOC_PAIR,
                                 Log2Size, IsPCRel, Value2);
     Writer->addRelocation(Fragment->getParent(), MRE);
   } else {
