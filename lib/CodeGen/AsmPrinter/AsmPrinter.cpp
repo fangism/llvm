@@ -228,6 +228,13 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
 
       bool CanBeHidden = false;
 
+      // FIXME: this should only have to be evaluated once
+      const Triple tt = Triple(Twine(getTargetTriple()));
+      if (tt.isMacOSX() && tt.isMacOSXVersionLT(10, 6)) {
+      // CanBeHidden = false;
+      // old system assembler doesn't understand .weak_def_can_be_hidden
+      // FIXME: this should really be a check on the assembler characteristics
+      } else
       if (Linkage == GlobalValue::LinkOnceODRLinkage) {
         if (GV->hasUnnamedAddr()) {
           CanBeHidden = true;
