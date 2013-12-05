@@ -42,7 +42,7 @@ MCAsmInfo::MCAsmInfo() {
   LabelSuffix = ":";
   DebugLabelSuffix = ":";
   GlobalPrefix = '\0';
-  PrivateGlobalPrefix = ".";
+  PrivateGlobalPrefix = "L";
   LinkerPrivateGlobalPrefix = "";
   InlineAsmStart = "APP";
   InlineAsmEnd = "NO_APP";
@@ -76,8 +76,8 @@ MCAsmInfo::MCAsmInfo() {
   HasIdentDirective = false;
   HasNoDeadStrip = false;
   WeakRefDirective = 0;
-  WeakDefDirective = 0;
-  LinkOnceDirective = 0;
+  HasWeakDefDirective = false;
+  HasLinkOnceDirective = false;
   HiddenVisibilityAttr = MCSA_Hidden;
   HiddenDeclarationVisibilityAttr = MCSA_Hidden;
   ProtectedVisibilityAttr = MCSA_Protected;
@@ -88,6 +88,7 @@ MCAsmInfo::MCAsmInfo() {
   DwarfRegNumForCFI = false;
   HasMicrosoftFastStdCallMangling = false;
   NeedsDwarfSectionOffsetDirective = false;
+  UseParensForSymbolVariant = false;
 }
 
 MCAsmInfo::~MCAsmInfo() {

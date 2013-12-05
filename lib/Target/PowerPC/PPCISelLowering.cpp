@@ -2969,7 +2969,7 @@ PPCTargetLowering::IsEligibleForTailCallOptimization(SDValue Callee,
        if (Flags.isByVal()) return false;
     }
 
-    // Non PIC/GOT  tail calls are supported.
+    // Non-PIC/GOT tail calls are supported.
     if (getTargetMachine().getRelocationModel() != Reloc::PIC_)
       return true;
 

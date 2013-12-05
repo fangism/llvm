@@ -1,4 +1,4 @@
-//===-- llvm/CodeGen/DwarfCompileUnit.h - Dwarf Compile Unit ---*- C++ -*--===//
+//===-- llvm/CodeGen/DwarfUnit.h - Dwarf Compile Unit ---*- C++ -*--===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -31,23 +31,46 @@ class ConstantInt;
 class ConstantFP;
 class DbgVariable;
 
+// Data structure to hold a range for range lists.
+class RangeSpan {
+public:
+  RangeSpan(MCSymbol *S, MCSymbol *E) : Start(S), End(E) {}
+  const MCSymbol *getStart() const { return Start; }
+  const MCSymbol *getEnd() const { return End; }
+
+private:
+  const MCSymbol *Start, *End;
+};
+
+class RangeSpanList {
+private:
+  // Index for locating within the debug_range section this particular span.
+  MCSymbol *RangeSym;
+  // List of ranges.
+  SmallVector<RangeSpan, 2> Ranges;
+
+public:
+  RangeSpanList(MCSymbol *Sym) : RangeSym(Sym) {}
+  MCSymbol *getSym() const { return RangeSym; }
+  const SmallVectorImpl<RangeSpan> &getRanges() const { return Ranges; }
+  void addRange(RangeSpan Range) { Ranges.push_back(Range); }
+};
+
 //===----------------------------------------------------------------------===//
-/// CompileUnit - This dwarf writer support class manages information associated
+/// Unit - This dwarf writer support class manages information associated
 /// with a source file.
-class CompileUnit {
+class Unit {
+protected:
   /// UniqueID - a numeric ID unique among all CUs in the module
   unsigned UniqueID;
 
   /// Node - MDNode for the compile unit.
   DICompileUnit Node;
 
-  /// Language - Language for the translation unit associated with this CU.
-  uint16_t Language;
+  /// Unit debug information entry.
+  const OwningPtr<DIE> UnitDie;
 
-  /// CUDie - Compile unit debug information entry.
-  const OwningPtr<DIE> CUDie;
-
-  /// Offset of the CUDie from beginning of debug info section.
+  /// Offset of the UnitDie from beginning of debug info section.
   unsigned DebugInfoOffset;
 
   /// Asm - Target of Dwarf emission.
@@ -57,7 +80,7 @@ class CompileUnit {
   DwarfDebug *DD;
   DwarfUnits *DU;
 
-  /// IndexTyDie - An anonymous type for index type.  Owned by CUDie.
+  /// IndexTyDie - An anonymous type for index type.  Owned by UnitDie.
   DIE *IndexTyDie;
 
   /// MDNodeToDieMap - Tracks the mapping of unit level debug information
@@ -94,24 +117,27 @@ class CompileUnit {
   /// corresponds to the MDNode mapped with the subprogram DIE.
   DenseMap<DIE *, const MDNode *> ContainingTypeMap;
 
+  // List of range lists for a given compile unit, separate from the ranges for
+  // the CU itself.
+  SmallVector<RangeSpanList, 1> CURangeLists;
+
   // DIEValueAllocator - All DIEValues are allocated through this allocator.
   BumpPtrAllocator DIEValueAllocator;
 
   // DIEIntegerOne - A preallocated DIEValue because 1 is used frequently.
   DIEInteger *DIEIntegerOne;
 
+  Unit(unsigned UID, DIE *D, DICompileUnit CU, AsmPrinter *A, DwarfDebug *DW,
+       DwarfUnits *DWU);
+
 public:
-  CompileUnit(unsigned UID, DIE *D, DICompileUnit CU, AsmPrinter *A,
-              DwarfDebug *DW, DwarfUnits *DWU);
-  CompileUnit(unsigned UID, DIE *D, uint16_t Language, AsmPrinter *A,
-              DwarfDebug *DW, DwarfUnits *DWU);
-  ~CompileUnit();
+  virtual ~Unit();
 
   // Accessors.
   unsigned getUniqueID() const { return UniqueID; }
-  uint16_t getLanguage() const { return Language; }
+  virtual uint16_t getLanguage() const = 0;
   DICompileUnit getNode() const { return Node; }
-  DIE *getCUDie() const { return CUDie.get(); }
+  DIE *getUnitDie() const { return UnitDie.get(); }
   const StringMap<const DIE *> &getGlobalNames() const { return GlobalNames; }
   const StringMap<const DIE *> &getGlobalTypes() const { return GlobalTypes; }
 
@@ -133,7 +159,16 @@ public:
   void setDebugInfoOffset(unsigned DbgInfoOff) { DebugInfoOffset = DbgInfoOff; }
 
   /// hasContent - Return true if this compile unit has something to write out.
-  bool hasContent() const { return !CUDie->getChildren().empty(); }
+  bool hasContent() const { return !UnitDie->getChildren().empty(); }
+
+  /// addRangeList - Add an address range list to the list of range lists.
+  void addRangeList(RangeSpanList Ranges) { CURangeLists.push_back(Ranges); }
+
+  /// getRangeLists - Get the vector of range lists.
+  const SmallVectorImpl<RangeSpanList> &getRangeLists() const {
+    return CURangeLists;
+  }
+  SmallVectorImpl<RangeSpanList> &getRangeLists() { return CURangeLists; }
 
   /// getParentContextString - Get a string containing the language specific
   /// context for a global name.
@@ -173,7 +208,7 @@ public:
 
   /// addDie - Adds or interns the DIE to the compile unit.
   ///
-  void addDie(DIE *Buffer) { CUDie->addChild(Buffer); }
+  void addDie(DIE *Buffer) { UnitDie->addChild(Buffer); }
 
   /// addFlag - Add a flag that is true to the DIE.
   void addFlag(DIE *Die, dwarf::Attribute Attribute);
@@ -214,10 +249,6 @@ public:
   /// addSectionOffset - Add an offset into a section attribute data and value.
   ///
   void addSectionOffset(DIE *Die, dwarf::Attribute Attribute, uint64_t Integer);
-
-  /// addLabelAddress - Add a dwarf label attribute data and value using
-  /// either DW_FORM_addr or DW_FORM_GNU_addr_index.
-  void addLabelAddress(DIE *Die, dwarf::Attribute Attribute, MCSymbol *Label);
 
   /// addOpAddress - Add a dwarf op address data and value using the
   /// form given and an op of either DW_FORM_addr or DW_FORM_GNU_addr_index.
@@ -313,9 +344,6 @@ public:
   /// getOrCreateContextDIE - Get context owner's DIE.
   DIE *getOrCreateContextDIE(DIScope Context);
 
-  /// createGlobalVariableDIE - create global variable DIE.
-  void createGlobalVariableDIE(DIGlobalVariable GV);
-
   /// constructContainingTypeDIEs - Construct DIEs for types that contain
   /// vtables.
   void constructContainingTypeDIEs();
@@ -338,6 +366,10 @@ public:
 
   /// Emit the header for this unit, not including the initial length field.
   void emitHeader(const MCSection *ASection, const MCSymbol *ASectionSym);
+
+protected:
+  /// getOrCreateStaticMemberDIE - Create new static data member DIE.
+  DIE *getOrCreateStaticMemberDIE(DIDerivedType DT);
 
 private:
   /// constructTypeDIE - Construct basic type die from DIBasicType.
@@ -370,9 +402,6 @@ private:
   /// DITemplateValueParameter.
   void constructTemplateValueParameterDIE(DIE &Buffer,
                                           DITemplateValueParameter TVP);
-
-  /// getOrCreateStaticMemberDIE - Create new static data member DIE.
-  DIE *getOrCreateStaticMemberDIE(DIDerivedType DT);
 
   /// getLowerBoundDefault - Return the default lower bound for an array. If the
   /// DWARF version doesn't handle the language, return -1.
@@ -411,5 +440,30 @@ private:
   void updateAcceleratorTables(DIScope Context, DIType Ty, const DIE *TyDIE);
 };
 
+class CompileUnit : public Unit {
+public:
+  CompileUnit(unsigned UID, DIE *D, DICompileUnit Node, AsmPrinter *A,
+              DwarfDebug *DW, DwarfUnits *DWU);
+
+  /// createGlobalVariableDIE - create global variable DIE.
+  void createGlobalVariableDIE(DIGlobalVariable GV);
+
+  /// addLabelAddress - Add a dwarf label attribute data and value using
+  /// either DW_FORM_addr or DW_FORM_GNU_addr_index.
+  void addLabelAddress(DIE *Die, dwarf::Attribute Attribute, MCSymbol *Label);
+
+  uint16_t getLanguage() const { return getNode().getLanguage(); }
+};
+
+class TypeUnit : public Unit {
+private:
+  uint16_t Language;
+
+public:
+  TypeUnit(unsigned UID, DIE *D, uint16_t Language, AsmPrinter *A,
+           DwarfDebug *DW, DwarfUnits *DWU);
+
+  uint16_t getLanguage() const { return Language; }
+};
 } // end llvm namespace
 #endif

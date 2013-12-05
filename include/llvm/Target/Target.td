@@ -949,7 +949,7 @@ class AsmWriter {
   // AsmWriterClassName - This specifies the suffix to use for the asmwriter
   // class.  Generated AsmWriter classes are always prefixed with the target
   // name.
-  string AsmWriterClassName  = "AsmPrinter";
+  string AsmWriterClassName  = "InstPrinter";
 
   // Variant - AsmWriters can be of multiple different variants.  Variants are
   // used to support targets that need to emit assembly code in ways that are
@@ -959,21 +959,13 @@ class AsmWriter {
   // == 1, will expand to "y".
   int Variant = 0;
 
-
-  // FirstOperandColumn/OperandSpacing - If the assembler syntax uses a columnar
-  // layout, the asmwriter can actually generate output in this columns (in
-  // verbose-asm mode).  These two values indicate the width of the first column
-  // (the "opcode" area) and the width to reserve for subsequent operands.  When
-  // verbose asm mode is enabled, operands will be indented to respect this.
-  int FirstOperandColumn = -1;
-
   // OperandSpacing - Space between operand columns.
   int OperandSpacing = -1;
 
   // isMCAsmWriter - Is this assembly writer for an MC emitter? This controls
   // generation of the printInstruction() method. For MC printers, it takes
   // an MCInstr* operand, otherwise it takes a MachineInstr*.
-  bit isMCAsmWriter = 0;
+  bit isMCAsmWriter = 1;
 }
 def DefaultAsmWriter : AsmWriter;
 

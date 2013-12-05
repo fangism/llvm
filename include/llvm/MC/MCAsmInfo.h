@@ -82,7 +82,7 @@ namespace llvm {
 
     /// LinkerRequiresNonEmptyDwarfLines - True if the linker has a bug and
     /// requires that the debug_line section be of a minimum size. In practice
-    /// such a linker requires a non empty line sequence if a file is present.
+    /// such a linker requires a non-empty line sequence if a file is present.
     bool LinkerRequiresNonEmptyDwarfLines; // Default to false.
 
     /// MaxInstLength - This is the maximum possible length of an instruction,
@@ -119,10 +119,10 @@ namespace llvm {
     /// onto all global symbols.  This is often used for '_'.
     char GlobalPrefix;                // Defaults to '\0'
 
-    /// PrivateGlobalPrefix - This prefix is used for globals like constant
-    /// pool entries that are completely private to the .s file and should not
-    /// have names in the .o file.  This is often "." or "L".
-    const char *PrivateGlobalPrefix;         // Defaults to "."
+    /// This prefix is used for globals like constant pool entries that are
+    /// completely private to the .s file and should not have names in the .o
+    /// file.
+    const char *PrivateGlobalPrefix;         // Defaults to "L"
 
     /// LinkerPrivateGlobalPrefix - This prefix is used for symbols that should
     /// be passed through the assembler but be removed by the linker.  This
@@ -266,13 +266,12 @@ namespace llvm {
     /// global as being a weak undefined symbol.
     const char *WeakRefDirective;            // Defaults to NULL.
 
-    /// WeakDefDirective - This directive, if non-null, is used to declare a
-    /// global as being a weak defined symbol.
-    const char *WeakDefDirective;            // Defaults to NULL.
+    /// True if we have a directive to declare a global as being a weak
+    /// defined symbol.
+    bool HasWeakDefDirective;                // Defaults to false.
 
-    /// LinkOnceDirective - This directive, if non-null is used to declare a
-    /// global as being a weak defined symbol.  This is used on cygwin/mingw.
-    const char *LinkOnceDirective;           // Defaults to NULL.
+    /// True if we have a .linkonce directive.  This is used on cygwin/mingw.
+    bool HasLinkOnceDirective;               // Defaults to false.
 
     /// HiddenVisibilityAttr - This attribute, if not MCSA_Invalid, is used to
     /// declare a symbol as having hidden visibility.
@@ -306,6 +305,10 @@ namespace llvm {
     /// DwarfRegNumForCFI - True if dwarf register numbers are printed
     /// instead of symbolic register names in .cfi_* directives.
     bool DwarfRegNumForCFI;  // Defaults to false;
+
+    /// UseParensForSymbolVariant - True if target uses parens to indicate the
+    /// symbol variant instead of @. For example, foo(plt) instead of foo@plt.
+    bool UseParensForSymbolVariant; // Defaults to false;
 
     //===--- Prologue State ----------------------------------------------===//
 
@@ -497,8 +500,8 @@ namespace llvm {
     bool hasIdentDirective() const { return HasIdentDirective; }
     bool hasNoDeadStrip() const { return HasNoDeadStrip; }
     const char *getWeakRefDirective() const { return WeakRefDirective; }
-    const char *getWeakDefDirective() const { return WeakDefDirective; }
-    const char *getLinkOnceDirective() const { return LinkOnceDirective; }
+    bool hasWeakDefDirective() const { return HasWeakDefDirective; }
+    bool hasLinkOnceDirective() const { return HasLinkOnceDirective; }
 
     MCSymbolAttr getHiddenVisibilityAttr() const { return HiddenVisibilityAttr;}
     MCSymbolAttr getHiddenDeclarationVisibilityAttr() const {
@@ -530,6 +533,9 @@ namespace llvm {
     }
     bool useDwarfRegNumForCFI() const {
       return DwarfRegNumForCFI;
+    }
+    bool useParensForSymbolVariant() const {
+      return UseParensForSymbolVariant;
     }
 
     void addInitialFrameState(const MCCFIInstruction &Inst) {

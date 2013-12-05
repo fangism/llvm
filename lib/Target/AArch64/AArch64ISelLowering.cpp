@@ -66,7 +66,7 @@ AArch64TargetLowering::AArch64TargetLowering(AArch64TargetMachine &TM)
     addRegisterClass(MVT::v1i64, &AArch64::FPR64RegClass);
     addRegisterClass(MVT::v1f32, &AArch64::FPR32RegClass);
     addRegisterClass(MVT::v1f64, &AArch64::FPR64RegClass);
-    addRegisterClass(MVT::v8i8, &AArch64::FPR64RegClass);
+    addRegisterClass(MVT::v8i8,  &AArch64::FPR64RegClass);
     addRegisterClass(MVT::v4i16, &AArch64::FPR64RegClass);
     addRegisterClass(MVT::v2i32, &AArch64::FPR64RegClass);
     addRegisterClass(MVT::v1i64, &AArch64::FPR64RegClass);
@@ -341,26 +341,32 @@ AArch64TargetLowering::AArch64TargetLowering(AArch64TargetMachine &TM)
 
     setOperationAction(ISD::FFLOOR, MVT::v2f32, Legal);
     setOperationAction(ISD::FFLOOR, MVT::v4f32, Legal);
+    setOperationAction(ISD::FFLOOR, MVT::v1f64, Legal);
     setOperationAction(ISD::FFLOOR, MVT::v2f64, Legal);
 
     setOperationAction(ISD::FCEIL, MVT::v2f32, Legal);
     setOperationAction(ISD::FCEIL, MVT::v4f32, Legal);
+    setOperationAction(ISD::FCEIL, MVT::v1f64, Legal);
     setOperationAction(ISD::FCEIL, MVT::v2f64, Legal);
 
     setOperationAction(ISD::FTRUNC, MVT::v2f32, Legal);
     setOperationAction(ISD::FTRUNC, MVT::v4f32, Legal);
+    setOperationAction(ISD::FTRUNC, MVT::v1f64, Legal);
     setOperationAction(ISD::FTRUNC, MVT::v2f64, Legal);
 
     setOperationAction(ISD::FRINT, MVT::v2f32, Legal);
     setOperationAction(ISD::FRINT, MVT::v4f32, Legal);
+    setOperationAction(ISD::FRINT, MVT::v1f64, Legal);
     setOperationAction(ISD::FRINT, MVT::v2f64, Legal);
 
     setOperationAction(ISD::FNEARBYINT, MVT::v2f32, Legal);
     setOperationAction(ISD::FNEARBYINT, MVT::v4f32, Legal);
+    setOperationAction(ISD::FNEARBYINT, MVT::v1f64, Legal);
     setOperationAction(ISD::FNEARBYINT, MVT::v2f64, Legal);
 
     setOperationAction(ISD::FROUND, MVT::v2f32, Legal);
     setOperationAction(ISD::FROUND, MVT::v4f32, Legal);
+    setOperationAction(ISD::FROUND, MVT::v1f64, Legal);
     setOperationAction(ISD::FROUND, MVT::v2f64, Legal);
   }
 }
@@ -401,6 +407,29 @@ static void getExclusiveOperation(unsigned Size, AtomicOrdering Ord,
 
   LdrOpc = LoadOps[Log2_32(Size)];
   StrOpc = StoreOps[Log2_32(Size)];
+}
+
+// FIXME: AArch64::DTripleRegClass and AArch64::QTripleRegClass don't really
+// have value type mapped, and they are both being defined as MVT::untyped.
+// Without knowing the MVT type, MachineLICM::getRegisterClassIDAndCost
+// would fail to figure out the register pressure correctly.
+std::pair<const TargetRegisterClass*, uint8_t>
+AArch64TargetLowering::findRepresentativeClass(MVT VT) const{
+  const TargetRegisterClass *RRC = 0;
+  uint8_t Cost = 1;
+  switch (VT.SimpleTy) {
+  default:
+    return TargetLowering::findRepresentativeClass(VT);
+  case MVT::v4i64:
+    RRC = &AArch64::QPairRegClass;
+    Cost = 2;
+    break;
+  case MVT::v8i64:
+    RRC = &AArch64::QQuadRegClass;
+    Cost = 4;
+    break;
+  }
+  return std::make_pair(RRC, Cost);
 }
 
 MachineBasicBlock *
@@ -4004,8 +4033,8 @@ AArch64TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG,
     return DAG.getNode(ISD::SCALAR_TO_VECTOR, DL, VT, Value);
 
   unsigned EltSize = VT.getVectorElementType().getSizeInBits();
-  // Use VDUP for non-constant splats.
   if (hasDominantValue && EltSize <= 64) {
+    // Use VDUP for non-constant splats.
     if (!isConstant) {
       SDValue N;
 
