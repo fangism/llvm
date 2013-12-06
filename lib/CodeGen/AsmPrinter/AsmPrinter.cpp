@@ -95,18 +95,19 @@ static unsigned getGVAlignmentLog2(const GlobalValue *GV, const DataLayout &TD,
 
 AsmPrinter::AsmPrinter(TargetMachine &tm, MCStreamer &Streamer)
   : MachineFunctionPass(ID),
-    TM(tm), MAI(tm.getMCAsmInfo()), MII(tm.getInstrInfo()),
+    TM(tm), Tr(Twine(getTargetTriple())),
+    MAI(tm.getMCAsmInfo()), MII(tm.getInstrInfo()),
     OutContext(Streamer.getContext()),
     OutStreamer(Streamer),
     LastMI(0), LastFn(0), Counter(~0U), SetCounter(0) {
-  DD = 0; DE = 0; MMI = 0; LI = 0; MF = 0;
+  DD = 0; MMI = 0; LI = 0; MF = 0;
   CurrentFnSym = CurrentFnSymForSize = 0;
   GCMetadataPrinters = 0;
   VerboseAsm = Streamer.isVerboseAsm();
 }
 
 AsmPrinter::~AsmPrinter() {
-  assert(DD == 0 && DE == 0 && "Debug/EH info didn't get finalized");
+  assert(DD == 0 && Handlers.empty() && "Debug/EH info didn't get finalized");
 
   if (GCMetadataPrinters != 0) {
     gcp_map_type &GCMap = getGCMap(GCMetadataPrinters);
@@ -192,25 +193,29 @@ bool AsmPrinter::doInitialization(Module &M) {
     OutStreamer.AddBlankLine();
   }
 
-  if (MAI->doesSupportDebugInformation())
+  if (MAI->doesSupportDebugInformation()) {
     DD = new DwarfDebug(this, &M);
+    Handlers.push_back(HandlerInfo(DD, DbgTimerName, DWARFGroupName));
+  }
 
+  DwarfException *DE = 0;
   switch (MAI->getExceptionHandlingType()) {
   case ExceptionHandling::None:
-    return false;
+    break;
   case ExceptionHandling::SjLj:
   case ExceptionHandling::DwarfCFI:
     DE = new DwarfCFIException(this);
-    return false;
+    break;
   case ExceptionHandling::ARM:
     DE = new ARMException(this);
-    return false;
+    break;
   case ExceptionHandling::Win64:
     DE = new Win64Exception(this);
-    return false;
+    break;
   }
-
-  llvm_unreachable("Unknown exception type.");
+  if (DE)
+    Handlers.push_back(HandlerInfo(DE, EHTimerName, DWARFGroupName));
+  return false;
 }
 
 void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
@@ -222,13 +227,18 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
   case GlobalValue::WeakAnyLinkage:
   case GlobalValue::WeakODRLinkage:
   case GlobalValue::LinkerPrivateWeakLinkage:
-    if (MAI->getWeakDefDirective() != 0) {
+    if (MAI->hasWeakDefDirective()) {
       // .globl _foo
       OutStreamer.EmitSymbolAttribute(GVSym, MCSA_Global);
 
       bool CanBeHidden = false;
 
-      if (Linkage == GlobalValue::LinkOnceODRLinkage) {
+      // -no-integrated-as: 
+      // old system assembler doesn't understand .weak_def_can_be_hidden
+      // FIXME: this should really be a check on the assembler characteristics
+      // rather than OS version
+      if (Linkage == GlobalValue::LinkOnceODRLinkage &&
+          !(Tr.isMacOSX() && Tr.isMacOSXVersionLT(10, 6))) {
         if (GV->hasUnnamedAddr()) {
           CanBeHidden = true;
         } else {
@@ -243,7 +253,7 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
         OutStreamer.EmitSymbolAttribute(GVSym, MCSA_WeakDefinition);
       else
         OutStreamer.EmitSymbolAttribute(GVSym, MCSA_WeakDefAutoPrivate);
-    } else if (MAI->getLinkOnceDirective() != 0) {
+    } else if (MAI->hasLinkOnceDirective()) {
       // .globl _foo
       OutStreamer.EmitSymbolAttribute(GVSym, MCSA_Global);
       //NOTE: linkonce is handled by the section the symbol was assigned to.
@@ -311,8 +321,11 @@ void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
   // sections and expected to be contiguous (e.g. ObjC metadata).
   unsigned AlignLog = getGVAlignmentLog2(GV, *DL);
 
-  if (DD)
-    DD->setSymbolSize(GVSym, Size);
+  for (unsigned I = 0, E = Handlers.size(); I != E; ++I) {
+    const HandlerInfo &OI = Handlers[I];
+    NamedRegionTimer T(OI.TimerName, OI.TimerGroupName, TimePassesIsEnabled);
+    OI.Handler->setSymbolSize(GVSym, Size);
+  }
 
   // Handle common and BSS local symbols (.lcomm).
   if (GVKind.isCommon() || GVKind.isBSSLocal()) {
@@ -482,13 +495,10 @@ void AsmPrinter::EmitFunctionHeader() {
   }
 
   // Emit pre-function debug and/or EH information.
-  if (DE) {
-    NamedRegionTimer T(EHTimerName, DWARFGroupName, TimePassesIsEnabled);
-    DE->beginFunction(MF);
-  }
-  if (DD) {
-    NamedRegionTimer T(DbgTimerName, DWARFGroupName, TimePassesIsEnabled);
-    DD->beginFunction(MF);
+  for (unsigned I = 0, E = Handlers.size(); I != E; ++I) {
+    const HandlerInfo &OI = Handlers[I];
+    NamedRegionTimer T(OI.TimerName, OI.TimerGroupName, TimePassesIsEnabled);
+    OI.Handler->beginFunction(MF);
   }
 
   // Emit the prefix data.
@@ -578,8 +588,7 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
   raw_svector_ostream OS(Str);
   OS << '\t' << AP.MAI->getCommentString() << "DEBUG_VALUE: ";
 
-  // cast away const; DIetc do not take const operands for some reason.
-  DIVariable V(const_cast<MDNode*>(MI->getOperand(2).getMetadata()));
+  DIVariable V(MI->getOperand(2).getMetadata());
   if (V.getContext().isSubprogram()) {
     StringRef Name = DISubprogram(V.getContext()).getDisplayName();
     if (!Name.empty())
@@ -693,7 +702,7 @@ void AsmPrinter::EmitFunctionBody() {
   // Emit target-specific gunk before the function body.
   EmitFunctionBodyStart();
 
-  bool ShouldPrintDebugScopes = DD && MMI->hasDebugInfo();
+  bool ShouldPrintDebugScopes = MMI->hasDebugInfo();
 
   // Print out code for the function.
   bool HasAnyRealCode = false;
@@ -714,8 +723,12 @@ void AsmPrinter::EmitFunctionBody() {
       }
 
       if (ShouldPrintDebugScopes) {
-        NamedRegionTimer T(DbgTimerName, DWARFGroupName, TimePassesIsEnabled);
-        DD->beginInstruction(II);
+        for (unsigned III = 0, EEE = Handlers.size(); III != EEE; ++III) {
+          const HandlerInfo &OI = Handlers[III];
+          NamedRegionTimer T(OI.TimerName, OI.TimerGroupName,
+                             TimePassesIsEnabled);
+          OI.Handler->beginInstruction(II);
+        }
       }
 
       if (isVerbose())
@@ -754,8 +767,12 @@ void AsmPrinter::EmitFunctionBody() {
       }
 
       if (ShouldPrintDebugScopes) {
-        NamedRegionTimer T(DbgTimerName, DWARFGroupName, TimePassesIsEnabled);
-        DD->endInstruction(II);
+        for (unsigned III = 0, EEE = Handlers.size(); III != EEE; ++III) {
+          const HandlerInfo &OI = Handlers[III];
+          NamedRegionTimer T(OI.TimerName, OI.TimerGroupName,
+                             TimePassesIsEnabled);
+          OI.Handler->endInstruction();
+        }
       }
     }
   }
@@ -811,14 +828,11 @@ void AsmPrinter::EmitFunctionBody() {
     OutStreamer.EmitELFSize(CurrentFnSym, SizeExp);
   }
 
-  // Emit post-function debug information.
-  if (DD) {
-    NamedRegionTimer T(DbgTimerName, DWARFGroupName, TimePassesIsEnabled);
-    DD->endFunction(MF);
-  }
-  if (DE) {
-    NamedRegionTimer T(EHTimerName, DWARFGroupName, TimePassesIsEnabled);
-    DE->endFunction();
+  // Emit post-function debug and/or EH information.
+  for (unsigned I = 0, E = Handlers.size(); I != E; ++I) {
+    const HandlerInfo &OI = Handlers[I];
+    NamedRegionTimer T(OI.TimerName, OI.TimerGroupName, TimePassesIsEnabled);
+    OI.Handler->endFunction(MF);
   }
   MMI->EndFunction();
 
@@ -907,20 +921,15 @@ bool AsmPrinter::doFinalization(Module &M) {
   OutStreamer.Flush();
 
   // Finalize debug and EH information.
-  if (DE) {
-    {
-      NamedRegionTimer T(EHTimerName, DWARFGroupName, TimePassesIsEnabled);
-      DE->endModule();
-    }
-    delete DE; DE = 0;
+  for (unsigned I = 0, E = Handlers.size(); I != E; ++I) {
+    const HandlerInfo &OI = Handlers[I];
+    NamedRegionTimer T(OI.TimerName, OI.TimerGroupName,
+                       TimePassesIsEnabled);
+    OI.Handler->endModule();
+    delete OI.Handler;
   }
-  if (DD) {
-    {
-      NamedRegionTimer T(DbgTimerName, DWARFGroupName, TimePassesIsEnabled);
-      DD->endModule();
-    }
-    delete DD; DD = 0;
-  }
+  Handlers.clear();
+  DD = 0;
 
   // If the target wants to know about weak references, print them all.
   if (MAI->getWeakRefDirective()) {
@@ -1422,8 +1431,8 @@ void AsmPrinter::EmitLabelDifference(const MCSymbol *Hi, const MCSymbol *Lo,
 /// where the size in bytes of the directive is specified by Size and Hi/Lo
 /// specify the labels.  This implicitly uses .set if it is available.
 void AsmPrinter::EmitLabelOffsetDifference(const MCSymbol *Hi, uint64_t Offset,
-                                           const MCSymbol *Lo, unsigned Size)
-  const {
+                                           const MCSymbol *Lo,
+                                           unsigned Size) const {
 
   // Emit Hi+Offset - Lo
   // Get the Hi+Offset expression.
@@ -2033,12 +2042,9 @@ MCSymbol *AsmPrinter::GetJTSetSymbol(unsigned UID, unsigned MBBID) const {
    Twine(UID) + "_set_" + Twine(MBBID));
 }
 
-MCSymbol *AsmPrinter::GetSymbolWithGlobalValueBase(const GlobalValue *GV,
+MCSymbol *AsmPrinter::getSymbolWithGlobalValueBase(const GlobalValue *GV,
                                                    StringRef Suffix) const {
-  SmallString<60> NameStr;
-  Mang->getNameWithPrefix(NameStr, GV, true);
-  NameStr.append(Suffix.begin(), Suffix.end());
-  return OutContext.GetOrCreateSymbol(NameStr.str());
+  return getObjFileLowering().getSymbolWithGlobalValueBase(*Mang, GV, Suffix);
 }
 
 /// GetExternalSymbolSymbol - Return the MCSymbol for the specified

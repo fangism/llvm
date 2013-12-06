@@ -1580,7 +1580,7 @@ void NVPTXAsmPrinter::emitFunctionParamList(const Function *F, raw_ostream &O) {
         continue;
       }
       // Non-kernel function, just print .param .b<size> for ABI
-      // and .reg .b<size> for non ABY
+      // and .reg .b<size> for non-ABI
       unsigned sz = 0;
       if (isa<IntegerType>(Ty)) {
         sz = cast<IntegerType>(Ty)->getBitWidth();
@@ -2086,21 +2086,6 @@ void NVPTXAsmPrinter::printOperand(const MachineInstr *MI, int opNum,
   case MachineOperand::MO_GlobalAddress:
     O << *getSymbol(MO.getGlobal());
     break;
-
-  case MachineOperand::MO_ExternalSymbol: {
-    const char *symbname = MO.getSymbolName();
-    if (strstr(symbname, ".PARAM") == symbname) {
-      unsigned index;
-      sscanf(symbname + 6, "%u[];", &index);
-      printParamName(index, O);
-    } else if (strstr(symbname, ".HLPPARAM") == symbname) {
-      unsigned index;
-      sscanf(symbname + 9, "%u[];", &index);
-      O << *CurrentFnSym << "_param_" << index << "_offset";
-    } else
-      O << symbname;
-    break;
-  }
 
   case MachineOperand::MO_MachineBasicBlock:
     O << *MO.getMBB()->getSymbol();

@@ -880,13 +880,13 @@ protected:
   }
 
   /// Indicate whether this target prefers to use _setjmp to implement
-  /// llvm.setjmp or the non _ version.  Defaults to false.
+  /// llvm.setjmp or the version without _.  Defaults to false.
   void setUseUnderscoreSetJmp(bool Val) {
     UseUnderscoreSetJmp = Val;
   }
 
   /// Indicate whether this target prefers to use _longjmp to implement
-  /// llvm.longjmp or the non _ version.  Defaults to false.
+  /// llvm.longjmp or the version without _.  Defaults to false.
   void setUseUnderscoreLongJmp(bool Val) {
     UseUnderscoreLongJmp = Val;
   }
@@ -1685,6 +1685,10 @@ protected:
   /// Return true if the value types that can be represented by the specified
   /// register class are all legal.
   bool isLegalRC(const TargetRegisterClass *RC) const;
+
+  /// Replace/modify any TargetFrameIndex operands with a targte-dependent
+  /// sequence of memory operands that is recognized by PrologEpilogInserter.
+  MachineBasicBlock *emitPatchPoint(MachineInstr *MI, MachineBasicBlock *MBB) const;
 };
 
 /// This class defines information used to lower LLVM code to legal SelectionDAG

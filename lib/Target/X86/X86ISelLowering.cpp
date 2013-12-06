@@ -15819,51 +15819,6 @@ X86TargetLowering::emitEHSjLjLongJmp(MachineInstr *MI,
   return MBB;
 }
 
-/// Convert any TargetFrameIndex operands into the x86-specific pattern of five
-/// memory operands that is recognized by PrologEpilogInserter.
-MachineBasicBlock *
-X86TargetLowering::emitPatchPoint(MachineInstr *MI,
-                                  MachineBasicBlock *MBB) const {
-  const TargetMachine &TM = getTargetMachine();
-  const X86InstrInfo *TII = static_cast<const X86InstrInfo*>(TM.getInstrInfo());
-
-  // MI changes inside this loop as we grow operands.
-  for(unsigned OperIdx = 0; OperIdx != MI->getNumOperands(); ++OperIdx) {
-    MachineOperand &MO = MI->getOperand(OperIdx);
-    if (!MO.isFI())
-      continue;
-
-    // foldMemoryOperand builds a new MI after replacing a single FI operand
-    // with the canonical set of five x86 addressing-mode operands.
-    int FI = MO.getIndex();
-    MachineFunction &MF = *MBB->getParent();
-    SmallVector<unsigned, 1> FIOps(1, OperIdx);
-    MachineInstr *NewMI = TII->foldMemoryOperandImpl(MF, MI, FIOps, FI);
-    assert(NewMI && "Cannot fold frame index operand into stackmap.");
-
-    // Inherit previous memory operands.
-    NewMI->setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
-    assert(NewMI->mayLoad() && "Folded a stackmap use to a non-load!");
-
-    // Add a new memory operand for this FI.
-    const MachineFrameInfo &MFI = *MF.getFrameInfo();
-    assert(MFI.getObjectOffset(FI) != -1);
-    MachineMemOperand *MMO =
-      MF.getMachineMemOperand(MachinePointerInfo::getFixedStack(FI),
-                              MachineMemOperand::MOLoad,
-                              TM.getDataLayout()->getPointerSize(),
-                              MFI.getObjectAlignment(FI));
-    NewMI->addMemOperand(MF, MMO);
-
-    // Replace the instruction and update the operand index.
-    MBB->insert(MachineBasicBlock::iterator(MI), NewMI);
-    OperIdx += (NewMI->getNumOperands() - MI->getNumOperands()) - 1;
-    MI->eraseFromParent();
-    MI = NewMI;
-  }
-  return MBB;
-}
-
 MachineBasicBlock *
 X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
                                                MachineBasicBlock *BB) const {
@@ -17055,12 +17010,13 @@ static SDValue PerformSELECTCombine(SDNode *N, SelectionDAG &DAG,
   // Simplify vector selection if the selector will be produced by CMPP*/PCMP*.
   if (N->getOpcode() == ISD::VSELECT && Cond.getOpcode() == ISD::SETCC &&
       // Check if SETCC has already been promoted
-      TLI.getSetCCResultType(*DAG.getContext(), VT) == Cond.getValueType()) {
+      TLI.getSetCCResultType(*DAG.getContext(), VT) == CondVT &&
+      // Check that condition value type matches vselect operand type
+      CondVT == VT) { 
 
     assert(Cond.getValueType().isVector() &&
            "vector select expects a vector selector!");
 
-    EVT IntVT = Cond.getValueType();
     bool TValIsAllOnes = ISD::isBuildVectorAllOnes(LHS.getNode());
     bool FValIsAllZeros = ISD::isBuildVectorAllZeros(RHS.getNode());
 
@@ -17075,7 +17031,7 @@ static SDValue PerformSELECTCombine(SDNode *N, SelectionDAG &DAG,
         ISD::CondCode NewCC =
           ISD::getSetCCInverse(cast<CondCodeSDNode>(CC)->get(),
                                Cond.getOperand(0).getValueType().isInteger());
-        Cond = DAG.getSetCC(DL, IntVT, Cond.getOperand(0), Cond.getOperand(1), NewCC);
+        Cond = DAG.getSetCC(DL, CondVT, Cond.getOperand(0), Cond.getOperand(1), NewCC);
         std::swap(LHS, RHS);
         TValIsAllOnes = FValIsAllOnes;
         FValIsAllZeros = TValIsAllZeros;
@@ -17088,11 +17044,11 @@ static SDValue PerformSELECTCombine(SDNode *N, SelectionDAG &DAG,
       if (TValIsAllOnes && FValIsAllZeros)
         Ret = Cond;
       else if (TValIsAllOnes)
-        Ret = DAG.getNode(ISD::OR, DL, IntVT, Cond,
-                          DAG.getNode(ISD::BITCAST, DL, IntVT, RHS));
+        Ret = DAG.getNode(ISD::OR, DL, CondVT, Cond,
+                          DAG.getNode(ISD::BITCAST, DL, CondVT, RHS));
       else if (FValIsAllZeros)
-        Ret = DAG.getNode(ISD::AND, DL, IntVT, Cond,
-                          DAG.getNode(ISD::BITCAST, DL, IntVT, LHS));
+        Ret = DAG.getNode(ISD::AND, DL, CondVT, Cond,
+                          DAG.getNode(ISD::BITCAST, DL, CondVT, LHS));
 
       return DAG.getNode(ISD::BITCAST, DL, VT, Ret);
     }

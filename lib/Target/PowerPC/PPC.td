@@ -153,12 +153,12 @@ include "PPCInstrInfo.td"
 //
 
 def : Processor<"generic", G3Itineraries, [Directive32]>;
-def : Processor<"440", PPC440Itineraries, [Directive440, FeatureISEL,
-                                           FeatureFRES, FeatureFRSQRTE,
-                                           FeatureBookE, DeprecatedMFTB]>;
-def : Processor<"450", PPC440Itineraries, [Directive440, FeatureISEL,
-                                           FeatureFRES, FeatureFRSQRTE,
-                                           FeatureBookE, DeprecatedMFTB]>;
+def : ProcessorModel<"440", PPC440Model, [Directive440, FeatureISEL,
+                                          FeatureFRES, FeatureFRSQRTE,
+                                          FeatureBookE, DeprecatedMFTB]>;
+def : ProcessorModel<"450", PPC440Model, [Directive440, FeatureISEL,
+                                          FeatureFRES, FeatureFRSQRTE,
+                                          FeatureBookE, DeprecatedMFTB]>;
 def : Processor<"601", G3Itineraries, [Directive601]>;
 def : Processor<"602", G3Itineraries, [Directive602]>;
 def : Processor<"603", G3Itineraries, [Directive603,
@@ -254,7 +254,7 @@ def : ProcessorModel<"pwr6x", G5Model,
                    FeatureSTFIWX, FeatureLFIWAX,
                    FeatureFPRND, Feature64Bit,
                    DeprecatedMFTB, DeprecatedDST]>;
-def : ProcessorModel<"pwr7", G5Model,
+def : ProcessorModel<"pwr7", P7Model,
                   [DirectivePwr7, FeatureAltivec,
                    FeatureMFOCRF, FeatureFCPSGN, FeatureFSqrt, FeatureFRE,
                    FeatureFRES, FeatureFRSQRTE, FeatureFRSQRTES,
@@ -285,11 +285,6 @@ def PPCInstrInfo : InstrInfo {
   let isLittleEndianEncoding = 1;
 }
 
-def PPCAsmWriter : AsmWriter {
-  string AsmWriterClassName  = "InstPrinter";
-  bit isMCAsmWriter = 1;
-}
-
 def PPCAsmParser : AsmParser {
   let ShouldEmitMatchRegisterName = 0;
 }
@@ -306,8 +301,7 @@ def PPCAsmParserVariant : AsmParserVariant {
 def PPC : Target {
   // Information about the instructions.
   let InstructionSet = PPCInstrInfo;
-  
-  let AssemblyWriters = [PPCAsmWriter];
+
   let AssemblyParsers = [PPCAsmParser];
   let AssemblyParserVariants = [PPCAsmParserVariant];
 }

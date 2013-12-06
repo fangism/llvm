@@ -120,6 +120,15 @@ class FJAL16_ins<bits<1> _X, string asmstr,
          itin>  {
   let isCodeGenOnly=1;
 }
+
+class FJALB16_ins<bits<1> _X, string asmstr,
+                 InstrItinClass itin>:
+  FJAL16<_X, (outs), (ins simm20:$imm),
+         !strconcat(asmstr, "\t$imm\t# branch\n\tnop"),[],
+         itin>  {
+  let isCodeGenOnly=1;
+}
+
 //
 // EXT-I instruction format
 //
@@ -289,7 +298,7 @@ class FI8_MOV32R16_ins<string asmstr, InstrItinClass itin>:
 
 //
 // This are pseudo formats for multiply
-// This first one can be changed to non pseudo now.
+// This first one can be changed to non-pseudo now.
 //
 // MULT
 //
@@ -734,6 +743,12 @@ def DivuRxRy16: FRR16_div_ins<0b11011, "divu", IIAlu> {
 def Jal16 : FJAL16_ins<0b0, "jal", IIAlu> {
   let hasDelaySlot = 0;  // not true, but we add the nop for now
   let isCall=1;
+  let Defs = [RA];
+}
+
+def JalB16 : FJALB16_ins<0b0, "jal", IIAlu>, branch16 {
+  let hasDelaySlot = 0;  // not true, but we add the nop for now
+  let isBranch=1;
   let Defs = [RA];
 }
 

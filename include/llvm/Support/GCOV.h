@@ -28,12 +28,9 @@ class GCOVBlock;
 class FileInfo;
 
 namespace GCOV {
-  enum GCOVFormat {
-    InvalidGCOV,
-    GCNO_402,
-    GCNO_404,
-    GCDA_402,
-    GCDA_404
+  enum GCOVVersion {
+    V402,
+    V404
   };
 } // end GCOV namespace
 
@@ -43,21 +40,43 @@ class GCOVBuffer {
 public:
   GCOVBuffer(MemoryBuffer *B) : Buffer(B), Cursor(0) {}
   
-  /// readGCOVFormat - Read GCOV signature at the beginning of buffer.
-  GCOV::GCOVFormat readGCOVFormat() {
-    StringRef Magic = Buffer->getBuffer().slice(0, 8);
-    Cursor = 8;
-    if (Magic == "oncg*404")
-      return GCOV::GCNO_404;
-    else if (Magic == "oncg*204")
-      return GCOV::GCNO_402;
-    else if (Magic == "adcg*404")
-      return GCOV::GCDA_404;
-    else if (Magic == "adcg*204")
-      return GCOV::GCDA_402;
-    
-    Cursor = 0;
-    return GCOV::InvalidGCOV;
+  /// readGCNOFormat - Check GCNO signature is valid at the beginning of buffer.
+  bool readGCNOFormat() {
+    StringRef File = Buffer->getBuffer().slice(0, 4);
+    if (File != "oncg") {
+      errs() << "Unexpected file type: " << File << ".\n";
+      return false;
+    }
+    Cursor = 4;
+    return true;
+  }
+
+  /// readGCDAFormat - Check GCDA signature is valid at the beginning of buffer.
+  bool readGCDAFormat() {
+    StringRef File = Buffer->getBuffer().slice(0, 4);
+    if (File != "adcg") {
+      errs() << "Unexpected file type: " << File << ".\n";
+      return false;
+    }
+    Cursor = 4;
+    return true;
+  }
+
+  /// readGCOVVersion - Read GCOV version.
+  bool readGCOVVersion(GCOV::GCOVVersion &Version) {
+    StringRef VersionStr = Buffer->getBuffer().slice(Cursor, Cursor+4);
+    if (VersionStr == "*204") {
+      Cursor += 4;
+      Version = GCOV::V402;
+      return true;
+    }
+    if (VersionStr == "*404") {
+      Cursor += 4;
+      Version = GCOV::V404;
+      return true;
+    }
+    errs() << "Unexpected version: " << VersionStr << ".\n";
+    return false;
   }
 
   /// readFunctionTag - If cursor points to a function tag then increment the
@@ -193,66 +212,102 @@ private:
 /// (.gcno and .gcda).
 class GCOVFile {
 public:
-  GCOVFile() : Checksum(0), Functions(), RunCount(0), ProgramCount(0) {}
+  GCOVFile() : GCNOInitialized(false), Checksum(0), Functions(), RunCount(0),
+               ProgramCount(0) {}
   ~GCOVFile();
-  bool read(GCOVBuffer &Buffer);
+  bool readGCNO(GCOVBuffer &Buffer);
+  bool readGCDA(GCOVBuffer &Buffer);
+  uint32_t getChecksum() const { return Checksum; }
   void dump() const;
   void collectLineCounts(FileInfo &FI);
 private:
+  bool GCNOInitialized;
+  GCOV::GCOVVersion Version;
   uint32_t Checksum;
   SmallVector<GCOVFunction *, 16> Functions;
   uint32_t RunCount;
   uint32_t ProgramCount;
 };
 
+struct GCOVEdge {
+  GCOVEdge(GCOVBlock *S, GCOVBlock *D): Src(S), Dst(D), Count(0) {}
+
+  GCOVBlock *Src;
+  GCOVBlock *Dst;
+  uint64_t Count;
+};
+
 /// GCOVFunction - Collects function information.
 class GCOVFunction {
 public:
-  GCOVFunction() : Ident(0), LineNumber(0) {}
+  GCOVFunction(GCOVFile &P) : Parent(P), Ident(0), LineNumber(0) {}
   ~GCOVFunction();
-  bool read(GCOVBuffer &Buffer, GCOV::GCOVFormat Format);
+  bool readGCNO(GCOVBuffer &Buffer, GCOV::GCOVVersion Version);
+  bool readGCDA(GCOVBuffer &Buffer, GCOV::GCOVVersion Version);
   StringRef getFilename() const { return Filename; }
   void dump() const;
   void collectLineCounts(FileInfo &FI);
 private:
+  GCOVFile &Parent;
   uint32_t Ident;
+  uint32_t Checksum;
   uint32_t LineNumber;
   StringRef Name;
   StringRef Filename;
   SmallVector<GCOVBlock *, 16> Blocks;
+  SmallVector<GCOVEdge *, 16> Edges;
 };
 
 /// GCOVBlock - Collects block information.
 class GCOVBlock {
 public:
+  typedef SmallVectorImpl<GCOVEdge *>::const_iterator EdgeIterator;
+
   GCOVBlock(GCOVFunction &P, uint32_t N) :
-    Parent(P), Number(N), Counter(0), Edges(), Lines() {}
+    Parent(P), Number(N), Counter(0), SrcEdges(), DstEdges(), Lines() {}
   ~GCOVBlock();
-  void addEdge(uint32_t N) { Edges.push_back(N); }
+  void addSrcEdge(GCOVEdge *Edge) {
+    assert(Edge->Dst == this); // up to caller to ensure edge is valid
+    SrcEdges.push_back(Edge);
+  }
+  void addDstEdge(GCOVEdge *Edge) {
+    assert(Edge->Src == this); // up to caller to ensure edge is valid
+    DstEdges.push_back(Edge);
+  }
   void addLine(uint32_t N) { Lines.push_back(N); }
-  void addCount(uint64_t N) { Counter += N; }
-  size_t getNumEdges() const { return Edges.size(); }
+  void addCount(size_t DstEdgeNo, uint64_t N);
+  uint64_t getCount() const { return Counter; }
+  size_t getNumSrcEdges() const { return SrcEdges.size(); }
+  size_t getNumDstEdges() const { return DstEdges.size(); }
+
+  EdgeIterator src_begin() const { return SrcEdges.begin(); }
+  EdgeIterator src_end() const { return SrcEdges.end(); }
+  EdgeIterator dst_begin() const { return DstEdges.begin(); }
+  EdgeIterator dst_end() const { return DstEdges.end(); }
+
   void dump() const;
   void collectLineCounts(FileInfo &FI);
 private:
   GCOVFunction &Parent;
   uint32_t Number;
   uint64_t Counter;
-  SmallVector<uint32_t, 16> Edges;
+  SmallVector<GCOVEdge *, 16> SrcEdges;
+  SmallVector<GCOVEdge *, 16> DstEdges;
   SmallVector<uint32_t, 16> Lines;
 };
 
-typedef DenseMap<uint32_t, uint64_t> LineCounts;
+typedef SmallVector<const GCOVBlock *, 4> BlockVector;
+typedef DenseMap<uint32_t, BlockVector> LineData;
 class FileInfo {
 public:
-  void addLineCount(StringRef Filename, uint32_t Line, uint64_t Count) {
-    LineInfo[Filename][Line-1] += Count;
+  void addBlockLine(StringRef Filename, uint32_t Line, const GCOVBlock *Block) {
+    LineInfo[Filename][Line-1].push_back(Block);
   }
   void setRunCount(uint32_t Runs) { RunCount = Runs; }
   void setProgramCount(uint32_t Programs) { ProgramCount = Programs; }
-  void print(raw_fd_ostream &OS, StringRef gcnoFile, StringRef gcdaFile) const;
+  void print(StringRef GCNOFile, StringRef GCDAFile) const;
 private:
-  StringMap<LineCounts> LineInfo;
+  StringMap<LineData> LineInfo;
   uint32_t RunCount;
   uint32_t ProgramCount;
 };
