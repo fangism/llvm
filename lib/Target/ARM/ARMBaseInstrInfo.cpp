@@ -1913,28 +1913,40 @@ bool llvm::tryFoldSPUpdateIntoPushPop(MachineFunction &MF,
 
   MachineBasicBlock *MBB = MI->getParent();
   const TargetRegisterInfo *TRI = MF.getRegInfo().getTargetRegisterInfo();
+  const MCPhysReg *CSRegs = TRI->getCalleeSavedRegs(&MF);
 
   // Now try to find enough space in the reglist to allocate NumBytes.
   for (unsigned CurReg = FirstReg - 1; CurReg >= RD0Reg && RegsNeeded;
-       --CurReg, --RegsNeeded) {
+       --CurReg) {
     if (!IsPop) {
       // Pushing any register is completely harmless, mark the
       // register involved as undef since we don't care about it in
       // the slightest.
       RegList.push_back(MachineOperand::CreateReg(CurReg, false, false,
                                                   false, false, true));
+      --RegsNeeded;
       continue;
     }
 
-    // However, we can only pop an extra register if it's not live. Otherwise we
-    // might clobber a return value register. We assume that once we find a live
-    // return register all lower ones will be too so there's no use proceeding.
-    if (MBB->computeRegisterLiveness(TRI, CurReg, MI) !=
-        MachineBasicBlock::LQR_Dead)
-      return false;
+    // However, we can only pop an extra register if it's not live. For
+    // registers live within the function we might clobber a return value
+    // register; the other way a register can be live here is if it's
+    // callee-saved.
+    if (isCalleeSavedRegister(CurReg, CSRegs) ||
+        MBB->computeRegisterLiveness(TRI, CurReg, MI) !=
+            MachineBasicBlock::LQR_Dead) {
+      // VFP pops don't allow holes in the register list, so any skip is fatal
+      // for our transformation. GPR pops do, so we should just keep looking.
+      if (IsVFPPushPop)
+        return false;
+      else
+        continue;
+    }
 
     // Mark the unimportant registers as <def,dead> in the POP.
-    RegList.push_back(MachineOperand::CreateReg(CurReg, true, false, true));
+    RegList.push_back(MachineOperand::CreateReg(CurReg, true, false, false,
+                                                true));
+    --RegsNeeded;
   }
 
   if (RegsNeeded > 0)
@@ -2360,8 +2372,32 @@ optimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, unsigned SrcReg2,
           isSafe = true;
           break;
         }
-        // Condition code is after the operand before CPSR.
-        ARMCC::CondCodes CC = (ARMCC::CondCodes)Instr.getOperand(IO-1).getImm();
+        // Condition code is after the operand before CPSR except for VSELs.
+        ARMCC::CondCodes CC;
+        bool IsInstrVSel = true;
+        switch (Instr.getOpcode()) {
+        default:
+          IsInstrVSel = false;
+          CC = (ARMCC::CondCodes)Instr.getOperand(IO - 1).getImm();
+          break;
+        case ARM::VSELEQD:
+        case ARM::VSELEQS:
+          CC = ARMCC::EQ;
+          break;
+        case ARM::VSELGTD:
+        case ARM::VSELGTS:
+          CC = ARMCC::GT;
+          break;
+        case ARM::VSELGED:
+        case ARM::VSELGES:
+          CC = ARMCC::GE;
+          break;
+        case ARM::VSELVSS:
+        case ARM::VSELVSD:
+          CC = ARMCC::VS;
+          break;
+        }
+
         if (Sub) {
           ARMCC::CondCodes NewCC = getSwappedCondition(CC);
           if (NewCC == ARMCC::AL)
@@ -2372,11 +2408,14 @@ optimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, unsigned SrcReg2,
           // If it is safe to remove CmpInstr, the condition code of these
           // operands will be modified.
           if (SrcReg2 != 0 && Sub->getOperand(1).getReg() == SrcReg2 &&
-              Sub->getOperand(2).getReg() == SrcReg)
-            OperandsToUpdate.push_back(std::make_pair(&((*I).getOperand(IO-1)),
-                                                      NewCC));
-        }
-        else
+              Sub->getOperand(2).getReg() == SrcReg) {
+            // VSel doesn't support condition code update.
+            if (IsInstrVSel)
+              return false;
+            OperandsToUpdate.push_back(
+                std::make_pair(&((*I).getOperand(IO - 1)), NewCC));
+          }
+        } else
           switch (CC) {
           default:
             // CPSR can be used multiple times, we should continue.
