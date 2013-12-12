@@ -67,6 +67,47 @@ void ARMBaseTargetMachine::addAnalysisPasses(PassManagerBase &PM) {
 
 void ARMTargetMachine::anchor() { }
 
+static std::string computeDataLayout(ARMSubtarget &ST) {
+  // Little endian. Pointers are 32 bits and aligned to 32 bits.
+  std::string Ret = "e-p:32:32";
+
+  // We have 64 bits floats and integers. The APCS ABI requires them to be
+  // aligned s them to 32 bits, others to 64 bits. We always try to align to
+  // 64 bits.
+  if (ST.isAPCS_ABI())
+    Ret += "-f64:32:64-i64:32:64";
+  else
+    Ret += "-f64:64:64-i64:64:64";
+
+  // On thumb, i16,i18 and i1 have natural aligment requirements, but we try to
+  // align to 32.
+  if (ST.isThumb())
+    Ret += "-i16:16:32-i8:8:32-i1:8:32";
+
+  // We have 128 and 64 bit vectors. The APCS ABI aligns them to 32 bits, others
+  // to 64. We always ty to give them natural alignment.
+  if (ST.isAPCS_ABI())
+    Ret += "-v128:32:128-v64:32:64";
+  else
+    Ret += "-v128:64:128-v64:64:64";
+
+  // An aggregate of size 0 is ABI aligned to 0.
+  // FIXME: explain better what this means.
+  if (ST.isThumb())
+    Ret += "-a:0:32";
+
+  // Integer registers are 32 bits.
+  Ret += "-n32";
+
+  // The stack is 64 bit aligned on AAPCS and 32 bit aligned everywhere else.
+  if (ST.isAAPCS_ABI())
+    Ret += "-S64";
+  else
+    Ret += "-S32";
+
+  return Ret;
+}
+
 ARMTargetMachine::ARMTargetMachine(const Target &T, StringRef TT,
                                    StringRef CPU, StringRef FS,
                                    const TargetOptions &Options,
@@ -74,14 +115,7 @@ ARMTargetMachine::ARMTargetMachine(const Target &T, StringRef TT,
                                    CodeGenOpt::Level OL)
   : ARMBaseTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
     InstrInfo(Subtarget),
-    DL(Subtarget.isAPCS_ABI() ?
-               std::string("e-p:32:32-f64:32:64-i64:32:64-"
-                           "v128:32:128-v64:32:64-n32-S32") :
-               Subtarget.isAAPCS_ABI() ?
-               std::string("e-p:32:32-f64:64:64-i64:64:64-"
-                           "v128:64:128-v64:64:64-n32-S64") :
-               std::string("e-p:32:32-f64:64:64-i64:64:64-"
-                           "v128:64:128-v64:64:64-n32-S32")),
+    DL(computeDataLayout(Subtarget)),
     TLInfo(*this),
     TSInfo(*this),
     FrameLowering(Subtarget) {
@@ -102,17 +136,7 @@ ThumbTargetMachine::ThumbTargetMachine(const Target &T, StringRef TT,
     InstrInfo(Subtarget.hasThumb2()
               ? ((ARMBaseInstrInfo*)new Thumb2InstrInfo(Subtarget))
               : ((ARMBaseInstrInfo*)new Thumb1InstrInfo(Subtarget))),
-    DL(Subtarget.isAPCS_ABI() ?
-               std::string("e-p:32:32-f64:32:64-i64:32:64-"
-                           "i16:16:32-i8:8:32-i1:8:32-"
-                           "v128:32:128-v64:32:64-a:0:32-n32-S32") :
-               Subtarget.isAAPCS_ABI() ?
-               std::string("e-p:32:32-f64:64:64-i64:64:64-"
-                           "i16:16:32-i8:8:32-i1:8:32-"
-                           "v128:64:128-v64:64:64-a:0:32-n32-S64") :
-               std::string("e-p:32:32-f64:64:64-i64:64:64-"
-                           "i16:16:32-i8:8:32-i1:8:32-"
-                           "v128:64:128-v64:64:64-a:0:32-n32-S32")),
+    DL(computeDataLayout(Subtarget)),
     TLInfo(*this),
     TSInfo(*this),
     FrameLowering(Subtarget.hasThumb2()

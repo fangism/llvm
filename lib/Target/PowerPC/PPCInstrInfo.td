@@ -613,20 +613,6 @@ multiclass XForm_6rc<bits<6> opcode, bits<10> xo, dag OOL, dag IOL,
   }
 }
 
-multiclass XForm_10r<bits<6> opcode, bits<10> xo, dag OOL, dag IOL,
-                    string asmbase, string asmstr, InstrItinClass itin,
-                    list<dag> pattern> {
-  let BaseName = asmbase in {
-    def NAME : XForm_10<opcode, xo, OOL, IOL,
-                       !strconcat(asmbase, !strconcat(" ", asmstr)), itin,
-                       pattern>, RecFormRel;
-    let Defs = [CR0] in
-    def o    : XForm_10<opcode, xo, OOL, IOL,
-                       !strconcat(asmbase, !strconcat(". ", asmstr)), itin,
-                       []>, isDOT, RecFormRel;
-  }
-}
-
 multiclass XForm_10rc<bits<6> opcode, bits<10> xo, dag OOL, dag IOL,
                       string asmbase, string asmstr, InstrItinClass itin,
                       list<dag> pattern> {
@@ -1616,8 +1602,17 @@ def XORI  : DForm_4<26, (outs gprc:$dst), (ins gprc:$src1, u16imm:$src2),
 def XORIS : DForm_4<27, (outs gprc:$dst), (ins gprc:$src1, u16imm:$src2),
                     "xoris $dst, $src1, $src2", IIC_IntSimple,
                     [(set i32:$dst, (xor i32:$src1, imm16ShiftedZExt:$src2))]>;
+
 def NOP   : DForm_4_zero<24, (outs), (ins), "nop", IIC_IntSimple,
                          []>;
+let isCodeGenOnly = 1 in {
+// The POWER6 and POWER7 have special group-terminating nops.
+def NOP_GT_PWR6 : DForm_4_fixedreg_zero<24, 1, (outs), (ins),
+                                        "ori 1, 1, 0", IIC_IntSimple, []>;
+def NOP_GT_PWR7 : DForm_4_fixedreg_zero<24, 2, (outs), (ins),
+                                        "ori 2, 2, 0", IIC_IntSimple, []>;
+}
+
 let isCompare = 1, neverHasSideEffects = 1 in {
   def CMPWI : DForm_5_ext<11, (outs crrc:$crD), (ins gprc:$rA, s16imm:$imm),
                           "cmpwi $crD, $rA, $imm", IIC_IntCompare>;

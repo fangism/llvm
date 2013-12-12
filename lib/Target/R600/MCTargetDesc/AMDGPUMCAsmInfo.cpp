@@ -24,7 +24,6 @@ AMDGPUMCAsmInfo::AMDGPUMCAsmInfo(StringRef &TT) : MCAsmInfo() {
   CommentColumn = 40;
   CommentString = ";";
   LabelSuffix = ":";
-  LinkerPrivateGlobalPrefix = "!";
   InlineAsmStart = ";#ASMSTART";
   InlineAsmEnd = ";#ASMEND";
   AssemblerDialect = 0;
@@ -40,7 +39,6 @@ AMDGPUMCAsmInfo::AMDGPUMCAsmInfo(StringRef &TT) : MCAsmInfo() {
   GPRel32Directive = 0;
   SunStyleELFSectionSwitchSyntax = true;
   UsesELFSectionDirectiveForBSS = true;
-  HasMicrosoftFastStdCallMangling = false;
 
   //===--- Alignment Information ----------------------------------------===//
   AlignDirective = ".align\t";

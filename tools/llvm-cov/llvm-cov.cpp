@@ -1,4 +1,4 @@
-//===- tools/llvm-cov/llvm-cov.cpp - LLVM coverage tool -------------------===//
+//===- llvm-cov.cpp - LLVM coverage tool ----------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -29,6 +29,9 @@ InputGCNO("gcno", cl::desc("<input gcno file>"), cl::init(""));
 
 static cl::opt<std::string>
 InputGCDA("gcda", cl::desc("<input gcda file>"), cl::init(""));
+
+static cl::opt<bool>
+AllBlocks("a", cl::init(false), cl::desc("display all block info"));
 
 //===----------------------------------------------------------------------===//
 int main(int argc, char **argv) {
@@ -67,12 +70,11 @@ int main(int argc, char **argv) {
     }
   }
 
-
   if (DumpGCOV)
     GF.dump();
 
   FileInfo FI;
   GF.collectLineCounts(FI);
-  FI.print(InputGCNO, InputGCDA);
+  FI.print(InputGCNO, InputGCDA, GCOVOptions(AllBlocks));
   return 0;
 }

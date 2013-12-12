@@ -23,6 +23,7 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -521,7 +522,7 @@ private:
   /// Holds all of the instructions that we gathered.
   SetVector<Instruction *> GatherSeq;
   /// A list of blocks that we are going to CSE.
-  SmallSet<BasicBlock *, 8> CSEBlocks;
+  SetVector<BasicBlock *> CSEBlocks;
 
   /// Numbers instructions in different blocks.
   DenseMap<BasicBlock *, BlockNumbering> BlocksNumbers;
@@ -564,10 +565,8 @@ void BoUpSLP::buildTree(ArrayRef<Value *> Roots, ValueSet *Rdx) {
            UE = Scalar->use_end(); User != UE; ++User) {
         DEBUG(dbgs() << "SLP: Checking user:" << **User << ".\n");
 
-        bool Gathered = MustGather.count(*User);
-
         // Skip in-tree scalars that become vectors.
-        if (ScalarToTreeEntry.count(*User) && !Gathered) {
+        if (ScalarToTreeEntry.count(*User)) {
           DEBUG(dbgs() << "SLP: \tInternal user will be removed:" <<
                 **User << ".\n");
           int Idx = ScalarToTreeEntry[*User]; (void) Idx;
@@ -1641,8 +1640,6 @@ Value *BoUpSLP::vectorizeTree() {
         for (Value::use_iterator User = Scalar->use_begin(),
              UE = Scalar->use_end(); User != UE; ++User) {
           DEBUG(dbgs() << "SLP: \tvalidating user:" << **User << ".\n");
-          assert(!MustGather.count(*User) &&
-                 "Replacing gathered value with undef");
 
           assert((ScalarToTreeEntry.count(*User) ||
                   // It is legal to replace the reduction users by undef.

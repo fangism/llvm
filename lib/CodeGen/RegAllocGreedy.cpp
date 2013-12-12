@@ -423,7 +423,14 @@ void RAGreedy::enqueue(LiveInterval *LI) {
       // Allocate original local ranges in linear instruction order. Since they
       // are singly defined, this produces optimal coloring in the absence of
       // global interference and other constraints.
-      Prio = LI->beginIndex().getInstrDistance(Indexes->getLastIndex());
+      if (!TRI->reverseLocalAssignment())
+        Prio = LI->beginIndex().getInstrDistance(Indexes->getLastIndex());
+      else {
+        // Allocating bottom up may allow many short LRGs to be assigned first
+        // to one of the cheap registers. This could be much faster for very
+        // large blocks on targets with many physical registers.
+        Prio = Indexes->getZeroIndex().getInstrDistance(LI->beginIndex());
+      }
     }
     else {
       // Allocate global and split ranges in long->short order. Long ranges that
@@ -723,7 +730,7 @@ unsigned RAGreedy::tryEvict(LiveInterval &VirtReg,
   }
 
   Order.rewind();
-  while (unsigned PhysReg = Order.nextWithDups(OrderLimit)) {
+  while (unsigned PhysReg = Order.next(OrderLimit)) {
     if (TRI->getCostPerUse(PhysReg) >= CostPerUseLimit)
       continue;
     // The first use of a callee-saved register in a function has cost 1.

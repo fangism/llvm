@@ -134,10 +134,10 @@ SystemZTargetLowering::SystemZTargetLowering(SystemZTargetMachine &tm)
       setOperationAction(ISD::SDIVREM, VT, Custom);
       setOperationAction(ISD::UDIVREM, VT, Custom);
 
-      // Expand ATOMIC_LOAD and ATOMIC_STORE using ATOMIC_CMP_SWAP.
-      // FIXME: probably much too conservative.
-      setOperationAction(ISD::ATOMIC_LOAD,  VT, Expand);
-      setOperationAction(ISD::ATOMIC_STORE, VT, Expand);
+      // Lower ATOMIC_LOAD and ATOMIC_STORE into normal volatile loads and
+      // stores, putting a serialization instruction after the stores.
+      setOperationAction(ISD::ATOMIC_LOAD,  VT, Custom);
+      setOperationAction(ISD::ATOMIC_STORE, VT, Custom);
 
       // No special instructions for these.
       setOperationAction(ISD::CTPOP,           VT, Expand);
@@ -970,6 +970,11 @@ SystemZTargetLowering::LowerReturn(SDValue Chain,
                      RetOps.data(), RetOps.size());
 }
 
+SDValue SystemZTargetLowering::
+prepareVolatileOrAtomicLoad(SDValue Chain, SDLoc DL, SelectionDAG &DAG) const {
+  return DAG.getNode(SystemZISD::SERIALIZE, DL, MVT::Other, Chain);
+}
+
 // CC is a comparison that will be implemented using an integer or
 // floating-point comparison.  Return the condition code mask for
 // a branch on true.  In the integer case, CCMASK_CMP_UO is set for
@@ -1207,10 +1212,14 @@ static bool shouldSwapCmpOperands(SDValue Op0, SDValue Op1,
   if (COp1 && COp1->getZExtValue() == 0)
     return false;
 
+  // Also keep natural memory operands second if the loaded value is
+  // only used here.  Several comparisons have memory forms.
+  if (isNaturalMemoryOperand(Op1, ICmpType) && Op1.hasOneUse())
+    return false;
+
   // Look for cases where Cmp0 is a single-use load and Cmp1 isn't.
   // In that case we generally prefer the memory to be second.
-  if ((isNaturalMemoryOperand(Op0, ICmpType) && Op0.hasOneUse()) &&
-      !(isNaturalMemoryOperand(Op1, ICmpType) && Op1.hasOneUse())) {
+  if (isNaturalMemoryOperand(Op0, ICmpType) && Op0.hasOneUse()) {
     // The only exceptions are when the second operand is a constant and
     // we can use things like CHHSI.
     if (!COp1)
@@ -1227,7 +1236,48 @@ static bool shouldSwapCmpOperands(SDValue Op0, SDValue Op1,
       return false;
     return true;
   }
+
+  // Try to promote the use of CGFR and CLGFR.
+  unsigned Opcode0 = Op0.getOpcode();
+  if (ICmpType != SystemZICMP::UnsignedOnly && Opcode0 == ISD::SIGN_EXTEND)
+    return true;
+  if (ICmpType != SystemZICMP::SignedOnly && Opcode0 == ISD::ZERO_EXTEND)
+    return true;
+  if (ICmpType != SystemZICMP::SignedOnly &&
+      Opcode0 == ISD::AND &&
+      Op0.getOperand(1).getOpcode() == ISD::Constant &&
+      cast<ConstantSDNode>(Op0.getOperand(1))->getZExtValue() == 0xffffffff)
+    return true;
+
   return false;
+}
+
+// Return a version of comparison CC mask CCMask in which the LT and GT
+// actions are swapped.
+static unsigned reverseCCMask(unsigned CCMask) {
+  return ((CCMask & SystemZ::CCMASK_CMP_EQ) |
+          (CCMask & SystemZ::CCMASK_CMP_GT ? SystemZ::CCMASK_CMP_LT : 0) |
+          (CCMask & SystemZ::CCMASK_CMP_LT ? SystemZ::CCMASK_CMP_GT : 0) |
+          (CCMask & SystemZ::CCMASK_CMP_UO));
+}
+
+// CmpOp0 and CmpOp1 are being compared using CC mask CCMask.  Check whether
+// CmpOp0 is a floating-point result that is also negated and if CmpOp1
+// is zero.  In this case we can use the negation to set CC, so avoiding
+// separate LOAD AND TEST and LOAD (NEGATIVE/COMPLEMENT) instructions.
+static void adjustForFNeg(SDValue &CmpOp0, SDValue &CmpOp1, unsigned &CCMask) {
+  ConstantFPSDNode *C1 = dyn_cast<ConstantFPSDNode>(CmpOp1);
+  if (C1 && C1->isZero()) {
+    for (SDNode::use_iterator I = CmpOp0->use_begin(), E = CmpOp0->use_end();
+         I != E; ++I) {
+      SDNode *N = *I;
+      if (N->getOpcode() == ISD::FNEG) {
+        CmpOp0 = SDValue(N, 0);
+        CCMask = reverseCCMask(CCMask);
+        return;
+      }
+    }
+  }
 }
 
 // Return true if shift operation N has an in-range constant shift value.
@@ -1441,14 +1491,12 @@ static SDValue emitCmp(const SystemZTargetMachine &TM, SelectionDAG &DAG,
 
   if (shouldSwapCmpOperands(CmpOp0, CmpOp1, ICmpType)) {
     std::swap(CmpOp0, CmpOp1);
-    CCMask = ((CCMask & SystemZ::CCMASK_CMP_EQ) |
-              (CCMask & SystemZ::CCMASK_CMP_GT ? SystemZ::CCMASK_CMP_LT : 0) |
-              (CCMask & SystemZ::CCMASK_CMP_LT ? SystemZ::CCMASK_CMP_GT : 0) |
-              (CCMask & SystemZ::CCMASK_CMP_UO));
+    CCMask = reverseCCMask(CCMask);
   }
 
   adjustForTestUnderMask(DAG, Opcode, CmpOp0, CmpOp1, CCValid, CCMask,
                          ICmpType);
+  adjustForFNeg(CmpOp0, CmpOp1, CCMask);
   if (Opcode == SystemZISD::ICMP || Opcode == SystemZISD::TM)
     return DAG.getNode(Opcode, DL, MVT::Glue, CmpOp0, CmpOp1,
                        DAG.getConstant(ICmpType, MVT::i32));
@@ -1486,16 +1534,11 @@ static void lowerGR128Binary(SelectionDAG &DAG, SDLoc DL, EVT VT,
   Odd = DAG.getTargetExtractSubreg(SystemZ::odd128(Is32Bit), DL, VT, Result);
 }
 
-SDValue SystemZTargetLowering::lowerSETCC(SDValue Op,
-                                          SelectionDAG &DAG) const {
-  SDValue CmpOp0   = Op.getOperand(0);
-  SDValue CmpOp1   = Op.getOperand(1);
-  ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
-  SDLoc DL(Op);
-
-  unsigned CCValid, CCMask;
-  SDValue Glue = emitCmp(TM, DAG, DL, CmpOp0, CmpOp1, CC, CCValid, CCMask);
-
+// Return an i32 value that is 1 if the CC value produced by Glue is
+// in the mask CCMask and 0 otherwise.  CC is known to have a value
+// in CCValid, so other values can be ignored.
+static SDValue emitSETCC(SelectionDAG &DAG, SDLoc DL, SDValue Glue,
+                         unsigned CCValid, unsigned CCMask) {
   IPMConversion Conversion = getIPMConversion(CCValid, CCMask);
   SDValue Result = DAG.getNode(SystemZISD::IPM, DL, MVT::i32, Glue);
 
@@ -1516,6 +1559,18 @@ SDValue SystemZTargetLowering::lowerSETCC(SDValue Op,
   return Result;
 }
 
+SDValue SystemZTargetLowering::lowerSETCC(SDValue Op,
+                                          SelectionDAG &DAG) const {
+  SDValue CmpOp0   = Op.getOperand(0);
+  SDValue CmpOp1   = Op.getOperand(1);
+  ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
+  SDLoc DL(Op);
+
+  unsigned CCValid, CCMask;
+  SDValue Glue = emitCmp(TM, DAG, DL, CmpOp0, CmpOp1, CC, CCValid, CCMask);
+  return emitSETCC(DAG, DL, Glue, CCValid, CCMask);
+}
+
 SDValue SystemZTargetLowering::lowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDValue Chain    = Op.getOperand(0);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(1))->get();
@@ -1525,10 +1580,10 @@ SDValue SystemZTargetLowering::lowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
 
   unsigned CCValid, CCMask;
-  SDValue Flags = emitCmp(TM, DAG, DL, CmpOp0, CmpOp1, CC, CCValid, CCMask);
+  SDValue Glue = emitCmp(TM, DAG, DL, CmpOp0, CmpOp1, CC, CCValid, CCMask);
   return DAG.getNode(SystemZISD::BR_CCMASK, DL, Op.getValueType(),
                      Chain, DAG.getConstant(CCValid, MVT::i32),
-                     DAG.getConstant(CCMask, MVT::i32), Dest, Flags);
+                     DAG.getConstant(CCMask, MVT::i32), Dest, Glue);
 }
 
 SDValue SystemZTargetLowering::lowerSELECT_CC(SDValue Op,
@@ -1541,14 +1596,37 @@ SDValue SystemZTargetLowering::lowerSELECT_CC(SDValue Op,
   SDLoc DL(Op);
 
   unsigned CCValid, CCMask;
-  SDValue Flags = emitCmp(TM, DAG, DL, CmpOp0, CmpOp1, CC, CCValid, CCMask);
+  SDValue Glue = emitCmp(TM, DAG, DL, CmpOp0, CmpOp1, CC, CCValid, CCMask);
+
+  // Special case for handling -1/0 results.  The shifts we use here
+  // should get optimized with the IPM conversion sequence.
+  ConstantSDNode *TrueC = dyn_cast<ConstantSDNode>(TrueOp);
+  ConstantSDNode *FalseC = dyn_cast<ConstantSDNode>(FalseOp);
+  if (TrueC && FalseC) {
+    int64_t TrueVal = TrueC->getSExtValue();
+    int64_t FalseVal = FalseC->getSExtValue();
+    if ((TrueVal == -1 && FalseVal == 0) || (TrueVal == 0 && FalseVal == -1)) {
+      // Invert the condition if we want -1 on false.
+      if (TrueVal == 0)
+        CCMask ^= CCValid;
+      SDValue Result = emitSETCC(DAG, DL, Glue, CCValid, CCMask);
+      EVT VT = Op.getValueType();
+      // Extend the result to VT.  Upper bits are ignored.
+      if (!is32Bit(VT))
+        Result = DAG.getNode(ISD::ANY_EXTEND, DL, VT, Result);
+      // Sign-extend from the low bit.
+      SDValue ShAmt = DAG.getConstant(VT.getSizeInBits() - 1, MVT::i32);
+      SDValue Shl = DAG.getNode(ISD::SHL, DL, VT, Result, ShAmt);
+      return DAG.getNode(ISD::SRA, DL, VT, Shl, ShAmt);
+    }
+  }
 
   SmallVector<SDValue, 5> Ops;
   Ops.push_back(TrueOp);
   Ops.push_back(FalseOp);
   Ops.push_back(DAG.getConstant(CCValid, MVT::i32));
   Ops.push_back(DAG.getConstant(CCMask, MVT::i32));
-  Ops.push_back(Flags);
+  Ops.push_back(Glue);
 
   SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::Glue);
   return DAG.getNode(SystemZISD::SELECT_CCMASK, DL, VTs, &Ops[0], Ops.size());
@@ -1949,11 +2027,32 @@ SDValue SystemZTargetLowering::lowerOR(SDValue Op, SelectionDAG &DAG) const {
                                    MVT::i64, HighOp, Low32);
 }
 
+// Op is an atomic load.  Lower it into a normal volatile load.
+SDValue SystemZTargetLowering::lowerATOMIC_LOAD(SDValue Op,
+                                                SelectionDAG &DAG) const {
+  AtomicSDNode *Node = cast<AtomicSDNode>(Op.getNode());
+  return DAG.getExtLoad(ISD::EXTLOAD, SDLoc(Op), Op.getValueType(),
+                        Node->getChain(), Node->getBasePtr(),
+                        Node->getMemoryVT(), Node->getMemOperand());
+}
+
+// Op is an atomic store.  Lower it into a normal volatile store followed
+// by a serialization.
+SDValue SystemZTargetLowering::lowerATOMIC_STORE(SDValue Op,
+                                                 SelectionDAG &DAG) const {
+  AtomicSDNode *Node = cast<AtomicSDNode>(Op.getNode());
+  SDValue Chain = DAG.getTruncStore(Node->getChain(), SDLoc(Op), Node->getVal(),
+                                    Node->getBasePtr(), Node->getMemoryVT(),
+                                    Node->getMemOperand());
+  return SDValue(DAG.getMachineNode(SystemZ::Serialize, SDLoc(Op), MVT::Other,
+                                    Chain), 0);
+}
+
 // Op is an 8-, 16-bit or 32-bit ATOMIC_LOAD_* operation.  Lower the first
 // two into the fullword ATOMIC_LOADW_* operation given by Opcode.
-SDValue SystemZTargetLowering::lowerATOMIC_LOAD(SDValue Op,
-                                                SelectionDAG &DAG,
-                                                unsigned Opcode) const {
+SDValue SystemZTargetLowering::lowerATOMIC_LOAD_OP(SDValue Op,
+                                                   SelectionDAG &DAG,
+                                                   unsigned Opcode) const {
   AtomicSDNode *Node = cast<AtomicSDNode>(Op.getNode());
 
   // 32-bit operations need no code outside the main loop.
@@ -2143,27 +2242,31 @@ SDValue SystemZTargetLowering::LowerOperation(SDValue Op,
   case ISD::OR:
     return lowerOR(Op, DAG);
   case ISD::ATOMIC_SWAP:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_SWAPW);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_SWAPW);
+  case ISD::ATOMIC_STORE:
+    return lowerATOMIC_STORE(Op, DAG);
+  case ISD::ATOMIC_LOAD:
+    return lowerATOMIC_LOAD(Op, DAG);
   case ISD::ATOMIC_LOAD_ADD:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_ADD);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_ADD);
   case ISD::ATOMIC_LOAD_SUB:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_SUB);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_SUB);
   case ISD::ATOMIC_LOAD_AND:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_AND);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_AND);
   case ISD::ATOMIC_LOAD_OR:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_OR);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_OR);
   case ISD::ATOMIC_LOAD_XOR:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_XOR);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_XOR);
   case ISD::ATOMIC_LOAD_NAND:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_NAND);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_NAND);
   case ISD::ATOMIC_LOAD_MIN:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_MIN);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_MIN);
   case ISD::ATOMIC_LOAD_MAX:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_MAX);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_MAX);
   case ISD::ATOMIC_LOAD_UMIN:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_UMIN);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_UMIN);
   case ISD::ATOMIC_LOAD_UMAX:
-    return lowerATOMIC_LOAD(Op, DAG, SystemZISD::ATOMIC_LOADW_UMAX);
+    return lowerATOMIC_LOAD_OP(Op, DAG, SystemZISD::ATOMIC_LOADW_UMAX);
   case ISD::ATOMIC_CMP_SWAP:
     return lowerATOMIC_CMP_SWAP(Op, DAG);
   case ISD::STACKSAVE:
@@ -2210,6 +2313,7 @@ const char *SystemZTargetLowering::getTargetNodeName(unsigned Opcode) const {
     OPCODE(STPCPY);
     OPCODE(SEARCH_STRING);
     OPCODE(IPM);
+    OPCODE(SERIALIZE);
     OPCODE(ATOMIC_SWAPW);
     OPCODE(ATOMIC_LOADW_ADD);
     OPCODE(ATOMIC_LOADW_SUB);

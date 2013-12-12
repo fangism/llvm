@@ -1,4 +1,4 @@
-//===- GCOVr.cpp - LLVM coverage tool -------------------------------------===//
+//===- GCOV.cpp - LLVM coverage tool --------------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -159,7 +159,8 @@ bool GCOVFunction::readGCNO(GCOVBuffer &Buff, GCOV::GCOVVersion Version) {
     uint32_t BlockNo;
     if (!Buff.readInt(BlockNo)) return false;
     if (BlockNo >= BlockCount) {
-      errs() << "Unexpected block number (in " << Name << ").\n";
+      errs() << "Unexpected block number: " << BlockNo << " (in " << Name
+             << ").\n";
       return false;
     }
     for (uint32_t i = 0, e = EdgeCount; i != e; ++i) {
@@ -181,7 +182,8 @@ bool GCOVFunction::readGCNO(GCOVBuffer &Buff, GCOV::GCOVVersion Version) {
     uint32_t BlockNo;
     if (!Buff.readInt(BlockNo)) return false;
     if (BlockNo >= BlockCount) {
-      errs() << "Unexpected block number (in " << Name << ").\n";
+      errs() << "Unexpected block number: " << BlockNo << " (in " << Name
+             << ").\n";
       return false;
     }
     GCOVBlock *Block = Blocks[BlockNo];
@@ -189,9 +191,9 @@ bool GCOVFunction::readGCNO(GCOVBuffer &Buff, GCOV::GCOVVersion Version) {
     while (Buff.getCursor() != (EndPos - 4)) {
       StringRef F;
       if (!Buff.readString(F)) return false;
-      if (F != Filename) {
-        errs() << "Multiple sources for a single basic block (in "
-               << Name << ").\n";
+      if (Filename != F) {
+        errs() << "Multiple sources for a single basic block: " << Filename
+               << " != " << F << " (in " << Name << ").\n";
         return false;
       }
       if (Buff.getCursor() == (EndPos - 4)) break;
@@ -356,7 +358,8 @@ void GCOVBlock::dump() const {
 // FileInfo implementation.
 
 /// print -  Print source files with collected line count information.
-void FileInfo::print(StringRef GCNOFile, StringRef GCDAFile) const {
+void FileInfo::print(StringRef GCNOFile, StringRef GCDAFile,
+                     const GCOVOptions &Options) const {
   for (StringMap<LineData>::const_iterator I = LineInfo.begin(),
          E = LineInfo.end(); I != E; ++I) {
     StringRef Filename = I->first();
@@ -367,7 +370,7 @@ void FileInfo::print(StringRef GCNOFile, StringRef GCDAFile) const {
     }
     StringRef AllLines = Buff->getBuffer();
 
-    std::string CovFilename = Filename.str() + ".llcov";
+    std::string CovFilename = Filename.str() + ".gcov";
     std::string ErrorInfo;
     raw_fd_ostream OS(CovFilename.c_str(), ErrorInfo);
     if (!ErrorInfo.empty())
@@ -383,13 +386,21 @@ void FileInfo::print(StringRef GCNOFile, StringRef GCDAFile) const {
     for (uint32_t i = 0; !AllLines.empty(); ++i) {
       LineData::const_iterator BlocksIt = Line.find(i);
 
-      // Add up the block counts to form line counts.
       if (BlocksIt != Line.end()) {
+        // Add up the block counts to form line counts.
         const BlockVector &Blocks = BlocksIt->second;
         uint64_t LineCount = 0;
         for (BlockVector::const_iterator I = Blocks.begin(), E = Blocks.end();
                I != E; ++I) {
-          LineCount += (*I)->getCount();
+          const GCOVBlock *Block = *I;
+          if (Options.AllBlocks) {
+            // Only take the highest block count for that line.
+            uint64_t BlockCount = Block->getCount();
+            LineCount = LineCount > BlockCount ? LineCount : BlockCount;
+          } else {
+            // Sum up all of the block counts.
+            LineCount += Block->getCount();
+          }
         }
         if (LineCount == 0)
           OS << "    #####:";
@@ -401,6 +412,24 @@ void FileInfo::print(StringRef GCNOFile, StringRef GCDAFile) const {
       std::pair<StringRef, StringRef> P = AllLines.split('\n');
       OS << format("%5u:", i+1) << P.first << "\n";
       AllLines = P.second;
+
+      if (Options.AllBlocks && BlocksIt != Line.end()) {
+        // Output the counts for each block at the last line of the block.
+        uint32_t BlockNo = 0;
+        const BlockVector &Blocks = BlocksIt->second;
+        for (BlockVector::const_iterator I = Blocks.begin(), E = Blocks.end();
+               I != E; ++I) {
+          const GCOVBlock *Block = *I;
+          if (Block->getLastLine() != i+1)
+            continue;
+
+          if (Block->getCount() == 0)
+            OS << "    $$$$$:";
+          else
+            OS << format("%9" PRIu64 ":", (uint64_t)Block->getCount());
+          OS << format("%5u-block  %u\n", i+1, BlockNo++);
+        }
+      }
     }
   }
 }

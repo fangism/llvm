@@ -1,7 +1,18 @@
-
-set(LLVM_LINK_COMPONENTS mcjit jit interpreter nativecodegen bitreader asmparser irreader selectiondag native instrumentation)
-
 add_subdirectory(ChildTarget)
+
+set(LLVM_LINK_COMPONENTS
+  CodeGen
+  Core
+  ExecutionEngine
+  IRReader
+  Instrumentation
+  Interpreter
+  JIT
+  MCJIT
+  SelectionDAG
+  Support
+  native
+  )
 
 if( LLVM_USE_OPROFILE )
   set(LLVM_LINK_COMPONENTS

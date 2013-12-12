@@ -4,7 +4,7 @@ LLVM Language Reference Manual
 
 .. contents::
    :local:
-   :depth: 3
+   :depth: 4
 
 Abstract
 ========
@@ -289,7 +289,9 @@ symbols from (to) DLLs (Dynamic Link Libraries).
     pointer to a pointer in a DLL, so that it can be referenced with the
     ``dllimport`` attribute. On Microsoft Windows targets, the pointer
     name is formed by combining ``__imp_`` and the function or variable
-    name.
+    name. Since this linkage exists for defining a dll interface, the
+    compiler, assembler and linker know it is externally referenced and
+    must refrain from deleting the symbol.
 
 It is illegal for a function *declaration* to have any linkage type
 other than ``external``, ``dllimport`` or ``extern_weak``.
@@ -501,8 +503,8 @@ variables defined within the module are not modified from their
 initial values before the start of the global initializer.  This is
 true even for variables potentially accessible from outside the
 module, including those with external linkage or appearing in
-``@llvm.used``. This assumption may be suppressed by marking the
-variable with ``externally_initialized``.
+``@llvm.used`` or dllexported variables. This assumption may be suppressed
+by marking the variable with ``externally_initialized``.
 
 An explicit alignment may be specified for a global, which must be a
 power of 2. If not present, or if the alignment is set to zero, the
@@ -1474,80 +1476,90 @@ transformation. A strong type system makes it easier to read the
 generated code and enables novel analyses and transformations that are
 not feasible to perform on normal three address code representations.
 
-.. _typeclassifications:
+.. _t_void:
 
-Type Classifications
---------------------
+Void Type
+---------
 
-The types fall into a few useful classifications:
-
-
-.. list-table::
-   :header-rows: 1
-
-   * - Classification
-     - Types
-
-   * - :ref:`integer <t_integer>`
-     - ``i1``, ``i2``, ``i3``, ... ``i8``, ... ``i16``, ... ``i32``, ...
-       ``i64``, ...
-
-   * - :ref:`floating point <t_floating>`
-     - ``half``, ``float``, ``double``, ``x86_fp80``, ``fp128``,
-       ``ppc_fp128``
+:Overview:
 
 
-   * - first class
+The void type does not represent any value and has no size.
 
-       .. _t_firstclass:
+:Syntax:
 
-     - :ref:`integer <t_integer>`, :ref:`floating point <t_floating>`,
-       :ref:`pointer <t_pointer>`, :ref:`vector <t_vector>`,
-       :ref:`structure <t_struct>`, :ref:`array <t_array>`,
-       :ref:`label <t_label>`, :ref:`metadata <t_metadata>`.
 
-   * - :ref:`primitive <t_primitive>`
-     - :ref:`label <t_label>`,
-       :ref:`void <t_void>`,
-       :ref:`integer <t_integer>`,
-       :ref:`floating point <t_floating>`,
-       :ref:`x86mmx <t_x86mmx>`,
-       :ref:`metadata <t_metadata>`.
+::
 
-   * - :ref:`derived <t_derived>`
-     - :ref:`array <t_array>`,
-       :ref:`function <t_function>`,
-       :ref:`pointer <t_pointer>`,
-       :ref:`structure <t_struct>`,
-       :ref:`vector <t_vector>`,
-       :ref:`opaque <t_opaque>`.
+      void
+
+
+.. _t_function:
+
+Function Type
+-------------
+
+:Overview:
+
+
+The function type can be thought of as a function signature. It consists of a
+return type and a list of formal parameter types. The return type of a function
+type is a void type or first class type --- except for :ref:`label <t_label>`
+and :ref:`metadata <t_metadata>` types.
+
+:Syntax:
+
+::
+
+      <returntype> (<parameter list>)
+
+...where '``<parameter list>``' is a comma-separated list of type
+specifiers. Optionally, the parameter list may include a type ``...``, which
+indicates that the function takes a variable number of arguments.  Variable
+argument functions can access their arguments with the :ref:`variable argument
+handling intrinsic <int_varargs>` functions.  '``<returntype>``' is any type
+except :ref:`label <t_label>` and :ref:`metadata <t_metadata>`.
+
+:Examples:
+
++---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ``i32 (i32)``                   | function taking an ``i32``, returning an ``i32``                                                                                                                    |
++---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ``float (i16, i32 *) *``        | :ref:`Pointer <t_pointer>` to a function that takes an ``i16`` and a :ref:`pointer <t_pointer>` to ``i32``, returning ``float``.                                    |
++---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ``i32 (i8*, ...)``              | A vararg function that takes at least one :ref:`pointer <t_pointer>` to ``i8`` (char in C), which returns an integer. This is the signature for ``printf`` in LLVM. |
++---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| ``{i32, i32} (i32)``            | A function taking an ``i32``, returning a :ref:`structure <t_struct>` containing two ``i32`` values                                                                 |
++---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+.. _t_firstclass:
+
+First Class Types
+-----------------
 
 The :ref:`first class <t_firstclass>` types are perhaps the most important.
 Values of these types are the only ones which can be produced by
 instructions.
 
-.. _t_primitive:
+.. _t_single_value:
 
-Primitive Types
----------------
+Single Value Types
+^^^^^^^^^^^^^^^^^^
 
-The primitive types are the fundamental building blocks of the LLVM
-system.
+These are the types that are valid in registers from CodeGen's perspective.
 
 .. _t_integer:
 
 Integer Type
-^^^^^^^^^^^^
+""""""""""""
 
-Overview:
-"""""""""
+:Overview:
 
 The integer type is a very simple type that simply specifies an
 arbitrary bit width for the integer type desired. Any bit width from 1
 bit to 2\ :sup:`23`\ -1 (about 8 million) can be specified.
 
-Syntax:
-"""""""
+:Syntax:
 
 ::
 
@@ -1557,7 +1569,7 @@ The number of bits the integer will occupy is specified by the ``N``
 value.
 
 Examples:
-"""""""""
+*********
 
 +----------------+------------------------------------------------+
 | ``i1``         | a single-bit integer.                          |
@@ -1570,7 +1582,7 @@ Examples:
 .. _t_floating:
 
 Floating Point Types
-^^^^^^^^^^^^^^^^^^^^
+""""""""""""""""""""
 
 .. list-table::
    :header-rows: 1
@@ -1599,10 +1611,9 @@ Floating Point Types
 .. _t_x86mmx:
 
 X86mmx Type
-^^^^^^^^^^^
+"""""""""""
 
-Overview:
-"""""""""
+:Overview:
 
 The x86mmx type represents a value held in an MMX register on an x86
 machine. The operations allowed on it are quite limited: parameters and
@@ -1611,42 +1622,92 @@ instructions are represented as intrinsic or asm calls with arguments
 and/or results of this type. There are no arrays, vectors or constants
 of this type.
 
-Syntax:
-"""""""
+:Syntax:
 
 ::
 
       x86mmx
 
-.. _t_void:
 
-Void Type
-^^^^^^^^^
+.. _t_pointer:
 
-Overview:
-"""""""""
+Pointer Type
+""""""""""""
 
-The void type does not represent any value and has no size.
+:Overview:
 
-Syntax:
-"""""""
+The pointer type is used to specify memory locations. Pointers are
+commonly used to reference objects in memory.
+
+Pointer types may have an optional address space attribute defining the
+numbered address space where the pointed-to object resides. The default
+address space is number zero. The semantics of non-zero address spaces
+are target-specific.
+
+Note that LLVM does not permit pointers to void (``void*``) nor does it
+permit pointers to labels (``label*``). Use ``i8*`` instead.
+
+:Syntax:
 
 ::
 
-      void
+      <type> *
+
+:Examples:
+
++-------------------------+--------------------------------------------------------------------------------------------------------------+
+| ``[4 x i32]*``          | A :ref:`pointer <t_pointer>` to :ref:`array <t_array>` of four ``i32`` values.                               |
++-------------------------+--------------------------------------------------------------------------------------------------------------+
+| ``i32 (i32*) *``        | A :ref:`pointer <t_pointer>` to a :ref:`function <t_function>` that takes an ``i32*``, returning an ``i32``. |
++-------------------------+--------------------------------------------------------------------------------------------------------------+
+| ``i32 addrspace(5)*``   | A :ref:`pointer <t_pointer>` to an ``i32`` value that resides in address space #5.                           |
++-------------------------+--------------------------------------------------------------------------------------------------------------+
+
+.. _t_vector:
+
+Vector Type
+"""""""""""
+
+:Overview:
+
+A vector type is a simple derived type that represents a vector of
+elements. Vector types are used when multiple primitive data are
+operated in parallel using a single instruction (SIMD). A vector type
+requires a size (number of elements) and an underlying primitive data
+type. Vector types are considered :ref:`first class <t_firstclass>`.
+
+:Syntax:
+
+::
+
+      < <# elements> x <elementtype> >
+
+The number of elements is a constant integer value larger than 0;
+elementtype may be any integer or floating point type, or a pointer to
+these types. Vectors of size zero are not allowed.
+
+:Examples:
+
++-------------------+--------------------------------------------------+
+| ``<4 x i32>``     | Vector of 4 32-bit integer values.               |
++-------------------+--------------------------------------------------+
+| ``<8 x float>``   | Vector of 8 32-bit floating-point values.        |
++-------------------+--------------------------------------------------+
+| ``<2 x i64>``     | Vector of 2 64-bit integer values.               |
++-------------------+--------------------------------------------------+
+| ``<4 x i64*>``    | Vector of 4 pointers to 64-bit integer values.   |
++-------------------+--------------------------------------------------+
 
 .. _t_label:
 
 Label Type
 ^^^^^^^^^^
 
-Overview:
-"""""""""
+:Overview:
 
 The label type represents code labels.
 
-Syntax:
-"""""""
+:Syntax:
 
 ::
 
@@ -1657,30 +1718,16 @@ Syntax:
 Metadata Type
 ^^^^^^^^^^^^^
 
-Overview:
-"""""""""
+:Overview:
 
 The metadata type represents embedded metadata. No derived types may be
 created from metadata except for :ref:`function <t_function>` arguments.
 
-Syntax:
-"""""""
+:Syntax:
 
 ::
 
       metadata
-
-.. _t_derived:
-
-Derived Types
--------------
-
-The real power in LLVM comes from the derived types in the system. This
-is what allows a programmer to represent arrays, functions, pointers,
-and other useful types. Each of these types contain one or more element
-types which may be a primitive type, or another derived type. For
-example, it is possible to have a two dimensional array, using an array
-as the element type of another array.
 
 .. _t_aggregate:
 
@@ -1695,17 +1742,15 @@ aggregate types.
 .. _t_array:
 
 Array Type
-^^^^^^^^^^
+""""""""""
 
-Overview:
-"""""""""
+:Overview:
 
 The array type is a very simple derived type that arranges elements
 sequentially in memory. The array type requires a size (number of
 elements) and an underlying data type.
 
-Syntax:
-"""""""
+:Syntax:
 
 ::
 
@@ -1714,8 +1759,7 @@ Syntax:
 The number of elements is a constant integer value; ``elementtype`` may
 be any type with a size.
 
-Examples:
-"""""""""
+:Examples:
 
 +------------------+--------------------------------------+
 | ``[40 x i32]``   | Array of 40 32-bit integer values.   |
@@ -1743,53 +1787,12 @@ LLVM with a zero length array type. An implementation of 'pascal style
 arrays' in LLVM could use the type "``{ i32, [0 x float]}``", for
 example.
 
-.. _t_function:
-
-Function Type
-^^^^^^^^^^^^^
-
-Overview:
-"""""""""
-
-The function type can be thought of as a function signature. It consists of a
-return type and a list of formal parameter types. The return type of a function
-type is a void type or first class type --- except for :ref:`label <t_label>`
-and :ref:`metadata <t_metadata>` types.
-
-Syntax:
-"""""""
-
-::
-
-      <returntype> (<parameter list>)
-
-...where '``<parameter list>``' is a comma-separated list of type
-specifiers. Optionally, the parameter list may include a type ``...``, which
-indicates that the function takes a variable number of arguments.  Variable
-argument functions can access their arguments with the :ref:`variable argument
-handling intrinsic <int_varargs>` functions.  '``<returntype>``' is any type
-except :ref:`label <t_label>` and :ref:`metadata <t_metadata>`.
-
-Examples:
-"""""""""
-
-+---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| ``i32 (i32)``                   | function taking an ``i32``, returning an ``i32``                                                                                                                    |
-+---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| ``float (i16, i32 *) *``        | :ref:`Pointer <t_pointer>` to a function that takes an ``i16`` and a :ref:`pointer <t_pointer>` to ``i32``, returning ``float``.                                    |
-+---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| ``i32 (i8*, ...)``              | A vararg function that takes at least one :ref:`pointer <t_pointer>` to ``i8`` (char in C), which returns an integer. This is the signature for ``printf`` in LLVM. |
-+---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| ``{i32, i32} (i32)``            | A function taking an ``i32``, returning a :ref:`structure <t_struct>` containing two ``i32`` values                                                                 |
-+---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-
 .. _t_struct:
 
 Structure Type
-^^^^^^^^^^^^^^
+""""""""""""""
 
-Overview:
-"""""""""
+:Overview:
 
 The structure type is used to represent a collection of data members
 together in memory. The elements of a structure may be any type that has
@@ -1813,16 +1816,14 @@ Literal types are uniqued by their contents and can never be recursive
 or opaque since there is no way to write one. Identified types can be
 recursive, can be opaqued, and are never uniqued.
 
-Syntax:
-"""""""
+:Syntax:
 
 ::
 
       %T1 = type { <type list> }     ; Identified normal struct type
       %T2 = type <{ <type list> }>   ; Identified packed struct type
 
-Examples:
-"""""""""
+:Examples:
 
 +------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 | ``{ i32, i32, i32 }``        | A triple of three ``i32`` values                                                                                                                                                      |
@@ -1835,104 +1836,26 @@ Examples:
 .. _t_opaque:
 
 Opaque Structure Types
-^^^^^^^^^^^^^^^^^^^^^^
+""""""""""""""""""""""
 
-Overview:
-"""""""""
+:Overview:
 
 Opaque structure types are used to represent named structure types that
 do not have a body specified. This corresponds (for example) to the C
 notion of a forward declared structure.
 
-Syntax:
-"""""""
+:Syntax:
 
 ::
 
       %X = type opaque
       %52 = type opaque
 
-Examples:
-"""""""""
+:Examples:
 
 +--------------+-------------------+
 | ``opaque``   | An opaque type.   |
 +--------------+-------------------+
-
-.. _t_pointer:
-
-Pointer Type
-^^^^^^^^^^^^
-
-Overview:
-"""""""""
-
-The pointer type is used to specify memory locations. Pointers are
-commonly used to reference objects in memory.
-
-Pointer types may have an optional address space attribute defining the
-numbered address space where the pointed-to object resides. The default
-address space is number zero. The semantics of non-zero address spaces
-are target-specific.
-
-Note that LLVM does not permit pointers to void (``void*``) nor does it
-permit pointers to labels (``label*``). Use ``i8*`` instead.
-
-Syntax:
-"""""""
-
-::
-
-      <type> *
-
-Examples:
-"""""""""
-
-+-------------------------+--------------------------------------------------------------------------------------------------------------+
-| ``[4 x i32]*``          | A :ref:`pointer <t_pointer>` to :ref:`array <t_array>` of four ``i32`` values.                               |
-+-------------------------+--------------------------------------------------------------------------------------------------------------+
-| ``i32 (i32*) *``        | A :ref:`pointer <t_pointer>` to a :ref:`function <t_function>` that takes an ``i32*``, returning an ``i32``. |
-+-------------------------+--------------------------------------------------------------------------------------------------------------+
-| ``i32 addrspace(5)*``   | A :ref:`pointer <t_pointer>` to an ``i32`` value that resides in address space #5.                           |
-+-------------------------+--------------------------------------------------------------------------------------------------------------+
-
-.. _t_vector:
-
-Vector Type
-^^^^^^^^^^^
-
-Overview:
-"""""""""
-
-A vector type is a simple derived type that represents a vector of
-elements. Vector types are used when multiple primitive data are
-operated in parallel using a single instruction (SIMD). A vector type
-requires a size (number of elements) and an underlying primitive data
-type. Vector types are considered :ref:`first class <t_firstclass>`.
-
-Syntax:
-"""""""
-
-::
-
-      < <# elements> x <elementtype> >
-
-The number of elements is a constant integer value larger than 0;
-elementtype may be any integer or floating point type, or a pointer to
-these types. Vectors of size zero are not allowed.
-
-Examples:
-"""""""""
-
-+-------------------+--------------------------------------------------+
-| ``<4 x i32>``     | Vector of 4 32-bit integer values.               |
-+-------------------+--------------------------------------------------+
-| ``<8 x float>``   | Vector of 8 32-bit floating-point values.        |
-+-------------------+--------------------------------------------------+
-| ``<2 x i64>``     | Vector of 2 64-bit integer values.               |
-+-------------------+--------------------------------------------------+
-| ``<4 x i64*>``    | Vector of 4 pointers to 64-bit integer values.   |
-+-------------------+--------------------------------------------------+
 
 Constants
 =========

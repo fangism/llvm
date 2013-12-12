@@ -5632,6 +5632,20 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
     SDValue Reduced = ReduceLoadWidth(N);
     if (Reduced.getNode())
       return Reduced;
+    // Handle the case where the load remains an extending load even
+    // after truncation.
+    if (N0.hasOneUse() && ISD::isUNINDEXEDLoad(N0.getNode())) {
+      LoadSDNode *LN0 = cast<LoadSDNode>(N0);
+      if (!LN0->isVolatile() &&
+          LN0->getMemoryVT().getStoreSizeInBits() < VT.getSizeInBits()) {
+        SDValue NewLoad = DAG.getExtLoad(LN0->getExtensionType(), SDLoc(LN0),
+                                         VT, LN0->getChain(), LN0->getBasePtr(),
+                                         LN0->getMemoryVT(),
+                                         LN0->getMemOperand());
+        DAG.ReplaceAllUsesOfValueWith(N0.getValue(1), NewLoad.getValue(1));
+        return NewLoad;
+      }
+    }
   }
   // fold (trunc (concat ... x ...)) -> (concat ..., (trunc x), ...)),
   // where ... are all 'undef'.
@@ -9859,7 +9873,7 @@ SDValue DAGCombiner::visitCONCAT_VECTORS(SDNode *N) {
   if (N->getNumOperands() == 2 &&
       N->getOperand(1)->getOpcode() == ISD::UNDEF) {
     SDValue In = N->getOperand(0);
-    assert(In->getValueType(0).isVector() && "Must concat vectors");
+    assert(In.getValueType().isVector() && "Must concat vectors");
 
     // Transform: concat_vectors(scalar, undef) -> scalar_to_vector(sclr).
     if (In->getOpcode() == ISD::BITCAST &&

@@ -72,6 +72,7 @@ AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, StringRef TT,
     InstrInfo.reset(new SIInstrInfo(*this));
     TLInfo.reset(new SITargetLowering(*this));
   }
+  setRequiresStructuredCFG(true);
   initAsmInfo();
 }
 
@@ -167,7 +168,7 @@ bool AMDGPUPassConfig::addPreSched2() {
   const AMDGPUSubtarget &ST = TM->getSubtarget<AMDGPUSubtarget>();
 
   if (ST.getGeneration() <= AMDGPUSubtarget::NORTHERN_ISLANDS)
-    addPass(createR600EmitClauseMarkers(*TM));
+    addPass(createR600EmitClauseMarkers());
   if (ST.isIfCvtEnabled())
     addPass(&IfConverterID);
   if (ST.getGeneration() <= AMDGPUSubtarget::NORTHERN_ISLANDS)
@@ -178,7 +179,7 @@ bool AMDGPUPassConfig::addPreSched2() {
 bool AMDGPUPassConfig::addPreEmitPass() {
   const AMDGPUSubtarget &ST = TM->getSubtarget<AMDGPUSubtarget>();
   if (ST.getGeneration() <= AMDGPUSubtarget::NORTHERN_ISLANDS) {
-    addPass(createAMDGPUCFGStructurizerPass(*TM));
+    addPass(createAMDGPUCFGStructurizerPass());
     addPass(createR600ExpandSpecialInstrsPass(*TM));
     addPass(&FinalizeMachineBundlesID);
     addPass(createR600Packetizer(*TM));
