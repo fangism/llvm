@@ -95,8 +95,7 @@ static unsigned getGVAlignmentLog2(const GlobalValue *GV, const DataLayout &TD,
 
 AsmPrinter::AsmPrinter(TargetMachine &tm, MCStreamer &Streamer)
   : MachineFunctionPass(ID),
-    TM(tm), Tr(Twine(getTargetTriple())),
-    MAI(tm.getMCAsmInfo()), MII(tm.getInstrInfo()),
+    TM(tm), MAI(tm.getMCAsmInfo()), MII(tm.getInstrInfo()),
     OutContext(Streamer.getContext()),
     OutStreamer(Streamer),
     LastMI(0), LastFn(0), Counter(~0U), SetCounter(0) {
@@ -233,12 +232,8 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
 
       bool CanBeHidden = false;
 
-      // -no-integrated-as: 
-      // old system assembler doesn't understand .weak_def_can_be_hidden
-      // FIXME: this should really be a check on the assembler characteristics
-      // rather than OS version
       if (Linkage == GlobalValue::LinkOnceODRLinkage &&
-          !(Tr.isMacOSX() && Tr.isMacOSXVersionLT(10, 6))) {
+          MAI->hasWeakDefCanBeHiddenDirective()) {
         if (GV->hasUnnamedAddr()) {
           CanBeHidden = true;
         } else {

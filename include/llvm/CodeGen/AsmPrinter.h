@@ -20,7 +20,6 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/ADT/Triple.h"
 
 namespace llvm {
   class AsmPrinterHandler;
@@ -62,10 +61,6 @@ namespace llvm {
     /// Target machine description.
     ///
     TargetMachine &TM;
-
-    /// Triple information - computed once from TargetMachine
-    ///
-    const Triple Tr;
 
     /// Target Asm Printer information.
     ///
