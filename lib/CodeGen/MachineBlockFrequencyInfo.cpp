@@ -91,7 +91,7 @@ struct DOTGraphTraits<MachineBlockFrequencyInfo*> :
     OS << Node->getName().str() << ":";
     switch (ViewMachineBlockFreqPropagationDAG) {
     case GVDT_Fraction:
-      Graph->getBlockFreq(Node).print(OS);
+      Graph->printBlockFreq(OS, Node);
       break;
     case GVDT_Integer:
       OS << Graph->getBlockFreq(Node).getFrequency();
@@ -167,4 +167,20 @@ getBlockFreq(const MachineBasicBlock *MBB) const {
 
 MachineFunction *MachineBlockFrequencyInfo::getFunction() const {
   return MBFI->Fn;
+}
+
+raw_ostream &
+MachineBlockFrequencyInfo::printBlockFreq(raw_ostream &OS,
+                                          const BlockFrequency Freq) const {
+  return MBFI->printBlockFreq(OS, Freq);
+}
+
+raw_ostream &
+MachineBlockFrequencyInfo::printBlockFreq(raw_ostream &OS,
+                                          const MachineBasicBlock *MBB) const {
+  return MBFI->printBlockFreq(OS, MBB);
+}
+
+uint64_t MachineBlockFrequencyInfo::getEntryFreq() const {
+  return MBFI->getEntryFreq();
 }

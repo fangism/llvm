@@ -34,31 +34,25 @@ static std::string computeDataLayout(const X86Subtarget &ST) {
   // X86 is little endian
   std::string Ret = "e";
 
-  // X86 and x32 have 32 bit pointers, x86-64 has 64 bit pointers
+  // X86 and x32 have 32 bit pointers.
   if (ST.isTarget64BitILP32() || !ST.is64Bit())
     Ret += "-p:32:32";
-  else
-    Ret += "-p:64:64";
-
-  // Objects on the stack ore aligned to 64 bits.
-  // FIXME: of any size?
-  if (ST.is64Bit())
-    Ret += "-s:64";
 
   // Some ABIs align 64 bit integers and doubles to 64 bits, others to 32.
   if (ST.is64Bit() || ST.isTargetCygMing() || ST.isTargetWindows())
-    Ret += "-f64:64:64-i64:64:64";
+    Ret += "-i64:64";
   else
-    Ret += "-f64:32:64-i64:32:64";
+    Ret += "-f64:32:64";
 
   // Some ABIs align long double to 128 bits, others to 32.
   if (ST.is64Bit() || ST.isTargetDarwin())
-    Ret += "-f80:128:128";
+    Ret += "-f80:128";
   else
-    Ret += "-f80:32:32";
+    Ret += "-f80:32";
 
-  // 128 bit floats (?) are aligned to 128 bits.
-  Ret += "-f128:128:128";
+  // Objects on the stack ore aligned to 64 bits.
+  if (ST.is64Bit())
+    Ret += "-s:64";
 
   // The registers can hold 8, 16, 32 or, in x86-64, 64 bits.
   if (ST.is64Bit())

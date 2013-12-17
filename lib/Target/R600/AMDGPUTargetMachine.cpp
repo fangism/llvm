@@ -49,6 +49,21 @@ static MachineSchedRegistry
 SchedCustomRegistry("r600", "Run R600's custom scheduler",
                     createR600MachineScheduler);
 
+static std::string computeDataLayout(const AMDGPUSubtarget &ST) {
+  std::string Ret = "e";
+
+  if (!ST.is64bit())
+    Ret += "-p:32:32";
+
+  if (ST.getGeneration() >= AMDGPUSubtarget::SOUTHERN_ISLANDS)
+    Ret += "-p3:32:32";
+
+  Ret += "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256"
+         "-v512:512-v1024:1024-v2048:2048-n32:64";
+
+  return Ret;
+}
+
 AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, StringRef TT,
     StringRef CPU, StringRef FS,
   TargetOptions Options,
@@ -58,7 +73,7 @@ AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, StringRef TT,
 :
   LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OptLevel),
   Subtarget(TT, CPU, FS),
-  Layout(Subtarget.getDataLayout()),
+  Layout(computeDataLayout(Subtarget)),
   FrameLowering(TargetFrameLowering::StackGrowsUp,
                 64 * 16 // Maximum stack alignment (long16)
                , 0),

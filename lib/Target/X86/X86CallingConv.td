@@ -357,9 +357,16 @@ def CC_X86_64_WebKit_JS : CallingConv<[
   // Promote i8/i16 arguments to i32.
   CCIfType<[i8, i16], CCPromoteToType<i32>>,
 
-  // Integer/FP values are always stored in stack slots that are 8 bytes in size
-  // and 8-byte aligned.
-  CCIfType<[i32, i64, f32, f64], CCAssignToStack<8, 8>>
+  // Only the first integer argument is passed in register.
+  CCIfType<[i32], CCAssignToReg<[EAX]>>,
+  CCIfType<[i64], CCAssignToReg<[RAX]>>,
+
+  // The remaining integer arguments are passed on the stack. 32bit integer and
+  // floating-point arguments are aligned to 4 byte and stored in 4 byte slots.
+  // 64bit integer and floating-point arguments are aligned to 8 byte and stored
+  // in 8 byte stack slots.
+  CCIfType<[i32, f32], CCAssignToStack<4, 4>>,
+  CCIfType<[i64, f64], CCAssignToStack<8, 8>>
 ]>;
 
 // No explicit register is specified for the AnyReg calling convention. The
@@ -616,6 +623,11 @@ def CSR_Win64 : CalleeSavedRegs<(add RBX, RBP, RDI, RSI, R12, R13, R14, R15,
 def CSR_MostRegs_64 : CalleeSavedRegs<(add RBX, RCX, RDX, RSI, RDI, R8, R9, R10,
                                            R11, R12, R13, R14, R15, RBP,
                                            (sequence "XMM%u", 0, 15))>;
+
+def CSR_AllRegs_64 : CalleeSavedRegs<(add CSR_MostRegs_64, RAX, RSP,
+                                      (sequence "XMM%u", 16, 31),
+                                      (sequence "YMM%u", 0, 31),
+                                      (sequence "ZMM%u", 0, 31))>;
 
 // Standard C + YMM6-15
 def CSR_Win64_Intel_OCL_BI_AVX : CalleeSavedRegs<(add RBX, RBP, RDI, RSI, R12,

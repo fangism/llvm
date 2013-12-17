@@ -140,6 +140,12 @@ const char* TargetLibraryInfo::StandardNames[LibFunc::NumLibFuncs] =
     "floor",
     "floorf",
     "floorl",
+    "fmax",
+    "fmaxf",
+    "fmaxl",
+    "fmin",
+    "fminf",
+    "fminl",
     "fmod",
     "fmodf",
     "fmodl",
@@ -426,6 +432,12 @@ static void initialize(TargetLibraryInfo &TLI, const Triple &T,
     }
   }
 
+  if (T.getOS() == Triple::NetBSD) {
+    TLI.setUnavailable(LibFunc::exp10l);
+    TLI.setUnavailable(LibFunc::exp10);
+    TLI.setUnavailable(LibFunc::exp10f);
+  }
+
   // iprintf and friends are only available on XCore and TCE.
   if (T.getArch() != Triple::xcore && T.getArch() != Triple::tce) {
     TLI.setUnavailable(LibFunc::iprintf);
@@ -447,6 +459,8 @@ static void initialize(TargetLibraryInfo &TLI, const Triple &T,
     TLI.setUnavailable(LibFunc::fabsf); // Win32 and Win64 both lack fabsf
     TLI.setUnavailable(LibFunc::fabsl);
     TLI.setUnavailable(LibFunc::floorl);
+    TLI.setUnavailable(LibFunc::fmaxl);
+    TLI.setUnavailable(LibFunc::fminl);
     TLI.setUnavailable(LibFunc::fmodl);
     TLI.setUnavailable(LibFunc::frexpl);
     TLI.setUnavailable(LibFunc::logl);
@@ -517,6 +531,8 @@ static void initialize(TargetLibraryInfo &TLI, const Triple &T,
       TLI.setUnavailable(LibFunc::coshf);
       TLI.setUnavailable(LibFunc::expf);
       TLI.setUnavailable(LibFunc::floorf);
+      TLI.setUnavailable(LibFunc::fminf);
+      TLI.setUnavailable(LibFunc::fmaxf);
       TLI.setUnavailable(LibFunc::fmodf);
       TLI.setUnavailable(LibFunc::logf);
       TLI.setUnavailable(LibFunc::powf);

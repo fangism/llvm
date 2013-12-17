@@ -193,7 +193,7 @@ static void DetectX86FamilyModel(unsigned EAX, unsigned &Family,
   }
 }
 
-std::string sys::getHostCPUName() {
+StringRef sys::getHostCPUName() {
   unsigned EAX = 0, EBX = 0, ECX = 0, EDX = 0;
   if (GetX86CpuIDAndInfo(0x1, &EAX, &EBX, &ECX, &EDX))
     return "generic";
@@ -449,7 +449,7 @@ std::string sys::getHostCPUName() {
   return "generic";
 }
 #elif defined(__APPLE__) && (defined(__ppc__) || defined(__powerpc__))
-std::string sys::getHostCPUName() {
+StringRef sys::getHostCPUName() {
   host_basic_info_data_t hostInfo;
   mach_msg_type_number_t infoCount;
 
@@ -478,7 +478,7 @@ std::string sys::getHostCPUName() {
   return "generic";
 }
 #elif defined(__linux__) && (defined(__ppc__) || defined(__powerpc__))
-std::string sys::getHostCPUName() {
+StringRef sys::getHostCPUName() {
   // Access to the Processor Version Register (PVR) on PowerPC is privileged,
   // and so we must use an operating-system interface to determine the current
   // processor type. On Linux, this is exposed through the /proc/cpuinfo file.
@@ -568,7 +568,7 @@ std::string sys::getHostCPUName() {
     .Default(generic);
 }
 #elif defined(__linux__) && defined(__arm__)
-std::string sys::getHostCPUName() {
+StringRef sys::getHostCPUName() {
   // The cpuid register on arm is not accessible from user space. On Linux,
   // it is exposed through the /proc/cpuinfo file.
   // Note: We cannot mmap /proc/cpuinfo here and then process the resulting
@@ -623,7 +623,7 @@ std::string sys::getHostCPUName() {
   return "generic";
 }
 #elif defined(__linux__) && defined(__s390x__)
-std::string sys::getHostCPUName() {
+StringRef sys::getHostCPUName() {
   // STIDP is a privileged operation, so use /proc/cpuinfo instead.
   // Note: We cannot mmap /proc/cpuinfo here and then process the resulting
   // memory buffer because the 'file' has 0 size (it can be read from only
@@ -665,7 +665,7 @@ std::string sys::getHostCPUName() {
   return "generic";
 }
 #else
-std::string sys::getHostCPUName() {
+StringRef sys::getHostCPUName() {
   return "generic";
 }
 #endif
