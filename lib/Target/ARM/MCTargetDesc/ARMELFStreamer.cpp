@@ -20,8 +20,10 @@
 #include "ARMUnwindOp.h"
 #include "ARMUnwindOpAsm.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/MC/MCAsmBackend.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
@@ -121,6 +123,7 @@ class ARMTargetAsmStreamer : public ARMTargetStreamer {
   virtual void emitTextAttribute(unsigned Attribute, StringRef String);
   virtual void emitArch(unsigned Arch);
   virtual void emitFPU(unsigned FPU);
+  virtual void emitInst(uint32_t Inst, char Suffix = '\0');
   virtual void finishAttributeSection();
 
 public:
@@ -188,6 +191,13 @@ void ARMTargetAsmStreamer::emitFPU(unsigned FPU) {
   OS << "\t.fpu\t" << GetFPUName(FPU) << "\n";
 }
 void ARMTargetAsmStreamer::finishAttributeSection() {
+}
+
+void ARMTargetAsmStreamer::emitInst(uint32_t Inst, char Suffix) {
+  OS << "\t.inst";
+  if (Suffix)
+    OS << "." << Suffix;
+  OS << "\t0x" << utohexstr(Inst) << "\n";
 }
 
 class ARMTargetELFStreamer : public ARMTargetStreamer {
@@ -295,6 +305,7 @@ private:
   virtual void emitTextAttribute(unsigned Attribute, StringRef String);
   virtual void emitArch(unsigned Arch);
   virtual void emitFPU(unsigned FPU);
+  virtual void emitInst(uint32_t Inst, char Suffix = '\0');
   virtual void finishAttributeSection();
 
   size_t calculateContentSize() const;
@@ -365,6 +376,44 @@ public:
       EmitARMMappingSymbol();
 
     MCELFStreamer::EmitInstruction(Inst);
+  }
+
+  virtual void emitInst(uint32_t Inst, char Suffix) {
+    unsigned Size;
+    char Buffer[4];
+    const bool LittleEndian = getContext().getAsmInfo()->isLittleEndian();
+
+    switch (Suffix) {
+    case '\0':
+      Size = 4;
+
+      assert(!IsThumb);
+      EmitARMMappingSymbol();
+      for (unsigned II = 0, IE = Size; II != IE; II++) {
+        const unsigned I = LittleEndian ? (Size - II - 1) : II;
+        Buffer[Size - II - 1] = uint8_t(Inst >> I * CHAR_BIT);
+      }
+
+      break;
+    case 'n':
+    case 'w':
+      Size = (Suffix == 'n' ? 2 : 4);
+
+      assert(IsThumb);
+      EmitThumbMappingSymbol();
+      for (unsigned II = 0, IE = Size; II != IE; II = II + 2) {
+        const unsigned I0 = LittleEndian ? II + 0 : (Size - II - 1);
+        const unsigned I1 = LittleEndian ? II + 1 : (Size - II - 2);
+        Buffer[Size - II - 2] = uint8_t(Inst >> I0 * CHAR_BIT);
+        Buffer[Size - II - 1] = uint8_t(Inst >> I1 * CHAR_BIT);
+      }
+
+      break;
+    default:
+      llvm_unreachable("Invalid Suffix");
+    }
+
+    MCELFStreamer::EmitBytes(StringRef(Buffer, Size));
   }
 
   /// This is one of the functions used to emit data into an ELF section, so the
@@ -632,43 +681,43 @@ void ARMTargetELFStreamer::emitFPUDefaultAttributes() {
   switch (FPU) {
   case ARM::VFP:
   case ARM::VFPV2:
-    setAttributeItem(ARMBuildAttrs::VFP_arch,
+    setAttributeItem(ARMBuildAttrs::FP_arch,
                      ARMBuildAttrs::AllowFPv2,
                      /* OverwriteExisting= */ false);
     break;
 
   case ARM::VFPV3:
-    setAttributeItem(ARMBuildAttrs::VFP_arch,
+    setAttributeItem(ARMBuildAttrs::FP_arch,
                      ARMBuildAttrs::AllowFPv3A,
                      /* OverwriteExisting= */ false);
     break;
 
   case ARM::VFPV3_D16:
-    setAttributeItem(ARMBuildAttrs::VFP_arch,
+    setAttributeItem(ARMBuildAttrs::FP_arch,
                      ARMBuildAttrs::AllowFPv3B,
                      /* OverwriteExisting= */ false);
     break;
 
   case ARM::VFPV4:
-    setAttributeItem(ARMBuildAttrs::VFP_arch,
+    setAttributeItem(ARMBuildAttrs::FP_arch,
                      ARMBuildAttrs::AllowFPv4A,
                      /* OverwriteExisting= */ false);
     break;
 
   case ARM::VFPV4_D16:
-    setAttributeItem(ARMBuildAttrs::VFP_arch,
+    setAttributeItem(ARMBuildAttrs::FP_arch,
                      ARMBuildAttrs::AllowFPv4B,
                      /* OverwriteExisting= */ false);
     break;
 
   case ARM::FP_ARMV8:
-    setAttributeItem(ARMBuildAttrs::VFP_arch,
+    setAttributeItem(ARMBuildAttrs::FP_arch,
                      ARMBuildAttrs::AllowFPARMv8A,
                      /* OverwriteExisting= */ false);
     break;
 
   case ARM::NEON:
-    setAttributeItem(ARMBuildAttrs::VFP_arch,
+    setAttributeItem(ARMBuildAttrs::FP_arch,
                      ARMBuildAttrs::AllowFPv3A,
                      /* OverwriteExisting= */ false);
     setAttributeItem(ARMBuildAttrs::Advanced_SIMD_arch,
@@ -677,7 +726,7 @@ void ARMTargetELFStreamer::emitFPUDefaultAttributes() {
     break;
 
   case ARM::NEON_VFPV4:
-    setAttributeItem(ARMBuildAttrs::VFP_arch,
+    setAttributeItem(ARMBuildAttrs::FP_arch,
                      ARMBuildAttrs::AllowFPv4A,
                      /* OverwriteExisting= */ false);
     setAttributeItem(ARMBuildAttrs::Advanced_SIMD_arch,
@@ -687,7 +736,7 @@ void ARMTargetELFStreamer::emitFPUDefaultAttributes() {
 
   case ARM::NEON_FP_ARMV8:
   case ARM::CRYPTO_NEON_FP_ARMV8:
-    setAttributeItem(ARMBuildAttrs::VFP_arch,
+    setAttributeItem(ARMBuildAttrs::FP_arch,
                      ARMBuildAttrs::AllowFPARMv8A,
                      /* OverwriteExisting= */ false);
     setAttributeItem(ARMBuildAttrs::Advanced_SIMD_arch,
@@ -790,6 +839,9 @@ void ARMTargetELFStreamer::finishAttributeSection() {
 
   Contents.clear();
   FPU = ARM::INVALID_FPU;
+}
+void ARMTargetELFStreamer::emitInst(uint32_t Inst, char Suffix) {
+  getStreamer().emitInst(Inst, Suffix);
 }
 
 void ARMELFStreamer::FinishImpl() {

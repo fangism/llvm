@@ -63,7 +63,7 @@ Module::~Module() {
 /// Target endian information.
 Module::Endianness Module::getEndianness() const {
   StringRef temp = DataLayout;
-  Module::Endianness ret = AnyEndianness;
+  Module::Endianness ret = BigEndian;
 
   while (!temp.empty()) {
     std::pair<StringRef, StringRef> P = getToken(temp, "-");
@@ -84,7 +84,7 @@ Module::Endianness Module::getEndianness() const {
 /// Target Pointer Size information.
 Module::PointerSize Module::getPointerSize() const {
   StringRef temp = DataLayout;
-  Module::PointerSize ret = AnyPointerSize;
+  Module::PointerSize ret = Pointer64;
 
   while (!temp.empty()) {
     std::pair<StringRef, StringRef> TmpP = getToken(temp, "-");

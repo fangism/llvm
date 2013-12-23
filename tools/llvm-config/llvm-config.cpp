@@ -147,6 +147,7 @@ Options:\n\
   --cflags          C compiler flags for files that include LLVM headers.\n\
   --cxxflags        C++ compiler flags for files that include LLVM headers.\n\
   --ldflags         Print Linker flags.\n\
+  --system-libs     Sytem Libraries needed to link against LLVM components.\n\
   --libs            Libraries needed to link against LLVM components.\n\
   --libnames        Bare library names for in-tree builds.\n\
   --libfiles        Fully qualified library filenames for makefile depends.\n\
@@ -172,6 +173,7 @@ std::string GetExecutablePath(const char *Argv0) {
 int main(int argc, char **argv) {
   std::vector<StringRef> Components;
   bool PrintLibs = false, PrintLibNames = false, PrintLibFiles = false;
+  bool PrintSystemLibs = false;
   bool HasAnyOption = false;
 
   // llvm-config is designed to support being run both from a development tree
@@ -184,6 +186,13 @@ int main(int argc, char **argv) {
   std::string CurrentExecPrefix;
   std::string ActiveObjRoot;
 
+  // If CMAKE_CFG_INTDIR is given, honor it as build mode.
+  char const *build_mode = LLVM_BUILDMODE;
+#if defined(CMAKE_CFG_INTDIR)
+  if (!(CMAKE_CFG_INTDIR[0] == '.' && CMAKE_CFG_INTDIR[1] == '\0'))
+    build_mode = CMAKE_CFG_INTDIR;
+#endif
+
   // Create an absolute path, and pop up one directory (we expect to be inside a
   // bin dir).
   sys::fs::make_absolute(CurrentPath);
@@ -193,7 +202,7 @@ int main(int argc, char **argv) {
   // Check to see if we are inside a development tree by comparing to possible
   // locations (prefix style or CMake style).
   if (sys::fs::equivalent(CurrentExecPrefix,
-                          Twine(LLVM_OBJ_ROOT) + "/" + LLVM_BUILDMODE)) {
+                          Twine(LLVM_OBJ_ROOT) + "/" + build_mode)) {
     IsInDevelopmentTree = true;
     DevelopmentTreeLayout = MakefileStyle;
 
@@ -231,16 +240,18 @@ int main(int argc, char **argv) {
     // layout.
     switch (DevelopmentTreeLayout) {
     case MakefileStyle:
-      ActiveBinDir = ActiveObjRoot + "/" + LLVM_BUILDMODE + "/bin";
-      ActiveLibDir = ActiveObjRoot + "/" + LLVM_BUILDMODE + "/lib";
+      ActivePrefix = ActiveObjRoot;
+      ActiveBinDir = ActiveObjRoot + "/" + build_mode + "/bin";
+      ActiveLibDir = ActiveObjRoot + "/" + build_mode + "/lib";
       break;
     case CMakeStyle:
       ActiveBinDir = ActiveObjRoot + "/bin";
       ActiveLibDir = ActiveObjRoot + "/lib";
       break;
     case CMakeBuildModeStyle:
-      ActiveBinDir = ActiveObjRoot + "/bin/" + LLVM_BUILDMODE;
-      ActiveLibDir = ActiveObjRoot + "/lib/" + LLVM_BUILDMODE;
+      ActivePrefix = ActiveObjRoot;
+      ActiveBinDir = ActiveObjRoot + "/bin/" + build_mode;
+      ActiveLibDir = ActiveObjRoot + "/lib/" + build_mode;
       break;
     }
 
@@ -279,6 +290,8 @@ int main(int argc, char **argv) {
         OS << ActiveIncludeOption << ' ' << LLVM_CXXFLAGS << '\n';
       } else if (Arg == "--ldflags") {
         OS << "-L" << ActiveLibDir << ' ' << LLVM_LDFLAGS << '\n';
+      } else if (Arg == "--system-libs") {
+        PrintSystemLibs = true;
       } else if (Arg == "--libs") {
         PrintLibs = true;
       } else if (Arg == "--libnames") {
@@ -300,11 +313,6 @@ int main(int argc, char **argv) {
       } else if (Arg == "--host-target") {
         OS << LLVM_DEFAULT_TARGET_TRIPLE << '\n';
       } else if (Arg == "--build-mode") {
-        char const *build_mode = LLVM_BUILDMODE;
-#if defined(CMAKE_CFG_INTDIR)
-        if (!(CMAKE_CFG_INTDIR[0] == '.' && CMAKE_CFG_INTDIR[1] == '\0'))
-          build_mode = CMAKE_CFG_INTDIR;
-#endif
         OS << build_mode << '\n';
       } else if (Arg == "--assertion-mode") {
 #if defined(NDEBUG)
@@ -313,7 +321,7 @@ int main(int argc, char **argv) {
         OS << "ON\n";
 #endif
       } else if (Arg == "--obj-root") {
-        OS << LLVM_OBJ_ROOT << '\n';
+        OS << ActivePrefix << '\n';
       } else if (Arg == "--src-root") {
         OS << LLVM_SRC_ROOT << '\n';
       } else {
@@ -327,7 +335,7 @@ int main(int argc, char **argv) {
   if (!HasAnyOption)
     usage();
 
-  if (PrintLibs || PrintLibNames || PrintLibFiles) {
+  if (PrintLibs || PrintLibNames || PrintLibFiles || PrintSystemLibs) {
     // If no components were specified, default to "all".
     if (Components.empty())
       Components.push_back("all");
@@ -357,14 +365,12 @@ int main(int argc, char **argv) {
         OS << ActiveLibDir << '/' << Lib;
       }
     }
-
-    // Print system libs in the next line.
-    // Assume LLVMSupport depends on system_libs.
-    // FIXME: LLVMBuild may take care of dependencies to system_libs.
-    if (PrintLibs)
-      OS << '\n' << LLVM_SYSTEM_LIBS;
-
     OS << '\n';
+
+    // Print SYSTEM_LIBS after --libs.
+    // FIXME: Each LLVM component may have its dependent system libs.
+    if (PrintSystemLibs)
+      OS << LLVM_SYSTEM_LIBS << '\n';
   } else if (!Components.empty()) {
     errs() << "llvm-config: error: components given, but unused\n\n";
     usage();

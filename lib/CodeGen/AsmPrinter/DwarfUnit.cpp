@@ -322,6 +322,11 @@ void DwarfUnit::addDIEEntry(DIE *Die, dwarf::Attribute Attribute, DIE *Entry) {
   addDIEEntry(Die, Attribute, createDIEEntry(Entry));
 }
 
+void DwarfUnit::addDIETypeSignature(DIE *Die, const DwarfTypeUnit &Type) {
+  Die->addValue(dwarf::DW_AT_signature, dwarf::DW_FORM_ref_sig8,
+                new (DIEValueAllocator) DIETypeSignature(Type));
+}
+
 void DwarfUnit::addDIEEntry(DIE *Die, dwarf::Attribute Attribute,
                             DIEEntry *Entry) {
   const DIE *DieCU = Die->getUnitOrNull();
@@ -1213,6 +1218,12 @@ void DwarfUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
         (Language == dwarf::DW_LANG_C89 || Language == dwarf::DW_LANG_C99 ||
          Language == dwarf::DW_LANG_ObjC))
       addFlag(&Buffer, dwarf::DW_AT_prototyped);
+
+    if (CTy.isLValueReference())
+      addFlag(&Buffer, dwarf::DW_AT_reference);
+
+    if (CTy.isRValueReference())
+      addFlag(&Buffer, dwarf::DW_AT_rvalue_reference);
   } break;
   case dwarf::DW_TAG_structure_type:
   case dwarf::DW_TAG_union_type:
@@ -1514,6 +1525,12 @@ DIE *DwarfUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   if (unsigned isa = Asm->getISAEncoding()) {
     addUInt(SPDie, dwarf::DW_AT_APPLE_isa, dwarf::DW_FORM_flag, isa);
   }
+
+  if (SP.isLValueReference())
+    addFlag(SPDie, dwarf::DW_AT_reference);
+
+  if (SP.isRValueReference())
+    addFlag(SPDie, dwarf::DW_AT_rvalue_reference);
 
   return SPDie;
 }

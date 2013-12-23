@@ -64,7 +64,7 @@ static unsigned adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
     // address range. Forcing a signed division because Value can be negative.
     Value = (int64_t)Value / 4;
     // We now check if Value can be encoded as a 16-bit signed immediate.
-    if (!isIntN(15, Value) && Ctx)
+    if (!isIntN(16, Value) && Ctx)
       Ctx->FatalError(Fixup.getLoc(), "out of range PC16 fixup");
     break;
   case Mips::fixup_Mips_26:
@@ -97,7 +97,7 @@ static unsigned adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
     // Forcing a signed division because Value can be negative.
     Value = (int64_t)Value / 2;
     // We now check if Value can be encoded as a 16-bit signed immediate.
-    if (!isIntN(15, Value) && Ctx)
+    if (!isIntN(16, Value) && Ctx)
       Ctx->FatalError(Fixup.getLoc(), "out of range PC16 fixup");
     break;
   }
@@ -222,6 +222,8 @@ public:
       { "fixup_MICROMIPS_GOT_DISP",        0,     16,   0 },
       { "fixup_MICROMIPS_GOT_PAGE",        0,     16,   0 },
       { "fixup_MICROMIPS_GOT_OFST",        0,     16,   0 },
+      { "fixup_MICROMIPS_TLS_GD",          0,     16,   0 },
+      { "fixup_MICROMIPS_TLS_LDM",         0,     16,   0 },
       { "fixup_MICROMIPS_TLS_DTPREL_HI16", 0,     16,   0 },
       { "fixup_MICROMIPS_TLS_DTPREL_LO16", 0,     16,   0 },
       { "fixup_MICROMIPS_TLS_TPREL_HI16",  0,     16,   0 },
