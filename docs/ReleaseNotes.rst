@@ -28,13 +28,6 @@ page <http://llvm.org/releases/>`_.
 Non-comprehensive list of changes in this release
 =================================================
 
-.. NOTE
-   For small 1-3 sentence descriptions, just add an entry at the end of
-   this list. If your description won't fit comfortably in one bullet
-   point (e.g. maybe you would like to give an example of the
-   functionality, or simply have a lot to talk about), see the `NOTE` below
-   for adding a new subsection.
-
 * This is expected to be the last release of LLVM which compiles using a C++98
   toolchain. We expect to start using some C++11 features in LLVM and other
   sub-projects starting after this release. That said, we are committed to
@@ -54,9 +47,9 @@ Non-comprehensive list of changes in this release
 
 * The R600 backend is not marked experimental anymore and is built by default.
 
-* APFloat::isNormal() was renamed to APFloat::isFiniteNonZero() and
-  APFloat::isIEEENormal() was renamed to APFloat::isNormal(). This ensures that
-  APFloat::isNormal() conforms to IEEE-754R-2008.
+* ``APFloat::isNormal()`` was renamed to ``APFloat::isFiniteNonZero()`` and
+  ``APFloat::isIEEENormal()`` was renamed to ``APFloat::isNormal()``. This
+  ensures that ``APFloat::isNormal()`` conforms to IEEE-754R-2008.
 
 * The library call simplification pass has been removed.  Its functionality
   has been integrated into the instruction combiner and function attribute
@@ -66,20 +59,20 @@ Non-comprehensive list of changes in this release
   or later instead. For more information, see the `Getting Started using Visual
   Studio <GettingStartedVS.html>`_ page.
 
-* The Loop Vectorizer that was previously enabled for -O3 is now enabled for
-  -Os and -O2.
+* The Loop Vectorizer that was previously enabled for ``-O3`` is now enabled
+  for ``-Os`` and ``-O2``.
 
 * The new SLP Vectorizer is now enabled by default.
 
-* llvm-ar now uses the new Object library and produces archives and
+* ``llvm-ar`` now uses the new Object library and produces archives and
   symbol tables in the gnu format.
 
-* FileCheck now allows specifing -check-prefix multiple times. This
+* FileCheck now allows specifing ``-check-prefix`` multiple times. This
   helps reduce duplicate check lines when using multiple RUN lines.
 
 * The bitcast instruction no longer allows casting between pointers
-   with different address spaces. To achieve this, use the new
-   addrspacecast instruction.
+   with different address spaces. To achieve this, use the new addrspacecast
+   instruction.
 
 * Different sized pointers for different address spaces should now
   generally work. This is primarily useful for GPU targets.
@@ -87,28 +80,33 @@ Non-comprehensive list of changes in this release
 * OCaml bindings have been significantly extended to cover almost all of the
   LLVM libraries.
 
-* ... next change ...
-
-.. NOTE
-   If you would like to document a larger change, then you can add a
-   subsection about it right here. You can copy the following boilerplate
-   and un-indent it (the indentation causes it to be inside this comment).
-
-   Special New Feature
-   -------------------
-
-   Makes programs 10x faster by doing Special New Thing.
-
 Mips Target
 -----------
 
 Support for the MIPS SIMD Architecture (MSA) has been added. MSA is supported
-through inline assembly, intrinsics with the prefix '__builtin_msa', and normal
-code generation.
+through inline assembly, intrinsics with the prefix '``__builtin_msa``', and
+normal code generation.
 
 For more information on MSA (including documentation for the instruction set),
 see the `MIPS SIMD page at Imagination Technologies
 <http://imgtec.com/mips/mips-simd.asp>`_
+
+PowerPC Target
+--------------
+
+Changes in the PowerPC backend include:
+
+* fast-isel support (for faster ``-O0`` code generation)
+* many improvements to the builtin assembler
+* support for generating unaligned (Altivec) vector loads
+* support for generating the fcpsgn instruction
+* generate ``frin`` for ``round()`` (not ``nearbyint()`` and ``rint()``, which
+  had been done only in fast-math mode)
+* improved instruction scheduling for embedded cores (such as the A2)
+* improved prologue/epilogue generation (especially in 32-bit mode)
+* support for dynamic stack alignment (and dynamic stack allocations with large alignments)
+* improved generation of counter-register-based loops
+* bug fixes
 
 SPARC Target
 ------------
@@ -122,6 +120,13 @@ The SPARC backend got many improvements, namely
 * TLS support
 * leaf functions optimization
 * bug fixes
+
+SystemZ/s390x Backend
+---------------------
+
+LLVM and clang can now optimize for zEnterprise z196 and zEnterprise EC12
+targets.  In clang these targets are selected using ``-march=z196`` and
+``-march=zEC12`` respectively.
 
 External Open Source Projects Using LLVM 3.4
 ============================================
@@ -156,7 +161,7 @@ Ports to other architectures like ARM and AArch64 are underway.
 LibBeauty
 ---------
 
-The `LibBeauty <http://www.libbeauty.comLibBeauty>`_ decompiler and reverse
+The `LibBeauty <http://www.libbeauty.com>`_ decompiler and reverse
 engineering tool currently utilises the LLVM disassembler and the LLVM IR
 Builder. The current aim of the project is to take a x86_64 binary ``.o`` file
 as input, and produce an equivalent LLVM IR ``.bc`` or ``.ll`` file as
@@ -242,4 +247,3 @@ going into the ``llvm/docs/`` directory in the LLVM tree.
 
 If you have any questions or comments about LLVM, please feel free to contact
 us via the `mailing lists <http://llvm.org/docs/#maillist>`_.
-
