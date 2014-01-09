@@ -18,9 +18,9 @@
 #define X86BASEINFO_H
 
 #include "X86MCTargetDesc.h"
+#include "llvm/MC/MCInstrInfo.h"
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/MC/MCInstrInfo.h"
 
 namespace llvm {
 
@@ -268,10 +268,6 @@ namespace X86II {
     MRM0m = 24,  MRM1m = 25,  MRM2m = 26,  MRM3m = 27, // Format /0 /1 /2 /3
     MRM4m = 28,  MRM5m = 29,  MRM6m = 30,  MRM7m = 31, // Format /4 /5 /6 /7
 
-    // MRMInitReg - This form is used for instructions whose source and
-    // destinations are the same register.
-    MRMInitReg = 32,
-
     //// MRM_XX - A mod/rm byte of exactly 0xXX.
     MRM_C1 = 33, MRM_C2 = 34, MRM_C3 = 35, MRM_C4 = 36,
     MRM_C8 = 37, MRM_C9 = 38, MRM_CA = 39, MRM_CB = 40,
@@ -299,13 +295,15 @@ namespace X86II {
 
     // OpSize - Set if this instruction requires an operand size prefix (0x66),
     // which most often indicates that the instruction operates on 16 bit data
-    // instead of 32 bit data.
+    // instead of 32 bit data. OpSize16 in 16 bit mode indicates that the
+    // instruction operates on 32 bit data instead of 16 bit data.
     OpSize      = 1 << 6,
+    OpSize16    = 1 << 7,
 
     // AsSize - Set if this instruction requires an operand size prefix (0x67),
     // which most often indicates that the instruction address 16 bit address
     // instead of 32 bit address (or 32 bit address in 64 bit mode).
-    AdSize      = 1 << 7,
+    AdSize      = 1 << 8,
 
     //===------------------------------------------------------------------===//
     // Op0Mask - There are several prefix bytes that are used to form two byte
@@ -313,7 +311,7 @@ namespace X86II {
     // used to obtain the setting of this field.  If no bits in this field is
     // set, there is no prefix byte for obtaining a multibyte opcode.
     //
-    Op0Shift    = 8,
+    Op0Shift    = 9,
     Op0Mask     = 0x1F << Op0Shift,
 
     // TB - TwoByte - Set if this instruction has a two byte opcode, which
@@ -419,16 +417,9 @@ namespace X86II {
     LOCKShift = FPTypeShift + 3,
     LOCK = 1 << LOCKShift,
 
-    // Segment override prefixes. Currently we just need ability to address
-    // stuff in gs and fs segments.
-    SegOvrShift = LOCKShift + 1,
-    SegOvrMask  = 3 << SegOvrShift,
-    FS          = 1 << SegOvrShift,
-    GS          = 2 << SegOvrShift,
-
     // Execution domain for SSE instructions in bits 23, 24.
     // 0 in bits 23-24 means normal, non-SSE instruction.
-    SSEDomainShift = SegOvrShift + 2,
+    SSEDomainShift = LOCKShift + 1,
 
     OpcodeShift   = SSEDomainShift + 2,
 
@@ -596,9 +587,6 @@ namespace X86II {
   ///
   inline int getMemoryOperandNo(uint64_t TSFlags, unsigned Opcode) {
     switch (TSFlags & X86II::FormMask) {
-    case X86II::MRMInitReg:
-        // FIXME: Remove this form.
-        return -1;
     default: llvm_unreachable("Unknown FormMask value in getMemoryOperandNo!");
     case X86II::Pseudo:
     case X86II::RawFrm:

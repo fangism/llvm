@@ -18,7 +18,6 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/ConstantFolding.h"
-#include "llvm/Assembly/Writer.h"
 #include "llvm/CodeGen/GCMetadataPrinter.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -28,6 +27,7 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -41,7 +41,6 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/Timer.h"
-#include "llvm/Target/Mangler.h"
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetLowering.h"
@@ -165,7 +164,7 @@ bool AsmPrinter::doInitialization(Module &M) {
 
   OutStreamer.InitStreamer();
 
-  Mang = new Mangler(&TM);
+  Mang = new Mangler(TM.getDataLayout());
 
   // Allow the target to emit any magic that it wants at the start of the file.
   EmitStartOfAsmFile(M);
@@ -291,7 +290,7 @@ void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
       return;
 
     if (isVerbose()) {
-      WriteAsOperand(OutStreamer.GetCommentOS(), GV,
+      GV->printAsOperand(OutStreamer.GetCommentOS(),
                      /*PrintType=*/false, GV->getParent());
       OutStreamer.GetCommentOS() << '\n';
     }
@@ -470,7 +469,7 @@ void AsmPrinter::EmitFunctionHeader() {
     OutStreamer.EmitSymbolAttribute(CurrentFnSym, MCSA_ELF_TypeFunction);
 
   if (isVerbose()) {
-    WriteAsOperand(OutStreamer.GetCommentOS(), F,
+    F->printAsOperand(OutStreamer.GetCommentOS(),
                    /*PrintType=*/false, F->getParent());
     OutStreamer.GetCommentOS() << '\n';
   }
@@ -659,10 +658,6 @@ AsmPrinter::CFIMoveType AsmPrinter::needsCFIMoves() {
 bool AsmPrinter::needsSEHMoves() {
   return MAI->getExceptionHandlingType() == ExceptionHandling::Win64 &&
     MF->getFunction()->needsUnwindTableEntry();
-}
-
-bool AsmPrinter::needsRelocationsForDwarfStringPool() const {
-  return MAI->doesDwarfUseRelocationsAcrossSections();
 }
 
 void AsmPrinter::emitPrologLabel(const MachineInstr &MI) {
@@ -1110,6 +1105,7 @@ void AsmPrinter::EmitConstantPool() {
 /// by the current function to the current output stream.
 ///
 void AsmPrinter::EmitJumpTableInfo() {
+  const DataLayout *DL = MF->getTarget().getDataLayout();
   const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
   if (MJTI == 0) return;
   if (MJTI->getEntryKind() == MachineJumpTableInfo::EK_Inline) return;
@@ -1175,7 +1171,7 @@ void AsmPrinter::EmitJumpTableInfo() {
     // before each jump table.  The first label is never referenced, but tells
     // the assembler and linker the extents of the jump table object.  The
     // second label is actually referenced by the code.
-    if (JTInDiffSection && MAI->hasLinkerPrivateGlobalPrefix())
+    if (JTInDiffSection && DL->hasLinkerPrivateGlobalPrefix())
       // FIXME: This doesn't have to have any specific name, just any randomly
       // named and numbered 'l' label would work.  Simplify GetJTISymbol.
       OutStreamer.EmitLabel(GetJTISymbol(JTI, true));
@@ -1532,7 +1528,7 @@ static const MCExpr *lowerConstant(const Constant *CV, AsmPrinter &AP) {
       std::string S;
       raw_string_ostream OS(S);
       OS << "Unsupported expression in static initializer: ";
-      WriteAsOperand(OS, CE, /*PrintType=*/false,
+      CE->printAsOperand(OS, /*PrintType=*/false,
                      !AP.MF ? 0 : AP.MF->getFunction()->getParent());
       report_fatal_error(OS.str());
     }
@@ -1997,14 +1993,16 @@ void AsmPrinter::printOffset(int64_t Offset, raw_ostream &OS) const {
 /// GetTempSymbol - Return the MCSymbol corresponding to the assembler
 /// temporary label with the specified stem and unique ID.
 MCSymbol *AsmPrinter::GetTempSymbol(StringRef Name, unsigned ID) const {
-  return OutContext.GetOrCreateSymbol(Twine(MAI->getPrivateGlobalPrefix()) +
+  const DataLayout *DL = TM.getDataLayout();
+  return OutContext.GetOrCreateSymbol(Twine(DL->getPrivateGlobalPrefix()) +
                                       Name + Twine(ID));
 }
 
 /// GetTempSymbol - Return an assembler temporary label with the specified
 /// stem.
 MCSymbol *AsmPrinter::GetTempSymbol(StringRef Name) const {
-  return OutContext.GetOrCreateSymbol(Twine(MAI->getPrivateGlobalPrefix())+
+  const DataLayout *DL = TM.getDataLayout();
+  return OutContext.GetOrCreateSymbol(Twine(DL->getPrivateGlobalPrefix())+
                                       Name);
 }
 
@@ -2019,8 +2017,9 @@ MCSymbol *AsmPrinter::GetBlockAddressSymbol(const BasicBlock *BB) const {
 
 /// GetCPISymbol - Return the symbol for the specified constant pool entry.
 MCSymbol *AsmPrinter::GetCPISymbol(unsigned CPID) const {
+  const DataLayout *DL = TM.getDataLayout();
   return OutContext.GetOrCreateSymbol
-    (Twine(MAI->getPrivateGlobalPrefix()) + "CPI" + Twine(getFunctionNumber())
+    (Twine(DL->getPrivateGlobalPrefix()) + "CPI" + Twine(getFunctionNumber())
      + "_" + Twine(CPID));
 }
 
@@ -2032,8 +2031,9 @@ MCSymbol *AsmPrinter::GetJTISymbol(unsigned JTID, bool isLinkerPrivate) const {
 /// GetJTSetSymbol - Return the symbol for the specified jump table .set
 /// FIXME: privatize to AsmPrinter.
 MCSymbol *AsmPrinter::GetJTSetSymbol(unsigned UID, unsigned MBBID) const {
+  const DataLayout *DL = TM.getDataLayout();
   return OutContext.GetOrCreateSymbol
-  (Twine(MAI->getPrivateGlobalPrefix()) + Twine(getFunctionNumber()) + "_" +
+  (Twine(DL->getPrivateGlobalPrefix()) + Twine(getFunctionNumber()) + "_" +
    Twine(UID) + "_set_" + Twine(MBBID));
 }
 

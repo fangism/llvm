@@ -558,12 +558,22 @@ static size_t TypeSizeToSizeIndex(uint32_t TypeSize) {
 }
 
 // \brief Create a constant for Str so that we can pass it to the run-time lib.
-static GlobalVariable *createPrivateGlobalForString(Module &M, StringRef Str) {
+static GlobalVariable *createPrivateGlobalForString(
+    Module &M, StringRef Str, bool AllowMerging) {
   Constant *StrConst = ConstantDataArray::getString(M.getContext(), Str);
-  GlobalVariable *GV = new GlobalVariable(M, StrConst->getType(), true,
-                            GlobalValue::InternalLinkage, StrConst,
-                            kAsanGenPrefix);
-  GV->setUnnamedAddr(true);  // Ok to merge these.
+  // For module-local strings that can be merged with another one we set the
+  // private linkage and the unnamed_addr attribute.
+  // Non-mergeable strings are made linker_private to remove them from the
+  // symbol table. "private" linkage doesn't work for Darwin, where the
+  // "L"-prefixed globals  end up in __TEXT,__const section
+  // (see http://llvm.org/bugs/show_bug.cgi?id=17976 for more info).
+  GlobalValue::LinkageTypes linkage =
+      AllowMerging ? GlobalValue::PrivateLinkage
+                   : GlobalValue::LinkerPrivateLinkage;
+  GlobalVariable *GV =
+      new GlobalVariable(M, StrConst->getType(), true,
+                         linkage, StrConst, kAsanGenPrefix);
+  if (AllowMerging) GV->setUnnamedAddr(true);
   GV->setAlignment(1);  // Strings may not be merged w/o setting align 1.
   return GV;
 }
@@ -950,11 +960,10 @@ bool AddressSanitizerModule::runOnModule(Module &M) {
 
   bool HasDynamicallyInitializedGlobals = false;
 
-  GlobalVariable *ModuleName = createPrivateGlobalForString(
-      M, M.getModuleIdentifier());
   // We shouldn't merge same module names, as this string serves as unique
   // module ID in runtime.
-  ModuleName->setUnnamedAddr(false);
+  GlobalVariable *ModuleName = createPrivateGlobalForString(
+      M, M.getModuleIdentifier(), /*AllowMerging*/false);
 
   for (size_t i = 0; i < n; i++) {
     static const uint64_t kMaxGlobalRedzone = 1 << 18;
@@ -985,7 +994,8 @@ bool AddressSanitizerModule::runOnModule(Module &M) {
         NewTy, G->getInitializer(),
         Constant::getNullValue(RightRedZoneTy), NULL);
 
-    GlobalVariable *Name = createPrivateGlobalForString(M, G->getName());
+    GlobalVariable *Name =
+        createPrivateGlobalForString(M, G->getName(), /*AllowMerging*/true);
 
     // Create a new global variable with enough space for a redzone.
     GlobalValue::LinkageTypes Linkage = G->getLinkage();
@@ -1351,27 +1361,26 @@ FunctionStackPoisoner::poisonRedZones(const ArrayRef<uint8_t> ShadowBytes,
                                       IRBuilder<> &IRB, Value *ShadowBase,
                                       bool DoPoison) {
   size_t n = ShadowBytes.size();
-  size_t LargeStoreSize = ASan.LongSize / 8;
-  size_t i;
-  for (i = 0; i + LargeStoreSize - 1 < n; i += LargeStoreSize) {
-    uint64_t Val = 0;
-    for (size_t j = 0; j < LargeStoreSize; j++) {
-      if (ASan.TD->isLittleEndian())
-        Val |= (uint64_t)ShadowBytes[i + j] << (8 * j);
-      else
-        Val = (Val << 8) | ShadowBytes[i + j];
+  size_t i = 0;
+  // We need to (un)poison n bytes of stack shadow. Poison as many as we can
+  // using 64-bit stores (if we are on 64-bit arch), then poison the rest
+  // with 32-bit stores, then with 16-byte stores, then with 8-byte stores.
+  for (size_t LargeStoreSizeInBytes = ASan.LongSize / 8;
+       LargeStoreSizeInBytes != 0; LargeStoreSizeInBytes /= 2) {
+    for (; i + LargeStoreSizeInBytes - 1 < n; i += LargeStoreSizeInBytes) {
+      uint64_t Val = 0;
+      for (size_t j = 0; j < LargeStoreSizeInBytes; j++) {
+        if (ASan.TD->isLittleEndian())
+          Val |= (uint64_t)ShadowBytes[i + j] << (8 * j);
+        else
+          Val = (Val << 8) | ShadowBytes[i + j];
+      }
+      if (!Val) continue;
+      Value *Ptr = IRB.CreateAdd(ShadowBase, ConstantInt::get(IntptrTy, i));
+      Type *StoreTy = Type::getIntNTy(*C, LargeStoreSizeInBytes * 8);
+      Value *Poison = ConstantInt::get(StoreTy, DoPoison ? Val : 0);
+      IRB.CreateStore(Poison, IRB.CreateIntToPtr(Ptr, StoreTy->getPointerTo()));
     }
-    if (!Val) continue;
-    Value *Ptr = IRB.CreateAdd(ShadowBase, ConstantInt::get(IntptrTy, i));
-    Value *Poison = ConstantInt::get(IntptrTy, DoPoison ? Val : 0);
-    IRB.CreateStore(Poison, IRB.CreateIntToPtr(Ptr, IntptrPtrTy));
-  }
-  for (; i < n; i++) {
-    uint8_t Val =  ShadowBytes[i];
-    if (!Val) continue;
-    Value *Ptr = IRB.CreateAdd(ShadowBase, ConstantInt::get(IntptrTy, i));
-    Value *Poison = ConstantInt::get(IRB.getInt8Ty(), DoPoison ? Val : 0);
-    IRB.CreateStore(Poison, IRB.CreateIntToPtr(Ptr, IRB.getInt8PtrTy()));
   }
 }
 
@@ -1494,7 +1503,8 @@ void FunctionStackPoisoner::poisonStack() {
     IRB.CreateAdd(LocalStackBase, ConstantInt::get(IntptrTy, ASan.LongSize/8)),
     IntptrPtrTy);
   GlobalVariable *StackDescriptionGlobal =
-      createPrivateGlobalForString(*F.getParent(), L.DescriptionString);
+      createPrivateGlobalForString(*F.getParent(), L.DescriptionString,
+                                   /*AllowMerging*/true);
   Value *Description = IRB.CreatePointerCast(StackDescriptionGlobal,
                                              IntptrTy);
   IRB.CreateStore(Description, BasePlus1);
@@ -1509,27 +1519,31 @@ void FunctionStackPoisoner::poisonStack() {
   Value *ShadowBase = ASan.memToShadow(LocalStackBase, IRB);
   poisonRedZones(L.ShadowBytes, IRB, ShadowBase, true);
 
-  // Unpoison the stack before all ret instructions.
+  // (Un)poison the stack before all ret instructions.
   for (size_t i = 0, n = RetVec.size(); i < n; i++) {
     Instruction *Ret = RetVec[i];
     IRBuilder<> IRBRet(Ret);
     // Mark the current frame as retired.
     IRBRet.CreateStore(ConstantInt::get(IntptrTy, kRetiredStackFrameMagic),
                        BasePlus0);
-    // Unpoison the stack.
-    poisonRedZones(L.ShadowBytes, IRBRet, ShadowBase, false);
     if (DoStackMalloc) {
       assert(StackMallocIdx >= 0);
-      // In use-after-return mode, mark the whole stack frame unaddressable.
+      // if LocalStackBase != OrigStackBase:
+      //     // In use-after-return mode, poison the whole stack frame.
+      //     if StackMallocIdx <= 4
+      //         // For small sizes inline the whole thing:
+      //         memset(ShadowBase, kAsanStackAfterReturnMagic, ShadowSize);
+      //         **SavedFlagPtr(LocalStackBase) = 0
+      //     else
+      //         __asan_stack_free_N(LocalStackBase, OrigStackBase)
+      // else
+      //     <This is not a fake stack; unpoison the redzones>
+      Value *Cmp = IRBRet.CreateICmpNE(LocalStackBase, OrigStackBase);
+      TerminatorInst *ThenTerm, *ElseTerm;
+      SplitBlockAndInsertIfThenElse(Cmp, Ret, &ThenTerm, &ElseTerm);
+
+      IRBuilder<> IRBPoison(ThenTerm);
       if (StackMallocIdx <= 4) {
-        // For small sizes inline the whole thing:
-        // if LocalStackBase != OrigStackBase:
-        //     memset(ShadowBase, kAsanStackAfterReturnMagic, ShadowSize);
-        //     **SavedFlagPtr(LocalStackBase) = 0
-        // FIXME: if LocalStackBase != OrigStackBase don't call poisonRedZones.
-        Value *Cmp = IRBRet.CreateICmpNE(LocalStackBase, OrigStackBase);
-        TerminatorInst *PoisonTerm = SplitBlockAndInsertIfThen(Cmp, Ret, false);
-        IRBuilder<> IRBPoison(PoisonTerm);
         int ClassSize = kMinStackMallocSize << StackMallocIdx;
         SetShadowToStackAfterReturnInlined(IRBPoison, ShadowBase,
                                            ClassSize >> Mapping.Scale);
@@ -1543,15 +1557,20 @@ void FunctionStackPoisoner::poisonStack() {
             IRBPoison.CreateIntToPtr(SavedFlagPtr, IRBPoison.getInt8PtrTy()));
       } else {
         // For larger frames call __asan_stack_free_*.
-        IRBRet.CreateCall3(AsanStackFreeFunc[StackMallocIdx], LocalStackBase,
-                           ConstantInt::get(IntptrTy, LocalStackSize),
-                           OrigStackBase);
+        IRBPoison.CreateCall3(AsanStackFreeFunc[StackMallocIdx], LocalStackBase,
+                              ConstantInt::get(IntptrTy, LocalStackSize),
+                              OrigStackBase);
       }
+
+      IRBuilder<> IRBElse(ElseTerm);
+      poisonRedZones(L.ShadowBytes, IRBElse, ShadowBase, false);
     } else if (HavePoisonedAllocas) {
       // If we poisoned some allocas in llvm.lifetime analysis,
       // unpoison whole stack frame now.
       assert(LocalStackBase == OrigStackBase);
       poisonAlloca(LocalStackBase, LocalStackSize, IRBRet, false);
+    } else {
+      poisonRedZones(L.ShadowBytes, IRBRet, ShadowBase, false);
     }
   }
 

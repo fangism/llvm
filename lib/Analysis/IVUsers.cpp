@@ -19,7 +19,6 @@
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Assembly/Writer.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -248,7 +247,7 @@ bool IVUsers::runOnLoop(Loop *l, LPPassManager &LPM) {
 
 void IVUsers::print(raw_ostream &OS, const Module *M) const {
   OS << "IV Users for loop ";
-  WriteAsOperand(OS, L->getHeader(), false);
+  L->getHeader()->printAsOperand(OS, false);
   if (SE->hasLoopInvariantBackedgeTakenCount(L)) {
     OS << " with backedge-taken count "
        << *SE->getBackedgeTakenCount(L);
@@ -258,13 +257,13 @@ void IVUsers::print(raw_ostream &OS, const Module *M) const {
   for (ilist<IVStrideUse>::const_iterator UI = IVUses.begin(),
        E = IVUses.end(); UI != E; ++UI) {
     OS << "  ";
-    WriteAsOperand(OS, UI->getOperandValToReplace(), false);
+    UI->getOperandValToReplace()->printAsOperand(OS, false);
     OS << " = " << *getReplacementExpr(*UI);
     for (PostIncLoopSet::const_iterator
          I = UI->PostIncLoops.begin(),
          E = UI->PostIncLoops.end(); I != E; ++I) {
       OS << " (post-inc with loop ";
-      WriteAsOperand(OS, (*I)->getHeader(), false);
+      (*I)->getHeader()->printAsOperand(OS, false);
       OS << ")";
     }
     OS << " in  ";

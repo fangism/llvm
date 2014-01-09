@@ -8,9 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Support/ErrorOr.h"
-
 #include "gtest/gtest.h"
-
 #include <memory>
 
 using namespace llvm;
@@ -27,7 +25,7 @@ TEST(ErrorOr, SimpleValue) {
 
   a = t2();
   EXPECT_FALSE(a);
-  EXPECT_EQ(errc::invalid_argument, a);
+  EXPECT_EQ(errc::invalid_argument, a.getError());
 #ifdef EXPECT_DEBUG_DEATH
   EXPECT_DEBUG_DEATH(*a, "Cannot get value when an error exists");
 #endif

@@ -366,6 +366,18 @@ added in the future:
     accessed runtime components pinned to specific hardware registers.
     At the moment only X86 supports this convention (both 32 and 64
     bit).
+"``webkit_jscc``" - WebKit's JavaScript calling convention
+    This calling convention has been implemented for `WebKit FTL JIT
+    <https://trac.webkit.org/wiki/FTLJIT>`_. It passes arguments on the
+    stack right to left (as cdecl does), and returns a value in the
+    platform's customary return register.
+"``anyregcc``" - Dynamic calling convention for code patching
+    This is a special convention that supports patching an arbitrary code
+    sequence in place of a call site. This convention forces the call
+    arguments into registers but allows them to be dynamcially
+    allocated. This can currently only be used with calls to
+    llvm.experimental.patchpoint because only this intrinsic records
+    the location of its arguments in a side table. See :doc:`StackMaps`.
 "``cc <n>``" - Numbered convention
     Any calling convention may be specified by number, allowing
     target-specific calling conventions to be used. Target specific
@@ -1129,10 +1141,9 @@ as follows:
 ``p[n]:<size>:<abi>:<pref>``
     This specifies the *size* of a pointer and its ``<abi>`` and
     ``<pref>``\erred alignments for address space ``n``. All sizes are in
-    bits. Specifying the ``<pref>`` alignment is optional. If omitted, the
-    preceding ``:`` should be omitted too. The address space, ``n`` is
-    optional, and if not specified, denotes the default address space 0.
-    The value of ``n`` must be in the range [1,2^23).
+    bits. The address space, ``n`` is optional, and if not specified,
+    denotes the default address space 0.  The value of ``n`` must be
+    in the range [1,2^23).
 ``i<size>:<abi>:<pref>``
     This specifies the alignment for an integer type of a given bit
     ``<size>``. The value of ``<size>`` must be in the range [1,2^23).
@@ -1145,18 +1156,27 @@ as follows:
     will work. 32 (float) and 64 (double) are supported on all targets; 80
     or 128 (different flavors of long double) are also supported on some
     targets.
-``a<size>:<abi>:<pref>``
-    This specifies the alignment for an aggregate type of a given bit
-    ``<size>``.
-``s<size>:<abi>:<pref>``
-    This specifies the alignment for a stack object of a given bit
-    ``<size>``.
+``a:<abi>:<pref>``
+    This specifies the alignment for an object of aggregate type.
+``m:<mangling>``
+   If prerest, specifies that llvm names are mangled in the output. The
+   options are
+   * ``e``: ELF mangling: Private symbols get a ``.L`` prefix.
+   * ``m``: Mips mangling: Private symbols get a ``$`` prefix.
+   * ``o``: Mach-O mangling: Private symbols get ``L`` prefix. Other
+    symbols get a ``_`` prefix.
+   * ``c``:  COFF prefix:  Similar to Mach-O, but stdcall and fastcall
+  functions also get a suffix based on the frame size.
 ``n<size1>:<size2>:<size3>...``
     This specifies a set of native integer widths for the target CPU in
     bits. For example, it might contain ``n32`` for 32-bit PowerPC,
     ``n32:64`` for PowerPC 64, or ``n8:16:32:64`` for X86-64. Elements of
     this set are considered to support most general arithmetic operations
     efficiently.
+
+On every specification that takes a ``<abi>:<pref>``, specifying the
+``<pref>`` alignment is optional. If omitted, the preceding ``:``
+should be omitted too and ``<pref>`` will be equal to ``<abi>``.
 
 When constructing the data layout for a given target, LLVM starts with a
 default set of specifications which are then (possibly) overridden by
@@ -8912,3 +8932,10 @@ Semantics:
 
 This intrinsic does nothing, and it's removed by optimizers and ignored
 by codegen.
+
+Stack Map Intrinsics
+--------------------
+
+LLVM provides experimental intrinsics to support runtime patching
+mechanisms commonly desired in dynamic language JITs. These intrinsics
+are described in :doc:`StackMaps`.

@@ -44,6 +44,10 @@ include "SparcInstrInfo.td"
 
 def SparcInstrInfo : InstrInfo;
 
+def SparcAsmParser : AsmParser {
+  bit ShouldEmitMatchRegisterName = 0;
+}
+
 //===----------------------------------------------------------------------===//
 // SPARC processors supported.
 //===----------------------------------------------------------------------===//
@@ -66,11 +70,6 @@ def : Proc<"ultrasparc3",     [FeatureV9, FeatureV8Deprecated]>;
 def : Proc<"ultrasparc3-vis", [FeatureV9, FeatureV8Deprecated, FeatureVIS]>;
 
 
-def SparcAsmWriter : AsmWriter {
-  string AsmWriterClassName  = "AsmPrinter";
-  bit isMCAsmWriter = 0;
-}
-
 //===----------------------------------------------------------------------===//
 // Declare the target which we are implementing
 //===----------------------------------------------------------------------===//
@@ -78,6 +77,5 @@ def SparcAsmWriter : AsmWriter {
 def Sparc : Target {
   // Pull in Instruction Info:
   let InstructionSet = SparcInstrInfo;
-
-  let AssemblyWriters = [SparcAsmWriter];
+  let AssemblyParsers  = [SparcAsmParser];
 }

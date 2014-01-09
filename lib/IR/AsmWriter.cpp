@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This library implements the functionality defined in llvm/Assembly/Writer.h
+// This library implements the functionality defined in llvm/IR/Writer.h
 //
 // Note that these routines must be extremely tolerant of various errors in the
 // LLVM code, because it can be used for debugging transformations.
@@ -15,15 +15,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "AsmWriter.h"
-
-#include "llvm/Assembly/Writer.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Assembly/AssemblyAnnotationWriter.h"
-#include "llvm/Assembly/PrintModulePass.h"
 #include "llvm/DebugInfo.h"
+#include "llvm/IR/AssemblyAnnotationWriter.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -32,6 +29,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/PrintModulePass.h"
 #include "llvm/IR/TypeFinder.h"
 #include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/Support/CFG.h"
@@ -40,7 +38,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/MathExtras.h"
-
 #include <algorithm>
 #include <cctype>
 using namespace llvm;
@@ -677,8 +674,6 @@ static void WriteAsOperandInternal(raw_ostream &Out, const Value *V,
                                    SlotTracker *Machine,
                                    const Module *Context);
 
-
-
 static const char *getPredicateText(unsigned predicate) {
   const char * pred = "unknown";
   switch (predicate) {
@@ -1065,11 +1060,8 @@ static void WriteMDNodeBodyInternal(raw_ostream &Out, const MDNode *Node,
   Out << "}";
 }
 
-
-/// WriteAsOperand - Write the name of the specified value out to the specified
-/// ostream.  This can be useful when you just want to print int %reg126, not
-/// the whole instruction that generated it.
-///
+// Full implementation of printing a Value as an operand with support for
+// TypePrinting, etc.
 static void WriteAsOperandInternal(raw_ostream &Out, const Value *V,
                                    TypePrinting *TypePrinter,
                                    SlotTracker *Machine,
@@ -1174,31 +1166,6 @@ static void WriteAsOperandInternal(raw_ostream &Out, const Value *V,
     Out << Prefix << Slot;
   else
     Out << "<badref>";
-}
-
-void WriteAsOperand(raw_ostream &Out, const Value *V,
-                    bool PrintType, const Module *Context) {
-
-  // Fast path: Don't construct and populate a TypePrinting object if we
-  // won't be needing any types printed.
-  if (!PrintType &&
-      ((!isa<Constant>(V) && !isa<MDNode>(V)) ||
-       V->hasName() || isa<GlobalValue>(V))) {
-    WriteAsOperandInternal(Out, V, 0, 0, Context);
-    return;
-  }
-
-  if (Context == 0) Context = getModuleFromVal(V);
-
-  TypePrinting TypePrinter;
-  if (Context)
-    TypePrinter.incorporateTypes(*Context);
-  if (PrintType) {
-    TypePrinter.print(V->getType(), Out);
-    Out << ' ';
-  }
-
-  WriteAsOperandInternal(Out, V, &TypePrinter, 0, Context);
 }
 
 void AssemblyWriter::init() {
@@ -2195,12 +2162,36 @@ void Value::print(raw_ostream &ROS, AssemblyAnnotationWriter *AAW) const {
     WriteConstantInternal(OS, C, TypePrinter, 0, 0);
   } else if (isa<InlineAsm>(this) || isa<MDString>(this) ||
              isa<Argument>(this)) {
-    WriteAsOperand(OS, this, true, 0);
+    this->printAsOperand(OS);
   } else {
     // Otherwise we don't know what it is. Call the virtual function to
     // allow a subclass to print itself.
     printCustom(OS);
   }
+}
+
+void Value::printAsOperand(raw_ostream &O, bool PrintType, const Module *M) const {
+  // Fast path: Don't construct and populate a TypePrinting object if we
+  // won't be needing any types printed.
+  if (!PrintType &&
+      ((!isa<Constant>(this) && !isa<MDNode>(this)) ||
+       hasName() || isa<GlobalValue>(this))) {
+    WriteAsOperandInternal(O, this, 0, 0, M);
+    return;
+  }
+
+  if (!M)
+    M = getModuleFromVal(this);
+
+  TypePrinting TypePrinter;
+  if (M)
+    TypePrinter.incorporateTypes(*M);
+  if (PrintType) {
+    TypePrinter.print(getType(), O);
+    O << ' ';
+  }
+
+  WriteAsOperandInternal(O, this, &TypePrinter, 0, M);
 }
 
 // Value::printCustom - subclasses should override this to implement printing.

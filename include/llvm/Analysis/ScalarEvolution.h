@@ -784,6 +784,13 @@ namespace llvm {
     /// disconnect it from a def-use chain linking it to a loop.
     void forgetValue(Value *V);
 
+    /// \brief Called when the client has changed the disposition of values in
+    /// this loop.
+    ///
+    /// We don't have a way to invalidate per-loop dispositions. Clear and
+    /// recompute is simpler.
+    void forgetLoopDispositions(const Loop *L) { LoopDispositions.clear(); }
+
     /// GetMinTrailingZeros - Determine the minimum number of zero bits that S
     /// is guaranteed to end in (at every loop iteration).  It is, at the same
     /// time, the minimum number of times S is divisible by 2.  For example,
@@ -880,13 +887,13 @@ namespace llvm {
     const SCEV *computeBECount(const SCEV *Delta, const SCEV *Stride,
                                bool Equality);
 
-    /// Verify if an linear IV with positive stride can overflow when in a 
+    /// Verify if an linear IV with positive stride can overflow when in a
     /// less-than comparison, knowing the invariant term of the comparison,
     /// the stride and the knowledge of NSW/NUW flags on the recurrence.
     bool doesIVOverflowOnLT(const SCEV *RHS, const SCEV *Stride,
                             bool IsSigned, bool NoWrap);
 
-    /// Verify if an linear IV with negative stride can overflow when in a 
+    /// Verify if an linear IV with negative stride can overflow when in a
     /// greater-than comparison, knowing the invariant term of the comparison,
     /// the stride and the knowledge of NSW/NUW flags on the recurrence.
     bool doesIVOverflowOnGT(const SCEV *RHS, const SCEV *Stride,

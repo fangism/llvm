@@ -29,8 +29,8 @@
 #include "llvm/MC/MCTargetAsmParser.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Host.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Host.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/SourceMgr.h"
@@ -44,7 +44,7 @@ using namespace llvm;
 LTOModule::LTOModule(llvm::Module *m, llvm::TargetMachine *t)
   : _module(m), _target(t),
     _context(_target->getMCAsmInfo(), _target->getRegisterInfo(), &ObjFileInfo),
-    _mangler(t) {
+    _mangler(t->getDataLayout()) {
   ObjFileInfo.InitMCObjectFileInfo(t->getTargetTriple(),
                                    t->getRelocationModel(), t->getCodeModel(),
                                    _context);

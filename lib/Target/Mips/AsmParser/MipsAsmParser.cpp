@@ -10,6 +10,7 @@
 #include "MCTargetDesc/MipsMCTargetDesc.h"
 #include "MipsRegisterInfo.h"
 #include "MipsTargetStreamer.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
@@ -20,9 +21,8 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCTargetAsmParser.h"
-#include "llvm/Support/TargetRegistry.h"
-#include "llvm/ADT/APInt.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/TargetRegistry.h"
 
 using namespace llvm;
 
@@ -196,6 +196,7 @@ class MipsAsmParser : public MCTargetAsmParser {
   bool parseDirectiveSet();
   bool parseDirectiveMipsHackStocg();
   bool parseDirectiveMipsHackELFFlags();
+  bool parseDirectiveOption();
 
   bool parseSetAtDirective();
   bool parseSetNoAtDirective();
@@ -2468,6 +2469,35 @@ bool MipsAsmParser::parseDirectiveGpWord() {
   return false;
 }
 
+bool MipsAsmParser::parseDirectiveOption() {
+  // Get the option token.
+  AsmToken Tok = Parser.getTok();
+  // At the moment only identifiers are supported.
+  if (Tok.isNot(AsmToken::Identifier)) {
+    Error(Parser.getTok().getLoc(), "unexpected token in .option directive");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+
+  StringRef Option = Tok.getIdentifier();
+
+  if (Option == "pic0") {
+    getTargetStreamer().emitDirectiveOptionPic0();
+    Parser.Lex();
+    if (Parser.getTok().isNot(AsmToken::EndOfStatement)) {
+      Error(Parser.getTok().getLoc(),
+            "unexpected token in .option pic0 directive");
+      Parser.eatToEndOfStatement();
+    }
+    return false;
+  }
+
+  // Unknown option.
+  Warning(Parser.getTok().getLoc(), "unknown option in .option directive");
+  Parser.eatToEndOfStatement();
+  return false;
+}
+
 bool MipsAsmParser::ParseDirective(AsmToken DirectiveID) {
 
   StringRef IDVal = DirectiveID.getString();
@@ -2522,6 +2552,19 @@ bool MipsAsmParser::ParseDirective(AsmToken DirectiveID) {
 
   if (IDVal == ".mips_hack_elf_flags")
     return parseDirectiveMipsHackELFFlags();
+
+  if (IDVal == ".option")
+    return parseDirectiveOption();
+
+  if (IDVal == ".abicalls") {
+    getTargetStreamer().emitDirectiveAbiCalls();
+    if (Parser.getTok().isNot(AsmToken::EndOfStatement)) {
+      Error(Parser.getTok().getLoc(), "unexpected token in directive");
+      // Clear line
+      Parser.eatToEndOfStatement();
+    }
+    return false;
+  }
 
   return true;
 }

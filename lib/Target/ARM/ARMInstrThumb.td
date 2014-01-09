@@ -300,6 +300,8 @@ def tBKPT : T1I<(outs), (ins imm0_255:$val), NoItinerary, "bkpt\t$val",
   bits<8> val;
   let Inst{7-0} = val;
 }
+// default immediate for breakpoint mnemonic
+def : InstAlias<"bkpt", (tBKPT 0)>, Requires<[IsThumb]>;
 
 def tHLT : T1I<(outs), (ins imm0_63:$val), NoItinerary, "hlt\t$val",
                 []>, T1Encoding<0b101110>, Requires<[IsThumb, HasV8]> {
@@ -543,15 +545,15 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in {
                      (tBX GPR:$dst, (ops 14, zero_reg))>,
                      Requires<[IsThumb]>, Sched<[WriteBr]>;
   }
-  // tTAILJMPd: IOS version uses a Thumb2 branch (no Thumb1 tail calls
-  // on IOS), so it's in ARMInstrThumb2.td.
-  // Non-IOS version:
+  // tTAILJMPd: MachO version uses a Thumb2 branch (no Thumb1 tail calls
+  // on MachO), so it's in ARMInstrThumb2.td.
+  // Non-MachO version:
   let Uses = [SP] in {
     def tTAILJMPdND : tPseudoExpand<(outs),
                    (ins t_brtarget:$dst, pred:$p),
                    4, IIC_Br, [],
                    (tB t_brtarget:$dst, pred:$p)>,
-                 Requires<[IsThumb, IsNotIOS]>, Sched<[WriteBr]>;
+                 Requires<[IsThumb, IsNotMachO]>, Sched<[WriteBr]>;
   }
 }
 

@@ -41,9 +41,7 @@ MCAsmInfo::MCAsmInfo() {
   CommentString = "#";
   LabelSuffix = ":";
   DebugLabelSuffix = ":";
-  GlobalPrefix = '\0';
   PrivateGlobalPrefix = "L";
-  LinkerPrivateGlobalPrefix = "";
   InlineAsmStart = "APP";
   InlineAsmEnd = "NO_APP";
   Code16Directive = ".code16";
@@ -86,8 +84,8 @@ MCAsmInfo::MCAsmInfo() {
   SupportsDebugInformation = false;
   ExceptionsType = ExceptionHandling::None;
   DwarfUsesRelocationsAcrossSections = true;
+  DwarfFDESymbolsUseAbsDiff = false;
   DwarfRegNumForCFI = false;
-  HasMicrosoftFastStdCallMangling = false;
   NeedsDwarfSectionOffsetDirective = false;
   UseParensForSymbolVariant = false;
 }

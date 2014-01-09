@@ -18,6 +18,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
 #include "llvm/CodeGen/StackMaps.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -27,7 +28,6 @@
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/Target/Mangler.h"
 using namespace llvm;
 
 namespace {
@@ -70,6 +70,7 @@ MachineModuleInfoMachO &X86MCInstLower::getMachOMMI() const {
 /// operand to an MCSymbol.
 MCSymbol *X86MCInstLower::
 GetSymbolFromOperand(const MachineOperand &MO) const {
+  const DataLayout *DL = TM.getDataLayout();
   assert((MO.isGlobal() || MO.isSymbol() || MO.isMBB()) && "Isn't a symbol reference");
 
   SmallString<128> Name;
@@ -91,7 +92,7 @@ GetSymbolFromOperand(const MachineOperand &MO) const {
   }
 
   if (!Suffix.empty())
-    Name += MAI.getPrivateGlobalPrefix();
+    Name += DL->getPrivateGlobalPrefix();
 
   unsigned PrefixLen = Name.size();
 
@@ -232,13 +233,6 @@ MCOperand X86MCInstLower::LowerSymbolOperand(const MachineOperand &MO,
 }
 
 
-/// LowerUnaryToTwoAddr - R = setb   -> R = sbb R, R
-static void LowerUnaryToTwoAddr(MCInst &OutMI, unsigned NewOpc) {
-  OutMI.setOpcode(NewOpc);
-  OutMI.addOperand(OutMI.getOperand(0));
-  OutMI.addOperand(OutMI.getOperand(0));
-}
-
 /// \brief Simplify FOO $imm, %{al,ax,eax,rax} to FOO $imm, for instruction with
 /// a short fixed-register form.
 static void SimplifyShortImmForm(MCInst &Inst, unsigned Opcode) {
@@ -340,6 +334,11 @@ static void SimplifyShortMoveForm(X86AsmPrinter &Printer, MCInst &Inst,
   Inst.addOperand(Saved);
 }
 
+static unsigned getRetOpcode(const X86Subtarget &Subtarget)
+{
+	return Subtarget.is64Bit() ? X86::RETQ : X86::RETL;
+}
+
 void X86MCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
   OutMI.setOpcode(MI->getOpcode());
 
@@ -395,7 +394,6 @@ ReSimplify:
     assert(OutMI.getOperand(1+X86::AddrSegmentReg).getReg() == 0 &&
            "LEA has segment specified!");
     break;
-  case X86::MOV32r0:      LowerUnaryToTwoAddr(OutMI, X86::XOR32rr); break;
 
   case X86::MOV32ri64:
     OutMI.setOpcode(X86::MOV32ri);
@@ -469,7 +467,7 @@ ReSimplify:
   case X86::EH_RETURN:
   case X86::EH_RETURN64: {
     OutMI = MCInst();
-    OutMI.setOpcode(X86::RET);
+    OutMI.setOpcode(getRetOpcode(AsmPrinter.getSubtarget()));
     break;
   }
 
@@ -873,12 +871,12 @@ void X86AsmPrinter::EmitInstruction(const MachineInstr *MI) {
     return LowerPATCHPOINT(OutStreamer, SM, *MI, Subtarget->is64Bit());
 
   case X86::MORESTACK_RET:
-    OutStreamer.EmitInstruction(MCInstBuilder(X86::RET));
+    OutStreamer.EmitInstruction(MCInstBuilder(getRetOpcode(*Subtarget)));
     return;
 
   case X86::MORESTACK_RET_RESTORE_R10:
     // Return, then restore R10.
-    OutStreamer.EmitInstruction(MCInstBuilder(X86::RET));
+    OutStreamer.EmitInstruction(MCInstBuilder(getRetOpcode(*Subtarget)));
     OutStreamer.EmitInstruction(MCInstBuilder(X86::MOV64rr)
       .addReg(X86::R10)
       .addReg(X86::RAX));

@@ -15,7 +15,6 @@
 #define DEBUG_TYPE "asm-printer"
 #include "ARMAsmPrinter.h"
 #include "ARM.h"
-#include "ARMBuildAttrs.h"
 #include "ARMConstantPoolValue.h"
 #include "ARMFPUName.h"
 #include "ARMMachineFunctionInfo.h"
@@ -23,16 +22,17 @@
 #include "ARMTargetObjectFile.h"
 #include "InstPrinter/ARMInstPrinter.h"
 #include "MCTargetDesc/ARMAddressingModes.h"
+#include "MCTargetDesc/ARMBuildAttrs.h"
 #include "MCTargetDesc/ARMMCExpr.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallString.h"
-#include "llvm/Assembly/Writer.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -51,7 +51,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Target/Mangler.h"
 #include "llvm/Target/TargetMachine.h"
 #include <cctype>
 using namespace llvm;
@@ -146,9 +145,9 @@ void ARMAsmPrinter::EmitXXStructor(const Constant *CV) {
   assert(GV && "C++ constructor pointer was not a GlobalValue!");
 
   const MCExpr *E = MCSymbolRefExpr::Create(getSymbol(GV),
-                                            (Subtarget->isTargetDarwin()
-                                             ? MCSymbolRefExpr::VK_None
-                                             : MCSymbolRefExpr::VK_ARM_TARGET1),
+                                            (Subtarget->isTargetELF()
+                                             ? MCSymbolRefExpr::VK_ARM_TARGET1
+                                             : MCSymbolRefExpr::VK_None),
                                             OutContext);
   
   OutStreamer.EmitValue(E, Size);
@@ -223,16 +222,18 @@ void ARMAsmPrinter::printOperand(const MachineInstr *MI, int OpNum,
 
 MCSymbol *ARMAsmPrinter::
 GetARMJTIPICJumpTableLabel2(unsigned uid, unsigned uid2) const {
+  const DataLayout *DL = TM.getDataLayout();
   SmallString<60> Name;
-  raw_svector_ostream(Name) << MAI->getPrivateGlobalPrefix() << "JTI"
+  raw_svector_ostream(Name) << DL->getPrivateGlobalPrefix() << "JTI"
     << getFunctionNumber() << '_' << uid << '_' << uid2;
   return OutContext.GetOrCreateSymbol(Name.str());
 }
 
 
 MCSymbol *ARMAsmPrinter::GetARMSJLJEHLabel() const {
+  const DataLayout *DL = TM.getDataLayout();
   SmallString<60> Name;
-  raw_svector_ostream(Name) << MAI->getPrivateGlobalPrefix() << "SJLJEH"
+  raw_svector_ostream(Name) << DL->getPrivateGlobalPrefix() << "SJLJEH"
     << getFunctionNumber();
   return OutContext.GetOrCreateSymbol(Name.str());
 }
@@ -438,7 +439,7 @@ bool ARMAsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI,
 }
 
 void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
-  if (Subtarget->isTargetDarwin()) {
+  if (Subtarget->isTargetMachO()) {
     Reloc::Model RelocM = TM.getRelocationModel();
     if (RelocM == Reloc::PIC_ || RelocM == Reloc::DynamicNoPIC) {
       // Declare all the text sections up front (before the DWARF sections
@@ -488,6 +489,19 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
                                    SectionKind::getText());
       OutStreamer.SwitchSection(StaticInitSect);
     }
+
+    // Compiling with debug info should not affect the code
+    // generation!  Since some of the data sections are first switched
+    // to only in ASMPrinter::doFinalization(), the debug info
+    // sections would come before the data sections in the object
+    // file.  This is problematic, since PC-relative loads have to use
+    // different instruction sequences in order to reach global data
+    // in the same object file.
+    OutStreamer.SwitchSection(getObjFileLowering().getCStringSection());
+    OutStreamer.SwitchSection(getObjFileLowering().getDataSection());
+    OutStreamer.SwitchSection(getObjFileLowering().getDataCommonSection());
+    OutStreamer.SwitchSection(getObjFileLowering().getDataBSSSection());
+    OutStreamer.SwitchSection(getObjFileLowering().getNonLazySymbolPointerSection());
   }
 
   // Use unified assembler syntax.
@@ -500,7 +514,7 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
 
 
 void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
-  if (Subtarget->isTargetDarwin()) {
+  if (Subtarget->isTargetMachO()) {
     // All darwin targets use mach-o.
     const TargetLoweringObjectFileMachO &TLOFMacho =
       static_cast<const TargetLoweringObjectFileMachO &>(getObjFileLowering());
@@ -768,7 +782,7 @@ getModifierVariantKind(ARMCP::ARMCPModifier Modifier) {
 
 MCSymbol *ARMAsmPrinter::GetARMGVSymbol(const GlobalValue *GV,
                                         unsigned char TargetFlags) {
-  bool isIndirect = Subtarget->isTargetDarwin() &&
+  bool isIndirect = Subtarget->isTargetMachO() &&
     (TargetFlags & ARMII::MO_NONLAZY) &&
     Subtarget->GVIsIndirectSymbol(GV, TM.getRelocationModel());
   if (!isIndirect)
@@ -789,6 +803,7 @@ MCSymbol *ARMAsmPrinter::GetARMGVSymbol(const GlobalValue *GV,
 
 void ARMAsmPrinter::
 EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
+  const DataLayout *DL = TM.getDataLayout();
   int Size = TM.getDataLayout()->getTypeAllocSize(MCPV->getType());
 
   ARMConstantPoolValue *ACPV = static_cast<ARMConstantPoolValue*>(MCPV);
@@ -797,7 +812,7 @@ EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
   if (ACPV->isLSDA()) {
     SmallString<128> Str;
     raw_svector_ostream OS(Str);
-    OS << MAI->getPrivateGlobalPrefix() << "_LSDA_" << getFunctionNumber();
+    OS << DL->getPrivateGlobalPrefix() << "_LSDA_" << getFunctionNumber();
     MCSym = OutContext.GetOrCreateSymbol(OS.str());
   } else if (ACPV->isBlockAddress()) {
     const BlockAddress *BA =
@@ -808,7 +823,7 @@ EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
 
     // On Darwin, const-pool entries may get the "FOO$non_lazy_ptr" mangling, so
     // flag the global as MO_NONLAZY.
-    unsigned char TF = Subtarget->isTargetDarwin() ? ARMII::MO_NONLAZY : 0;
+    unsigned char TF = Subtarget->isTargetMachO() ? ARMII::MO_NONLAZY : 0;
     MCSym = GetARMGVSymbol(GV, TF);
   } else if (ACPV->isMachineBasicBlock()) {
     const MachineBasicBlock *MBB = cast<ARMConstantPoolMBB>(ACPV)->getMBB();
@@ -825,7 +840,7 @@ EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
                             OutContext);
 
   if (ACPV->getPCAdjustment()) {
-    MCSymbol *PCLabel = getPICLabel(MAI->getPrivateGlobalPrefix(),
+    MCSymbol *PCLabel = getPICLabel(DL->getPrivateGlobalPrefix(),
                                     getFunctionNumber(),
                                     ACPV->getLabelId(),
                                     OutContext);
@@ -1104,6 +1119,8 @@ extern cl::opt<bool> EnableARMEHABI;
 #include "ARMGenMCPseudoLowering.inc"
 
 void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
+  const DataLayout *DL = TM.getDataLayout();
+
   // If we just ended a constant pool, mark it as such.
   if (InConstantPool && MI->getOpcode() != ARM::CONSTPOOL_ENTRY) {
     OutStreamer.EmitDataRegion(MCDR_DataRegionEnd);
@@ -1241,7 +1258,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     MCSymbol *GVSym = GetARMGVSymbol(GV, TF);
     const MCExpr *GVSymExpr = MCSymbolRefExpr::Create(GVSym, OutContext);
 
-    MCSymbol *LabelSym = getPICLabel(MAI->getPrivateGlobalPrefix(),
+    MCSymbol *LabelSym = getPICLabel(DL->getPrivateGlobalPrefix(),
                                      getFunctionNumber(),
                                      MI->getOperand(2).getImm(), OutContext);
     const MCExpr *LabelSymExpr= MCSymbolRefExpr::Create(LabelSym, OutContext);
@@ -1274,7 +1291,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     MCSymbol *GVSym = GetARMGVSymbol(GV, TF);
     const MCExpr *GVSymExpr = MCSymbolRefExpr::Create(GVSym, OutContext);
 
-    MCSymbol *LabelSym = getPICLabel(MAI->getPrivateGlobalPrefix(),
+    MCSymbol *LabelSym = getPICLabel(DL->getPrivateGlobalPrefix(),
                                      getFunctionNumber(),
                                      MI->getOperand(3).getImm(), OutContext);
     const MCExpr *LabelSymExpr= MCSymbolRefExpr::Create(LabelSym, OutContext);
@@ -1300,7 +1317,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     // This adds the address of LPC0 to r0.
 
     // Emit the label.
-    OutStreamer.EmitLabel(getPICLabel(MAI->getPrivateGlobalPrefix(),
+    OutStreamer.EmitLabel(getPICLabel(DL->getPrivateGlobalPrefix(),
                           getFunctionNumber(), MI->getOperand(2).getImm(),
                           OutContext));
 
@@ -1321,7 +1338,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     // This adds the address of LPC0 to r0.
 
     // Emit the label.
-    OutStreamer.EmitLabel(getPICLabel(MAI->getPrivateGlobalPrefix(),
+    OutStreamer.EmitLabel(getPICLabel(DL->getPrivateGlobalPrefix(),
                           getFunctionNumber(), MI->getOperand(2).getImm(),
                           OutContext));
 
@@ -1352,7 +1369,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     // a PC-relative address at the ldr instruction.
 
     // Emit the label.
-    OutStreamer.EmitLabel(getPICLabel(MAI->getPrivateGlobalPrefix(),
+    OutStreamer.EmitLabel(getPICLabel(DL->getPrivateGlobalPrefix(),
                           getFunctionNumber(), MI->getOperand(2).getImm(),
                           OutContext));
 
@@ -1518,7 +1535,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   case ARM::TRAP: {
     // Non-Darwin binutils don't yet support the "trap" mnemonic.
     // FIXME: Remove this special case when they do.
-    if (!Subtarget->isTargetDarwin()) {
+    if (!Subtarget->isTargetMachO()) {
       //.long 0xe7ffdefe @ trap
       uint32_t Val = 0xe7ffdefeUL;
       OutStreamer.AddComment("trap");
@@ -1537,7 +1554,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   case ARM::tTRAP: {
     // Non-Darwin binutils don't yet support the "trap" mnemonic.
     // FIXME: Remove this special case when they do.
-    if (!Subtarget->isTargetDarwin()) {
+    if (!Subtarget->isTargetMachO()) {
       //.short 57086 @ trap
       uint16_t Val = 0xdefe;
       OutStreamer.AddComment("trap");

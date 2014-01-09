@@ -28,7 +28,6 @@ def MRM6r  : Format<22>; def MRM7r  : Format<23>;
 def MRM0m  : Format<24>; def MRM1m  : Format<25>; def MRM2m  : Format<26>;
 def MRM3m  : Format<27>; def MRM4m  : Format<28>; def MRM5m  : Format<29>;
 def MRM6m  : Format<30>; def MRM7m  : Format<31>;
-def MRMInitReg : Format<32>;
 def MRM_C1 : Format<33>;
 def MRM_C2 : Format<34>;
 def MRM_C3 : Format<35>;
@@ -113,11 +112,10 @@ def CD8VT8 : CD8VForm<7>;  // v := 8
 // Prefix byte classes which are used to indicate to the ad-hoc machine code
 // emitter that various prefix bytes are required.
 class OpSize { bit hasOpSizePrefix = 1; }
+class OpSize16 { bit hasOpSize16Prefix = 1; }
 class AdSize { bit hasAdSizePrefix = 1; }
 class REX_W  { bit hasREX_WPrefix = 1; }
 class LOCK   { bit hasLockPrefix = 1; }
-class SegFS  { bits<2> SegOvrBits = 1; }
-class SegGS  { bits<2> SegOvrBits = 2; }
 class TB     { bits<5> Prefix = 1; }
 class REP    { bits<5> Prefix = 2; }
 class D8     { bits<5> Prefix = 3; }
@@ -187,14 +185,18 @@ class X86Inst<bits<8> opcod, Format f, ImmType i, dag outs, dag ins,
   //
   // Attributes specific to X86 instructions...
   //
+  bit ForceDisassemble = 0; // Force instruction to disassemble even though it's
+                            // isCodeGenonly. Needed to hide an ambiguous
+                            // AsmString from the parser, but still disassemble.
+
   bit hasOpSizePrefix = 0;  // Does this inst have a 0x66 prefix?
+  bit hasOpSize16Prefix = 0;// Does this inst have a 0x66 prefix in 16-bit mode?
   bit hasAdSizePrefix = 0;  // Does this inst have a 0x67 prefix?
 
   bits<5> Prefix = 0;       // Which prefix byte does this inst have?
   bit hasREX_WPrefix  = 0;  // Does this inst require the REX.W prefix?
   FPFormat FPForm = NotFP;  // What flavor of FP instruction is this?
   bit hasLockPrefix = 0;    // Does this inst have a 0xF0 prefix?
-  bits<2> SegOvrBits = 0;   // Segment override prefix.
   Domain ExeDomain = d;
   bit hasVEXPrefix = 0;     // Does this inst require a VEX prefix?
   bit hasVEX_WPrefix = 0;   // Does this inst set the VEX_W field?
@@ -219,32 +221,32 @@ class X86Inst<bits<8> opcod, Format f, ImmType i, dag outs, dag ins,
   // TSFlags layout should be kept in sync with X86InstrInfo.h.
   let TSFlags{5-0}   = FormBits;
   let TSFlags{6}     = hasOpSizePrefix;
-  let TSFlags{7}     = hasAdSizePrefix;
-  let TSFlags{12-8}  = Prefix;
-  let TSFlags{13}    = hasREX_WPrefix;
-  let TSFlags{16-14} = ImmT.Value;
-  let TSFlags{19-17} = FPForm.Value;
-  let TSFlags{20}    = hasLockPrefix;
-  let TSFlags{22-21} = SegOvrBits;
-  let TSFlags{24-23} = ExeDomain.Value;
-  let TSFlags{32-25} = Opcode;
-  let TSFlags{33}    = hasVEXPrefix;
-  let TSFlags{34}    = hasVEX_WPrefix;
-  let TSFlags{35}    = hasVEX_4VPrefix;
-  let TSFlags{36}    = hasVEX_4VOp3Prefix;
-  let TSFlags{37}    = hasVEX_i8ImmReg;
-  let TSFlags{38}    = hasVEX_L;
-  let TSFlags{39}    = ignoresVEX_L;
-  let TSFlags{40}    = hasEVEXPrefix;
-  let TSFlags{41}    = hasEVEX_K;
-  let TSFlags{42}    = hasEVEX_Z;
-  let TSFlags{43}    = hasEVEX_L2;
-  let TSFlags{44}    = hasEVEX_B;
-  let TSFlags{46-45} = EVEX_CD8E;
-  let TSFlags{49-47} = EVEX_CD8V;
-  let TSFlags{50}    = has3DNow0F0FOpcode;
-  let TSFlags{51}    = hasMemOp4Prefix;
-  let TSFlags{52}    = hasXOP_Prefix;
+  let TSFlags{7}     = hasOpSize16Prefix;
+  let TSFlags{8}     = hasAdSizePrefix;
+  let TSFlags{13-9}  = Prefix;
+  let TSFlags{14}    = hasREX_WPrefix;
+  let TSFlags{17-15} = ImmT.Value;
+  let TSFlags{20-18} = FPForm.Value;
+  let TSFlags{21}    = hasLockPrefix;
+  let TSFlags{23-22} = ExeDomain.Value;
+  let TSFlags{31-24} = Opcode;
+  let TSFlags{32}    = hasVEXPrefix;
+  let TSFlags{33}    = hasVEX_WPrefix;
+  let TSFlags{34}    = hasVEX_4VPrefix;
+  let TSFlags{35}    = hasVEX_4VOp3Prefix;
+  let TSFlags{36}    = hasVEX_i8ImmReg;
+  let TSFlags{37}    = hasVEX_L;
+  let TSFlags{38}    = ignoresVEX_L;
+  let TSFlags{39}    = hasEVEXPrefix;
+  let TSFlags{40}    = hasEVEX_K;
+  let TSFlags{41}    = hasEVEX_Z;
+  let TSFlags{42}    = hasEVEX_L2;
+  let TSFlags{43}    = hasEVEX_B;
+  let TSFlags{45-44} = EVEX_CD8E;
+  let TSFlags{48-46} = EVEX_CD8V;
+  let TSFlags{49}    = has3DNow0F0FOpcode;
+  let TSFlags{50}    = hasMemOp4Prefix;
+  let TSFlags{51}    = hasXOP_Prefix;
 }
 
 class PseudoI<dag oops, dag iops, list<dag> pattern>

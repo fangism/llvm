@@ -429,7 +429,8 @@ class DwarfDebug : public AsmPrinterHandler {
   MCSymbol *DwarfStrSectionSym, *TextSectionSym, *DwarfDebugRangeSectionSym;
   MCSymbol *DwarfDebugLocSectionSym, *DwarfLineSectionSym, *DwarfAddrSectionSym;
   MCSymbol *FunctionBeginSym, *FunctionEndSym;
-  MCSymbol *DwarfAbbrevDWOSectionSym, *DwarfStrDWOSectionSym;
+  MCSymbol *DwarfInfoDWOSectionSym, *DwarfAbbrevDWOSectionSym;
+  MCSymbol *DwarfStrDWOSectionSym;
   MCSymbol *DwarfGnuPubNamesSectionSym, *DwarfGnuPubTypesSectionSym;
 
   // As an optimization, there is no need to emit an entry in the directory
@@ -588,6 +589,9 @@ class DwarfDebug : public AsmPrinterHandler {
 
   /// DWARF 5 Experimental Split Dwarf Emitters
 
+  /// \brief Initialize common features of skeleton units.
+  void initSkeletonUnit(const DwarfUnit *U, DIE *Die, DwarfUnit *NewU);
+
   /// \brief Construct the split debug info compile unit for the debug info
   /// section.
   DwarfCompileUnit *constructSkeletonCU(const DwarfCompileUnit *CU);
@@ -694,7 +698,8 @@ public:
 
   /// \brief Add a DIE to the set of types that we're going to pull into
   /// type units.
-  void addDwarfTypeUnitType(uint16_t Language, DIE *Die, DICompositeType CTy);
+  void addDwarfTypeUnitType(DICompileUnit CUNode, StringRef Identifier,
+                            DIE *Die, DICompositeType CTy);
 
   /// \brief Add a label so that arange data can be generated for it.
   void addArangeLabel(SymbolCU SCU) { ArangeLabels.push_back(SCU); }

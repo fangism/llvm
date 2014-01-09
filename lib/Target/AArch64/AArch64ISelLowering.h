@@ -18,8 +18,8 @@
 #include "Utils/AArch64BaseInfo.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/SelectionDAG.h"
-#include "llvm/Target/TargetLowering.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/Target/TargetLowering.h"
 
 namespace llvm {
 namespace AArch64ISD {
@@ -220,6 +220,8 @@ public:
                       const SmallVectorImpl<ISD::OutputArg> &Outs,
                       const SmallVectorImpl<SDValue> &OutVals,
                       SDLoc dl, SelectionDAG &DAG) const;
+
+  virtual unsigned getByValTypeAlignment(Type *Ty) const LLVM_OVERRIDE;
 
   SDValue LowerCall(CallLoweringInfo &CLI,
                     SmallVectorImpl<SDValue> &InVals) const;

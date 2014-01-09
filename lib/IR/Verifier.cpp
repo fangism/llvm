@@ -52,7 +52,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/Dominators.h"
-#include "llvm/Assembly/Writer.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
@@ -101,7 +100,7 @@ namespace {  // Anonymous namespace for class
         if (I->empty() || !I->back().isTerminator()) {
           dbgs() << "Basic Block in function '" << F.getName()
                  << "' does not have terminator!\n";
-          WriteAsOperand(dbgs(), I, true);
+          I->printAsOperand(dbgs(), true);
           dbgs() << "\n";
           Broken = true;
         }
@@ -348,7 +347,7 @@ namespace {
       if (isa<Instruction>(V)) {
         MessagesStr << *V << '\n';
       } else {
-        WriteAsOperand(MessagesStr, V, true, Mod);
+        V->printAsOperand(MessagesStr, true, Mod);
         MessagesStr << '\n';
       }
     }
@@ -550,9 +549,11 @@ void Verifier::visitGlobalAlias(GlobalAlias &GA) {
     ConstantExpr *CE = dyn_cast<ConstantExpr>(Aliasee);
     Assert1(CE &&
             (CE->getOpcode() == Instruction::BitCast ||
+             CE->getOpcode() == Instruction::AddrSpaceCast ||
              CE->getOpcode() == Instruction::GetElementPtr) &&
             isa<GlobalValue>(CE->getOperand(0)),
-            "Aliasee should be either GlobalValue or bitcast of GlobalValue",
+            "Aliasee should be either GlobalValue, bitcast or "
+             "addrspacecast of GlobalValue",
             &GA);
 
     if (CE->getOpcode() == Instruction::BitCast) {

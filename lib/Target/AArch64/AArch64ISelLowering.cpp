@@ -385,6 +385,18 @@ AArch64TargetLowering::AArch64TargetLowering(AArch64TargetMachine &TM)
           setTruncStoreAction(VT, VT1, Expand);
       }
     }
+
+    // There is no v1i64/v2i64 multiply, expand v1i64/v2i64 to GPR i64 multiply.
+    // FIXME: For a v2i64 multiply, we copy VPR to GPR and do 2 i64 multiplies,
+    // and then copy back to VPR. This solution may be optimized by Following 3
+    // NEON instructions:
+    //        pmull  v2.1q, v0.1d, v1.1d
+    //        pmull2 v3.1q, v0.2d, v1.2d
+    //        ins    v2.d[1], v3.d[0]
+    // As currently we can't verify the correctness of such assumption, we can
+    // do such optimization in the future.
+    setOperationAction(ISD::MUL, MVT::v1i64, Expand);
+    setOperationAction(ISD::MUL, MVT::v2i64, Expand);
   }
 }
 
@@ -1334,6 +1346,12 @@ AArch64TargetLowering::LowerReturn(SDValue Chain,
                      &RetOps[0], RetOps.size());
 }
 
+unsigned AArch64TargetLowering::getByValTypeAlignment(Type *Ty) const {
+  // This is a new backend. For anything more precise than this a FE should
+  // set an explicit alignment.
+  return 4;
+}
+
 SDValue
 AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
                                  SmallVectorImpl<SDValue> &InVals) const {
@@ -2112,6 +2130,9 @@ SDValue AArch64TargetLowering::LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) co
   MachineFunction &MF = DAG.getMachineFunction();
   MachineFrameInfo *MFI = MF.getFrameInfo();
   MFI->setReturnAddressIsTaken(true);
+
+  if (verifyReturnAddressArgumentIsConstant(Op, DAG))
+    return SDValue();
 
   EVT VT = Op.getValueType();
   SDLoc dl(Op);
@@ -3957,7 +3978,10 @@ bool AArch64TargetLowering::isKnownShuffleVector(SDValue Op, SelectionDAG &DAG,
   if (V1.getNode() && NumElts == V0NumElts &&
       V0NumElts == V1.getValueType().getVectorNumElements()) {
     SDValue Shuffle = DAG.getVectorShuffle(VT, DL, V0, V1, Mask);
-    Res = LowerVECTOR_SHUFFLE(Shuffle, DAG);
+    if(Shuffle.getOpcode() != ISD::VECTOR_SHUFFLE)
+      Res = Shuffle;
+    else
+      Res = LowerVECTOR_SHUFFLE(Shuffle, DAG);
     return true;
   } else
     return false;
@@ -4070,9 +4094,7 @@ AArch64TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG,
   if (ValueCounts.size() == 0)
     return DAG.getUNDEF(VT);
 
-  // Loads are better lowered with insert_vector_elt.
-  // Keep going if we are hitting this case.
-  if (isOnlyLowElement && !ISD::isNormalLoad(Value.getNode()))
+  if (isOnlyLowElement)
     return DAG.getNode(ISD::SCALAR_TO_VECTOR, DL, VT, Value);
 
   unsigned EltSize = VT.getVectorElementType().getSizeInBits();
@@ -4085,14 +4107,60 @@ AArch64TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG,
       // just use DUPLANE. We can only do this if the lane being extracted
       // is at a constant index, as the DUP from lane instructions only have
       // constant-index forms.
+      //
+      // If there is a TRUNCATE between EXTRACT_VECTOR_ELT and DUP, we can
+      // remove TRUNCATE for DUPLANE by apdating the source vector to
+      // appropriate vector type and lane index.
+      //
       // FIXME: for now we have v1i8, v1i16, v1i32 legal vector types, if they
       // are not legal any more, no need to check the type size in bits should
       // be large than 64.
-      if (Value->getOpcode() == ISD::EXTRACT_VECTOR_ELT &&
-          isa<ConstantSDNode>(Value->getOperand(1)) &&
-          Value->getOperand(0).getValueType().getSizeInBits() >= 64) {
-          N = DAG.getNode(AArch64ISD::NEON_VDUPLANE, DL, VT,
-                        Value->getOperand(0), Value->getOperand(1));
+      SDValue V = Value;
+      if (Value->getOpcode() == ISD::TRUNCATE)
+        V = Value->getOperand(0);
+      if (V->getOpcode() == ISD::EXTRACT_VECTOR_ELT &&
+          isa<ConstantSDNode>(V->getOperand(1)) &&
+          V->getOperand(0).getValueType().getSizeInBits() >= 64) {
+
+        // If the element size of source vector is larger than DUPLANE
+        // element size, we can do transformation by,
+        // 1) bitcasting source register to smaller element vector
+        // 2) mutiplying the lane index by SrcEltSize/ResEltSize
+        // For example, we can lower
+        //     "v8i16 vdup_lane(v4i32, 1)"
+        // to be
+        //     "v8i16 vdup_lane(v8i16 bitcast(v4i32), 2)".
+        SDValue SrcVec = V->getOperand(0);
+        unsigned SrcEltSize =
+            SrcVec.getValueType().getVectorElementType().getSizeInBits();
+        unsigned ResEltSize = VT.getVectorElementType().getSizeInBits();
+        if (SrcEltSize > ResEltSize) {
+          assert((SrcEltSize % ResEltSize == 0) && "Invalid element size");
+          SDValue BitCast;
+          unsigned SrcSize = SrcVec.getValueType().getSizeInBits();
+          unsigned ResSize = VT.getSizeInBits();
+
+          if (SrcSize > ResSize) {
+            assert((SrcSize % ResSize == 0) && "Invalid vector size");
+            EVT CastVT =
+                EVT::getVectorVT(*DAG.getContext(), VT.getVectorElementType(),
+                                 SrcSize / ResEltSize);
+            BitCast = DAG.getNode(ISD::BITCAST, DL, CastVT, SrcVec);
+          } else {
+            assert((SrcSize == ResSize) && "Invalid vector size of source vec");
+            BitCast = DAG.getNode(ISD::BITCAST, DL, VT, SrcVec);
+          }
+
+          unsigned LaneIdx = V->getConstantOperandVal(1);
+          SDValue Lane =
+              DAG.getConstant((SrcEltSize / ResEltSize) * LaneIdx, MVT::i64);
+          N = DAG.getNode(AArch64ISD::NEON_VDUPLANE, DL, VT, BitCast, Lane);
+        } else {
+          assert((SrcEltSize == ResEltSize) &&
+                 "Invalid element size of source vec");
+          N = DAG.getNode(AArch64ISD::NEON_VDUPLANE, DL, VT, V->getOperand(0),
+                          V->getOperand(1));
+        }
       } else
         N = DAG.getNode(AArch64ISD::NEON_VDUP, DL, VT, Value);
 

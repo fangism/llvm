@@ -58,11 +58,6 @@ static cl::opt<bool> UnknownLocations(
     cl::desc("Make an absence of debug location information explicit."),
     cl::init(false));
 
-static cl::opt<bool>
-GenerateODRHash("generate-odr-hash", cl::Hidden,
-                cl::desc("Add an ODR hash to external type DIEs."),
-                cl::init(false));
-
 static cl::opt<bool> GenerateCUHash("generate-cu-hash", cl::Hidden,
                                     cl::desc("Add the CU hash as the dwo_id."),
                                     cl::init(false));
@@ -187,8 +182,7 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
       InfoHolder(A, "info_string", DIEValueAllocator),
       SkeletonHolder(A, "skel_string", DIEValueAllocator) {
 
-  DwarfInfoSectionSym = DwarfAbbrevSectionSym = 0;
-  DwarfStrSectionSym = TextSectionSym = 0;
+  DwarfInfoSectionSym = DwarfAbbrevSectionSym = DwarfStrSectionSym = 0;
   DwarfDebugRangeSectionSym = DwarfDebugLocSectionSym = DwarfLineSectionSym = 0;
   DwarfAddrSectionSym = 0;
   DwarfAbbrevDWOSectionSym = DwarfStrDWOSectionSym = 0;
@@ -773,12 +767,6 @@ DwarfCompileUnit *DwarfDebug::constructDwarfCompileUnit(DICompileUnit DIUnit) {
                  DIUnit.getLanguage());
   NewCU->addString(Die, dwarf::DW_AT_name, FN);
 
-  // 2.17.1 requires that we use DW_AT_low_pc for a single entry point
-  // into an entity. We're using 0 (or a NULL label) for this. For
-  // split dwarf it's in the skeleton CU so omit it here.
-  if (!useSplitDwarf())
-    NewCU->addLabelAddress(Die, dwarf::DW_AT_low_pc, NULL);
-
   // Define start line table label for each Compile Unit.
   MCSymbol *LineTableStartSym =
       Asm->GetTempSymbol("line_table_start", NewCU->getUniqueID());
@@ -828,14 +816,13 @@ DwarfCompileUnit *DwarfDebug::constructDwarfCompileUnit(DICompileUnit DIUnit) {
   if (!FirstCU)
     FirstCU = NewCU;
 
-  NewCU->initSection(
-      useSplitDwarf() ? Asm->getObjFileLowering().getDwarfInfoDWOSection()
-                      : Asm->getObjFileLowering().getDwarfInfoSection(),
-      // FIXME: This is subtle (using the info section even when
-      // this CU is in the dwo section) and necessary for the
-      // current arange code - ideally it should iterate
-      // skeleton units, not full units, if it's going to reference skeletons
-      DwarfInfoSectionSym);
+  if (useSplitDwarf()) {
+    NewCU->initSection(Asm->getObjFileLowering().getDwarfInfoDWOSection(),
+                       DwarfInfoDWOSectionSym);
+    NewCU->setSkeleton(constructSkeletonCU(NewCU));
+  } else
+    NewCU->initSection(Asm->getObjFileLowering().getDwarfInfoSection(),
+                       DwarfInfoSectionSym);
 
   CUMap.insert(std::make_pair(DIUnit, NewCU));
   CUDieMap.insert(std::make_pair(Die, NewCU));
@@ -1027,41 +1014,6 @@ void DwarfDebug::collectDeadVariables() {
   }
 }
 
-// Type Signature [7.27] and ODR Hash code.
-
-/// \brief Grabs the string in whichever attribute is passed in and returns
-/// a reference to it. Returns "" if the attribute doesn't exist.
-static StringRef getDIEStringAttr(DIE *Die, unsigned Attr) {
-  DIEValue *V = Die->findAttribute(Attr);
-
-  if (DIEString *S = dyn_cast_or_null<DIEString>(V))
-    return S->getString();
-
-  return StringRef("");
-}
-
-/// Return true if the current DIE is contained within an anonymous namespace.
-static bool isContainedInAnonNamespace(DIE *Die) {
-  DIE *Parent = Die->getParent();
-
-  while (Parent) {
-    if (Parent->getTag() == dwarf::DW_TAG_namespace &&
-        getDIEStringAttr(Parent, dwarf::DW_AT_name) == "")
-      return true;
-    Parent = Parent->getParent();
-  }
-
-  return false;
-}
-
-/// Test if the current CU language is C++ and that we have
-/// a named type that is not contained in an anonymous namespace.
-static bool shouldAddODRHash(DwarfTypeUnit *CU, DIE *Die) {
-  return CU->getLanguage() == dwarf::DW_LANG_C_plus_plus &&
-         getDIEStringAttr(Die, dwarf::DW_AT_name) != "" &&
-         !isContainedInAnonNamespace(Die);
-}
-
 void DwarfDebug::finalizeModuleInfo() {
   // Collect info for variables that were optimized out.
   collectDeadVariables();
@@ -1082,7 +1034,9 @@ void DwarfDebug::finalizeModuleInfo() {
     // Add CU specific attributes if we need to add any.
     if (TheU->getUnitDie()->getTag() == dwarf::DW_TAG_compile_unit) {
       // If we're splitting the dwarf out now that we've got the entire
-      // CU then construct a skeleton CU based upon it.
+      // CU then add the dwo id to it.
+      DwarfCompileUnit *SkCU =
+          static_cast<DwarfCompileUnit *>(TheU->getSkeleton());
       if (useSplitDwarf()) {
         // This should be a unique identifier when we want to build .dwp files.
         uint64_t ID = 0;
@@ -1092,19 +1046,23 @@ void DwarfDebug::finalizeModuleInfo() {
         }
         TheU->addUInt(TheU->getUnitDie(), dwarf::DW_AT_GNU_dwo_id,
                       dwarf::DW_FORM_data8, ID);
-        // Now construct the skeleton CU associated.
-        DwarfCompileUnit *SkCU =
-            constructSkeletonCU(static_cast<DwarfCompileUnit *>(TheU));
         SkCU->addUInt(SkCU->getUnitDie(), dwarf::DW_AT_GNU_dwo_id,
                       dwarf::DW_FORM_data8, ID);
-      } else {
-        // Attribute if we've emitted a range list for the compile unit, this
-        // will get constructed for the skeleton CU separately if we have one.
-        if (DwarfCURanges && TheU->getRanges().size())
-          addSectionLabel(Asm, TheU, TheU->getUnitDie(), dwarf::DW_AT_ranges,
-                          Asm->GetTempSymbol("cu_ranges", TheU->getUniqueID()),
-                          DwarfDebugRangeSectionSym);
       }
+
+      // If we've requested ranges and have them emit a DW_AT_ranges attribute
+      // on the unit that will remain in the .o file, otherwise add a
+      // DW_AT_low_pc.
+      // FIXME: Also add a high pc if we can.
+      // FIXME: We should use ranges if we have multiple compile units.
+      DwarfCompileUnit *U = SkCU ? SkCU : static_cast<DwarfCompileUnit *>(TheU);
+      if (DwarfCURanges && TheU->getRanges().size())
+        addSectionLabel(Asm, U, U->getUnitDie(), dwarf::DW_AT_ranges,
+                        Asm->GetTempSymbol("cu_ranges", U->getUniqueID()),
+                        DwarfDebugRangeSectionSym);
+      else
+        U->addUInt(U->getUnitDie(), dwarf::DW_AT_low_pc, dwarf::DW_FORM_addr,
+                   0);
     }
   }
 
@@ -2007,6 +1965,9 @@ void DwarfDebug::emitSectionLabels() {
   // Dwarf sections base addresses.
   DwarfInfoSectionSym =
       emitSectionSym(Asm, TLOF.getDwarfInfoSection(), "section_info");
+  if (useSplitDwarf())
+    DwarfInfoDWOSectionSym =
+        emitSectionSym(Asm, TLOF.getDwarfInfoDWOSection(), "section_info_dwo");
   DwarfAbbrevSectionSym =
       emitSectionSym(Asm, TLOF.getDwarfAbbrevSection(), "section_abbrev");
   if (useSplitDwarf())
@@ -2043,9 +2004,6 @@ void DwarfDebug::emitSectionLabels() {
 
   DwarfDebugLocSectionSym =
       emitSectionSym(Asm, TLOF.getDwarfLocSection(), "section_debug_loc");
-
-  TextSectionSym = emitSectionSym(Asm, TLOF.getTextSection(), "text_begin");
-  emitSectionSym(Asm, TLOF.getDataSection());
 }
 
 // Recursively emits a debug information entry.
@@ -2859,9 +2817,8 @@ void DwarfDebug::emitDebugARanges() {
     unsigned TupleSize = PtrSize * 2;
 
     // 7.20 in the Dwarf specs requires the table to be aligned to a tuple.
-    unsigned Padding = 0;
-    while (((sizeof(int32_t) + ContentSize + Padding) % TupleSize) != 0)
-      Padding++;
+    unsigned Padding =
+        OffsetToAlignment(sizeof(int32_t) + ContentSize, TupleSize);
 
     ContentSize += Padding;
     ContentSize += (List.size() + 1) * TupleSize;
@@ -2872,14 +2829,13 @@ void DwarfDebug::emitDebugARanges() {
     Asm->OutStreamer.AddComment("DWARF Arange version number");
     Asm->EmitInt16(dwarf::DW_ARANGES_VERSION);
     Asm->OutStreamer.AddComment("Offset Into Debug Info Section");
-    Asm->EmitSectionOffset(CU->getLabelBegin(), CU->getSectionSym());
+    Asm->EmitSectionOffset(CU->getLocalLabelBegin(), CU->getLocalSectionSym());
     Asm->OutStreamer.AddComment("Address Size (in bytes)");
     Asm->EmitInt8(PtrSize);
     Asm->OutStreamer.AddComment("Segment Size (in bytes)");
     Asm->EmitInt8(0);
 
-    for (unsigned n = 0; n < Padding; n++)
-      Asm->EmitInt8(0xff);
+    Asm->OutStreamer.EmitFill(Padding, 0xff);
 
     for (unsigned n = 0; n < List.size(); n++) {
       const ArangeSpan &Span = List[n];
@@ -2974,6 +2930,27 @@ void DwarfDebug::emitDebugRanges() {
 
 // DWARF5 Experimental Separate Dwarf emitters.
 
+void DwarfDebug::initSkeletonUnit(const DwarfUnit *U, DIE *Die,
+                                  DwarfUnit *NewU) {
+  NewU->addLocalString(Die, dwarf::DW_AT_GNU_dwo_name,
+                       U->getCUNode().getSplitDebugFilename());
+
+  // Relocate to the beginning of the addr_base section, else 0 for the
+  // beginning of the one for this compile unit.
+  if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
+    NewU->addSectionLabel(Die, dwarf::DW_AT_GNU_addr_base,
+                           DwarfAddrSectionSym);
+  else
+    NewU->addSectionOffset(Die, dwarf::DW_AT_GNU_addr_base, 0);
+
+  if (!CompilationDir.empty())
+    NewU->addLocalString(Die, dwarf::DW_AT_comp_dir, CompilationDir);
+
+  addGnuPubAttributes(NewU, Die);
+
+  SkeletonHolder.addUnit(NewU);
+}
+
 // This DIE has the following attributes: DW_AT_comp_dir, DW_AT_stmt_list,
 // DW_AT_low_pc, DW_AT_high_pc, DW_AT_ranges, DW_AT_dwo_name, DW_AT_dwo_id,
 // DW_AT_ranges_base, DW_AT_addr_base.
@@ -2982,29 +2959,9 @@ DwarfCompileUnit *DwarfDebug::constructSkeletonCU(const DwarfCompileUnit *CU) {
 
   DIE *Die = new DIE(dwarf::DW_TAG_compile_unit);
   DwarfCompileUnit *NewCU = new DwarfCompileUnit(
-      CU->getUniqueID(), Die, CU->getNode(), Asm, this, &SkeletonHolder);
+      CU->getUniqueID(), Die, CU->getCUNode(), Asm, this, &SkeletonHolder);
   NewCU->initSection(Asm->getObjFileLowering().getDwarfInfoSection(),
                      DwarfInfoSectionSym);
-
-  NewCU->addLocalString(Die, dwarf::DW_AT_GNU_dwo_name,
-                        CU->getNode().getSplitDebugFilename());
-
-  // Relocate to the beginning of the addr_base section, else 0 for the
-  // beginning of the one for this compile unit.
-  if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-    NewCU->addSectionLabel(Die, dwarf::DW_AT_GNU_addr_base,
-                           DwarfAddrSectionSym);
-  else
-    NewCU->addSectionOffset(Die, dwarf::DW_AT_GNU_addr_base, 0);
-
-  // Attribute if we've emitted a range list for the compile unit, this
-  // will get constructed for the skeleton CU separately if we have one.
-  if (DwarfCURanges && CU->getRanges().size())
-    addSectionLabel(Asm, NewCU, Die, dwarf::DW_AT_ranges,
-                    Asm->GetTempSymbol("cu_ranges", CU->getUniqueID()),
-                    DwarfDebugRangeSectionSym);
-  else
-    NewCU->addUInt(Die, dwarf::DW_AT_low_pc, dwarf::DW_FORM_addr, 0);
 
   // DW_AT_stmt_list is a offset of line number information for this
   // compile unit in debug_line section.
@@ -3014,12 +2971,7 @@ DwarfCompileUnit *DwarfDebug::constructSkeletonCU(const DwarfCompileUnit *CU) {
   else
     NewCU->addSectionOffset(Die, dwarf::DW_AT_stmt_list, 0);
 
-  if (!CompilationDir.empty())
-    NewCU->addLocalString(Die, dwarf::DW_AT_comp_dir, CompilationDir);
-
-  addGnuPubAttributes(NewCU, Die);
-
-  SkeletonHolder.addUnit(NewCU);
+  initSkeletonUnit(CU, Die, NewCU);
 
   return NewCU;
 }
@@ -3052,32 +3004,30 @@ void DwarfDebug::emitDebugStrDWO() {
                          OffSec, StrSym);
 }
 
-void DwarfDebug::addDwarfTypeUnitType(uint16_t Language, DIE *RefDie,
+void DwarfDebug::addDwarfTypeUnitType(DICompileUnit CUNode,
+                                      StringRef Identifier, DIE *RefDie,
                                       DICompositeType CTy) {
   const DwarfTypeUnit *&TU = DwarfTypeUnits[CTy];
   if (!TU) {
     DIE *UnitDie = new DIE(dwarf::DW_TAG_type_unit);
-    DwarfTypeUnit *NewTU =
-        new DwarfTypeUnit(InfoHolder.getUnits().size(), UnitDie, Language, Asm,
-                          this, &InfoHolder);
+    DwarfTypeUnit *NewTU = new DwarfTypeUnit(
+        InfoHolder.getUnits().size(), UnitDie, CUNode, Asm, this, &InfoHolder);
     TU = NewTU;
     InfoHolder.addUnit(NewTU);
 
     NewTU->addUInt(UnitDie, dwarf::DW_AT_language, dwarf::DW_FORM_data2,
-                   Language);
+                   CUNode.getLanguage());
 
     DIE *Die = NewTU->createTypeDIE(CTy);
 
-    if (GenerateODRHash && shouldAddODRHash(NewTU, Die))
-      NewTU->addUInt(UnitDie, dwarf::DW_AT_GNU_odr_signature,
-                     dwarf::DW_FORM_data8,
-                     DIEHash().computeDIEODRSignature(*Die));
-    // FIXME: This won't handle circularly referential structures, as the DIE
-    // may have references to other DIEs still under construction and missing
-    // their signature. Hashing should walk through the signatures to their
-    // referenced type, or possibly walk the precomputed hashes of related types
-    // at the end.
-    uint64_t Signature = DIEHash().computeTypeSignature(*Die);
+    MD5 Hash;
+    Hash.update(Identifier);
+    // ... take the least significant 8 bytes and return those. Our MD5
+    // implementation always returns its results in little endian, swap bytes
+    // appropriately.
+    MD5::MD5Result Result;
+    Hash.final(Result);
+    uint64_t Signature = *reinterpret_cast<support::ulittle64_t *>(Result + 8);
     NewTU->setTypeSignature(Signature);
     NewTU->setType(Die);
 
