@@ -216,7 +216,7 @@ protected:
   const TargetOptions &Options;
 
  public:
-  enum {
+  enum TargetABI_enum {
     ARM_ABI_UNKNOWN,
     ARM_ABI_APCS,
     ARM_ABI_AAPCS // ARM EABI
