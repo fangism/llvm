@@ -13,11 +13,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm-c/lto.h"
+#include "llvm-c/Core.h"
+#include "llvm-c/Target.h"
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/LTO/LTOCodeGenerator.h"
 #include "llvm/LTO/LTOModule.h"
-#include "llvm-c/Core.h"
-#include "llvm-c/Target.h"
 
 // extra command-line flags needed for LTOCodeGenerator
 static cl::opt<bool>
@@ -193,6 +193,13 @@ lto_symbol_attributes lto_module_get_symbol_attribute(lto_module_t mod,
   return mod->getSymbolAttributes(index);
 }
 
+/// Set a diagnostic handler.
+void lto_codegen_set_diagnostic_handler(lto_code_gen_t cg,
+                                        lto_diagnostic_handler_t diag_handler,
+                                        void *ctxt) {
+  cg->setDiagnosticHandler(diag_handler, ctxt);
+}
+
 /// lto_codegen_create - Instantiates a code generator. Returns NULL if there
 /// is an error.
 lto_code_gen_t lto_codegen_create(void) {
@@ -250,6 +257,13 @@ void lto_codegen_set_assembler_path(lto_code_gen_t cg, const char *path) {
 void lto_codegen_set_assembler_args(lto_code_gen_t cg, const char **args,
                                     int nargs) {
   // In here only for backwards compatibility. We use MC now.
+}
+
+/// lto_codegen_set_internalize_strategy - Sets the strategy to use during
+/// internalize.
+void lto_codegen_set_internalize_strategy(lto_code_gen_t cg,
+                                          lto_internalize_strategy strategy) {
+  cg->setInternalizeStrategy(strategy);
 }
 
 /// lto_codegen_add_must_preserve_symbol - Adds to a list of all global symbols

@@ -19,7 +19,6 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/CaptureTracking.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
@@ -27,6 +26,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -1009,7 +1009,15 @@ BasicAliasAnalysis::aliasGEP(const GEPOperator *GEP1, uint64_t V1Size,
         return NoAlias;
       }
     } else {
-      if (V1Size != UnknownSize) {
+      // We have the situation where:
+      // +                +
+      // | BaseOffset     |
+      // ---------------->|
+      // |-->V1Size       |-------> V2Size
+      // GEP1             V2
+      // We need to know that V2Size is not unknown, otherwise we might have
+      // stripped a gep with negative index ('gep <ptr>, -1, ...).
+      if (V1Size != UnknownSize && V2Size != UnknownSize) {
         if (-(uint64_t)GEP1BaseOffset < V1Size)
           return PartialAlias;
         return NoAlias;
@@ -1335,7 +1343,9 @@ bool BasicAliasAnalysis::isValueEqualInPotentialCycles(const Value *V,
     return false;
 
   // Use dominance or loop info if available.
-  DominatorTree *DT = getAnalysisIfAvailable<DominatorTree>();
+  DominatorTreeWrapperPass *DTWP =
+      getAnalysisIfAvailable<DominatorTreeWrapperPass>();
+  DominatorTree *DT = DTWP ? &DTWP->getDomTree() : 0;
   LoopInfo *LI = getAnalysisIfAvailable<LoopInfo>();
 
   // Make sure that the visited phis cannot reach the Value. This ensures that

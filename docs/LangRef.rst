@@ -274,27 +274,8 @@ linkage:
     visible, meaning that it participates in linkage and can be used to
     resolve external symbol references.
 
-The next two types of linkage are targeted for Microsoft Windows
-platform only. They are designed to support importing (exporting)
-symbols from (to) DLLs (Dynamic Link Libraries).
-
-``dllimport``
-    "``dllimport``" linkage causes the compiler to reference a function
-    or variable via a global pointer to a pointer that is set up by the
-    DLL exporting the symbol. On Microsoft Windows targets, the pointer
-    name is formed by combining ``__imp_`` and the function or variable
-    name.
-``dllexport``
-    "``dllexport``" linkage causes the compiler to provide a global
-    pointer to a pointer in a DLL, so that it can be referenced with the
-    ``dllimport`` attribute. On Microsoft Windows targets, the pointer
-    name is formed by combining ``__imp_`` and the function or variable
-    name. Since this linkage exists for defining a dll interface, the
-    compiler, assembler and linker know it is externally referenced and
-    must refrain from deleting the symbol.
-
 It is illegal for a function *declaration* to have any linkage type
-other than ``external``, ``dllimport`` or ``extern_weak``.
+other than ``external`` or ``extern_weak``.
 
 .. _callingconv:
 
@@ -331,7 +312,8 @@ added in the future:
     so that the call does not break any live ranges in the caller side.
     This calling convention does not support varargs and requires the
     prototype of all callees to exactly match the prototype of the
-    function definition.
+    function definition. Furthermore the inliner doesn't consider such function
+    calls for inlining.
 "``cc 10``" - GHC convention
     This calling convention has been implemented specifically for use by
     the `Glasgow Haskell Compiler (GHC) <http://www.haskell.org/ghc>`_.
@@ -378,6 +360,55 @@ added in the future:
     allocated. This can currently only be used with calls to
     llvm.experimental.patchpoint because only this intrinsic records
     the location of its arguments in a side table. See :doc:`StackMaps`.
+"``preserve_mostcc``" - The `PreserveMost` calling convention
+    This calling convention attempts to make the code in the caller as little
+    intrusive as possible. This calling convention behaves identical to the `C`
+    calling convention on how arguments and return values are passed, but it
+    uses a different set of caller/callee-saved registers. This alleviates the
+    burden of saving and recovering a large register set before and after the
+    call in the caller.
+
+    - On X86-64 the callee preserves all general purpose registers, except for
+      R11. R11 can be used as a scratch register. Floating-point registers
+      (XMMs/YMMs) are not preserved and need to be saved by the caller.
+
+    The idea behind this convention is to support calls to runtime functions
+    that have a hot path and a cold path. The hot path is usually a small piece
+    of code that doesn't many registers. The cold path might need to call out to
+    another function and therefore only needs to preserve the caller-saved
+    registers, which haven't already been saved by the caller. The
+    `PreserveMost` calling convention is very similar to the `cold` calling
+    convention in terms of caller/callee-saved registers, but they are used for
+    different types of function calls. `coldcc` is for function calls that are
+    rarely executed, whereas `preserve_mostcc` function calls are intended to be
+    on the hot path and definitely executed a lot. Furthermore `preserve_mostcc`
+    doesn't prevent the inliner from inlining the function call.
+
+    This calling convention will be used by a future version of the ObjectiveC
+    runtime and should therefore still be considered experimental at this time.
+    Although this convention was created to optimize certain runtime calls to
+    the ObjectiveC runtime, it is not limited to this runtime and might be used
+    by other runtimes in the future too. The current implementation only
+    supports X86-64, but the intention is to support more architectures in the
+    future.
+"``preserve_allcc``" - The `PreserveAll` calling convention
+    This calling convention attempts to make the code in the caller even less
+    intrusive than the `PreserveMost` calling convention. This calling
+    convention also behaves identical to the `C` calling convention on how
+    arguments and return values are passed, but it uses a different set of
+    caller/callee-saved registers. This removes the burden of saving and
+    recovering a large register set before and after the call in the caller.
+
+    - On X86-64 the callee preserves all general purpose registers, except for
+      R11. R11 can be used as a scratch register. Furthermore it also preserves
+      all floating-point registers (XMMs/YMMs).
+
+    The idea behind this convention is to support calls to runtime functions
+    that don't need to call out to any other functions.
+
+    This calling convention, like the `PreserveMost` calling convention, will be
+    used by a future version of the ObjectiveC runtime and should be considered
+    experimental at this time.
 "``cc <n>``" - Numbered convention
     Any calling convention may be specified by number, allowing
     target-specific calling conventions to be used. Target specific
@@ -415,6 +446,25 @@ styles:
     cannot be overridden by another module.
 
 .. _namedtypes:
+
+DLL Storage Classes
+-------------------
+
+All Global Variables, Functions and Aliases can have one of the following
+DLL storage class:
+
+``dllimport``
+    "``dllimport``" causes the compiler to reference a function or variable via
+    a global pointer to a pointer that is set up by the DLL exporting the
+    symbol. On Microsoft Windows targets, the pointer name is formed by
+    combining ``__imp_`` and the function or variable name.
+``dllexport``
+    "``dllexport``" causes the compiler to provide a global pointer to a pointer
+    in a DLL, so that it can be referenced with the ``dllimport`` attribute. On
+    Microsoft Windows targets, the pointer name is formed by combining
+    ``__imp_`` and the function or variable name. Since this storage class
+    exists for defining a dll interface, the compiler, assembler and linker know
+    it is externally referenced and must refrain from deleting the symbol.
 
 Named Types
 -----------
@@ -529,6 +579,15 @@ assume that the globals are densely packed in their section and try to
 iterate over them as an array, alignment padding would break this
 iteration.
 
+Globals can also have a :ref:`DLL storage class <dllstorageclass>`.
+
+Syntax::
+
+    [@<GlobalVarName> =] [Linkage] [Visibility] [DLLStorageClass] [ThreadLocal]
+                         [AddrSpace] [unnamed_addr] [ExternallyInitialized]
+                         <global | constant> <Type>
+                         [, section "name"] [, align <Alignment>]
+
 For example, the following defines a global in a numbered address space
 with an initializer, section, and alignment:
 
@@ -556,7 +615,8 @@ Functions
 
 LLVM function definitions consist of the "``define``" keyword, an
 optional :ref:`linkage type <linkage>`, an optional :ref:`visibility
-style <visibility>`, an optional :ref:`calling convention <callingconv>`,
+style <visibility>`, an optional :ref:`DLL storage class <dllstorageclass>`,
+an optional :ref:`calling convention <callingconv>`,
 an optional ``unnamed_addr`` attribute, a return type, an optional
 :ref:`parameter attribute <paramattrs>` for the return type, a function
 name, a (possibly empty) argument list (each with optional :ref:`parameter
@@ -567,7 +627,8 @@ curly brace, a list of basic blocks, and a closing curly brace.
 
 LLVM function declarations consist of the "``declare``" keyword, an
 optional :ref:`linkage type <linkage>`, an optional :ref:`visibility
-style <visibility>`, an optional :ref:`calling convention <callingconv>`,
+style <visibility>`, an optional :ref:`DLL storage class <dllstorageclass>`,
+an optional :ref:`calling convention <callingconv>`,
 an optional ``unnamed_addr`` attribute, a return type, an optional
 :ref:`parameter attribute <paramattrs>` for the return type, a function
 name, a possibly empty list of arguments, an optional alignment, an optional
@@ -603,7 +664,7 @@ be significant and two identical functions can be merged.
 
 Syntax::
 
-    define [linkage] [visibility]
+    define [linkage] [visibility] [DLLStorageClass]
            [cconv] [ret attrs]
            <ResultType> @<FunctionName> ([argument list])
            [fn Attrs] [section "name"] [align N]
@@ -616,12 +677,13 @@ Aliases
 
 Aliases act as "second name" for the aliasee value (which can be either
 function, global variable, another alias or bitcast of global value).
-Aliases may have an optional :ref:`linkage type <linkage>`, and an optional
-:ref:`visibility style <visibility>`.
+Aliases may have an optional :ref:`linkage type <linkage>`, an optional
+:ref:`visibility style <visibility>`, and an optional :ref:`DLL storage class
+<dllstorageclass>`.
 
 Syntax::
 
-    @<Name> = alias [Linkage] [Visibility] <AliaseeTy> @<Aliasee>
+    @<Name> = [Visibility] [DLLStorageClass] alias [Linkage] <AliaseeTy> @<Aliasee>
 
 The linkage must be one of ``private``, ``linker_private``,
 ``linker_private_weak``, ``internal``, ``linkonce``, ``weak``,
@@ -715,29 +777,24 @@ Currently, only the following parameter attributes are defined:
 
 .. Warning:: This feature is unstable and not fully implemented.
 
-    The ``inalloca`` argument attribute allows the caller to get the
-    address of an outgoing argument to a ``call`` or ``invoke`` before
-    it executes.  It is similar to ``byval`` in that it is used to pass
-    arguments by value, but it guarantees that the argument will not be
-    copied.
+    The ``inalloca`` argument attribute allows the caller to take the
+    address of outgoing stack arguments.  An ``inalloca`` argument must
+    be a pointer to stack memory produced by an ``alloca`` instruction.
+    The alloca, or argument allocation, must also be tagged with the
+    inalloca keyword.  Only the past argument may have the ``inalloca``
+    attribute, and that argument is guaranteed to be passed in memory.
 
-    To be :ref:`well formed <wellformed>`, the caller must pass in an
-    alloca value into an ``inalloca`` parameter, and an alloca may be
-    used as an ``inalloca`` argument at most once.  The attribute can
-    only be applied to parameters that would be passed in memory and not
-    registers.  The ``inalloca`` attribute cannot be used in conjunction
-    with other attributes that affect argument storage, like ``inreg``,
-    ``nest``, ``sret``, or ``byval``.  The ``inalloca`` stack space is
-    considered to be clobbered by any call that uses it, so any
-    ``inalloca`` parameters cannot be marked ``readonly``.
+    An argument allocation may be used by a call at most once because
+    the call may deallocate it.  The ``inalloca`` attribute cannot be
+    used in conjunction with other attributes that affect argument
+    storage, like ``inreg``, ``nest``, ``sret``, or ``byval``.
 
-    Allocas passed with ``inalloca`` to a call must be in the opposite
-    order of the parameter list, meaning that the rightmost argument
-    must be allocated first.  If a call has inalloca arguments, no other
-    allocas can occur between the first alloca used by the call and the
-    call site, unless they are are cleared by calls to
-    :ref:`llvm.stackrestore <int_stackrestore>`.  Violating these rules
-    results in undefined behavior at runtime.
+    When the call site is reached, the argument allocation must have
+    been the most recent stack allocation that is still live, or the
+    results are undefined.  It is possible to allocate additional stack
+    space after an argument allocation and before its call site, but it
+    must be cleared off with :ref:`llvm.stackrestore
+    <int_stackrestore>`.
 
     See :doc:`InAlloca` for more information on how to use this
     attribute.
@@ -1159,14 +1216,15 @@ as follows:
 ``a:<abi>:<pref>``
     This specifies the alignment for an object of aggregate type.
 ``m:<mangling>``
-   If prerest, specifies that llvm names are mangled in the output. The
-   options are
-   * ``e``: ELF mangling: Private symbols get a ``.L`` prefix.
-   * ``m``: Mips mangling: Private symbols get a ``$`` prefix.
-   * ``o``: Mach-O mangling: Private symbols get ``L`` prefix. Other
-    symbols get a ``_`` prefix.
-   * ``c``:  COFF prefix:  Similar to Mach-O, but stdcall and fastcall
-  functions also get a suffix based on the frame size.
+    If present, specifies that llvm names are mangled in the output. The
+    options are
+
+    * ``e``: ELF mangling: Private symbols get a ``.L`` prefix.
+    * ``m``: Mips mangling: Private symbols get a ``$`` prefix.
+    * ``o``: Mach-O mangling: Private symbols get ``L`` prefix. Other
+      symbols get a ``_`` prefix.
+    * ``w``: Windows COFF prefix:  Similar to Mach-O, but stdcall and fastcall
+      functions also get a suffix based on the frame size.
 ``n<size1>:<size2>:<size3>...``
     This specifies a set of native integer widths for the target CPU in
     bits. For example, it might contain ``n32`` for 32-bit PowerPC,
@@ -4632,7 +4690,7 @@ Syntax:
 
 ::
 
-      <result> = alloca <type>[, <ty> <NumElements>][, align <alignment>]     ; yields {type*}:result
+      <result> = alloca <type>[, inalloca][, <ty> <NumElements>][, align <alignment>]     ; yields {type*}:result
 
 Overview:
 """""""""

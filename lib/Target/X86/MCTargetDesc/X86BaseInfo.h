@@ -255,6 +255,10 @@ namespace X86II {
     ///
     MRMSrcMem      = 6,
 
+    /// RawFrmMemOffs - This form is for instructions that store an absolute
+    /// memory offset as an immediate with a possible segment override.
+    RawFrmMemOffs  = 7,
+
     /// MRM[0-7][rm] - These forms are used to represent instructions that use
     /// a Mod/RM byte, and use the middle field to hold extended opcode
     /// information.  In the intel manual these are represented as /0, /1, ...
@@ -354,6 +358,16 @@ namespace X86II {
 
     // XOPA - Prefix to encode 0xA in VEX.MMMM of XOP instructions.
     XOPA = 22 << Op0Shift,
+
+    // PD - Prefix code for packed double precision vector floating point
+    // operations performed in the SSE registers.
+    PD = 23 << Op0Shift,
+
+    // T8PD - Prefix before and after 0x0F. Combination of T8 and PD.
+    T8PD = 24 << Op0Shift,
+
+    // TAPD - Prefix before and after 0x0F. Combination of TA and PD.
+    TAPD = 25 << Op0Shift,
 
     //===------------------------------------------------------------------===//
     // REX_W - REX prefixes are instruction prefixes used in 64-bit mode.
@@ -503,8 +517,10 @@ namespace X86II {
     MemOp4 = 1U << 18,
 
     /// XOP - Opcode prefix used by XOP instructions.
-    XOP = 1U << 19
+    XOP = 1U << 19,
 
+    /// Explicitly specified rounding control
+    EVEX_RC = 1U << 20
   };
 
   // getBaseOpcodeFor - This function returns the "base" X86 opcode for the
@@ -595,6 +611,7 @@ namespace X86II {
     case X86II::MRMSrcReg:
     case X86II::RawFrmImm8:
     case X86II::RawFrmImm16:
+    case X86II::RawFrmMemOffs:
        return -1;
     case X86II::MRMDestMem:
       return 0;

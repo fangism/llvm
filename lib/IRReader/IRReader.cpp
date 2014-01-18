@@ -36,15 +36,16 @@ Module *llvm::getLazyIRModule(MemoryBuffer *Buffer, SMDiagnostic &Err,
   if (isBitcode((const unsigned char *)Buffer->getBufferStart(),
                 (const unsigned char *)Buffer->getBufferEnd())) {
     std::string ErrMsg;
-    Module *M = getLazyBitcodeModule(Buffer, Context, &ErrMsg);
-    if (M == 0) {
+    ErrorOr<Module *> ModuleOrErr = getLazyBitcodeModule(Buffer, Context);
+    if (error_code EC = ModuleOrErr.getError()) {
       Err = SMDiagnostic(Buffer->getBufferIdentifier(), SourceMgr::DK_Error,
-                         ErrMsg);
+                         EC.message());
       // ParseBitcodeFile does not take ownership of the Buffer in the
       // case of an error.
       delete Buffer;
+      return NULL;
     }
-    return M;
+    return ModuleOrErr.get();
   }
 
   return ParseAssembly(Buffer, 0, Err, Context);
@@ -68,12 +69,14 @@ Module *llvm::ParseIR(MemoryBuffer *Buffer, SMDiagnostic &Err,
                      TimePassesIsEnabled);
   if (isBitcode((const unsigned char *)Buffer->getBufferStart(),
                 (const unsigned char *)Buffer->getBufferEnd())) {
-    std::string ErrMsg;
-    Module *M = ParseBitcodeFile(Buffer, Context, &ErrMsg);
-    if (M == 0)
+    ErrorOr<Module *> ModuleOrErr = parseBitcodeFile(Buffer, Context);
+    Module *M = 0;
+    if (error_code EC = ModuleOrErr.getError())
       Err = SMDiagnostic(Buffer->getBufferIdentifier(), SourceMgr::DK_Error,
-                         ErrMsg);
-    // ParseBitcodeFile does not take ownership of the Buffer.
+                         EC.message());
+    else
+      M = ModuleOrErr.get();
+    // parseBitcodeFile does not take ownership of the Buffer.
     delete Buffer;
     return M;
   }

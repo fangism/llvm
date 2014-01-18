@@ -250,7 +250,7 @@ namespace {
 // directory specified by CacheDir, using a filename provided in the module
 // descriptor. The cache tries to load a saved object using that path if the
 // file exists. CacheDir defaults to "", in which case objects are cached
-// alongside their originating bitcodes. 
+// alongside their originating bitcodes.
 //
 class LLIObjectCache : public ObjectCache {
 public:
@@ -258,7 +258,7 @@ public:
     // Add trailing '/' to cache dir if necessary.
     if (!this->CacheDir.empty() &&
         this->CacheDir[this->CacheDir.size() - 1] != '/')
-      this->CacheDir += '/'; 
+      this->CacheDir += '/';
   }
   virtual ~LLIObjectCache() {}
 
@@ -268,8 +268,11 @@ public:
     if (!getCacheFilename(ModuleID, CacheName))
       return;
     std::string errStr;
-    if (!CacheDir.empty()) // Create user-defined cache dir.
-      sys::fs::create_directories(CacheName.substr(0, CacheName.rfind('/')));
+    if (!CacheDir.empty()) { // Create user-defined cache dir.
+      SmallString<128> dir(CacheName);
+      sys::path::remove_filename(dir);
+      sys::fs::create_directories(Twine(dir));
+    }
     raw_fd_ostream outfile(CacheName.c_str(), errStr, sys::fs::F_Binary);
     outfile.write(Obj->getBufferStart(), Obj->getBufferSize());
     outfile.close();
@@ -301,7 +304,15 @@ private:
     size_t PrefixLength = Prefix.length();
     if (ModID.substr(0, PrefixLength) != Prefix)
       return false;
-    CacheName = CacheDir + ModID.substr(PrefixLength);
+        std::string CacheSubdir = ModID.substr(PrefixLength);
+#if defined(_WIN32)
+        // Transform "X:\foo" => "/X\foo" for convenience.
+        if (isalpha(CacheSubdir[0]) && CacheSubdir[1] == ':') {
+          CacheSubdir[1] = CacheSubdir[0];
+          CacheSubdir[0] = '/';
+        }
+#endif
+    CacheName = CacheDir + CacheSubdir;
     size_t pos = CacheName.rfind('.');
     CacheName.replace(pos, CacheName.length() - pos, ".o");
     return true;
@@ -402,11 +413,10 @@ int main(int argc, char **argv, char * const *envp) {
   }
 
   // If not jitting lazily, load the whole bitcode file eagerly too.
-  std::string ErrorMsg;
   if (NoLazyCompilation) {
-    if (Mod->MaterializeAllPermanently(&ErrorMsg)) {
+    if (error_code EC = Mod->materializeAllPermanently()) {
       errs() << argv[0] << ": bitcode didn't read correctly.\n";
-      errs() << "Reason: " << ErrorMsg << "\n";
+      errs() << "Reason: " << EC.message() << "\n";
       exit(1);
     }
   }
@@ -422,6 +432,7 @@ int main(int argc, char **argv, char * const *envp) {
     DebugIRPass->runOnModule(*Mod);
   }
 
+  std::string ErrorMsg;
   EngineBuilder builder(Mod);
   builder.setMArch(MArch);
   builder.setMCPU(MCPU);
@@ -674,7 +685,10 @@ int main(int argc, char **argv, char * const *envp) {
     MM->setRemoteTarget(Target.get());
 
     // Create the remote target.
-    Target->create();
+    if (!Target->create()) {
+      errs() << "ERROR: " << Target->getErrorMsg() << "\n";
+      return EXIT_FAILURE;
+    }
 
     // Since we're executing in a (at least simulated) remote address space,
     // we can't use the ExecutionEngine::runFunctionAsMain(). We have to
@@ -691,7 +705,7 @@ int main(int argc, char **argv, char * const *envp) {
     DEBUG(dbgs() << "Executing '" << EntryFn->getName() << "' at 0x"
                  << format("%llx", Entry) << "\n");
 
-    if (Target->executeCode(Entry, Result))
+    if (!Target->executeCode(Entry, Result))
       errs() << "ERROR: " << Target->getErrorMsg() << "\n";
 
     // Like static constructors, the remote target MCJIT support doesn't handle

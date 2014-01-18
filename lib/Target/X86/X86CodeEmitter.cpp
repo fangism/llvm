@@ -696,6 +696,12 @@ void Emitter<CodeEmitter>::emitOpcodePrefix(uint64_t TSFlags,
       Need0FPrefix = true;
       break;
     case X86II::REP: break; // already handled.
+    case X86II::PD:   // 66 0F
+    case X86II::T8PD: // 66 0F 38
+    case X86II::TAPD: // 66 0F 3A
+      MCE.emitByte(0x66);
+      Need0FPrefix = true;
+      break;
     case X86II::T8XS: // F3 0F 38
     case X86II::XS:   // F3 0F
       MCE.emitByte(0xF3);
@@ -728,11 +734,13 @@ void Emitter<CodeEmitter>::emitOpcodePrefix(uint64_t TSFlags,
     MCE.emitByte(0x0F);
 
   switch (Desc->TSFlags & X86II::Op0Mask) {
+    case X86II::T8PD:  // 66 0F 38
     case X86II::T8XD:  // F2 0F 38
     case X86II::T8XS:  // F3 0F 38
     case X86II::T8:    // 0F 38
       MCE.emitByte(0x38);
       break;
+    case X86II::TAPD:  // 66 0F 38
     case X86II::TAXD:  // F2 0F 38
     case X86II::TA:    // 0F 3A
       MCE.emitByte(0x3A);
@@ -826,7 +834,7 @@ void Emitter<CodeEmitter>::emitVEXOpcodePrefix(uint64_t TSFlags,
   unsigned char VEX_W = 0;
 
   // XOP: Use XOP prefix byte 0x8f instead of VEX.
-  bool XOP = false;
+  bool XOP = (TSFlags >> X86II::VEXShift) & X86II::XOP;
 
   // VEX_5M (VEX m-mmmmm field):
   //
@@ -861,15 +869,8 @@ void Emitter<CodeEmitter>::emitVEXOpcodePrefix(uint64_t TSFlags,
   //
   unsigned char VEX_PP = 0;
 
-  // Encode the operand size opcode prefix as needed.
-  if (TSFlags & X86II::OpSize)
-    VEX_PP = 0x01;
-
   if ((TSFlags >> X86II::VEXShift) & X86II::VEX_W)
     VEX_W = 1;
-
-  if ((TSFlags >> X86II::VEXShift) & X86II::XOP)
-    XOP = true;
 
   if ((TSFlags >> X86II::VEXShift) & X86II::VEX_L)
     VEX_L = 1;
@@ -882,6 +883,10 @@ void Emitter<CodeEmitter>::emitVEXOpcodePrefix(uint64_t TSFlags,
     case X86II::TA:  // 0F 3A
       VEX_5M = 0x3;
       break;
+    case X86II::T8PD: // 66 0F 38
+      VEX_PP = 0x1;
+      VEX_5M = 0x2;
+      break;
     case X86II::T8XS: // F3 0F 38
       VEX_PP = 0x2;
       VEX_5M = 0x2;
@@ -890,9 +895,16 @@ void Emitter<CodeEmitter>::emitVEXOpcodePrefix(uint64_t TSFlags,
       VEX_PP = 0x3;
       VEX_5M = 0x2;
       break;
+    case X86II::TAPD: // 66 0F 3A
+      VEX_PP = 0x1;
+      VEX_5M = 0x3;
+      break;
     case X86II::TAXD: // F2 0F 3A
       VEX_PP = 0x3;
       VEX_5M = 0x3;
+      break;
+    case X86II::PD:  // 66 0F
+      VEX_PP = 0x1;
       break;
     case X86II::XS:  // F3 0F
       VEX_PP = 0x2;
@@ -927,6 +939,9 @@ void Emitter<CodeEmitter>::emitVEXOpcodePrefix(uint64_t TSFlags,
   }
 
   switch (TSFlags & X86II::FormMask) {
+    default: llvm_unreachable("Unexpected form in emitVEXOpcodePrefix!");
+    case X86II::RawFrm:
+      break;
     case X86II::MRMDestMem: {
       // MRMDestMem instructions forms:
       //  MemAddr, src1(ModR/M)
@@ -1042,8 +1057,6 @@ void Emitter<CodeEmitter>::emitVEXOpcodePrefix(uint64_t TSFlags,
 
       if (X86II::isX86_64ExtendedReg(MI.getOperand(CurOp).getReg()))
         VEX_B = 0x0;
-      break;
-    default: // RawFrm
       break;
   }
 

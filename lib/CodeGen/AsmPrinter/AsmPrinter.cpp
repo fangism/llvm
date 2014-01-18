@@ -22,6 +22,7 @@
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
@@ -256,7 +257,6 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
       OutStreamer.EmitSymbolAttribute(GVSym, MCSA_Weak);
     }
     return;
-  case GlobalValue::DLLExportLinkage:
   case GlobalValue::AppendingLinkage:
     // FIXME: appending linkage variables should go into a section of
     // their name or something.  For now, just emit them as external.
@@ -271,7 +271,6 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
     return;
   case GlobalValue::AvailableExternallyLinkage:
     llvm_unreachable("Should never emit this");
-  case GlobalValue::DLLImportLinkage:
   case GlobalValue::ExternalWeakLinkage:
     llvm_unreachable("Don't know how to emit these");
   }
@@ -580,7 +579,7 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
 
   SmallString<128> Str;
   raw_svector_ostream OS(Str);
-  OS << '\t' << AP.MAI->getCommentString() << "DEBUG_VALUE: ";
+  OS << "DEBUG_VALUE: ";
 
   DIVariable V(MI->getOperand(2).getMetadata());
   if (V.getContext().isSubprogram()) {
@@ -628,7 +627,7 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
       // Suppress offset, it is not meaningful here.
       OS << "undef";
       // NOTE: Want this comment at start of line, don't emit with AddComment.
-      AP.OutStreamer.EmitRawText(OS.str());
+      AP.OutStreamer.emitRawComment(OS.str());
       return true;
     }
     if (Deref)
@@ -640,7 +639,7 @@ static bool emitDebugValueComment(const MachineInstr *MI, AsmPrinter &AP) {
     OS << '+' << Offset << ']';
 
   // NOTE: Want this comment at start of line, don't emit with AddComment.
-  AP.OutStreamer.EmitRawText(OS.str());
+  AP.OutStreamer.emitRawComment(OS.str());
   return true;
 }
 
@@ -1513,6 +1512,10 @@ static const MCExpr *lowerConstant(const Constant *CV, AsmPrinter &AP) {
     llvm_unreachable("Unknown constant value to lower!");
   }
 
+  if (const MCExpr *RelocExpr =
+          AP.getObjFileLowering().getExecutableRelativeSymbol(CE, AP.Mang))
+    return RelocExpr;
+
   switch (CE->getOpcode()) {
   default:
     // If the code isn't optimized, there may be outstanding folding
@@ -2152,8 +2155,7 @@ void AsmPrinter::EmitBasicBlockStart(const MachineBasicBlock *MBB) const {
   if (MBB->pred_empty() || isBlockOnlyReachableByFallthrough(MBB)) {
     if (isVerbose() && OutStreamer.hasRawTextSupport()) {
       // NOTE: Want this comment at start of line, don't emit with AddComment.
-      OutStreamer.EmitRawText(Twine(MAI->getCommentString()) + " BB#" +
-                              Twine(MBB->getNumber()) + ":");
+      OutStreamer.emitRawComment(" BB#" + Twine(MBB->getNumber()) + ":", false);
     }
   } else {
     OutStreamer.EmitLabel(MBB->getSymbol());
@@ -2216,14 +2218,13 @@ isBlockOnlyReachableByFallthrough(const MachineBasicBlock *MBB) const {
     if (!MI.isBranch() || MI.isIndirectBranch())
       return false;
 
-    // If we are the operands of one of the branches, this is not
-    // a fall through.
-    for (MachineInstr::mop_iterator OI = MI.operands_begin(),
-           OE = MI.operands_end(); OI != OE; ++OI) {
-      const MachineOperand& OP = *OI;
-      if (OP.isJTI())
+    // If we are the operands of one of the branches, this is not a fall
+    // through. Note that targets with delay slots will usually bundle
+    // terminators with the delay slot instruction.
+    for (ConstMIBundleOperands OP(&MI); OP.isValid(); ++OP) {
+      if (OP->isJTI())
         return false;
-      if (OP.isMBB() && OP.getMBB() == MBB)
+      if (OP->isMBB() && OP->getMBB() == MBB)
         return false;
     }
   }

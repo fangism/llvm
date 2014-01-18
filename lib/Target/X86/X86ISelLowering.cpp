@@ -189,6 +189,8 @@ static TargetLoweringObjectFile *createTLOF(X86TargetMachine &TM) {
     return new X86LinuxTargetObjectFile();
   if (Subtarget->isTargetELF())
     return new TargetLoweringObjectFileELF();
+  if (Subtarget->isTargetWindows())
+    return new X86WindowsTargetObjectFile();
   if (Subtarget->isTargetCOFF())
     return new TargetLoweringObjectFileCOFF();
   llvm_unreachable("unknown subtarget type");
@@ -1840,6 +1842,9 @@ X86TargetLowering::LowerReturn(SDValue Chain,
     else if (VA.getLocInfo() == CCValAssign::BCvt)
       ValToCopy = DAG.getNode(ISD::BITCAST, dl, VA.getLocVT(), ValToCopy);
 
+    assert(VA.getLocInfo() != CCValAssign::FPExt &&
+           "Unexpected FP-extend for return value.");  
+
     // If this is x86-64, and we disabled SSE, we can't return FP values,
     // or SSE or MMX vectors.
     if ((ValVT == MVT::f32 || ValVT == MVT::f64 ||
@@ -2796,7 +2801,7 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     // We should use extra load for direct calls to dllimported functions in
     // non-JIT mode.
     const GlobalValue *GV = G->getGlobal();
-    if (!GV->hasDLLImportLinkage()) {
+    if (!GV->hasDLLImportStorageClass()) {
       unsigned char OpFlags = 0;
       bool ExtraLoad = false;
       unsigned WrapperKind = ISD::DELETED_NODE;
@@ -9539,6 +9544,11 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC,
                                     SelectionDAG &DAG) const {
   SDLoc dl(Op);
 
+  if (Op.getValueType() == MVT::i1)
+    // KORTEST instruction should be selected
+    return DAG.getNode(X86ISD::CMP, dl, MVT::i32, Op,
+                       DAG.getConstant(0, Op.getValueType()));
+
   // CF and OF aren't always set the way we want. Determine which
   // of these we need.
   bool NeedCF = false;
@@ -9555,15 +9565,14 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC,
     NeedOF = true;
     break;
   }
-
   // See if we can use the EFLAGS value from the operand instead of
   // doing a separate TEST. TEST always sets OF and CF to 0, so unless
   // we prove that the arithmetic won't overflow, we can't use OF or CF.
   if (Op.getResNo() != 0 || NeedOF || NeedCF) {
     // Emit a CMP with 0, which is the TEST pattern.
-    if (Op.getValueType() == MVT::i1)
-      return DAG.getNode(X86ISD::CMP, dl, MVT::i1, Op,
-                         DAG.getConstant(0, MVT::i1));
+    //if (Op.getValueType() == MVT::i1)
+    //  return DAG.getNode(X86ISD::CMP, dl, MVT::i1, Op,
+    //                     DAG.getConstant(0, MVT::i1));
     return DAG.getNode(X86ISD::CMP, dl, MVT::i32, Op,
                        DAG.getConstant(0, Op.getValueType()));
   }
@@ -9757,10 +9766,10 @@ SDValue X86TargetLowering::EmitCmp(SDValue Op0, SDValue Op1, unsigned X86CC,
       return EmitTest(Op0, X86CC, DAG);
 
      if (Op0.getValueType() == MVT::i1) {
+       // invert the value
       Op0 = DAG.getNode(ISD::XOR, dl, MVT::i1, Op0,
                         DAG.getConstant(-1, MVT::i1));
-      return DAG.getNode(X86ISD::CMP, dl, MVT::i1, Op0,
-                         DAG.getConstant(0, MVT::i1));
+      return EmitTest(Op0, X86CC, DAG);
      }
   }
  
@@ -10232,11 +10241,16 @@ SDValue X86TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
       X86::CondCode CCode = (X86::CondCode)Op0.getConstantOperandVal(0);
       bool Invert = (CC == ISD::SETNE) ^
         cast<ConstantSDNode>(Op1)->isNullValue();
-      if (!Invert) return Op0;
+      if (!Invert)
+        return Op0;
 
       CCode = X86::GetOppositeBranchCondition(CCode);
-      return DAG.getNode(X86ISD::SETCC, dl, VT,
-                         DAG.getConstant(CCode, MVT::i8), Op0.getOperand(1));
+      SDValue SetCC = DAG.getNode(X86ISD::SETCC, dl, MVT::i8,
+                                  DAG.getConstant(CCode, MVT::i8),
+                                  Op0.getOperand(1));
+      if (VT == MVT::i1)
+        return DAG.getNode(ISD::TRUNCATE, dl, MVT::i1, SetCC);
+      return SetCC;
     }
   }
 
@@ -10247,8 +10261,11 @@ SDValue X86TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
 
   SDValue EFLAGS = EmitCmp(Op0, Op1, X86CC, DAG);
   EFLAGS = ConvertCmpIfNecessary(EFLAGS, DAG);
-  return DAG.getNode(X86ISD::SETCC, dl, VT,
-                      DAG.getConstant(X86CC, MVT::i8), EFLAGS);
+  SDValue SetCC = DAG.getNode(X86ISD::SETCC, dl, MVT::i8,
+                              DAG.getConstant(X86CC, MVT::i8), EFLAGS);
+  if (VT == MVT::i1)
+    return DAG.getNode(ISD::TRUNCATE, dl, MVT::i1, SetCC);
+  return SetCC;
 }
 
 // isX86LogicalCmp - Return true if opcode is a X86 logical comparison.
@@ -11118,8 +11135,9 @@ static SDValue getTargetVShiftByConstNode(unsigned Opc, SDLoc dl, MVT VT,
          && "Unknown target vector shift-by-constant node");
 
   // Fold this packed vector shift into a build vector if SrcOp is a
-  // vector of ConstantSDNodes or UNDEFs.
-  if (ISD::isBuildVectorOfConstantSDNodes(SrcOp.getNode())) {
+  // vector of Constants or UNDEFs, and SrcOp valuetype is the same as VT.
+  if (VT == SrcOp.getSimpleValueType() &&
+      ISD::isBuildVectorOfConstantSDNodes(SrcOp.getNode())) {
     SmallVector<SDValue, 8> Elts;
     unsigned NumElts = SrcOp->getNumOperands();
     ConstantSDNode *ND;
@@ -17695,12 +17713,15 @@ static SDValue CMPEQCombine(SDNode *N, SelectionDAG &DAG,
           // See X86ATTInstPrinter.cpp:printSSECC().
           unsigned x86cc = (cc0 == X86::COND_E) ? 0 : 4;
           if (Subtarget->hasAVX512()) {
-            // SETCC type in AVX-512 is MVT::i1
-            assert(N->getValueType(0) == MVT::i1 && "Unexpected AND node type");
-            return DAG.getNode(X86ISD::FSETCC, DL, MVT::i1, CMP00, CMP01,
-                               DAG.getConstant(x86cc, MVT::i8));
+            SDValue FSetCC = DAG.getNode(X86ISD::FSETCC, DL, MVT::i1, CMP00,
+                                         CMP01, DAG.getConstant(x86cc, MVT::i8));
+            if (N->getValueType(0) != MVT::i1)
+              return DAG.getNode(ISD::ZERO_EXTEND, DL, N->getValueType(0),
+                                 FSetCC);
+            return FSetCC;
           }
-          SDValue OnesOrZeroesF = DAG.getNode(X86ISD::FSETCC, DL, CMP00.getValueType(), CMP00, CMP01,
+          SDValue OnesOrZeroesF = DAG.getNode(X86ISD::FSETCC, DL,
+                                              CMP00.getValueType(), CMP00, CMP01,
                                               DAG.getConstant(x86cc, MVT::i8));
           MVT IntVT = (is64BitFP ? MVT::i64 : MVT::i32); 
           SDValue OnesOrZeroesI = DAG.getNode(ISD::BITCAST, DL, IntVT,

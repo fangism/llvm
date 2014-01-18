@@ -29,7 +29,6 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/Loads.h"
 #include "llvm/Analysis/PtrUseVisitor.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -38,6 +37,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -930,7 +930,7 @@ FunctionPass *llvm::createSROAPass(bool RequiresDomTree) {
 
 INITIALIZE_PASS_BEGIN(SROA, "sroa", "Scalar Replacement Of Aggregates",
                       false, false)
-INITIALIZE_PASS_DEPENDENCY(DominatorTree)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_END(SROA, "sroa", "Scalar Replacement Of Aggregates",
                     false, false)
 
@@ -3545,7 +3545,9 @@ bool SROA::runOnFunction(Function &F) {
     DEBUG(dbgs() << "  Skipping SROA -- no target data!\n");
     return false;
   }
-  DT = getAnalysisIfAvailable<DominatorTree>();
+  DominatorTreeWrapperPass *DTWP =
+      getAnalysisIfAvailable<DominatorTreeWrapperPass>();
+  DT = DTWP ? &DTWP->getDomTree() : 0;
 
   BasicBlock &EntryBB = F.getEntryBlock();
   for (BasicBlock::iterator I = EntryBB.begin(), E = llvm::prior(EntryBB.end());
@@ -3587,6 +3589,6 @@ bool SROA::runOnFunction(Function &F) {
 
 void SROA::getAnalysisUsage(AnalysisUsage &AU) const {
   if (RequiresDomTree)
-    AU.addRequired<DominatorTree>();
+    AU.addRequired<DominatorTreeWrapperPass>();
   AU.setPreservesCFG();
 }

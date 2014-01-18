@@ -26,7 +26,6 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/ConstantFolding.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/Loads.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
@@ -34,6 +33,7 @@
 #include "llvm/Analysis/PHITransAddr.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -677,13 +677,13 @@ namespace {
 
     // This transformation requires dominator postdominator info
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-      AU.addRequired<DominatorTree>();
+      AU.addRequired<DominatorTreeWrapperPass>();
       AU.addRequired<TargetLibraryInfo>();
       if (!NoLoads)
         AU.addRequired<MemoryDependenceAnalysis>();
       AU.addRequired<AliasAnalysis>();
 
-      AU.addPreserved<DominatorTree>();
+      AU.addPreserved<DominatorTreeWrapperPass>();
       AU.addPreserved<AliasAnalysis>();
     }
 
@@ -726,7 +726,7 @@ FunctionPass *llvm::createGVNPass(bool NoLoads) {
 
 INITIALIZE_PASS_BEGIN(GVN, "gvn", "Global Value Numbering", false, false)
 INITIALIZE_PASS_DEPENDENCY(MemoryDependenceAnalysis)
-INITIALIZE_PASS_DEPENDENCY(DominatorTree)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfo)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(GVN, "gvn", "Global Value Numbering", false, false)
@@ -2315,7 +2315,7 @@ bool GVN::processInstruction(Instruction *I) {
 bool GVN::runOnFunction(Function& F) {
   if (!NoLoads)
     MD = &getAnalysis<MemoryDependenceAnalysis>();
-  DT = &getAnalysis<DominatorTree>();
+  DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   TD = getAnalysisIfAvailable<DataLayout>();
   TLI = &getAnalysis<TargetLibraryInfo>();
   VN.setAliasAnalysis(&getAnalysis<AliasAnalysis>());

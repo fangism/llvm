@@ -254,7 +254,7 @@ SparcTargetLowering::LowerReturn_64(SDValue Chain,
                  DAG.getTarget(), RVLocs, *DAG.getContext());
 
   // Analyze return values.
-  CCInfo.AnalyzeReturn(Outs, CC_Sparc64);
+  CCInfo.AnalyzeReturn(Outs, RetCC_Sparc64);
 
   SDValue Flag;
   SmallVector<SDValue, 4> RetOps(1, Chain);
@@ -271,6 +271,7 @@ SparcTargetLowering::LowerReturn_64(SDValue Chain,
 
     // Integer return values must be sign or zero extended by the callee.
     switch (VA.getLocInfo()) {
+    case CCValAssign::Full: break;
     case CCValAssign::SExt:
       OutVal = DAG.getNode(ISD::SIGN_EXTEND, DL, VA.getLocVT(), OutVal);
       break;
@@ -279,8 +280,9 @@ SparcTargetLowering::LowerReturn_64(SDValue Chain,
       break;
     case CCValAssign::AExt:
       OutVal = DAG.getNode(ISD::ANY_EXTEND, DL, VA.getLocVT(), OutVal);
-    default:
       break;
+    default:
+      llvm_unreachable("Unknown loc info!");
     }
 
     // The custom bit on an i32 return value indicates that it should be passed
@@ -1258,7 +1260,7 @@ SparcTargetLowering::LowerCall_64(TargetLowering::CallLoweringInfo &CLI,
   if (CLI.Ins.size() == 1 && CLI.Ins[0].VT == MVT::f32 && CLI.CS == 0)
     CLI.Ins[0].Flags.setInReg();
 
-  RVInfo.AnalyzeCallResult(CLI.Ins, CC_Sparc64);
+  RVInfo.AnalyzeCallResult(CLI.Ins, RetCC_Sparc64);
 
   // Copy all of the result registers out of their specified physreg.
   for (unsigned i = 0; i != RVLocs.size(); ++i) {

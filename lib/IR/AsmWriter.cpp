@@ -24,12 +24,12 @@
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/IRPrintingPasses.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
-#include "llvm/IR/PrintModulePass.h"
 #include "llvm/IR/TypeFinder.h"
 #include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/Support/CFG.h"
@@ -73,6 +73,8 @@ static void PrintCallingConv(unsigned cc, raw_ostream &Out) {
   case CallingConv::Cold:          Out << "coldcc"; break;
   case CallingConv::WebKit_JS:     Out << "webkit_jscc"; break;
   case CallingConv::AnyReg:        Out << "anyregcc"; break;
+  case CallingConv::PreserveMost:  Out << "preserve_mostcc"; break;
+  case CallingConv::PreserveAll:   Out << "preserve_allcc"; break;
   case CallingConv::X86_StdCall:   Out << "x86_stdcallcc"; break;
   case CallingConv::X86_FastCall:  Out << "x86_fastcallcc"; break;
   case CallingConv::X86_ThisCall:  Out << "x86_thiscallcc"; break;
@@ -1367,8 +1369,6 @@ static void PrintLinkage(GlobalValue::LinkageTypes LT,
   case GlobalValue::WeakODRLinkage:       Out << "weak_odr ";       break;
   case GlobalValue::CommonLinkage:        Out << "common ";         break;
   case GlobalValue::AppendingLinkage:     Out << "appending ";      break;
-  case GlobalValue::DLLImportLinkage:     Out << "dllimport ";      break;
-  case GlobalValue::DLLExportLinkage:     Out << "dllexport ";      break;
   case GlobalValue::ExternalWeakLinkage:  Out << "extern_weak ";    break;
   case GlobalValue::AvailableExternallyLinkage:
     Out << "available_externally ";
@@ -1383,6 +1383,15 @@ static void PrintVisibility(GlobalValue::VisibilityTypes Vis,
   case GlobalValue::DefaultVisibility: break;
   case GlobalValue::HiddenVisibility:    Out << "hidden "; break;
   case GlobalValue::ProtectedVisibility: Out << "protected "; break;
+  }
+}
+
+static void PrintDLLStorageClass(GlobalValue::DLLStorageClassTypes SCT,
+                                 formatted_raw_ostream &Out) {
+  switch (SCT) {
+  case GlobalValue::DefaultStorageClass: break;
+  case GlobalValue::DLLImportStorageClass: Out << "dllimport "; break;
+  case GlobalValue::DLLExportStorageClass: Out << "dllexport "; break;
   }
 }
 
@@ -1418,6 +1427,7 @@ void AssemblyWriter::printGlobal(const GlobalVariable *GV) {
 
   PrintLinkage(GV->getLinkage(), Out);
   PrintVisibility(GV->getVisibility(), Out);
+  PrintDLLStorageClass(GV->getDLLStorageClass(), Out);
   PrintThreadLocalModel(GV->getThreadLocalMode(), Out);
 
   if (unsigned AddressSpace = GV->getType()->getAddressSpace())
@@ -1455,6 +1465,7 @@ void AssemblyWriter::printAlias(const GlobalAlias *GA) {
     Out << " = ";
   }
   PrintVisibility(GA->getVisibility(), Out);
+  PrintDLLStorageClass(GA->getDLLStorageClass(), Out);
 
   Out << "alias ";
 
@@ -1552,6 +1563,7 @@ void AssemblyWriter::printFunction(const Function *F) {
 
   PrintLinkage(F->getLinkage(), Out);
   PrintVisibility(F->getVisibility(), Out);
+  PrintDLLStorageClass(F->getDLLStorageClass(), Out);
 
   // Print the calling convention.
   if (F->getCallingConv() != CallingConv::C) {

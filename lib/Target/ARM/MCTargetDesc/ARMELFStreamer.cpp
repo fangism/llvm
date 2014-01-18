@@ -692,7 +692,6 @@ void ARMTargetELFStreamer::emitArchDefaultAttributes() {
     break;
 
   case ARM::ARMV6M:
-    setAttributeItem(CPU_arch_profile, MicroControllerProfile, false);
     setAttributeItem(THUMB_ISA_use, Allowed, false);
     break;
 
@@ -926,7 +925,7 @@ void ARMTargetELFStreamer::emitInst(uint32_t Inst, char Suffix) {
 }
 
 void ARMELFStreamer::FinishImpl() {
-  MCTargetStreamer &TS = getTargetStreamer();
+  MCTargetStreamer &TS = *getTargetStreamer();
   ARMTargetStreamer &ATS = static_cast<ARMTargetStreamer &>(TS);
   ATS.finishAttributeSection();
 

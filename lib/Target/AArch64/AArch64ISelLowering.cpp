@@ -30,13 +30,9 @@
 using namespace llvm;
 
 static TargetLoweringObjectFile *createTLOF(AArch64TargetMachine &TM) {
-  const AArch64Subtarget *Subtarget = &TM.getSubtarget<AArch64Subtarget>();
-
-  if (Subtarget->isTargetLinux())
-    return new AArch64LinuxTargetObjectFile();
-  if (Subtarget->isTargetELF())
-    return new TargetLoweringObjectFileELF();
-  llvm_unreachable("unknown subtarget type");
+  assert (TM.getSubtarget<AArch64Subtarget>().isTargetELF() &&
+          "unknown subtarget type");
+  return new AArch64ElfTargetObjectFile();
 }
 
 AArch64TargetLowering::AArch64TargetLowering(AArch64TargetMachine &TM)
@@ -154,6 +150,11 @@ AArch64TargetLowering::AArch64TargetLowering(AArch64TargetMachine &TM)
   setOperationAction(ISD::SREM, MVT::i64, Expand);
   setOperationAction(ISD::SDIVREM, MVT::i32, Expand);
   setOperationAction(ISD::SDIVREM, MVT::i64, Expand);
+
+  setOperationAction(ISD::SMUL_LOHI, MVT::i32, Expand);
+  setOperationAction(ISD::SMUL_LOHI, MVT::i64, Expand);
+  setOperationAction(ISD::UMUL_LOHI, MVT::i32, Expand);
+  setOperationAction(ISD::UMUL_LOHI, MVT::i64, Expand);
 
   setOperationAction(ISD::CTPOP, MVT::i32, Expand);
   setOperationAction(ISD::CTPOP, MVT::i64, Expand);
@@ -285,6 +286,15 @@ AArch64TargetLowering::AArch64TargetLowering(AArch64TargetMachine &TM)
   setExceptionSelectorRegister(AArch64::X1);
 
   if (Subtarget->hasNEON()) {
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v8i8, Expand);
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v4i16, Expand);
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v2i32, Expand);
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v1i64, Expand);
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v16i8, Expand);
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v8i16, Expand);
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v4i32, Expand);
+    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::v2i64, Expand);
+
     setOperationAction(ISD::BUILD_VECTOR, MVT::v1i8, Custom);
     setOperationAction(ISD::BUILD_VECTOR, MVT::v8i8, Custom);
     setOperationAction(ISD::BUILD_VECTOR, MVT::v16i8, Custom);
@@ -314,10 +324,8 @@ AArch64TargetLowering::AArch64TargetLowering(AArch64TargetMachine &TM)
     setOperationAction(ISD::VECTOR_SHUFFLE, MVT::v1f64, Custom);
     setOperationAction(ISD::VECTOR_SHUFFLE, MVT::v2f64, Custom);
 
+    setOperationAction(ISD::CONCAT_VECTORS, MVT::v2i32, Legal);
     setOperationAction(ISD::CONCAT_VECTORS, MVT::v16i8, Legal);
-    setOperationAction(ISD::CONCAT_VECTORS, MVT::v8i16, Legal);
-    setOperationAction(ISD::CONCAT_VECTORS, MVT::v4i32, Legal);
-    setOperationAction(ISD::CONCAT_VECTORS, MVT::v2i64, Legal);
     setOperationAction(ISD::CONCAT_VECTORS, MVT::v8i16, Legal);
     setOperationAction(ISD::CONCAT_VECTORS, MVT::v4i32, Legal);
     setOperationAction(ISD::CONCAT_VECTORS, MVT::v2i64, Legal);
@@ -366,6 +374,89 @@ AArch64TargetLowering::AArch64TargetLowering(AArch64TargetMachine &TM)
     setOperationAction(ISD::FROUND, MVT::v4f32, Legal);
     setOperationAction(ISD::FROUND, MVT::v1f64, Legal);
     setOperationAction(ISD::FROUND, MVT::v2f64, Legal);
+
+    setOperationAction(ISD::SINT_TO_FP, MVT::v1i8, Custom);
+    setOperationAction(ISD::SINT_TO_FP, MVT::v1i16, Custom);
+    setOperationAction(ISD::SINT_TO_FP, MVT::v1i32, Custom);
+    setOperationAction(ISD::SINT_TO_FP, MVT::v4i16, Custom);
+    setOperationAction(ISD::SINT_TO_FP, MVT::v2i32, Custom);
+    setOperationAction(ISD::SINT_TO_FP, MVT::v2i64, Custom);
+
+    setOperationAction(ISD::UINT_TO_FP, MVT::v1i8, Custom);
+    setOperationAction(ISD::UINT_TO_FP, MVT::v1i16, Custom);
+    setOperationAction(ISD::UINT_TO_FP, MVT::v1i32, Custom);
+    setOperationAction(ISD::UINT_TO_FP, MVT::v4i16, Custom);
+    setOperationAction(ISD::UINT_TO_FP, MVT::v2i32, Custom);
+    setOperationAction(ISD::UINT_TO_FP, MVT::v2i64, Custom);
+
+    setOperationAction(ISD::FP_TO_SINT, MVT::v1i8, Custom);
+    setOperationAction(ISD::FP_TO_SINT, MVT::v1i16, Custom);
+    setOperationAction(ISD::FP_TO_SINT, MVT::v1i32, Custom);
+    setOperationAction(ISD::FP_TO_SINT, MVT::v4i16, Custom);
+    setOperationAction(ISD::FP_TO_SINT, MVT::v2i32, Custom);
+    setOperationAction(ISD::FP_TO_SINT, MVT::v2i64, Custom);
+
+    setOperationAction(ISD::FP_TO_UINT, MVT::v1i8, Custom);
+    setOperationAction(ISD::FP_TO_UINT, MVT::v1i16, Custom);
+    setOperationAction(ISD::FP_TO_UINT, MVT::v1i32, Custom);
+    setOperationAction(ISD::FP_TO_UINT, MVT::v4i16, Custom);
+    setOperationAction(ISD::FP_TO_UINT, MVT::v2i32, Custom);
+    setOperationAction(ISD::FP_TO_UINT, MVT::v2i64, Custom);
+
+    // Neon does not support vector divide/remainder operations except
+    // floating-point divide.
+    setOperationAction(ISD::SDIV, MVT::v1i8, Expand);
+    setOperationAction(ISD::SDIV, MVT::v8i8, Expand);
+    setOperationAction(ISD::SDIV, MVT::v16i8, Expand);
+    setOperationAction(ISD::SDIV, MVT::v1i16, Expand);
+    setOperationAction(ISD::SDIV, MVT::v4i16, Expand);
+    setOperationAction(ISD::SDIV, MVT::v8i16, Expand);
+    setOperationAction(ISD::SDIV, MVT::v1i32, Expand);
+    setOperationAction(ISD::SDIV, MVT::v2i32, Expand);
+    setOperationAction(ISD::SDIV, MVT::v4i32, Expand);
+    setOperationAction(ISD::SDIV, MVT::v1i64, Expand);
+    setOperationAction(ISD::SDIV, MVT::v2i64, Expand);
+
+    setOperationAction(ISD::UDIV, MVT::v1i8, Expand);
+    setOperationAction(ISD::UDIV, MVT::v8i8, Expand);
+    setOperationAction(ISD::UDIV, MVT::v16i8, Expand);
+    setOperationAction(ISD::UDIV, MVT::v1i16, Expand);
+    setOperationAction(ISD::UDIV, MVT::v4i16, Expand);
+    setOperationAction(ISD::UDIV, MVT::v8i16, Expand);
+    setOperationAction(ISD::UDIV, MVT::v1i32, Expand);
+    setOperationAction(ISD::UDIV, MVT::v2i32, Expand);
+    setOperationAction(ISD::UDIV, MVT::v4i32, Expand);
+    setOperationAction(ISD::UDIV, MVT::v1i64, Expand);
+    setOperationAction(ISD::UDIV, MVT::v2i64, Expand);
+
+    setOperationAction(ISD::SREM, MVT::v1i8, Expand);
+    setOperationAction(ISD::SREM, MVT::v8i8, Expand);
+    setOperationAction(ISD::SREM, MVT::v16i8, Expand);
+    setOperationAction(ISD::SREM, MVT::v1i16, Expand);
+    setOperationAction(ISD::SREM, MVT::v4i16, Expand);
+    setOperationAction(ISD::SREM, MVT::v8i16, Expand);
+    setOperationAction(ISD::SREM, MVT::v1i32, Expand);
+    setOperationAction(ISD::SREM, MVT::v2i32, Expand);
+    setOperationAction(ISD::SREM, MVT::v4i32, Expand);
+    setOperationAction(ISD::SREM, MVT::v1i64, Expand);
+    setOperationAction(ISD::SREM, MVT::v2i64, Expand);
+
+    setOperationAction(ISD::UREM, MVT::v1i8, Expand);
+    setOperationAction(ISD::UREM, MVT::v8i8, Expand);
+    setOperationAction(ISD::UREM, MVT::v16i8, Expand);
+    setOperationAction(ISD::UREM, MVT::v1i16, Expand);
+    setOperationAction(ISD::UREM, MVT::v4i16, Expand);
+    setOperationAction(ISD::UREM, MVT::v8i16, Expand);
+    setOperationAction(ISD::UREM, MVT::v1i32, Expand);
+    setOperationAction(ISD::UREM, MVT::v2i32, Expand);
+    setOperationAction(ISD::UREM, MVT::v4i32, Expand);
+    setOperationAction(ISD::UREM, MVT::v1i64, Expand);
+    setOperationAction(ISD::UREM, MVT::v2i64, Expand);
+
+    setOperationAction(ISD::FREM, MVT::v2f32, Expand);
+    setOperationAction(ISD::FREM, MVT::v4f32, Expand);
+    setOperationAction(ISD::FREM, MVT::v1f64, Expand);
+    setOperationAction(ISD::FREM, MVT::v2f64, Expand);
 
     // Vector ExtLoad and TruncStore are expanded.
     for (unsigned I = MVT::FIRST_VECTOR_VALUETYPE;
@@ -1224,7 +1315,8 @@ AArch64TargetLowering::LowerFormalArguments(SDValue Chain,
       break;
     case CCValAssign::SExt:
     case CCValAssign::ZExt:
-    case CCValAssign::AExt: {
+    case CCValAssign::AExt:
+    case CCValAssign::FPExt: {
       unsigned DestSize = VA.getValVT().getSizeInBits();
       unsigned DestSubReg;
 
@@ -1445,7 +1537,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     case CCValAssign::Full: break;
     case CCValAssign::SExt:
     case CCValAssign::ZExt:
-    case CCValAssign::AExt: {
+    case CCValAssign::AExt:
+    case CCValAssign::FPExt: {
       unsigned SrcSize = VA.getValVT().getSizeInBits();
       unsigned SrcSubReg;
 
@@ -2109,9 +2202,42 @@ AArch64TargetLowering::LowerFP_EXTEND(SDValue Op, SelectionDAG &DAG) const {
   return LowerF128ToCall(Op, DAG, LC);
 }
 
+static SDValue LowerVectorFP_TO_INT(SDValue Op, SelectionDAG &DAG,
+                                    bool IsSigned) {
+  SDLoc dl(Op);
+  EVT VT = Op.getValueType();
+  SDValue Vec = Op.getOperand(0);
+  EVT OpVT = Vec.getValueType();
+  unsigned Opc = IsSigned ? ISD::FP_TO_SINT : ISD::FP_TO_UINT;
+
+  if (VT.getVectorNumElements() == 1) {
+    assert(OpVT == MVT::v1f64 && "Unexpected vector type!");
+    if (VT.getSizeInBits() == OpVT.getSizeInBits())
+      return Op;
+    return DAG.UnrollVectorOp(Op.getNode());
+  }
+
+  if (VT.getSizeInBits() > OpVT.getSizeInBits()) {
+    assert(Vec.getValueType() == MVT::v2f32 && VT == MVT::v2i64 &&
+           "Unexpected vector type!");
+    Vec = DAG.getNode(ISD::FP_EXTEND, dl, MVT::v2f64, Vec);
+    return DAG.getNode(Opc, dl, VT, Vec);
+  } else if (VT.getSizeInBits() < OpVT.getSizeInBits()) {
+    EVT CastVT = EVT::getIntegerVT(*DAG.getContext(),
+                                   OpVT.getVectorElementType().getSizeInBits());
+    CastVT =
+        EVT::getVectorVT(*DAG.getContext(), CastVT, VT.getVectorNumElements());
+    Vec = DAG.getNode(Opc, dl, CastVT, Vec);
+    return DAG.getNode(ISD::TRUNCATE, dl, VT, Vec);
+  }
+  return DAG.getNode(Opc, dl, VT, Vec);
+}
+
 SDValue
 AArch64TargetLowering::LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG,
                                       bool IsSigned) const {
+  if (Op.getValueType().isVector())
+    return LowerVectorFP_TO_INT(Op, DAG, IsSigned);
   if (Op.getOperand(0).getValueType() != MVT::f128) {
     // It's legal except when f128 is involved
     return Op;
@@ -2457,9 +2583,42 @@ AArch64TargetLowering::LowerGlobalTLSAddress(SDValue Op,
   return DAG.getNode(ISD::ADD, DL, PtrVT, ThreadBase, TPOff);
 }
 
+static SDValue LowerVectorINT_TO_FP(SDValue Op, SelectionDAG &DAG,
+                                    bool IsSigned) {
+  SDLoc dl(Op);
+  EVT VT = Op.getValueType();
+  SDValue Vec = Op.getOperand(0);
+  unsigned Opc = IsSigned ? ISD::SINT_TO_FP : ISD::UINT_TO_FP;
+
+  if (VT.getVectorNumElements() == 1) {
+    assert(VT == MVT::v1f64 && "Unexpected vector type!");
+    if (VT.getSizeInBits() == Vec.getValueSizeInBits())
+      return Op;
+    return DAG.UnrollVectorOp(Op.getNode());
+  }
+
+  if (VT.getSizeInBits() < Vec.getValueSizeInBits()) {
+    assert(Vec.getValueType() == MVT::v2i64 && VT == MVT::v2f32 &&
+           "Unexpected vector type!");
+    Vec = DAG.getNode(Opc, dl, MVT::v2f64, Vec);
+    return DAG.getNode(ISD::FP_ROUND, dl, VT, Vec, DAG.getIntPtrConstant(0));
+  } else if (VT.getSizeInBits() > Vec.getValueSizeInBits()) {
+    unsigned CastOpc = IsSigned ? ISD::SIGN_EXTEND : ISD::ZERO_EXTEND;
+    EVT CastVT = EVT::getIntegerVT(*DAG.getContext(),
+                                   VT.getVectorElementType().getSizeInBits());
+    CastVT =
+        EVT::getVectorVT(*DAG.getContext(), CastVT, VT.getVectorNumElements());
+    Vec = DAG.getNode(CastOpc, dl, CastVT, Vec);
+  }
+
+  return DAG.getNode(Opc, dl, VT, Vec);
+}
+
 SDValue
 AArch64TargetLowering::LowerINT_TO_FP(SDValue Op, SelectionDAG &DAG,
                                       bool IsSigned) const {
+  if (Op.getValueType().isVector())
+    return LowerVectorINT_TO_FP(Op, DAG, IsSigned);
   if (Op.getValueType() != MVT::f128) {
     // Legal for everything except f128.
     return Op;
@@ -3480,8 +3639,9 @@ static SDValue PerformORCombine(SDNode *N,
       BuildVectorSDNode *BVN1 = dyn_cast<BuildVectorSDNode>(N1->getOperand(1));
       APInt SplatBits1;
       if (BVN1 && BVN1->isConstantSplat(SplatBits1, SplatUndef, SplatBitSize,
-                                        HasAnyUndefs) &&
-          !HasAnyUndefs && SplatBits0 == ~SplatBits1) {
+                                        HasAnyUndefs) && !HasAnyUndefs &&
+          SplatBits0.getBitWidth() == SplatBits1.getBitWidth() &&
+          SplatBits0 == ~SplatBits1) {
 
         return DAG.getNode(ISD::VSELECT, DL, VT, N0->getOperand(1),
                            N0->getOperand(0), N1->getOperand(0));
@@ -3570,7 +3730,25 @@ static bool isVShiftRImm(SDValue Op, EVT VT, int64_t &Cnt) {
   return (Cnt >= 1 && Cnt <= ElementBits);
 }
 
-/// Checks for immediate versions of vector shifts and lowers them.
+static SDValue GenForSextInreg(SDNode *N,
+                               TargetLowering::DAGCombinerInfo &DCI,
+                               EVT SrcVT, EVT DestVT, EVT SubRegVT,
+                               const int *Mask, SDValue Src) {
+  SelectionDAG &DAG = DCI.DAG;
+  SDValue Bitcast
+    = DAG.getNode(ISD::BITCAST, SDLoc(N), SrcVT, Src);
+  SDValue Sext
+    = DAG.getNode(ISD::SIGN_EXTEND, SDLoc(N), DestVT, Bitcast);
+  SDValue ShuffleVec
+    = DAG.getVectorShuffle(DestVT, SDLoc(N), Sext, DAG.getUNDEF(DestVT), Mask);
+  SDValue ExtractSubreg
+    = SDValue(DAG.getMachineNode(TargetOpcode::EXTRACT_SUBREG, SDLoc(N),
+                SubRegVT, ShuffleVec,
+                DAG.getTargetConstant(AArch64::sub_64, MVT::i32)), 0);
+  return ExtractSubreg;
+}
+
+/// Checks for vector shifts and lowers them.
 static SDValue PerformShiftCombine(SDNode *N,
                                    TargetLowering::DAGCombinerInfo &DCI,
                                    const AArch64Subtarget *ST) {
@@ -3578,6 +3756,51 @@ static SDValue PerformShiftCombine(SDNode *N,
   EVT VT = N->getValueType(0);
   if (N->getOpcode() == ISD::SRA && (VT == MVT::i32 || VT == MVT::i64))
     return PerformSRACombine(N, DCI);
+
+  // We're looking for an SRA/SHL pair to help generating instruction
+  //   sshll  v0.8h, v0.8b, #0
+  // The instruction STXL is also the alias of this instruction.
+  //
+  // For example, for DAG like below,
+  //   v2i32 = sra (v2i32 (shl v2i32, 16)), 16
+  // we can transform it into
+  //   v2i32 = EXTRACT_SUBREG 
+  //             (v4i32 (suffle_vector
+  //                       (v4i32 (sext (v4i16 (bitcast v2i32))), 
+  //                       undef, (0, 2, u, u)),
+  //             sub_64
+  //
+  // With this transformation we expect to generate "SSHLL + UZIP1"
+  // Sometimes UZIP1 can be optimized away by combining with other context.
+  int64_t ShrCnt, ShlCnt;
+  if (N->getOpcode() == ISD::SRA
+      && (VT == MVT::v2i32 || VT == MVT::v4i16)
+      && isVShiftRImm(N->getOperand(1), VT, ShrCnt)
+      && N->getOperand(0).getOpcode() == ISD::SHL
+      && isVShiftRImm(N->getOperand(0).getOperand(1), VT, ShlCnt)) {
+    SDValue Src = N->getOperand(0).getOperand(0);
+    if (VT == MVT::v2i32 && ShrCnt == 16 && ShlCnt == 16) {
+      // sext_inreg(v2i32, v2i16)
+      // We essentially only care the Mask {0, 2, u, u}
+      int Mask[4] = {0, 2, 4, 6};
+      return GenForSextInreg(N, DCI, MVT::v4i16, MVT::v4i32, MVT::v2i32,
+                             Mask, Src); 
+    }
+    else if (VT == MVT::v2i32 && ShrCnt == 24 && ShlCnt == 24) {
+      // sext_inreg(v2i16, v2i8)
+      // We essentially only care the Mask {0, u, 4, u, u, u, u, u, u, u, u, u}
+      int Mask[8] = {0, 2, 4, 6, 8, 10, 12, 14};
+      return GenForSextInreg(N, DCI, MVT::v8i8, MVT::v8i16, MVT::v2i32,
+                             Mask, Src);
+    }
+    else if (VT == MVT::v4i16 && ShrCnt == 8 && ShlCnt == 8) {
+      // sext_inreg(v4i16, v4i8)
+      // We essentially only care the Mask {0, 2, 4, 6, u, u, u, u, u, u, u, u}
+      int Mask[8] = {0, 2, 4, 6, 8, 10, 12, 14};
+      return GenForSextInreg(N, DCI, MVT::v8i8, MVT::v8i16, MVT::v4i16,
+                             Mask, Src);
+    }
+  }
 
   // Nothing to be done for scalar shifts.
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
@@ -4246,7 +4469,7 @@ static bool isREVMask(ArrayRef<int> M, EVT VT, unsigned BlockSize) {
 
 // isPermuteMask - Check whether the vector shuffle matches to UZP, ZIP and
 // TRN instruction.
-static unsigned isPermuteMask(ArrayRef<int> M, EVT VT) {
+static unsigned isPermuteMask(ArrayRef<int> M, EVT VT, bool isV2undef) {
   unsigned NumElts = VT.getVectorNumElements();
   if (NumElts < 4)
     return 0;
@@ -4255,7 +4478,10 @@ static unsigned isPermuteMask(ArrayRef<int> M, EVT VT) {
 
   // Check UZP1
   for (unsigned i = 0; i < NumElts; ++i) {
-    if ((unsigned)M[i] != i * 2) {
+    unsigned answer = i * 2;
+    if (isV2undef && answer >= NumElts)
+      answer -= NumElts;
+    if (M[i] != -1 && (unsigned)M[i] != answer) {
       ismatch = false;
       break;
     }
@@ -4266,7 +4492,10 @@ static unsigned isPermuteMask(ArrayRef<int> M, EVT VT) {
   // Check UZP2
   ismatch = true;
   for (unsigned i = 0; i < NumElts; ++i) {
-    if ((unsigned)M[i] != i * 2 + 1) {
+    unsigned answer = i * 2 + 1;
+    if (isV2undef && answer >= NumElts)
+      answer -= NumElts;
+    if (M[i] != -1 && (unsigned)M[i] != answer) {
       ismatch = false;
       break;
     }
@@ -4277,7 +4506,10 @@ static unsigned isPermuteMask(ArrayRef<int> M, EVT VT) {
   // Check ZIP1
   ismatch = true;
   for (unsigned i = 0; i < NumElts; ++i) {
-    if ((unsigned)M[i] != i / 2 + NumElts * (i % 2)) {
+    unsigned answer = i / 2 + NumElts * (i % 2);
+    if (isV2undef && answer >= NumElts)
+      answer -= NumElts;
+    if (M[i] != -1 && (unsigned)M[i] != answer) {
       ismatch = false;
       break;
     }
@@ -4288,7 +4520,10 @@ static unsigned isPermuteMask(ArrayRef<int> M, EVT VT) {
   // Check ZIP2
   ismatch = true;
   for (unsigned i = 0; i < NumElts; ++i) {
-    if ((unsigned)M[i] != (NumElts + i) / 2 + NumElts * (i % 2)) {
+    unsigned answer = (NumElts + i) / 2 + NumElts * (i % 2);
+    if (isV2undef && answer >= NumElts)
+      answer -= NumElts;
+    if (M[i] != -1 && (unsigned)M[i] != answer) {
       ismatch = false;
       break;
     }
@@ -4299,7 +4534,10 @@ static unsigned isPermuteMask(ArrayRef<int> M, EVT VT) {
   // Check TRN1
   ismatch = true;
   for (unsigned i = 0; i < NumElts; ++i) {
-    if ((unsigned)M[i] != i + (NumElts - 1) * (i % 2)) {
+    unsigned answer = i + (NumElts - 1) * (i % 2);
+    if (isV2undef && answer >= NumElts)
+      answer -= NumElts;
+    if (M[i] != -1 && (unsigned)M[i] != answer) {
       ismatch = false;
       break;
     }
@@ -4310,7 +4548,10 @@ static unsigned isPermuteMask(ArrayRef<int> M, EVT VT) {
   // Check TRN2
   ismatch = true;
   for (unsigned i = 0; i < NumElts; ++i) {
-    if ((unsigned)M[i] != 1 + i + (NumElts - 1) * (i % 2)) {
+    unsigned answer = 1 + i + (NumElts - 1) * (i % 2);
+    if (isV2undef && answer >= NumElts)
+      answer -= NumElts;
+    if (M[i] != -1 && (unsigned)M[i] != answer) {
       ismatch = false;
       break;
     }
@@ -4347,9 +4588,18 @@ AArch64TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
   if (isREVMask(ShuffleMask, VT, 16))
     return DAG.getNode(AArch64ISD::NEON_REV16, dl, VT, V1);
 
-  unsigned ISDNo = isPermuteMask(ShuffleMask, VT);
-  if (ISDNo)
-    return DAG.getNode(ISDNo, dl, VT, V1, V2);
+  unsigned ISDNo;
+  if (V2.getOpcode() == ISD::UNDEF)
+    ISDNo = isPermuteMask(ShuffleMask, VT, true);
+  else
+    ISDNo = isPermuteMask(ShuffleMask, VT, false);
+
+  if (ISDNo) {
+    if (V2.getOpcode() == ISD::UNDEF)
+      return DAG.getNode(ISDNo, dl, VT, V1, V1);
+    else
+      return DAG.getNode(ISDNo, dl, VT, V1, V2);
+  }
 
   // If the element of shuffle mask are all the same constant, we can
   // transform it into either NEON_VDUP or NEON_VDUPLANE

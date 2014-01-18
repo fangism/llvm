@@ -235,14 +235,8 @@ def UDIVXri : F3_2<2, 0b001101,
 let Predicates = [Is64Bit] in {
 
 // 64-bit loads.
-def LDXrr  : F3_1<3, 0b001011,
-                  (outs I64Regs:$dst), (ins MEMrr:$addr),
-                  "ldx [$addr], $dst",
-                  [(set i64:$dst, (load ADDRrr:$addr))]>;
-def LDXri  : F3_2<3, 0b001011,
-                  (outs I64Regs:$dst), (ins MEMri:$addr),
-                  "ldx [$addr], $dst",
-                  [(set i64:$dst, (load ADDRri:$addr))]>;
+defm LDX   : Load<"ldx", 0b001011, load, I64Regs, i64>;
+
 let mayLoad = 1, isCodeGenOnly = 1, isAsmParserOnly = 1 in
   def TLS_LDXrr : F3_1<3, 0b001011,
                        (outs IntRegs:$dst), (ins MEMrr:$addr, TLSSym:$sym),
@@ -276,24 +270,10 @@ def : Pat<(i64 (extloadi32 ADDRrr:$addr)),  (LDrr ADDRrr:$addr)>;
 def : Pat<(i64 (extloadi32 ADDRri:$addr)),  (LDri ADDRri:$addr)>;
 
 // Sign-extending load of i32 into i64 is a new SPARC v9 instruction.
-def LDSWrr : F3_1<3, 0b001000,
-                 (outs I64Regs:$dst), (ins MEMrr:$addr),
-                 "ldsw [$addr], $dst",
-                 [(set i64:$dst, (sextloadi32 ADDRrr:$addr))]>;
-def LDSWri : F3_2<3, 0b001000,
-                 (outs I64Regs:$dst), (ins MEMri:$addr),
-                 "ldsw [$addr], $dst",
-                 [(set i64:$dst, (sextloadi32 ADDRri:$addr))]>;
+defm LDSW   : Load<"ldsw", 0b001000, sextloadi32, I64Regs, i64>;
 
 // 64-bit stores.
-def STXrr  : F3_1<3, 0b001110,
-                 (outs), (ins MEMrr:$addr, I64Regs:$rd),
-                 "stx $rd, [$addr]",
-                 [(store i64:$rd, ADDRrr:$addr)]>;
-def STXri  : F3_2<3, 0b001110,
-                 (outs), (ins MEMri:$addr, I64Regs:$rd),
-                 "stx $rd, [$addr]",
-                 [(store i64:$rd, ADDRri:$addr)]>;
+defm STX    : Store<"stx", 0b001110, store,  I64Regs, i64>;
 
 // Truncating stores from i64 are identical to the i32 stores.
 def : Pat<(truncstorei8  i64:$src, ADDRrr:$addr), (STBrr ADDRrr:$addr, $src)>;
@@ -378,31 +358,31 @@ def FMOVQ_XCC : F4_3<0b110101, 0b000011, (outs QFPRegs:$rd),
 let Predicates = [Is64Bit] in {
 
 def FXTOS : F3_3u<2, 0b110100, 0b010000100,
-                 (outs FPRegs:$dst), (ins DFPRegs:$src),
-                 "fxtos $src, $dst",
-                 [(set FPRegs:$dst, (SPxtof DFPRegs:$src))]>;
+                 (outs FPRegs:$rd), (ins DFPRegs:$rs2),
+                 "fxtos $rs2, $rd",
+                 [(set FPRegs:$rd, (SPxtof DFPRegs:$rs2))]>;
 def FXTOD : F3_3u<2, 0b110100, 0b010001000,
-                 (outs DFPRegs:$dst), (ins DFPRegs:$src),
-                 "fxtod $src, $dst",
-                 [(set DFPRegs:$dst, (SPxtof DFPRegs:$src))]>;
+                 (outs DFPRegs:$rd), (ins DFPRegs:$rs2),
+                 "fxtod $rs2, $rd",
+                 [(set DFPRegs:$rd, (SPxtof DFPRegs:$rs2))]>;
 def FXTOQ : F3_3u<2, 0b110100, 0b010001100,
-                 (outs QFPRegs:$dst), (ins DFPRegs:$src),
-                 "fxtoq $src, $dst",
-                 [(set QFPRegs:$dst, (SPxtof DFPRegs:$src))]>,
+                 (outs QFPRegs:$rd), (ins DFPRegs:$rs2),
+                 "fxtoq $rs2, $rd",
+                 [(set QFPRegs:$rd, (SPxtof DFPRegs:$rs2))]>,
                  Requires<[HasHardQuad]>;
 
 def FSTOX : F3_3u<2, 0b110100, 0b010000001,
-                 (outs DFPRegs:$dst), (ins FPRegs:$src),
-                 "fstox $src, $dst",
-                 [(set DFPRegs:$dst, (SPftox FPRegs:$src))]>;
+                 (outs DFPRegs:$rd), (ins FPRegs:$rs2),
+                 "fstox $rs2, $rd",
+                 [(set DFPRegs:$rd, (SPftox FPRegs:$rs2))]>;
 def FDTOX : F3_3u<2, 0b110100, 0b010000010,
-                 (outs DFPRegs:$dst), (ins DFPRegs:$src),
-                 "fdtox $src, $dst",
-                 [(set DFPRegs:$dst, (SPftox DFPRegs:$src))]>;
+                 (outs DFPRegs:$rd), (ins DFPRegs:$rs2),
+                 "fdtox $rs2, $rd",
+                 [(set DFPRegs:$rd, (SPftox DFPRegs:$rs2))]>;
 def FQTOX : F3_3u<2, 0b110100, 0b010000011,
-                 (outs DFPRegs:$dst), (ins QFPRegs:$src),
-                 "fqtox $src, $dst",
-                 [(set DFPRegs:$dst, (SPftox QFPRegs:$src))]>,
+                 (outs DFPRegs:$rd), (ins QFPRegs:$rs2),
+                 "fqtox $rs2, $rd",
+                 [(set DFPRegs:$rd, (SPftox QFPRegs:$rs2))]>,
                  Requires<[HasHardQuad]>;
 
 } // Predicates = [Is64Bit]

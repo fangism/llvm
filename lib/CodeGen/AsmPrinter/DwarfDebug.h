@@ -458,6 +458,9 @@ class DwarfDebug : public AsmPrinterHandler {
   // Whether to emit the pubnames/pubtypes sections.
   bool HasDwarfPubSections;
 
+  // Whether or not to use AT_ranges for compilation units.
+  bool HasCURanges;
+
   // Version of dwarf we're emitting.
   unsigned DwarfVersion;
 
@@ -596,6 +599,10 @@ class DwarfDebug : public AsmPrinterHandler {
   /// section.
   DwarfCompileUnit *constructSkeletonCU(const DwarfCompileUnit *CU);
 
+  /// \brief Construct the split debug info compile unit for the debug info
+  /// section.
+  DwarfTypeUnit *constructSkeletonTU(const DwarfTypeUnit *TU);
+
   /// \brief Emit the debug info dwo section.
   void emitDebugInfoDWO();
 
@@ -728,6 +735,9 @@ public:
   /// \brief Returns whether or not to change the current debug info for the
   /// split dwarf proposal support.
   bool useSplitDwarf() { return HasSplitDwarf; }
+
+  /// \brief Returns whether or not to use AT_ranges for compilation units.
+  bool useCURanges() { return HasCURanges; }
 
   /// Returns the Dwarf Version.
   unsigned getDwarfVersion() const { return DwarfVersion; }

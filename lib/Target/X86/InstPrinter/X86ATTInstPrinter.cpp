@@ -125,14 +125,12 @@ void X86ATTInstPrinter::printAVXCC(const MCInst *MI, unsigned Op,
 
 void X86ATTInstPrinter::printRoundingControl(const MCInst *MI, unsigned Op,
                                    raw_ostream &O) {
-  int64_t Imm = MI->getOperand(Op).getImm() & 0x1f;
+  int64_t Imm = MI->getOperand(Op).getImm() & 0x3;
   switch (Imm) {
   case 0: O << "{rn-sae}"; break;
   case 1: O << "{rd-sae}"; break;
   case 2: O << "{ru-sae}"; break;
   case 3: O << "{rz-sae}"; break;
-      
-  default: llvm_unreachable("Invalid AVX-512 rounding control argument!");
   }
 }
 /// printPCRelImm - This is used to print an immediate value that ends up
@@ -231,8 +229,15 @@ void X86ATTInstPrinter::printMemReference(const MCInst *MI, unsigned Op,
 void X86ATTInstPrinter::printMemOffset(const MCInst *MI, unsigned Op,
                                        raw_ostream &O) {
   const MCOperand &DispSpec = MI->getOperand(Op);
+  const MCOperand &SegReg = MI->getOperand(Op+1);
 
   O << markup("<mem:");
+
+  // If this has a segment register, print it.
+  if (SegReg.getReg()) {
+    printOperand(MI, Op+1, O);
+    O << ':';
+  }
 
   if (DispSpec.isImm()) {
     O << formatImm(DispSpec.getImm());

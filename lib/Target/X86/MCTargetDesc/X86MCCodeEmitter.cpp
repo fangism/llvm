@@ -158,9 +158,8 @@ public:
                            const MCInst &MI, const MCInstrDesc &Desc,
                            raw_ostream &OS) const;
 
-  void EmitSegmentOverridePrefix(uint64_t TSFlags, unsigned &CurByte,
-                                 int MemOperand, const MCInst &MI,
-                                 raw_ostream &OS) const;
+  void EmitSegmentOverridePrefix(unsigned &CurByte, unsigned SegOperand,
+                                 const MCInst &MI, raw_ostream &OS) const;
 
   void EmitOpcodePrefix(uint64_t TSFlags, unsigned &CurByte, int MemOperand,
                         const MCInst &MI, const MCInstrDesc &Desc,
@@ -604,7 +603,7 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
   bool HasVEX_4V = (TSFlags >> X86II::VEXShift) & X86II::VEX_4V;
   bool HasVEX_4VOp3 = (TSFlags >> X86II::VEXShift) & X86II::VEX_4VOp3;
   bool HasMemOp4 = (TSFlags >> X86II::VEXShift) & X86II::MemOp4;
-  bool HasEVEX_RC = false;
+  bool HasEVEX_RC = (TSFlags >> X86II::VEXShift) & X86II::EVEX_RC;
 
   // VEX_R: opcode externsion equivalent to REX.R in
   // 1's complement (inverted) form
@@ -634,7 +633,7 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
   unsigned char VEX_W = 0;
 
   // XOP: Use XOP prefix byte 0x8f instead of VEX.
-  bool XOP = false;
+  bool XOP = (TSFlags >> X86II::VEXShift) & X86II::XOP;
 
   // VEX_5M (VEX m-mmmmm field):
   //
@@ -686,15 +685,10 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
   // EVEX_aaa
   unsigned char EVEX_aaa = 0;
 
-  // Encode the operand size opcode prefix as needed.
-  if (TSFlags & X86II::OpSize)
-    VEX_PP = 0x01;
+  bool EncodeRC = false;
 
   if ((TSFlags >> X86II::VEXShift) & X86II::VEX_W)
     VEX_W = 1;
-
-  if ((TSFlags >> X86II::VEXShift) & X86II::XOP)
-    XOP = true;
 
   if ((TSFlags >> X86II::VEXShift) & X86II::VEX_L)
     VEX_L = 1;
@@ -715,6 +709,10 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
   case X86II::TA:  // 0F 3A
     VEX_5M = 0x3;
     break;
+  case X86II::T8PD: // 66 0F 38
+    VEX_PP = 0x1;
+    VEX_5M = 0x2;
+    break;
   case X86II::T8XS: // F3 0F 38
     VEX_PP = 0x2;
     VEX_5M = 0x2;
@@ -723,9 +721,16 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
     VEX_PP = 0x3;
     VEX_5M = 0x2;
     break;
+  case X86II::TAPD: // 66 0F 3A
+    VEX_PP = 0x1;
+    VEX_5M = 0x3;
+    break;
   case X86II::TAXD: // F2 0F 3A
     VEX_PP = 0x3;
     VEX_5M = 0x3;
+    break;
+  case X86II::PD:  // 66 0F
+    VEX_PP = 0x1;
     break;
   case X86II::XS:  // F3 0F
     VEX_PP = 0x2;
@@ -749,25 +754,12 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
 
   // Classify VEX_B, VEX_4V, VEX_R, VEX_X
   unsigned NumOps = Desc.getNumOperands();
-  unsigned RcOperand = NumOps-1;
-  unsigned CurOp = 0;
-  if (NumOps > 1 && Desc.getOperandConstraint(1, MCOI::TIED_TO) == 0)
-    ++CurOp;
-  else if (NumOps > 3 && Desc.getOperandConstraint(2, MCOI::TIED_TO) == 0 &&
-           Desc.getOperandConstraint(3, MCOI::TIED_TO) == 1)
-    // Special case for AVX-512 GATHER with 2 TIED_TO operands
-    // Skip the first 2 operands: dst, mask_wb
-    CurOp += 2;
-  else if (NumOps > 3 && Desc.getOperandConstraint(2, MCOI::TIED_TO) == 0 &&
-           Desc.getOperandConstraint(NumOps - 1, MCOI::TIED_TO) == 1)
-    // Special case for GATHER with 2 TIED_TO operands
-    // Skip the first 2 operands: dst, mask_wb
-    CurOp += 2;
-  else if (NumOps > 2 && Desc.getOperandConstraint(NumOps - 2, MCOI::TIED_TO) == 0)
-    // SCATTER
-    ++CurOp;
+  unsigned CurOp = X86II::getOperandBias(Desc);
 
   switch (TSFlags & X86II::FormMask) {
+  default: llvm_unreachable("Unexpected form in EmitVEXOpcodePrefix!");
+  case X86II::RawFrm:
+    break;
   case X86II::MRMDestMem: {
     // MRMDestMem instructions forms:
     //  MemAddr, src1(ModR/M)
@@ -910,10 +902,13 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
     if (HasVEX_4VOp3)
       VEX_4V = getVEXRegisterEncoding(MI, CurOp++);
     if (EVEX_b) {
-      assert(RcOperand >= CurOp);
-      EVEX_rc = MI.getOperand(RcOperand).getImm() & 0x3;
-      HasEVEX_RC = true;
-    }
+      if (HasEVEX_RC) {
+        unsigned RcOperand = NumOps-1;
+        assert(RcOperand >= CurOp);
+        EVEX_rc = MI.getOperand(RcOperand).getImm() & 0x3;
+      }
+      EncodeRC = true;
+    }      
     break;
   case X86II::MRMDestReg:
     // MRMDestReg instructions forms:
@@ -940,6 +935,8 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
       VEX_R = 0x0;
     if (HasEVEX && X86II::is32ExtendedReg(MI.getOperand(CurOp).getReg()))
       EVEX_R2 = 0x0;
+    if (EVEX_b)
+      EncodeRC = true;
     break;
   case X86II::MRM0r: case X86II::MRM1r:
   case X86II::MRM2r: case X86II::MRM3r:
@@ -961,12 +958,11 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
     if (HasEVEX && X86II::is32ExtendedReg(MI.getOperand(CurOp).getReg()))
       VEX_X = 0x0;
     break;
-  default: // RawFrm
-    break;
   }
 
   // Emit segment override opcode prefix as needed.
-  EmitSegmentOverridePrefix(TSFlags, CurByte, MemOperand, MI, OS);
+  if (MemOperand >= 0)
+    EmitSegmentOverridePrefix(CurByte, MemOperand+X86::AddrSegmentReg, MI, OS);
 
   if (!HasEVEX) {
     // VEX opcode prefix can have 2 or 3 bytes
@@ -1013,7 +1009,7 @@ void X86MCCodeEmitter::EmitVEXOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
              (VEX_4V  << 3) |
              (EVEX_U  << 2) |
              VEX_PP, CurByte, OS);
-    if (HasEVEX_RC)
+    if (EncodeRC)
       EmitByte((EVEX_z  << 7) |
               (EVEX_rc << 5) |
               (EVEX_b  << 4) |
@@ -1123,15 +1119,12 @@ static unsigned DetermineREXPrefix(const MCInst &MI, uint64_t TSFlags,
 }
 
 /// EmitSegmentOverridePrefix - Emit segment override opcode prefix as needed
-void X86MCCodeEmitter::EmitSegmentOverridePrefix(uint64_t TSFlags,
-                                        unsigned &CurByte, int MemOperand,
-                                        const MCInst &MI,
-                                        raw_ostream &OS) const {
-  if (MemOperand < 0)
-    return; // No memory operand
-
+void X86MCCodeEmitter::EmitSegmentOverridePrefix(unsigned &CurByte,
+                                                 unsigned SegOperand,
+                                                 const MCInst &MI,
+                                                 raw_ostream &OS) const {
   // Check for explicit segment override on memory operand.
-  switch (MI.getOperand(MemOperand+X86::AddrSegmentReg).getReg()) {
+  switch (MI.getOperand(SegOperand).getReg()) {
   default: llvm_unreachable("Unknown segment register!");
   case 0: break;
   case X86::CS: EmitByte(0x2E, CurByte, OS); break;
@@ -1157,7 +1150,8 @@ void X86MCCodeEmitter::EmitOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
     EmitByte(0xF0, CurByte, OS);
 
   // Emit segment override opcode prefix as needed.
-  EmitSegmentOverridePrefix(TSFlags, CurByte, MemOperand, MI, OS);
+  if (MemOperand >= 0)
+    EmitSegmentOverridePrefix(CurByte, MemOperand+X86::AddrSegmentReg, MI, OS);
 
   // Emit the repeat opcode prefix as needed.
   if ((TSFlags & X86II::Op0Mask) == X86II::REP)
@@ -1209,6 +1203,12 @@ void X86MCCodeEmitter::EmitOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
   case X86II::A7:  // 0F A7
     Need0FPrefix = true;
     break;
+  case X86II::PD:   // 66 0F
+  case X86II::T8PD: // 66 0F 38
+  case X86II::TAPD: // 66 0F 3A
+    EmitByte(0x66, CurByte, OS);
+    Need0FPrefix = true;
+    break;
   case X86II::XS:   // F3 0F
   case X86II::T8XS: // F3 0F 38
     EmitByte(0xF3, CurByte, OS);
@@ -1246,11 +1246,13 @@ void X86MCCodeEmitter::EmitOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
 
   // FIXME: Pull this up into previous switch if REX can be moved earlier.
   switch (TSFlags & X86II::Op0Mask) {
+  case X86II::T8PD:  // 66 0F 38
   case X86II::T8XS:  // F3 0F 38
   case X86II::T8XD:  // F2 0F 38
   case X86II::T8:    // 0F 38
     EmitByte(0x38, CurByte, OS);
     break;
+  case X86II::TAPD:  // 66 0F 3A
   case X86II::TAXD:  // F2 0F 3A
   case X86II::TA:    // 0F 3A
     EmitByte(0x3A, CurByte, OS);
@@ -1293,7 +1295,7 @@ EncodeInstruction(const MCInst &MI, raw_ostream &OS,
   // It uses the EVEX.aaa field?
   bool HasEVEX = (TSFlags >> X86II::VEXShift) & X86II::EVEX;
   bool HasEVEX_K = HasEVEX && ((TSFlags >> X86II::VEXShift) & X86II::EVEX_K);
-  bool HasEVEX_B = HasEVEX && ((TSFlags >> X86II::VEXShift) & X86II::EVEX_B);
+  bool HasEVEX_RC = HasEVEX && ((TSFlags >> X86II::VEXShift) & X86II::EVEX_RC);
   
   // Determine where the memory operand starts, if present.
   int MemoryOperand = X86II::getMemoryOperandNo(TSFlags, Opcode);
@@ -1317,6 +1319,15 @@ EncodeInstruction(const MCInst &MI, raw_ostream &OS,
     llvm_unreachable("Pseudo instruction shouldn't be emitted");
   case X86II::RawFrm:
     EmitByte(BaseOpcode, CurByte, OS);
+    break;
+  case X86II::RawFrmMemOffs:
+    // Emit segment override opcode prefix as needed.
+    EmitSegmentOverridePrefix(CurByte, 1, MI, OS);
+    EmitByte(BaseOpcode, CurByte, OS);
+    EmitImmediate(MI.getOperand(CurOp++), MI.getLoc(),
+                  X86II::getSizeOfImm(TSFlags), getImmFixupKind(TSFlags),
+                  CurByte, OS, Fixups);
+    ++CurOp; // skip segment operand
     break;
   case X86II::RawFrmImm8:
     EmitByte(BaseOpcode, CurByte, OS);
@@ -1391,7 +1402,7 @@ EncodeInstruction(const MCInst &MI, raw_ostream &OS,
     if (HasVEX_4VOp3)
       ++CurOp;
     // do not count the rounding control operand
-    if (HasEVEX_B)
+    if (HasEVEX_RC)
       NumOps--;
     break;
 

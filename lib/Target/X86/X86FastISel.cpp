@@ -697,7 +697,7 @@ bool X86FastISel::X86SelectCallAddress(const Value *V, X86AddressMode &AM) {
       return false;
 
     // Can't handle DLLImport.
-    if (GV->hasDLLImportLinkage())
+    if (GV->hasDLLImportStorageClass())
       return false;
 
     // Can't handle TLS.
@@ -2111,6 +2111,8 @@ bool X86FastISel::DoSelectCall(const Instruction *I, const char *MemIntName) {
       // FIXME: Indirect doesn't need extending, but fast-isel doesn't fully
       // support this.
       return false;
+    case CCValAssign::FPExt:
+      llvm_unreachable("Unexpected loc info!");
     }
 
     if (VA.isRegLoc()) {

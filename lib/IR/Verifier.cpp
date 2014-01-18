@@ -45,18 +45,18 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Analysis/Verifier.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/DebugInfo.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
@@ -79,324 +79,301 @@ using namespace llvm;
 static cl::opt<bool> DisableDebugInfoVerifier("disable-debug-info-verifier",
                                               cl::init(true));
 
-namespace {  // Anonymous namespace for class
-  struct PreVerifier : public FunctionPass {
-    static char ID; // Pass ID, replacement for typeid
-
-    PreVerifier() : FunctionPass(ID) {
-      initializePreVerifierPass(*PassRegistry::getPassRegistry());
-    }
-
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-      AU.setPreservesAll();
-    }
-
-    // Check that the prerequisites for successful DominatorTree construction
-    // are satisfied.
-    bool runOnFunction(Function &F) {
-      bool Broken = false;
-
-      for (Function::iterator I = F.begin(), E = F.end(); I != E; ++I) {
-        if (I->empty() || !I->back().isTerminator()) {
-          dbgs() << "Basic Block in function '" << F.getName()
-                 << "' does not have terminator!\n";
-          I->printAsOperand(dbgs(), true);
-          dbgs() << "\n";
-          Broken = true;
-        }
-      }
-
-      if (Broken)
-        report_fatal_error("Broken module, no Basic Block terminator!");
-
-      return false;
-    }
-  };
-}
-
-char PreVerifier::ID = 0;
-INITIALIZE_PASS(PreVerifier, "preverify", "Preliminary module verification",
-                false, false)
-static char &PreVerifyID = PreVerifier::ID;
-
 namespace {
-  struct Verifier : public FunctionPass, public InstVisitor<Verifier> {
-    static char ID; // Pass ID, replacement for typeid
-    bool Broken;          // Is this module found to be broken?
-    VerifierFailureAction action;
-                          // What to do if verification fails.
-    Module *Mod;          // Module we are verifying right now
-    LLVMContext *Context; // Context within which we are verifying
-    DominatorTree *DT;    // Dominator Tree, caution can be null!
-    const DataLayout *DL;
+struct Verifier : public FunctionPass, public InstVisitor<Verifier> {
+  static char ID;
 
-    std::string Messages;
-    raw_string_ostream MessagesStr;
+  // What to do if verification fails.
+  VerifierFailureAction Action;
 
-    /// InstInThisBlock - when verifying a basic block, keep track of all of the
-    /// instructions we have seen so far.  This allows us to do efficient
-    /// dominance checks for the case when an instruction has an operand that is
-    /// an instruction in the same block.
-    SmallPtrSet<Instruction*, 16> InstsInThisBlock;
+  Module *M;
+  LLVMContext *Context;
+  const DataLayout *DL;
+  DominatorTree DT;
 
-    /// MDNodes - keep track of the metadata nodes that have been checked
-    /// already.
-    SmallPtrSet<MDNode *, 32> MDNodes;
+  bool Broken;
+  std::string Messages;
+  raw_string_ostream MessagesStr;
 
-    /// PersonalityFn - The personality function referenced by the
-    /// LandingPadInsts. All LandingPadInsts within the same function must use
-    /// the same personality function.
-    const Value *PersonalityFn;
+  /// \brief When verifying a basic block, keep track of all of the
+  /// instructions we have seen so far.
+  ///
+  /// This allows us to do efficient dominance checks for the case when an
+  /// instruction has an operand that is an instruction in the same block.
+  SmallPtrSet<Instruction *, 16> InstsInThisBlock;
 
-    /// Finder keeps track of all debug info MDNodes in a Module.
-    DebugInfoFinder Finder;
+  /// \brief Keep track of the metadata nodes that have been checked already.
+  SmallPtrSet<MDNode *, 32> MDNodes;
 
-    Verifier()
-      : FunctionPass(ID), Broken(false),
-        action(AbortProcessAction), Mod(0), Context(0), DT(0), DL(0),
-        MessagesStr(Messages), PersonalityFn(0) {
-      initializeVerifierPass(*PassRegistry::getPassRegistry());
+  /// \brief The personality function referenced by the LandingPadInsts.
+  /// All LandingPadInsts within the same function must use the same
+  /// personality function.
+  const Value *PersonalityFn;
+
+  /// \brief Finder keeps track of all debug info MDNodes in a Module.
+  DebugInfoFinder Finder;
+
+  Verifier()
+      : FunctionPass(ID), Action(AbortProcessAction), M(0), Context(0), DL(0),
+        Broken(false), MessagesStr(Messages), PersonalityFn(0) {
+    initializeVerifierPass(*PassRegistry::getPassRegistry());
+  }
+  explicit Verifier(VerifierFailureAction Action)
+      : FunctionPass(ID), Action(Action), M(0), Context(0), DL(0),
+        Broken(false), MessagesStr(Messages), PersonalityFn(0) {
+    initializeVerifierPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool doInitialization(Module &M) {
+    this->M = &M;
+    Context = &M.getContext();
+
+    DL = getAnalysisIfAvailable<DataLayout>();
+
+    // We must abort before returning back to the pass manager, or else the
+    // pass manager may try to run other passes on the broken module.
+    return abortIfBroken();
+  }
+
+  bool runOnFunction(Function &F) {
+    Broken = false;
+
+    // First ensure the function is well-enough formed to compute dominance
+    // information.
+    for (Function::iterator I = F.begin(), E = F.end(); I != E; ++I) {
+      if (I->empty() || !I->back().isTerminator()) {
+        dbgs() << "Basic Block in function '" << F.getName()
+               << "' does not have terminator!\n";
+        I->printAsOperand(dbgs(), true);
+        dbgs() << "\n";
+        Broken = true;
+      }
     }
-    explicit Verifier(VerifierFailureAction ctn)
-      : FunctionPass(ID), Broken(false), action(ctn), Mod(0),
-        Context(0), DT(0), DL(0), MessagesStr(Messages), PersonalityFn(0) {
-      initializeVerifierPass(*PassRegistry::getPassRegistry());
-    }
-
-    bool doInitialization(Module &M) {
-      Mod = &M;
-      Context = &M.getContext();
-
-      DL = getAnalysisIfAvailable<DataLayout>();
-
-      // We must abort before returning back to the pass manager, or else the
-      // pass manager may try to run other passes on the broken module.
+    if (Broken)
       return abortIfBroken();
+
+    // Now directly compute a dominance tree. We don't rely on the pass
+    // manager to provide this as it isolates us from a potentially
+    // out-of-date dominator tree and makes it significantly more complex to
+    // run this code outside of a pass manager.
+    DT.recalculate(F);
+
+    M = F.getParent();
+    if (!Context)
+      Context = &F.getContext();
+
+    Finder.reset();
+    visit(F);
+    InstsInThisBlock.clear();
+    PersonalityFn = 0;
+
+    if (!DisableDebugInfoVerifier)
+      // Verify Debug Info.
+      verifyDebugInfo();
+
+    // We must abort before returning back to the pass manager, or else the
+    // pass manager may try to run other passes on the broken module.
+    return abortIfBroken();
+  }
+
+  bool doFinalization(Module &M) {
+    // Scan through, checking all of the external function's linkage now...
+    for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I) {
+      visitGlobalValue(*I);
+
+      // Check to make sure function prototypes are okay.
+      if (I->isDeclaration())
+        visitFunction(*I);
     }
 
-    bool runOnFunction(Function &F) {
-      // Get dominator information if we are being run by PassManager
-      DT = &getAnalysis<DominatorTree>();
+    for (Module::global_iterator I = M.global_begin(), E = M.global_end();
+         I != E; ++I)
+      visitGlobalVariable(*I);
 
-      Mod = F.getParent();
-      if (!Context) Context = &F.getContext();
+    for (Module::alias_iterator I = M.alias_begin(), E = M.alias_end(); I != E;
+         ++I)
+      visitGlobalAlias(*I);
 
+    for (Module::named_metadata_iterator I = M.named_metadata_begin(),
+                                         E = M.named_metadata_end();
+         I != E; ++I)
+      visitNamedMDNode(*I);
+
+    visitModuleFlags(M);
+    visitModuleIdents(M);
+
+    if (!DisableDebugInfoVerifier) {
       Finder.reset();
-      visit(F);
-      InstsInThisBlock.clear();
-      PersonalityFn = 0;
-
-      if (!DisableDebugInfoVerifier)
-        // Verify Debug Info.
-        verifyDebugInfo();
-
-      // We must abort before returning back to the pass manager, or else the
-      // pass manager may try to run other passes on the broken module.
-      return abortIfBroken();
+      Finder.processModule(M);
+      // Verify Debug Info.
+      verifyDebugInfo();
     }
 
-    bool doFinalization(Module &M) {
-      // Scan through, checking all of the external function's linkage now...
-      for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I) {
-        visitGlobalValue(*I);
+    // If the module is broken, abort at this time.
+    return abortIfBroken();
+  }
 
-        // Check to make sure function prototypes are okay.
-        if (I->isDeclaration()) visitFunction(*I);
-      }
+  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    AU.setPreservesAll();
+  }
 
-      for (Module::global_iterator I = M.global_begin(), E = M.global_end();
-           I != E; ++I)
-        visitGlobalVariable(*I);
-
-      for (Module::alias_iterator I = M.alias_begin(), E = M.alias_end();
-           I != E; ++I)
-        visitGlobalAlias(*I);
-
-      for (Module::named_metadata_iterator I = M.named_metadata_begin(),
-           E = M.named_metadata_end(); I != E; ++I)
-        visitNamedMDNode(*I);
-
-      visitModuleFlags(M);
-      visitModuleIdents(M);
-
-      if (!DisableDebugInfoVerifier) {
-        Finder.reset();
-        Finder.processModule(M);
-        // Verify Debug Info.
-        verifyDebugInfo();
-      }
-
-      // If the module is broken, abort at this time.
-      return abortIfBroken();
+  /// abortIfBroken - If the module is broken and we are supposed to abort on
+  /// this condition, do so.
+  ///
+  bool abortIfBroken() {
+    if (!Broken)
+      return false;
+    MessagesStr << "Broken module found, ";
+    switch (Action) {
+    case AbortProcessAction:
+      MessagesStr << "compilation aborted!\n";
+      dbgs() << MessagesStr.str();
+      // Client should choose different reaction if abort is not desired
+      abort();
+    case PrintMessageAction:
+      MessagesStr << "verification continues.\n";
+      dbgs() << MessagesStr.str();
+      return false;
+    case ReturnStatusAction:
+      MessagesStr << "compilation terminated.\n";
+      return true;
     }
+    llvm_unreachable("Invalid action");
+  }
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-      AU.setPreservesAll();
-      AU.addRequiredID(PreVerifyID);
-      AU.addRequired<DominatorTree>();
+  // Verification methods...
+  void visitGlobalValue(GlobalValue &GV);
+  void visitGlobalVariable(GlobalVariable &GV);
+  void visitGlobalAlias(GlobalAlias &GA);
+  void visitNamedMDNode(NamedMDNode &NMD);
+  void visitMDNode(MDNode &MD, Function *F);
+  void visitModuleIdents(Module &M);
+  void visitModuleFlags(Module &M);
+  void visitModuleFlag(MDNode *Op, DenseMap<MDString *, MDNode *> &SeenIDs,
+                       SmallVectorImpl<MDNode *> &Requirements);
+  void visitFunction(Function &F);
+  void visitBasicBlock(BasicBlock &BB);
+  using InstVisitor<Verifier>::visit;
+
+  void visit(Instruction &I);
+
+  void visitTruncInst(TruncInst &I);
+  void visitZExtInst(ZExtInst &I);
+  void visitSExtInst(SExtInst &I);
+  void visitFPTruncInst(FPTruncInst &I);
+  void visitFPExtInst(FPExtInst &I);
+  void visitFPToUIInst(FPToUIInst &I);
+  void visitFPToSIInst(FPToSIInst &I);
+  void visitUIToFPInst(UIToFPInst &I);
+  void visitSIToFPInst(SIToFPInst &I);
+  void visitIntToPtrInst(IntToPtrInst &I);
+  void visitPtrToIntInst(PtrToIntInst &I);
+  void visitBitCastInst(BitCastInst &I);
+  void visitAddrSpaceCastInst(AddrSpaceCastInst &I);
+  void visitPHINode(PHINode &PN);
+  void visitBinaryOperator(BinaryOperator &B);
+  void visitICmpInst(ICmpInst &IC);
+  void visitFCmpInst(FCmpInst &FC);
+  void visitExtractElementInst(ExtractElementInst &EI);
+  void visitInsertElementInst(InsertElementInst &EI);
+  void visitShuffleVectorInst(ShuffleVectorInst &EI);
+  void visitVAArgInst(VAArgInst &VAA) { visitInstruction(VAA); }
+  void visitCallInst(CallInst &CI);
+  void visitInvokeInst(InvokeInst &II);
+  void visitGetElementPtrInst(GetElementPtrInst &GEP);
+  void visitLoadInst(LoadInst &LI);
+  void visitStoreInst(StoreInst &SI);
+  void verifyDominatesUse(Instruction &I, unsigned i);
+  void visitInstruction(Instruction &I);
+  void visitTerminatorInst(TerminatorInst &I);
+  void visitBranchInst(BranchInst &BI);
+  void visitReturnInst(ReturnInst &RI);
+  void visitSwitchInst(SwitchInst &SI);
+  void visitIndirectBrInst(IndirectBrInst &BI);
+  void visitSelectInst(SelectInst &SI);
+  void visitUserOp1(Instruction &I);
+  void visitUserOp2(Instruction &I) { visitUserOp1(I); }
+  void visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI);
+  void visitAtomicCmpXchgInst(AtomicCmpXchgInst &CXI);
+  void visitAtomicRMWInst(AtomicRMWInst &RMWI);
+  void visitFenceInst(FenceInst &FI);
+  void visitAllocaInst(AllocaInst &AI);
+  void visitExtractValueInst(ExtractValueInst &EVI);
+  void visitInsertValueInst(InsertValueInst &IVI);
+  void visitLandingPadInst(LandingPadInst &LPI);
+
+  void VerifyCallSite(CallSite CS);
+  bool PerformTypeCheck(Intrinsic::ID ID, Function *F, Type *Ty, int VT,
+                        unsigned ArgNo, std::string &Suffix);
+  bool VerifyIntrinsicType(Type *Ty, ArrayRef<Intrinsic::IITDescriptor> &Infos,
+                           SmallVectorImpl<Type *> &ArgTys);
+  bool VerifyIntrinsicIsVarArg(bool isVarArg,
+                               ArrayRef<Intrinsic::IITDescriptor> &Infos);
+  bool VerifyAttributeCount(AttributeSet Attrs, unsigned Params);
+  void VerifyAttributeTypes(AttributeSet Attrs, unsigned Idx, bool isFunction,
+                            const Value *V);
+  void VerifyParameterAttrs(AttributeSet Attrs, unsigned Idx, Type *Ty,
+                            bool isReturnValue, const Value *V);
+  void VerifyFunctionAttrs(FunctionType *FT, AttributeSet Attrs,
+                           const Value *V);
+
+  void VerifyBitcastType(const Value *V, Type *DestTy, Type *SrcTy);
+  void VerifyConstantExprBitcastType(const ConstantExpr *CE);
+
+  void verifyDebugInfo();
+
+  void WriteValue(const Value *V) {
+    if (!V)
+      return;
+    if (isa<Instruction>(V)) {
+      MessagesStr << *V << '\n';
+    } else {
+      V->printAsOperand(MessagesStr, true, M);
+      MessagesStr << '\n';
     }
+  }
 
-    /// abortIfBroken - If the module is broken and we are supposed to abort on
-    /// this condition, do so.
-    ///
-    bool abortIfBroken() {
-      if (!Broken) return false;
-      MessagesStr << "Broken module found, ";
-      switch (action) {
-      case AbortProcessAction:
-        MessagesStr << "compilation aborted!\n";
-        dbgs() << MessagesStr.str();
-        // Client should choose different reaction if abort is not desired
-        abort();
-      case PrintMessageAction:
-        MessagesStr << "verification continues.\n";
-        dbgs() << MessagesStr.str();
-        return false;
-      case ReturnStatusAction:
-        MessagesStr << "compilation terminated.\n";
-        return true;
-      }
-      llvm_unreachable("Invalid action");
-    }
+  void WriteType(Type *T) {
+    if (!T)
+      return;
+    MessagesStr << ' ' << *T;
+  }
 
+  // CheckFailed - A check failed, so print out the condition and the message
+  // that failed.  This provides a nice place to put a breakpoint if you want
+  // to see why something is not correct.
+  void CheckFailed(const Twine &Message, const Value *V1 = 0,
+                   const Value *V2 = 0, const Value *V3 = 0,
+                   const Value *V4 = 0) {
+    MessagesStr << Message.str() << "\n";
+    WriteValue(V1);
+    WriteValue(V2);
+    WriteValue(V3);
+    WriteValue(V4);
+    Broken = true;
+  }
 
-    // Verification methods...
-    void visitGlobalValue(GlobalValue &GV);
-    void visitGlobalVariable(GlobalVariable &GV);
-    void visitGlobalAlias(GlobalAlias &GA);
-    void visitNamedMDNode(NamedMDNode &NMD);
-    void visitMDNode(MDNode &MD, Function *F);
-    void visitModuleIdents(Module &M);
-    void visitModuleFlags(Module &M);
-    void visitModuleFlag(MDNode *Op, DenseMap<MDString*, MDNode*> &SeenIDs,
-                         SmallVectorImpl<MDNode*> &Requirements);
-    void visitFunction(Function &F);
-    void visitBasicBlock(BasicBlock &BB);
-    using InstVisitor<Verifier>::visit;
+  void CheckFailed(const Twine &Message, const Value *V1, Type *T2,
+                   const Value *V3 = 0) {
+    MessagesStr << Message.str() << "\n";
+    WriteValue(V1);
+    WriteType(T2);
+    WriteValue(V3);
+    Broken = true;
+  }
 
-    void visit(Instruction &I);
-
-    void visitTruncInst(TruncInst &I);
-    void visitZExtInst(ZExtInst &I);
-    void visitSExtInst(SExtInst &I);
-    void visitFPTruncInst(FPTruncInst &I);
-    void visitFPExtInst(FPExtInst &I);
-    void visitFPToUIInst(FPToUIInst &I);
-    void visitFPToSIInst(FPToSIInst &I);
-    void visitUIToFPInst(UIToFPInst &I);
-    void visitSIToFPInst(SIToFPInst &I);
-    void visitIntToPtrInst(IntToPtrInst &I);
-    void visitPtrToIntInst(PtrToIntInst &I);
-    void visitBitCastInst(BitCastInst &I);
-    void visitAddrSpaceCastInst(AddrSpaceCastInst &I);
-    void visitPHINode(PHINode &PN);
-    void visitBinaryOperator(BinaryOperator &B);
-    void visitICmpInst(ICmpInst &IC);
-    void visitFCmpInst(FCmpInst &FC);
-    void visitExtractElementInst(ExtractElementInst &EI);
-    void visitInsertElementInst(InsertElementInst &EI);
-    void visitShuffleVectorInst(ShuffleVectorInst &EI);
-    void visitVAArgInst(VAArgInst &VAA) { visitInstruction(VAA); }
-    void visitCallInst(CallInst &CI);
-    void visitInvokeInst(InvokeInst &II);
-    void visitGetElementPtrInst(GetElementPtrInst &GEP);
-    void visitLoadInst(LoadInst &LI);
-    void visitStoreInst(StoreInst &SI);
-    void verifyDominatesUse(Instruction &I, unsigned i);
-    void visitInstruction(Instruction &I);
-    void visitTerminatorInst(TerminatorInst &I);
-    void visitBranchInst(BranchInst &BI);
-    void visitReturnInst(ReturnInst &RI);
-    void visitSwitchInst(SwitchInst &SI);
-    void visitIndirectBrInst(IndirectBrInst &BI);
-    void visitSelectInst(SelectInst &SI);
-    void visitUserOp1(Instruction &I);
-    void visitUserOp2(Instruction &I) { visitUserOp1(I); }
-    void visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI);
-    void visitAtomicCmpXchgInst(AtomicCmpXchgInst &CXI);
-    void visitAtomicRMWInst(AtomicRMWInst &RMWI);
-    void visitFenceInst(FenceInst &FI);
-    void visitAllocaInst(AllocaInst &AI);
-    void visitExtractValueInst(ExtractValueInst &EVI);
-    void visitInsertValueInst(InsertValueInst &IVI);
-    void visitLandingPadInst(LandingPadInst &LPI);
-
-    void VerifyCallSite(CallSite CS);
-    bool PerformTypeCheck(Intrinsic::ID ID, Function *F, Type *Ty,
-                          int VT, unsigned ArgNo, std::string &Suffix);
-    bool VerifyIntrinsicType(Type *Ty,
-                             ArrayRef<Intrinsic::IITDescriptor> &Infos,
-                             SmallVectorImpl<Type*> &ArgTys);
-    bool VerifyIntrinsicIsVarArg(bool isVarArg,
-                                 ArrayRef<Intrinsic::IITDescriptor> &Infos);
-    bool VerifyAttributeCount(AttributeSet Attrs, unsigned Params);
-    void VerifyAttributeTypes(AttributeSet Attrs, unsigned Idx,
-                              bool isFunction, const Value *V);
-    void VerifyParameterAttrs(AttributeSet Attrs, unsigned Idx, Type *Ty,
-                              bool isReturnValue, const Value *V);
-    void VerifyFunctionAttrs(FunctionType *FT, AttributeSet Attrs,
-                             const Value *V);
-
-    void VerifyBitcastType(const Value *V, Type *DestTy, Type *SrcTy);
-    void VerifyConstantExprBitcastType(const ConstantExpr *CE);
-
-    void verifyDebugInfo();
-
-    void WriteValue(const Value *V) {
-      if (!V) return;
-      if (isa<Instruction>(V)) {
-        MessagesStr << *V << '\n';
-      } else {
-        V->printAsOperand(MessagesStr, true, Mod);
-        MessagesStr << '\n';
-      }
-    }
-
-    void WriteType(Type *T) {
-      if (!T) return;
-      MessagesStr << ' ' << *T;
-    }
-
-
-    // CheckFailed - A check failed, so print out the condition and the message
-    // that failed.  This provides a nice place to put a breakpoint if you want
-    // to see why something is not correct.
-    void CheckFailed(const Twine &Message,
-                     const Value *V1 = 0, const Value *V2 = 0,
-                     const Value *V3 = 0, const Value *V4 = 0) {
-      MessagesStr << Message.str() << "\n";
-      WriteValue(V1);
-      WriteValue(V2);
-      WriteValue(V3);
-      WriteValue(V4);
-      Broken = true;
-    }
-
-    void CheckFailed(const Twine &Message, const Value *V1,
-                     Type *T2, const Value *V3 = 0) {
-      MessagesStr << Message.str() << "\n";
-      WriteValue(V1);
-      WriteType(T2);
-      WriteValue(V3);
-      Broken = true;
-    }
-
-    void CheckFailed(const Twine &Message, Type *T1,
-                     Type *T2 = 0, Type *T3 = 0) {
-      MessagesStr << Message.str() << "\n";
-      WriteType(T1);
-      WriteType(T2);
-      WriteType(T3);
-      Broken = true;
-    }
-  };
+  void CheckFailed(const Twine &Message, Type *T1, Type *T2 = 0, Type *T3 = 0) {
+    MessagesStr << Message.str() << "\n";
+    WriteType(T1);
+    WriteType(T2);
+    WriteType(T3);
+    Broken = true;
+  }
+};
 } // End anonymous namespace
 
 char Verifier::ID = 0;
-INITIALIZE_PASS_BEGIN(Verifier, "verify", "Module Verifier", false, false)
-INITIALIZE_PASS_DEPENDENCY(PreVerifier)
-INITIALIZE_PASS_DEPENDENCY(DominatorTree)
-INITIALIZE_PASS_END(Verifier, "verify", "Module Verifier", false, false)
+INITIALIZE_PASS(Verifier, "verify", "Module Verifier", false, false)
 
 // Assert - We know that cond should be true, if not print an error message.
 #define Assert(C, M) \
@@ -421,15 +398,11 @@ void Verifier::visitGlobalValue(GlobalValue &GV) {
   Assert1(!GV.isDeclaration() ||
           GV.isMaterializable() ||
           GV.hasExternalLinkage() ||
-          GV.hasDLLImportLinkage() ||
           GV.hasExternalWeakLinkage() ||
           (isa<GlobalAlias>(GV) &&
            (GV.hasLocalLinkage() || GV.hasWeakLinkage())),
-  "Global is external, but doesn't have external or dllimport or weak linkage!",
+          "Global is external, but doesn't have external or weak linkage!",
           &GV);
-
-  Assert1(!GV.hasDLLImportLinkage() || GV.isDeclaration(),
-          "Global is marked as dllimport, but not external", &GV);
 
   Assert1(!GV.hasAppendingLinkage() || isa<GlobalVariable>(GV),
           "Only global variables can have appending linkage!", &GV);
@@ -456,8 +429,7 @@ void Verifier::visitGlobalVariable(GlobalVariable &GV) {
               &GV);
     }
   } else {
-    Assert1(GV.hasExternalLinkage() || GV.hasDLLImportLinkage() ||
-            GV.hasExternalWeakLinkage(),
+    Assert1(GV.hasExternalLinkage() || GV.hasExternalWeakLinkage(),
             "invalid linkage type for global declaration", &GV);
   }
 
@@ -501,6 +473,11 @@ void Verifier::visitGlobalVariable(GlobalVariable &GV) {
       }
     }
   }
+
+  Assert1(!GV.hasDLLImportStorageClass() ||
+          (GV.isDeclaration() && GV.hasExternalLinkage()) ||
+          GV.hasAvailableExternallyLinkage(),
+          "Global is marked as dllimport, but not external", &GV);
 
   if (!GV.hasInitializer()) {
     visitGlobalValue(GV);
@@ -910,6 +887,11 @@ void Verifier::VerifyFunctionAttrs(FunctionType *FT, AttributeSet Attrs,
 
     if (Attrs.hasAttribute(Idx, Attribute::StructRet))
       Assert1(Idx == 1, "Attribute sret is not on first parameter!", V);
+
+    if (Attrs.hasAttribute(Idx, Attribute::InAlloca)) {
+      Assert1(Idx == FT->getNumParams(),
+              "inalloca isn't on the last parameter!", V);
+    }
   }
 
   if (!Attrs.hasAttributes(AttributeSet::FunctionIndex))
@@ -1078,8 +1060,7 @@ void Verifier::visitFunction(Function &F) {
   if (F.isMaterializable()) {
     // Function has a body somewhere we can't see.
   } else if (F.isDeclaration()) {
-    Assert1(F.hasExternalLinkage() || F.hasDLLImportLinkage() ||
-            F.hasExternalWeakLinkage(),
+    Assert1(F.hasExternalLinkage() || F.hasExternalWeakLinkage(),
             "invalid linkage type for function declaration", &F);
   } else {
     // Verify that this function (which has a body) is not named "llvm.*".  It
@@ -1105,6 +1086,11 @@ void Verifier::visitFunction(Function &F) {
     if (F.hasAddressTaken(&U))
       Assert1(0, "Invalid user of intrinsic instruction!", U);
   }
+
+  Assert1(!F.hasDLLImportStorageClass() ||
+          (F.isDeclaration() && F.hasExternalLinkage()) ||
+          F.hasAvailableExternallyLinkage(),
+          "Function is marked as dllimport, but not external.", &F);
 }
 
 // verifyBasicBlock - Verify that a basic block is well formed...
@@ -1537,15 +1523,6 @@ void Verifier::VerifyCallSite(CallSite CS) {
   // Verify call attributes.
   VerifyFunctionAttrs(FTy, Attrs, I);
 
-  // Verify that values used for inalloca parameters are in fact allocas.
-  for (unsigned i = 0, e = CS.arg_size(); i != e; ++i) {
-    if (!Attrs.hasAttribute(1 + i, Attribute::InAlloca))
-      continue;
-    Value *Arg = CS.getArgument(i);
-    Assert2(isa<AllocaInst>(Arg), "Inalloca argument is not an alloca!", I,
-            Arg);
-  }
-
   if (FTy->isVarArg()) {
     // FIXME? is 'nest' even legal here?
     bool SawNest = false;
@@ -1579,6 +1556,10 @@ void Verifier::VerifyCallSite(CallSite CS) {
 
       Assert1(!Attrs.hasAttribute(Idx, Attribute::StructRet),
               "Attribute 'sret' cannot be used for vararg call arguments!", I);
+
+      if (Attrs.hasAttribute(Idx, Attribute::InAlloca))
+        Assert1(Idx == CS.arg_size(), "inalloca isn't on the last argument!",
+                I);
     }
   }
 
@@ -1884,21 +1865,6 @@ void Verifier::visitAllocaInst(AllocaInst &AI) {
   Assert1(AI.getArraySize()->getType()->isIntegerTy(),
           "Alloca array size must have integer type", &AI);
 
-  // Verify that an alloca instruction is not used with inalloca more than once.
-  unsigned InAllocaUses = 0;
-  for (User::use_iterator UI = AI.use_begin(), UE = AI.use_end(); UI != UE;
-       ++UI) {
-    CallSite CS(*UI);
-    if (!CS)
-      continue;
-    unsigned ArgNo = CS.getArgumentNo(UI);
-    if (CS.isInAllocaArgument(ArgNo)) {
-      InAllocaUses++;
-      Assert1(InAllocaUses <= 1,
-              "Allocas can be used at most once with inalloca!", &AI);
-    }
-  }
-
   visitInstruction(AI);
 }
 
@@ -2037,7 +2003,7 @@ void Verifier::verifyDominatesUse(Instruction &I, unsigned i) {
   }
 
   const Use &U = I.getOperandUse(i);
-  Assert2(InstsInThisBlock.count(Op) || DT->dominates(Op, U),
+  Assert2(InstsInThisBlock.count(Op) || DT.dominates(Op, U),
           "Instruction does not dominate all uses!", Op, &I);
 }
 
@@ -2050,7 +2016,7 @@ void Verifier::visitInstruction(Instruction &I) {
   if (!isa<PHINode>(I)) {   // Check that non-phi nodes are not self referential
     for (Value::use_iterator UI = I.use_begin(), UE = I.use_end();
          UI != UE; ++UI)
-      Assert1(*UI != (User*)&I || !DT->isReachableFromEntry(BB),
+      Assert1(*UI != (User*)&I || !DT.isReachableFromEntry(BB),
               "Only PHI nodes may reference their own value!", &I);
   }
 
@@ -2101,7 +2067,7 @@ void Verifier::visitInstruction(Instruction &I) {
       Assert1(!F->isIntrinsic() || isa<CallInst>(I) ||
               F->getIntrinsicID() == Intrinsic::donothing,
               "Cannot invoke an intrinsinc other than donothing", &I);
-      Assert1(F->getParent() == Mod, "Referencing function in another module!",
+      Assert1(F->getParent() == M, "Referencing function in another module!",
               &I);
     } else if (BasicBlock *OpBB = dyn_cast<BasicBlock>(I.getOperand(i))) {
       Assert1(OpBB->getParent() == BB->getParent(),
@@ -2110,7 +2076,7 @@ void Verifier::visitInstruction(Instruction &I) {
       Assert1(OpArg->getParent() == BB->getParent(),
               "Referring to an argument in another function!", &I);
     } else if (GlobalValue *GV = dyn_cast<GlobalValue>(I.getOperand(i))) {
-      Assert1(GV->getParent() == Mod, "Referencing global in another module!",
+      Assert1(GV->getParent() == M, "Referencing global in another module!",
               &I);
     } else if (isa<Instruction>(I.getOperand(i))) {
       verifyDominatesUse(I, i);
@@ -2161,7 +2127,7 @@ void Verifier::visitInstruction(Instruction &I) {
 
   if (!DisableDebugInfoVerifier) {
     MD = I.getMetadata(LLVMContext::MD_dbg);
-    Finder.processLocation(*Mod, DILocation(MD));
+    Finder.processLocation(*M, DILocation(MD));
   }
 
   InstsInThisBlock.insert(&I);
@@ -2339,13 +2305,13 @@ void Verifier::visitIntrinsicFunctionCall(Intrinsic::ID ID, CallInst &CI) {
     Assert1(MD->getNumOperands() == 1,
                 "invalid llvm.dbg.declare intrinsic call 2", &CI);
     if (!DisableDebugInfoVerifier)
-      Finder.processDeclare(*Mod, cast<DbgDeclareInst>(&CI));
+      Finder.processDeclare(*M, cast<DbgDeclareInst>(&CI));
   } break;
   case Intrinsic::dbg_value: { //llvm.dbg.value
     if (!DisableDebugInfoVerifier) {
       Assert1(CI.getArgOperand(0) && isa<MDNode>(CI.getArgOperand(0)),
               "invalid llvm.dbg.value intrinsic call 1", &CI);
-      Finder.processValue(*Mod, cast<DbgValueInst>(&CI));
+      Finder.processValue(*M, cast<DbgValueInst>(&CI));
     }
     break;
   }
@@ -2440,12 +2406,8 @@ FunctionPass *llvm::createVerifierPass(VerifierFailureAction action) {
   return new Verifier(action);
 }
 
-
-/// verifyFunction - Check a function for errors, printing messages on stderr.
-/// Return true if the function is corrupt.
-///
 bool llvm::verifyFunction(const Function &f, VerifierFailureAction action) {
-  Function &F = const_cast<Function&>(f);
+  Function &F = const_cast<Function &>(f);
   assert(!F.isDeclaration() && "Cannot verify external functions");
 
   FunctionPassManager FPM(F.getParent());
@@ -2456,15 +2418,12 @@ bool llvm::verifyFunction(const Function &f, VerifierFailureAction action) {
   return V->Broken;
 }
 
-/// verifyModule - Check a module for errors, printing messages on stderr.
-/// Return true if the module is corrupt.
-///
 bool llvm::verifyModule(const Module &M, VerifierFailureAction action,
                         std::string *ErrorInfo) {
   PassManager PM;
   Verifier *V = new Verifier(action);
   PM.add(V);
-  PM.run(const_cast<Module&>(M));
+  PM.run(const_cast<Module &>(M));
 
   if (ErrorInfo && V->Broken)
     *ErrorInfo = V->MessagesStr.str();

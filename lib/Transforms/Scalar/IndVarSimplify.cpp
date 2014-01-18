@@ -29,13 +29,13 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
@@ -87,7 +87,7 @@ namespace {
     virtual bool runOnLoop(Loop *L, LPPassManager &LPM);
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-      AU.addRequired<DominatorTree>();
+      AU.addRequired<DominatorTreeWrapperPass>();
       AU.addRequired<LoopInfo>();
       AU.addRequired<ScalarEvolution>();
       AU.addRequiredID(LoopSimplifyID);
@@ -122,7 +122,7 @@ namespace {
 char IndVarSimplify::ID = 0;
 INITIALIZE_PASS_BEGIN(IndVarSimplify, "indvars",
                 "Induction Variable Simplification", false, false)
-INITIALIZE_PASS_DEPENDENCY(DominatorTree)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfo)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
@@ -1798,7 +1798,7 @@ bool IndVarSimplify::runOnLoop(Loop *L, LPPassManager &LPM) {
 
   LI = &getAnalysis<LoopInfo>();
   SE = &getAnalysis<ScalarEvolution>();
-  DT = &getAnalysis<DominatorTree>();
+  DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   TD = getAnalysisIfAvailable<DataLayout>();
   TLI = getAnalysisIfAvailable<TargetLibraryInfo>();
 

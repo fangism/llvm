@@ -570,21 +570,20 @@ static void DumpSymbolNamesFromFile(std::string &Filename) {
   sys::fs::file_magic magic = sys::fs::identify_magic(Buffer->getBuffer());
 
   LLVMContext &Context = getGlobalContext();
-  std::string ErrorMessage;
   if (magic == sys::fs::file_magic::bitcode) {
-    Module *Result = 0;
-    Result = ParseBitcodeFile(Buffer.get(), Context, &ErrorMessage);
-    if (Result) {
+    ErrorOr<Module *> ModuleOrErr = parseBitcodeFile(Buffer.get(), Context);
+    if (error(ModuleOrErr.getError(), Filename)) {
+      return;
+    } else {
+      Module *Result = ModuleOrErr.get();
       DumpSymbolNamesFromModule(Result);
       delete Result;
-    } else {
-      error(ErrorMessage, Filename);
-      return;
     }
   } else if (magic == sys::fs::file_magic::archive) {
-    OwningPtr<Binary> arch;
-    if (error(object::createBinary(Buffer.take(), arch), Filename))
+    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take());
+    if (error(BinaryOrErr.getError(), Filename))
       return;
+    OwningPtr<Binary> arch(BinaryOrErr.get());
 
     if (object::Archive *a = dyn_cast<object::Archive>(arch.get())) {
       if (ArchiveMap) {
@@ -616,11 +615,10 @@ static void DumpSymbolNamesFromFile(std::string &Filename) {
           OwningPtr<MemoryBuffer> buff;
           if (error(i->getMemoryBuffer(buff)))
             return;
-          Module *Result = 0;
-          if (buff)
-            Result = ParseBitcodeFile(buff.get(), Context, &ErrorMessage);
 
-          if (Result) {
+          ErrorOr<Module *> ModuleOrErr = parseBitcodeFile(buff.get(), Context);
+          if (ModuleOrErr) {
+            Module *Result = ModuleOrErr.get();
             DumpSymbolNamesFromModule(Result);
             delete Result;
           }
@@ -633,9 +631,10 @@ static void DumpSymbolNamesFromFile(std::string &Filename) {
       }
     }
   } else if (magic == sys::fs::file_magic::macho_universal_binary) {
-    OwningPtr<Binary> Bin;
-    if (error(object::createBinary(Buffer.take(), Bin), Filename))
+    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take());
+    if (error(BinaryOrErr.getError(), Filename))
       return;
+    OwningPtr<Binary> Bin(BinaryOrErr.get());
 
     object::MachOUniversalBinary *UB =
         cast<object::MachOUniversalBinary>(Bin.get());
@@ -650,9 +649,10 @@ static void DumpSymbolNamesFromFile(std::string &Filename) {
       }
     }
   } else if (magic.is_object()) {
-    OwningPtr<Binary> obj;
-    if (error(object::createBinary(Buffer.take(), obj), Filename))
+    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take());
+    if (error(BinaryOrErr.getError(), Filename))
       return;
+    OwningPtr<Binary> obj(BinaryOrErr.get());
     if (object::ObjectFile *o = dyn_cast<ObjectFile>(obj.get()))
       DumpSymbolNamesFromObject(o);
   } else {

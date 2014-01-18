@@ -46,7 +46,7 @@
 using namespace llvm;
 
 MipsTargetStreamer &MipsAsmPrinter::getTargetStreamer() {
-  return static_cast<MipsTargetStreamer &>(OutStreamer.getTargetStreamer());
+  return static_cast<MipsTargetStreamer &>(*OutStreamer.getTargetStreamer());
 }
 
 bool MipsAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
@@ -265,19 +265,19 @@ const char *MipsAsmPrinter::getCurrentABIString() const {
 }
 
 void MipsAsmPrinter::EmitFunctionEntryLabel() {
-  if (OutStreamer.hasRawTextSupport()) {
-    if (Subtarget->inMips16Mode())
-      OutStreamer.EmitRawText(StringRef("\t.set\tmips16"));
-    else
-      OutStreamer.EmitRawText(StringRef("\t.set\tnomips16"));
-    // leave out until FSF available gas has micromips changes
-    // OutStreamer.EmitRawText(StringRef("\t.set\tnomicromips"));
-    OutStreamer.EmitRawText("\t.ent\t" + Twine(CurrentFnSym->getName()));
-  }
-
+  MipsTargetStreamer &TS = getTargetStreamer();
   if (Subtarget->inMicroMipsMode())
-    getTargetStreamer().emitMipsHackSTOCG(CurrentFnSym,
-                                          (unsigned)ELF::STO_MIPS_MICROMIPS);
+    TS.emitDirectiveSetMicroMips();
+  // leave out until FSF available gas has micromips changes
+  //  else
+  //    TS.emitDirectiveSetNoMicroMips();
+
+  if (Subtarget->inMips16Mode())
+    TS.emitDirectiveSetMips16();
+  else
+    TS.emitDirectiveSetNoMips16();
+
+  TS.emitDirectiveEnt(*CurrentFnSym);
   OutStreamer.EmitLabel(CurrentFnSym);
 }
 

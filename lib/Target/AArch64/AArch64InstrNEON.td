@@ -1877,6 +1877,10 @@ def UXTL2vv_16B : NeonI_ext_len_alias<"uxtl2", ".8h", ".16b",  USHLLvvi_16B, VPR
 def UXTL2vv_8H  : NeonI_ext_len_alias<"uxtl2", ".4s", ".8h",  USHLLvvi_8H, VPR128, VPR128>;
 def UXTL2vv_4S  : NeonI_ext_len_alias<"uxtl2", ".2d", ".4s",  USHLLvvi_4S, VPR128, VPR128>;
 
+def : Pat<(v8i16 (anyext (v8i8 VPR64:$Rn))), (USHLLvvi_8B VPR64:$Rn, 0)>;
+def : Pat<(v4i32 (anyext (v4i16 VPR64:$Rn))), (USHLLvvi_4H VPR64:$Rn, 0)>;
+def : Pat<(v2i64 (anyext (v2i32 VPR64:$Rn))), (USHLLvvi_2S VPR64:$Rn, 0)>;
+
 // Rounding/Saturating shift
 class N2VShift_RQ<bit q, bit u, bits<5> opcode, string asmop, string T,
                   RegisterOperand VPRC, ValueType Ty, Operand ImmTy,
@@ -6222,6 +6226,20 @@ def : Pat<(v2i32 (bitconvert (v1i64  VPR64:$src))), (v2i32 VPR64:$src)>;
 def : Pat<(v4i16 (bitconvert (v1i64  VPR64:$src))), (v4i16 VPR64:$src)>;
 def : Pat<(v8i8  (bitconvert (v1i64  VPR64:$src))), (v8i8 VPR64:$src)>;
 
+def : Pat<(v1i64 (bitconvert (v1f64  VPR64:$src))), (v1i64 VPR64:$src)>;
+def : Pat<(v2f32 (bitconvert (v1f64  VPR64:$src))), (v2f32 VPR64:$src)>;
+def : Pat<(v2i32 (bitconvert (v1f64  VPR64:$src))), (v2i32 VPR64:$src)>;
+def : Pat<(v4i16 (bitconvert (v1f64  VPR64:$src))), (v4i16 VPR64:$src)>;
+def : Pat<(v8i8 (bitconvert (v1f64  VPR64:$src))), (v8i8 VPR64:$src)>;
+def : Pat<(f64   (bitconvert (v1f64  VPR64:$src))), (f64 VPR64:$src)>;
+
+def : Pat<(v1f64 (bitconvert (v1i64  VPR64:$src))), (v1f64 VPR64:$src)>;
+def : Pat<(v1f64 (bitconvert (v2f32  VPR64:$src))), (v1f64 VPR64:$src)>;
+def : Pat<(v1f64 (bitconvert (v2i32  VPR64:$src))), (v1f64 VPR64:$src)>;
+def : Pat<(v1f64 (bitconvert (v4i16  VPR64:$src))), (v1f64 VPR64:$src)>;
+def : Pat<(v1f64 (bitconvert (v8i8  VPR64:$src))), (v1f64 VPR64:$src)>;
+def : Pat<(v1f64 (bitconvert (f64  VPR64:$src))), (v1f64 VPR64:$src)>;
+
 // ..and 128-bit vector bitcasts...
 
 def : Pat<(v2f64 (bitconvert (v16i8  VPR128:$src))), (v2f64 VPR128:$src)>;
@@ -6870,15 +6888,10 @@ def : Pat<(v4i32 (scalar_to_vector GPR32:$Rn)),
 def : Pat<(v2i64 (scalar_to_vector GPR64:$Rn)),
           (INSdx (v2i64 (IMPLICIT_DEF)), $Rn, (i64 0))>;
 
-def : Pat<(v2i32 (scalar_to_vector GPR32:$Rn)),
-          (v2i32 (EXTRACT_SUBREG (v16i8
-            (INSsw (v4i32 (IMPLICIT_DEF)), $Rn, (i64 0))),
-            sub_64))>;
-
-def : Pat<(v2i32 (scalar_to_vector GPR32:$Rn)),
-          (v2i32 (EXTRACT_SUBREG (v16i8
-            (INSsw (v4i32 (IMPLICIT_DEF)), $Rn, (i64 0))),
-            sub_64))>;
+def : Pat<(v2f32 (scalar_to_vector (f32 FPR32:$Rn))),
+          (SUBREG_TO_REG (i64 0), FPR32:$Rn, sub_32)>;
+def : Pat<(v4f32 (scalar_to_vector (f32 FPR32:$Rn))),
+          (SUBREG_TO_REG (i64 0), FPR32:$Rn, sub_32)>;
 
 def : Pat<(v1f64 (scalar_to_vector (f64 FPR64:$Rn))),
           (v1f64 FPR64:$Rn)>;
@@ -7044,6 +7057,11 @@ defm : Concat_Vector_Pattern<v4i32, v2i32>;
 defm : Concat_Vector_Pattern<v2i64, v1i64>;
 defm : Concat_Vector_Pattern<v4f32, v2f32>;
 defm : Concat_Vector_Pattern<v2f64, v1f64>;
+
+def : Pat<(v2i32 (concat_vectors (v1i32 FPR32:$Rn), (v1i32 FPR32:$Rn))),
+          (DUPELT2s (v4i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32)), 0)>;
+def : Pat<(v2i32 (concat_vectors undef, (v1i32 FPR32:$Rn))),
+          (DUPELT2s (v4i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32)), 0)>;
 
 //patterns for EXTRACT_SUBVECTOR
 def : Pat<(v8i8 (extract_subvector (v16i8 VPR128:$Rn), (i64 0))),
@@ -8833,6 +8851,12 @@ def : Pat<(v2i64 (sra (v2i64 VPR128:$Rn), (v2i64 VPR128:$Rm))),
 //
 // Patterns for handling half-precision values
 //
+
+// Convert between f16 value and f32 value
+def : Pat<(f32 (f16_to_f32 (i32 GPR32:$Rn))),
+          (FCVTsh (EXTRACT_SUBREG (FMOVsw $Rn), sub_16))>;
+def : Pat<(i32 (f32_to_f16 (f32 FPR32:$Rn))),
+          (FMOVws (SUBREG_TO_REG (i64 0), (f16 (FCVThs $Rn)), sub_16))>;
 
 // Convert f16 value coming in as i16 value to f32
 def : Pat<(f32 (f16_to_f32 (i32 (and (i32 GPR32:$Rn), 65535)))),

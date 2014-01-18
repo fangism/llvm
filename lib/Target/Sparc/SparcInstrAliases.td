@@ -117,3 +117,20 @@ defm : fp_cond_alias<"uge",   0b1100>;
 defm : fp_cond_alias<"le",    0b1101>;
 defm : fp_cond_alias<"ule",   0b1110>;
 defm : fp_cond_alias<"o",     0b1111>;
+
+
+// Instruction aliases for JMPL.
+
+// jmp addr -> jmpl addr, %g0
+def : InstAlias<"jmp $addr", (JMPLrr G0, MEMrr:$addr)>;
+def : InstAlias<"jmp $addr", (JMPLri G0, MEMri:$addr)>;
+
+// call addr -> jmpl addr, %o7
+def : InstAlias<"call $addr", (JMPLrr O7, MEMrr:$addr)>;
+def : InstAlias<"call $addr", (JMPLri O7, MEMri:$addr)>;
+
+// retl -> RETL 8
+def : InstAlias<"retl", (RETL 8)>;
+
+// ret -> RET 8
+def : InstAlias<"ret", (RET 8)>;
