@@ -30,10 +30,12 @@ using std::cerr;
 using std::endl;
 #endif
 
+#if !ST_USE_RAW_OSTREAM
 /**
 	Guarantee that ios is initialized.  
  */
 static const std::ios_base::Init ios_init;
+#endif
 
 //=============================================================================
 /**
@@ -69,8 +71,10 @@ public:
 	static
 	st_ostream_type&
 	print_auto_indent(st_ostream_type& o) {
+#if !ST_USE_RAW_OSTREAM
 		// guarantee iostream initialized before first used.  
 		static const std::ios_base::Init ios_init;
+#endif
 		static const stack_text_type& si(manager::stack_indent);
 		// INVARIANT(o.good());
 		ostream_iterator<string> osi(o);
