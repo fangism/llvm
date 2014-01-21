@@ -28,3 +28,15 @@ function( get_host_triple var )
   set( ${var} ${value} PARENT_SCOPE )
   message(STATUS "Target triple: ${value}")
 endfunction( get_host_triple var )
+
+# Mac OS X only: get the host version
+function( get_host_osx_version var )
+  if( APPLE )
+    execute_process(COMMAND sw_vers -productVersion COMMAND cut -d. -f1-2
+      RESULT_VARIABLE TT_RV
+      OUTPUT_VARIABLE value
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set( ${var} ${value} PARENT_SCOPE )
+    message(STATUS "Host OS X version: ${value}")
+  endif ( APPLE )
+endfunction( get_host_osx_version var )

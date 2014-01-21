@@ -346,6 +346,12 @@ get_host_triple(LLVM_INFERRED_HOST_TRIPLE)
 set(LLVM_HOST_TRIPLE "${LLVM_INFERRED_HOST_TRIPLE}" CACHE STRING
     "Host on which LLVM binaries will run")
 
+if( APPLE )
+get_host_osx_version(LLVM_INFERRED_OSX_VERSION)
+set(LLVM_HOST_OSX_VERSION "${LLVM_INFERRED_OSX_VERSION}" CACHE STRING
+    "Host version of Mac OS X")
+endif( APPLE )
+
 # Determine the native architecture.
 string(TOLOWER "${LLVM_TARGET_ARCH}" LLVM_NATIVE_ARCH)
 if( LLVM_NATIVE_ARCH STREQUAL "host" )
