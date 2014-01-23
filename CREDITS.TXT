@@ -443,3 +443,9 @@ D: Bunches of stuff
 N: Bob Wilson
 E: bob.wilson@acm.org
 D: Advanced SIMD (NEON) support in the ARM backend.
+
+N: David Fang
+D: PowerPC-Darwin port
+
+N: Iain Sandoe
+D: PowerPC-Darwin port
