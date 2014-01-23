@@ -113,6 +113,4 @@ add_llvm_library(LLVMSupport
   Windows/ThreadLocal.inc
   Windows/TimeValue.inc
   Windows/Watchdog.inc
-# fang's debugging tools
-  stacktrace.cc
   )
