@@ -186,7 +186,8 @@ def ARMvminnm        : SDNode<"ARMISD::VMINNM", SDT_ARMVMINNM, []>;
 def HasV4T           : Predicate<"Subtarget->hasV4TOps()">,
                                  AssemblerPredicate<"HasV4TOps", "armv4t">;
 def NoV4T            : Predicate<"!Subtarget->hasV4TOps()">;
-def HasV5T           : Predicate<"Subtarget->hasV5TOps()">;
+def HasV5T           : Predicate<"Subtarget->hasV5TOps()">,
+                                 AssemblerPredicate<"HasV5TOps", "armv5t">;
 def HasV5TE          : Predicate<"Subtarget->hasV5TEOps()">,
                                  AssemblerPredicate<"HasV5TEOps", "armv5te">;
 def HasV6            : Predicate<"Subtarget->hasV6Ops()">,
@@ -592,7 +593,7 @@ def so_imm2part : PatLeaf<(imm), [{
 /// arm_i32imm - True for +V6T2, or true only if so_imm2part is true.
 ///
 def arm_i32imm : PatLeaf<(imm), [{
-  if (Subtarget->hasV6T2Ops())
+  if (Subtarget->useMovt())
     return true;
   return ARM_AM::isSOImmTwoPartVal((unsigned)N->getZExtValue());
 }]>;
@@ -1774,8 +1775,8 @@ let imod = 0, iflags = 0, M = 1 in
 // Preload signals the memory system of possible future data/instruction access.
 multiclass APreLoad<bits<1> read, bits<1> data, string opc> {
 
-  def i12 : AXI<(outs), (ins addrmode_imm12:$addr), MiscFrm, IIC_Preload,
-                !strconcat(opc, "\t$addr"),
+  def i12 : AXIM<(outs), (ins addrmode_imm12:$addr), AddrMode_i12, MiscFrm,
+                IIC_Preload, !strconcat(opc, "\t$addr"),
                 [(ARMPreload addrmode_imm12:$addr, (i32 read), (i32 data))]>,
                 Sched<[WritePreLd]> {
     bits<4> Rt;

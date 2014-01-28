@@ -473,6 +473,10 @@ multiclass Neon_bitwise3V_patterns<SDPatternOperator opnode,
             (INST16B VPR128:$src, VPR128:$Rn, VPR128:$Rm)>;
   def : Pat<(v2i64 (opnode (v2i64 VPR128:$src), VPR128:$Rn, VPR128:$Rm)),
             (INST16B VPR128:$src, VPR128:$Rn, VPR128:$Rm)>;
+  def : Pat<(v2f64 (opnode (v2i64 VPR128:$src), VPR128:$Rn, VPR128:$Rm)),
+            (INST16B VPR128:$src, VPR128:$Rn, VPR128:$Rm)>;
+  def : Pat<(v4f32 (opnode (v4i32 VPR128:$src), VPR128:$Rn, VPR128:$Rm)),
+            (INST16B VPR128:$src, VPR128:$Rn, VPR128:$Rm)>;
 
   // Allow to match BSL instruction pattern with non-constant operand
   def : Pat<(v8i8 (or (and VPR64:$Rn, VPR64:$Rd),
@@ -813,29 +817,41 @@ def FCMLTvvv_2S  : NeonI_compare_aliases<"fcmlt", ".2s",  FCMGTvvv_2S,  VPR64>;
 def FCMLTvvv_4S  : NeonI_compare_aliases<"fcmlt", ".4s",  FCMGTvvv_4S,  VPR128>;
 def FCMLTvvv_2D  : NeonI_compare_aliases<"fcmlt", ".2d",  FCMGTvvv_2D,  VPR128>;
 
+def fpzero_izero_asmoperand : AsmOperandClass {
+  let Name = "FPZeroIZero";
+  let ParserMethod = "ParseFPImm0AndImm0Operand";
+  let DiagnosticType = "FPZero";
+}
+
+def fpzz32 : Operand<f32>,
+             ComplexPattern<f32, 1, "SelectFPZeroOperand", [fpimm]> {
+  let ParserMatchClass = fpzero_izero_asmoperand;
+  let PrintMethod = "printFPZeroOperand";
+  let DecoderMethod = "DecodeFPZeroOperand";
+}
 
 multiclass NeonI_fpcmpz_sizes<bit u, bit size, bits<5> opcode,
                               string asmop, CondCode CC>
 {
   def _2S : NeonI_2VMisc<0b0, u, {size, 0b0}, opcode,
-            (outs VPR64:$Rd), (ins VPR64:$Rn, fpz32:$FPImm),
+            (outs VPR64:$Rd), (ins VPR64:$Rn, fpzz32:$FPImm),
             asmop # "\t$Rd.2s, $Rn.2s, $FPImm",
             [(set (v2i32 VPR64:$Rd),
-               (v2i32 (Neon_cmpz (v2f32 VPR64:$Rn), (f32 fpz32:$FPImm), CC)))],
+               (v2i32 (Neon_cmpz (v2f32 VPR64:$Rn), (f32 fpzz32:$FPImm), CC)))],
             NoItinerary>;
 
   def _4S : NeonI_2VMisc<0b1, u, {size, 0b0}, opcode,
-            (outs VPR128:$Rd), (ins VPR128:$Rn, fpz32:$FPImm),
+            (outs VPR128:$Rd), (ins VPR128:$Rn, fpzz32:$FPImm),
             asmop # "\t$Rd.4s, $Rn.4s, $FPImm",
             [(set (v4i32 VPR128:$Rd),
-               (v4i32 (Neon_cmpz (v4f32 VPR128:$Rn), (f32 fpz32:$FPImm), CC)))],
+               (v4i32 (Neon_cmpz (v4f32 VPR128:$Rn), (f32 fpzz32:$FPImm), CC)))],
             NoItinerary>;
 
   def _2D : NeonI_2VMisc<0b1, u, {size, 0b1}, opcode,
-            (outs VPR128:$Rd), (ins VPR128:$Rn, fpz32:$FPImm),
+            (outs VPR128:$Rd), (ins VPR128:$Rn, fpzz32:$FPImm),
             asmop # "\t$Rd.2d, $Rn.2d, $FPImm",
             [(set (v2i64 VPR128:$Rd),
-               (v2i64 (Neon_cmpz (v2f64 VPR128:$Rn), (f32 fpz32:$FPImm), CC)))],
+               (v2i64 (Neon_cmpz (v2f64 VPR128:$Rn), (f32 fpzz32:$FPImm), CC)))],
             NoItinerary>;
 }
 
@@ -4512,12 +4528,12 @@ class NeonI_Scalar2SameMisc_cmpz_D_size<bit u, bits<5> opcode, string asmop>
 multiclass NeonI_Scalar2SameMisc_cmpz_SD_size<bit u, bits<5> opcode,
                                               string asmop> {
   def ssi : NeonI_Scalar2SameMisc<u, 0b10, opcode,
-                           (outs FPR32:$Rd), (ins FPR32:$Rn, fpz32:$FPImm),
+                           (outs FPR32:$Rd), (ins FPR32:$Rn, fpzz32:$FPImm),
                            !strconcat(asmop, "\t$Rd, $Rn, $FPImm"),
                            [],
                            NoItinerary>;
   def ddi : NeonI_Scalar2SameMisc<u, 0b11, opcode,
-                           (outs FPR64:$Rd), (ins FPR64:$Rn, fpz32:$FPImm),
+                           (outs FPR64:$Rd), (ins FPR64:$Rn, fpzz32:$FPImm),
                            !strconcat(asmop, "\t$Rd, $Rn, $FPImm"),
                            [],
                            NoItinerary>;
@@ -4539,12 +4555,12 @@ multiclass Neon_Scalar2SameMisc_cmpz_SD_size_patterns<SDPatternOperator opnode,
                                                       CondCode CC,
                                                       Instruction INSTS,
                                                       Instruction INSTD> {
-  def : Pat<(v1i32 (opnode (f32 FPR32:$Rn), (f32 fpz32:$FPImm))),
-            (INSTS FPR32:$Rn, fpz32:$FPImm)>;
-  def : Pat<(v1i64 (opnode (f64 FPR64:$Rn), (f32 fpz32:$FPImm))),
-            (INSTD FPR64:$Rn, fpz32:$FPImm)>;
-  def : Pat<(v1i64 (Neon_cmpz (v1f64 FPR64:$Rn), (f32 fpz32:$FPImm), CC)),
-            (INSTD FPR64:$Rn, fpz32:$FPImm)>;
+  def : Pat<(v1i32 (opnode (f32 FPR32:$Rn), (f32 fpzz32:$FPImm))),
+            (INSTS FPR32:$Rn, fpzz32:$FPImm)>;
+  def : Pat<(v1i64 (opnode (f64 FPR64:$Rn), (f32 fpzz32:$FPImm))),
+            (INSTD FPR64:$Rn, fpzz32:$FPImm)>;
+  def : Pat<(v1i64 (Neon_cmpz (v1f64 FPR64:$Rn), (f32 fpzz32:$FPImm), CC)),
+            (INSTD FPR64:$Rn, fpzz32:$FPImm)>;
 }
 
 multiclass Neon_Scalar2SameMisc_D_size_patterns<SDPatternOperator opnode,
@@ -6195,6 +6211,101 @@ defm : NeonI_SDUP<Neon_Low2D, Neon_High2D, v1i64, v2i64>;
 defm : NeonI_SDUP<Neon_Low4float, Neon_High4float, v2f32, v4f32>;
 defm : NeonI_SDUP<Neon_Low2double, Neon_High2double, v1f64, v2f64>;
 
+// The following is for sext/zext from v1xx to v1xx
+multiclass NeonI_ext<string prefix, SDNode ExtOp> {
+  // v1i32 -> v1i64
+  def : Pat<(v1i64 (ExtOp (v1i32 FPR32:$Rn))),
+            (EXTRACT_SUBREG 
+              (v2i64 (!cast<Instruction>(prefix # "_2S")
+                (v2i32 (SUBREG_TO_REG (i64 0), $Rn, sub_32)), 0)),
+              sub_64)>;
+  
+  // v1i16 -> v1i32
+  def : Pat<(v1i32 (ExtOp (v1i16 FPR16:$Rn))),
+            (EXTRACT_SUBREG 
+              (v4i32 (!cast<Instruction>(prefix # "_4H")
+                (v4i16 (SUBREG_TO_REG (i64 0), $Rn, sub_16)), 0)),
+              sub_32)>;
+  
+  // v1i8 -> v1i16
+  def : Pat<(v1i16 (ExtOp (v1i8 FPR8:$Rn))),
+            (EXTRACT_SUBREG 
+              (v8i16 (!cast<Instruction>(prefix # "_8B")
+                (v8i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)), 0)),
+              sub_16)>;
+}
+
+defm NeonI_zext : NeonI_ext<"USHLLvvi", zext>;
+defm NeonI_sext : NeonI_ext<"SSHLLvvi", sext>;
+
+// zext v1i8 -> v1i32
+def : Pat<(v1i32 (zext (v1i8 FPR8:$Rn))),
+          (v1i32 (EXTRACT_SUBREG
+            (v1i64 (SUBREG_TO_REG (i64 0),
+              (v1i8 (DUPbv_B
+                (v16i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)),
+                0)),
+              sub_8)),
+            sub_32))>;
+
+// zext v1i8 -> v1i64
+def : Pat<(v1i64 (zext (v1i8 FPR8:$Rn))),
+          (v1i64 (SUBREG_TO_REG (i64 0),
+            (v1i8 (DUPbv_B
+              (v16i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)),
+              0)),
+            sub_8))>;
+
+// zext v1i16 -> v1i64
+def : Pat<(v1i64 (zext (v1i16 FPR16:$Rn))),
+          (v1i64 (SUBREG_TO_REG (i64 0),
+            (v1i16 (DUPhv_H
+              (v8i16 (SUBREG_TO_REG (i64 0), $Rn, sub_16)),
+              0)),
+            sub_16))>;
+
+// sext v1i8 -> v1i32
+def : Pat<(v1i32 (sext (v1i8 FPR8:$Rn))),
+          (EXTRACT_SUBREG
+            (v4i32 (SSHLLvvi_4H
+              (v4i16 (SUBREG_TO_REG (i64 0),
+                (v1i16 (EXTRACT_SUBREG 
+                  (v8i16 (SSHLLvvi_8B
+                    (v8i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)), 0)),
+                  sub_16)),
+                sub_16)), 0)),
+            sub_32)>;
+              
+// sext v1i8 -> v1i64
+def : Pat<(v1i64 (sext (v1i8 FPR8:$Rn))),
+          (EXTRACT_SUBREG 
+            (v2i64 (SSHLLvvi_2S
+              (v2i32 (SUBREG_TO_REG (i64 0),
+                (v1i32 (EXTRACT_SUBREG
+                  (v4i32 (SSHLLvvi_4H
+                    (v4i16 (SUBREG_TO_REG (i64 0),
+                      (v1i16 (EXTRACT_SUBREG 
+                        (v8i16 (SSHLLvvi_8B
+                          (v8i8 (SUBREG_TO_REG (i64 0), $Rn, sub_8)), 0)),
+                        sub_16)),
+                      sub_16)), 0)),
+                  sub_32)),
+                sub_32)), 0)),
+            sub_64)>;
+
+  
+// sext v1i16 -> v1i64
+def : Pat<(v1i64 (sext (v1i16 FPR16:$Rn))),
+          (EXTRACT_SUBREG
+            (v2i64 (SSHLLvvi_2S
+              (v2i32 (SUBREG_TO_REG (i64 0),
+                (v1i32 (EXTRACT_SUBREG 
+                  (v4i32 (SSHLLvvi_4H
+                    (v4i16 (SUBREG_TO_REG (i64 0), $Rn, sub_16)), 0)),
+                  sub_32)),
+                sub_32)), 0)),
+            sub_64)>;
+
 //===----------------------------------------------------------------------===//
 // Non-Instruction Patterns
 //===----------------------------------------------------------------------===//
@@ -6416,7 +6527,7 @@ defm TBL2 : NI_TBL_pat<0b01, 0b0, "tbl", "VPair">;
 defm TBL3 : NI_TBL_pat<0b10, 0b0, "tbl", "VTriple">;
 defm TBL4 : NI_TBL_pat<0b11, 0b0, "tbl", "VQuad">;
 
-// Table lookup extention
+// Table lookup extension
 class NI_TBX<bit q, bits<2> op2, bits<2> len, bit op,
              string asmop, string OpS, RegisterOperand OpVPR,
              RegisterOperand VecList>
@@ -7058,9 +7169,17 @@ defm : Concat_Vector_Pattern<v2i64, v1i64>;
 defm : Concat_Vector_Pattern<v4f32, v2f32>;
 defm : Concat_Vector_Pattern<v2f64, v1f64>;
 
+def : Pat<(v2i32 (concat_vectors (v1i32 FPR32:$Rn), undef)),
+          (v2i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32))>;
+def : Pat<(v2i32 (concat_vectors (v1i32 FPR32:$Rn), (v1i32 FPR32:$Rm))),
+          (EXTRACT_SUBREG 
+            (v4i32 (INSELs
+              (v4i32 (SUBREG_TO_REG (i64 0), FPR32:$Rn, sub_32)),
+              (v4i32 (SUBREG_TO_REG (i64 0), FPR32:$Rm, sub_32)),
+              (i64 1),
+              (i64 0))),
+            sub_64)>;
 def : Pat<(v2i32 (concat_vectors (v1i32 FPR32:$Rn), (v1i32 FPR32:$Rn))),
-          (DUPELT2s (v4i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32)), 0)>;
-def : Pat<(v2i32 (concat_vectors undef, (v1i32 FPR32:$Rn))),
           (DUPELT2s (v4i32 (SUBREG_TO_REG(i64 0), $Rn, sub_32)), 0)>;
 
 //patterns for EXTRACT_SUBVECTOR

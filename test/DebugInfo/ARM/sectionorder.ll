@@ -1,19 +1,11 @@
 ; RUN: llc  -filetype=asm %s -o - | FileCheck %s
 
-; Verifies that the DWARF* sections come _after_ the data sections.
+; Verifies that the DWARF* sections come _after_ the __TEXT sections.
 ; rdar://problem/15623193
 
 ; CHECK: .section	__TEXT,__text,
 ; CHECK-NOT: __DWARF,__debug
 ; CHECK: .section	__TEXT,__cstring,cstring_literals
-; CHECK-NOT: __DWARF,__debug
-; CHECK: .section	__DATA,__data
-; CHECK-NOT: __DWARF,__debug
-; CHECK: .section	__DATA,__common
-; CHECK-NOT: __DWARF,__debug
-; CHECK: .section	__DATA,__bss
-; CHECK-NOT: __DWARF,__debug
-; CHECK: .section	__DATA,__nl_symbol_ptr,non_lazy_symbol_pointers
 target triple = "thumbv7-apple-ios"
 
 !llvm.module.flags = !{!3, !4}

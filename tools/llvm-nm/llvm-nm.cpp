@@ -580,15 +580,15 @@ static void DumpSymbolNamesFromFile(std::string &Filename) {
       delete Result;
     }
   } else if (magic == sys::fs::file_magic::archive) {
-    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take());
+    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take(), magic);
     if (error(BinaryOrErr.getError(), Filename))
       return;
     OwningPtr<Binary> arch(BinaryOrErr.get());
 
     if (object::Archive *a = dyn_cast<object::Archive>(arch.get())) {
       if (ArchiveMap) {
-        object::Archive::symbol_iterator I = a->begin_symbols();
-        object::Archive::symbol_iterator E = a->end_symbols();
+        object::Archive::symbol_iterator I = a->symbol_begin();
+        object::Archive::symbol_iterator E = a->symbol_end();
         if (I !=E) {
           outs() << "Archive map" << "\n";
           for (; I != E; ++I) {
@@ -607,8 +607,8 @@ static void DumpSymbolNamesFromFile(std::string &Filename) {
         }
       }
 
-      for (object::Archive::child_iterator i = a->begin_children(),
-                                           e = a->end_children(); i != e; ++i) {
+      for (object::Archive::child_iterator i = a->child_begin(),
+                                           e = a->child_end(); i != e; ++i) {
         OwningPtr<Binary> child;
         if (i->getAsBinary(child)) {
           // Try opening it as a bitcode file.
@@ -631,7 +631,7 @@ static void DumpSymbolNamesFromFile(std::string &Filename) {
       }
     }
   } else if (magic == sys::fs::file_magic::macho_universal_binary) {
-    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take());
+    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take(), magic);
     if (error(BinaryOrErr.getError(), Filename))
       return;
     OwningPtr<Binary> Bin(BinaryOrErr.get());
@@ -649,7 +649,7 @@ static void DumpSymbolNamesFromFile(std::string &Filename) {
       }
     }
   } else if (magic.is_object()) {
-    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take());
+    ErrorOr<Binary *> BinaryOrErr = object::createBinary(Buffer.take(), magic);
     if (error(BinaryOrErr.getError(), Filename))
       return;
     OwningPtr<Binary> obj(BinaryOrErr.get());

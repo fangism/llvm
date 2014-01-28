@@ -1375,6 +1375,17 @@ BlockAddress::BlockAddress(Function *F, BasicBlock *BB)
   BB->AdjustBlockAddressRefCount(1);
 }
 
+BlockAddress *BlockAddress::lookup(const BasicBlock *BB) {
+  if (!BB->hasAddressTaken())
+    return 0;
+
+  const Function *F = BB->getParent();
+  assert(F != 0 && "Block must have a parent");
+  BlockAddress *BA =
+      F->getContext().pImpl->BlockAddresses.lookup(std::make_pair(F, BB));
+  assert(BA && "Refcount and block address map disagree!");
+  return BA;
+}
 
 // destroyConstant - Remove the constant from the constant table.
 //
@@ -2783,6 +2794,7 @@ Instruction *ConstantExpr::getAsInstruction() {
   case Instruction::PtrToInt:
   case Instruction::IntToPtr:
   case Instruction::BitCast:
+  case Instruction::AddrSpaceCast:
     return CastInst::Create((Instruction::CastOps)getOpcode(),
                             Ops[0], getType());
   case Instruction::Select:

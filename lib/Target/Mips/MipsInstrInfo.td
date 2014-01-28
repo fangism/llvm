@@ -542,14 +542,14 @@ class SetCC_R<string opstr, PatFrag cond_op, RegisterOperand RO> :
   InstSE<(outs GPR32Opnd:$rd), (ins RO:$rs, RO:$rt),
          !strconcat(opstr, "\t$rd, $rs, $rt"),
          [(set GPR32Opnd:$rd, (cond_op RO:$rs, RO:$rt))],
-         IIslt, FrmR, opstr>;
+         II_SLT_SLTU, FrmR, opstr>;
 
 class SetCC_I<string opstr, PatFrag cond_op, Operand Od, PatLeaf imm_type,
               RegisterOperand RO>:
   InstSE<(outs GPR32Opnd:$rt), (ins RO:$rs, Od:$imm16),
          !strconcat(opstr, "\t$rt, $rs, $imm16"),
          [(set GPR32Opnd:$rt, (cond_op RO:$rs, imm_type:$imm16))],
-         IIslt, FrmI, opstr>;
+         II_SLTI_SLTIU, FrmI, opstr>;
 
 // Jump
 class JumpFJ<DAGOperand opnd, string opstr, SDPatternOperator operator,
@@ -968,24 +968,24 @@ let Predicates = [HasMips32r2, HasStdEnc] in {
 
 /// Load and Store Instructions
 ///  aligned
-def LB  : Load<"lb", GPR32Opnd, sextloadi8, IILoad>, MMRel, LW_FM<0x20>;
-def LBu : Load<"lbu", GPR32Opnd, zextloadi8, IILoad, addrDefault>, MMRel,
+def LB  : Load<"lb", GPR32Opnd, sextloadi8, II_LB>, MMRel, LW_FM<0x20>;
+def LBu : Load<"lbu", GPR32Opnd, zextloadi8, II_LBU, addrDefault>, MMRel,
           LW_FM<0x24>;
-def LH  : Load<"lh", GPR32Opnd, sextloadi16, IILoad, addrDefault>, MMRel,
+def LH  : Load<"lh", GPR32Opnd, sextloadi16, II_LH, addrDefault>, MMRel,
           LW_FM<0x21>;
-def LHu : Load<"lhu", GPR32Opnd, zextloadi16, IILoad>, MMRel, LW_FM<0x25>;
-def LW  : Load<"lw", GPR32Opnd, load, IILoad, addrDefault>, MMRel,
+def LHu : Load<"lhu", GPR32Opnd, zextloadi16, II_LHU>, MMRel, LW_FM<0x25>;
+def LW  : Load<"lw", GPR32Opnd, load, II_LW, addrDefault>, MMRel,
           LW_FM<0x23>;
-def SB  : Store<"sb", GPR32Opnd, truncstorei8, IIStore>, MMRel, LW_FM<0x28>;
-def SH  : Store<"sh", GPR32Opnd, truncstorei16, IIStore>, MMRel, LW_FM<0x29>;
-def SW  : Store<"sw", GPR32Opnd, store, IIStore>, MMRel, LW_FM<0x2b>;
+def SB  : Store<"sb", GPR32Opnd, truncstorei8, II_SB>, MMRel, LW_FM<0x28>;
+def SH  : Store<"sh", GPR32Opnd, truncstorei16, II_SH>, MMRel, LW_FM<0x29>;
+def SW  : Store<"sw", GPR32Opnd, store, II_SW>, MMRel, LW_FM<0x2b>;
 
 /// load/store left/right
 let Predicates = [NotInMicroMips] in {
-def LWL : LoadLeftRight<"lwl", MipsLWL, GPR32Opnd, IILoad>, LW_FM<0x22>;
-def LWR : LoadLeftRight<"lwr", MipsLWR, GPR32Opnd, IILoad>, LW_FM<0x26>;
-def SWL : StoreLeftRight<"swl", MipsSWL, GPR32Opnd, IIStore>, LW_FM<0x2a>;
-def SWR : StoreLeftRight<"swr", MipsSWR, GPR32Opnd, IIStore>, LW_FM<0x2e>;
+def LWL : LoadLeftRight<"lwl", MipsLWL, GPR32Opnd, II_LWL>, LW_FM<0x22>;
+def LWR : LoadLeftRight<"lwr", MipsLWR, GPR32Opnd, II_LWR>, LW_FM<0x26>;
+def SWL : StoreLeftRight<"swl", MipsSWL, GPR32Opnd, II_SWL>, LW_FM<0x2a>;
+def SWR : StoreLeftRight<"swr", MipsSWR, GPR32Opnd, II_SWR>, LW_FM<0x2e>;
 }
 
 def SYNC : MMRel, SYNC_FT<"sync">, SYNC_FM;

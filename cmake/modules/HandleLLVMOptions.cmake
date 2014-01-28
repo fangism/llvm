@@ -29,7 +29,12 @@ if(NOT LLVM_FORCE_USE_OLD_TOOLCHAIN)
     # version of libstdc++ directly. Instead we test for a known bug in
     # libstdc++4.6 that is fixed in libstdc++4.7.
     if(NOT LLVM_ENABLE_LIBCXX)
+      set(OLD_CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS})
+      set(OLD_CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES})
       set(CMAKE_REQUIRED_FLAGS "-std=c++0x")
+      if (ANDROID)
+        set(CMAKE_REQUIRED_LIBRARIES "atomic")
+      endif()
       check_cxx_source_compiles("
 #include <atomic>
 std::atomic<float> x(0.0f);
@@ -38,8 +43,10 @@ int main() { return (float)x; }"
       if(NOT LLVM_NO_OLD_LIBSTDCXX)
         message(FATAL_ERROR "Host Clang must be able to find libstdc++4.7 or newer!")
       endif()
+      set(CMAKE_REQUIRED_FLAGS ${OLD_CMAKE_REQUIRED_FLAGS})
+      set(CMAKE_REQUIRED_LIBRARIES ${OLD_CMAKE_REQUIRED_LIBRARIES})
     endif()
-  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 17.0)
       message(FATAL_ERROR "Host Visual Studio must be at least 2012 (MSVC 17.0)")
     endif()
@@ -341,4 +348,22 @@ if (UNIX AND
     CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
     CMAKE_GENERATOR STREQUAL "Ninja")
   append("-fcolor-diagnostics" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+endif()
+
+# Add flags for add_dead_strip().
+# FIXME: With MSVS, consider compiling with /Gy and linking with /OPT:REF?
+# But MinSizeRel seems to add that automatically, so maybe disable these
+# flags instead if LLVM_NO_DEAD_STRIP is set.
+if(NOT CYGWIN AND NOT WIN32)
+  if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    append("-ffunction-sections -fdata-sections" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+  endif()
+endif()
+
+if(MSVC)
+  # Remove flags here, for exceptions and RTTI.
+  # Each target property of source proerty should be responsible to control them.
+  # CL.EXE complains to override flags like "/GR /GR-".
+  string(REGEX REPLACE "(^| ) */EH[-cs]+ *( |$)" "\\1 \\2" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+  string(REGEX REPLACE "(^| ) */GR-? *( |$)" "\\1 \\2" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()

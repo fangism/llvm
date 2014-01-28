@@ -12,7 +12,6 @@
 #include "MCTargetDesc/ARMAddressingModes.h"
 #include "MCTargetDesc/ARMArchName.h"
 #include "MCTargetDesc/ARMBaseInfo.h"
-#include "MCTargetDesc/ARMBuildAttrs.h"
 #include "MCTargetDesc/ARMMCExpr.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/MapVector.h"
@@ -40,6 +39,8 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCTargetAsmParser.h"
+#include "llvm/Support/ARMBuildAttributes.h"
+#include "llvm/Support/ARMEHABI.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/MathExtras.h"
@@ -121,6 +122,7 @@ class UnwindContext {
   Locs FnStartLocs;
   Locs CantUnwindLocs;
   Locs PersonalityLocs;
+  Locs PersonalityIndexLocs;
   Locs HandlerDataLocs;
   int FPReg;
 
@@ -130,12 +132,15 @@ public:
   bool hasFnStart() const { return !FnStartLocs.empty(); }
   bool cantUnwind() const { return !CantUnwindLocs.empty(); }
   bool hasHandlerData() const { return !HandlerDataLocs.empty(); }
-  bool hasPersonality() const { return !PersonalityLocs.empty(); }
+  bool hasPersonality() const {
+    return !(PersonalityLocs.empty() && PersonalityIndexLocs.empty());
+  }
 
   void recordFnStart(SMLoc L) { FnStartLocs.push_back(L); }
   void recordCantUnwind(SMLoc L) { CantUnwindLocs.push_back(L); }
   void recordPersonality(SMLoc L) { PersonalityLocs.push_back(L); }
   void recordHandlerData(SMLoc L) { HandlerDataLocs.push_back(L); }
+  void recordPersonalityIndex(SMLoc L) { PersonalityIndexLocs.push_back(L); }
 
   void saveFPReg(int Reg) { FPReg = Reg; }
   int getFPReg() const { return FPReg; }
@@ -157,8 +162,18 @@ public:
   }
   void emitPersonalityLocNotes() const {
     for (Locs::const_iterator PI = PersonalityLocs.begin(),
-                              PE = PersonalityLocs.end(); PI != PE; ++PI)
-      Parser.Note(*PI, ".personality was specified here");
+                              PE = PersonalityLocs.end(),
+                              PII = PersonalityIndexLocs.begin(),
+                              PIE = PersonalityIndexLocs.end();
+         PI != PE || PII != PIE;) {
+      if (PI != PE && (PII == PIE || PI->getPointer() < PII->getPointer()))
+        Parser.Note(*PI++, ".personality was specified here");
+      else if (PII != PIE && (PI == PE || PII->getPointer() < PI->getPointer()))
+        Parser.Note(*PII++, ".personalityindex was specified here");
+      else
+        llvm_unreachable(".personality and .personalityindex cannot be "
+                         "at the same location");
+    }
   }
 
   void reset() {
@@ -166,6 +181,7 @@ public:
     CantUnwindLocs = Locs();
     PersonalityLocs = Locs();
     HandlerDataLocs = Locs();
+    PersonalityIndexLocs = Locs();
     FPReg = -1;
   }
 };
@@ -278,6 +294,8 @@ class ARMAsmParser : public MCTargetAsmParser {
   bool parseDirectiveInst(SMLoc L, char Suffix = '\0');
   bool parseDirectiveLtorg(SMLoc L);
   bool parseDirectiveEven(SMLoc L);
+  bool parseDirectivePersonalityIndex(SMLoc L);
+  bool parseDirectiveUnwindRaw(SMLoc L);
 
   StringRef splitMnemonic(StringRef Mnemonic, unsigned &PredicationCode,
                           bool &CarrySetting, unsigned &ProcessorIMod,
@@ -7938,7 +7956,7 @@ MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
 
       // Only after the instruction is fully processed, we can validate it
       if (wasInITBlock && hasV8Ops() && isThumb() &&
-          !isV8EligibleForIT(&Inst, 2)) {
+          !isV8EligibleForIT(&Inst)) {
         Warning(IDLoc, "deprecated instruction in IT block");
       }
     }
@@ -8062,6 +8080,10 @@ bool ARMAsmParser::ParseDirective(AsmToken DirectiveID) {
     return parseDirectiveLtorg(DirectiveID.getLoc());
   else if (IDVal == ".even")
     return parseDirectiveEven(DirectiveID.getLoc());
+  else if (IDVal == ".personalityindex")
+    return parseDirectivePersonalityIndex(DirectiveID.getLoc());
+  else if (IDVal == ".unwind_raw")
+    return parseDirectiveUnwindRaw(DirectiveID.getLoc());
   return true;
 }
 
@@ -8071,8 +8093,10 @@ bool ARMAsmParser::parseDirectiveWord(unsigned Size, SMLoc L) {
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
     for (;;) {
       const MCExpr *Value;
-      if (getParser().parseExpression(Value))
+      if (getParser().parseExpression(Value)) {
+        Parser.eatToEndOfStatement();
         return false;
+      }
 
       getParser().getStreamer().EmitValue(Value, Size);
 
@@ -8365,7 +8389,7 @@ bool ARMAsmParser::parseDirectiveEabiAttr(SMLoc L) {
   else if (Tag == ARMBuildAttrs::compatibility) {
     IsStringValue = true;
     IsIntegerValue = true;
-  } else if (Tag == ARMBuildAttrs::nodefaults || Tag < 32 || Tag % 2 == 0)
+  } else if (Tag < 32 || Tag % 2 == 0)
     IsIntegerValue = true;
   else if (Tag % 2 == 1)
     IsStringValue = true;
@@ -8454,6 +8478,9 @@ bool ARMAsmParser::parseDirectiveFnStart(SMLoc L) {
     return false;
   }
 
+  // Reset the unwind directives parser state
+  UC.reset();
+
   getTargetStreamer().emitFnStart();
 
   UC.recordFnStart(L);
@@ -8504,6 +8531,8 @@ bool ARMAsmParser::parseDirectiveCantUnwind(SMLoc L) {
 /// parseDirectivePersonality
 ///  ::= .personality name
 bool ARMAsmParser::parseDirectivePersonality(SMLoc L) {
+  bool HasExistingPersonality = UC.hasPersonality();
+
   UC.recordPersonality(L);
 
   // Check the ordering of unwind directives
@@ -8519,6 +8548,12 @@ bool ARMAsmParser::parseDirectivePersonality(SMLoc L) {
   if (UC.hasHandlerData()) {
     Error(L, ".personality must precede .handlerdata directive");
     UC.emitHandlerDataLocNotes();
+    return false;
+  }
+  if (HasExistingPersonality) {
+    Parser.eatToEndOfStatement();
+    Error(L, "multiple personality directives");
+    UC.emitPersonalityLocNotes();
     return false;
   }
 
@@ -8818,7 +8853,7 @@ bool ARMAsmParser::parseDirectiveEven(SMLoc L) {
   }
 
   if (!Section) {
-    getStreamer().InitToTextSection();
+    getStreamer().InitSections();
     Section = getStreamer().getCurrentSection().first;
   }
 
@@ -8827,6 +8862,142 @@ bool ARMAsmParser::parseDirectiveEven(SMLoc L) {
   else
     getStreamer().EmitValueToAlignment(2, 0, 1, 0);
 
+  return false;
+}
+
+/// parseDirectivePersonalityIndex
+///   ::= .personalityindex index
+bool ARMAsmParser::parseDirectivePersonalityIndex(SMLoc L) {
+  bool HasExistingPersonality = UC.hasPersonality();
+
+  UC.recordPersonalityIndex(L);
+
+  if (!UC.hasFnStart()) {
+    Parser.eatToEndOfStatement();
+    Error(L, ".fnstart must precede .personalityindex directive");
+    return false;
+  }
+  if (UC.cantUnwind()) {
+    Parser.eatToEndOfStatement();
+    Error(L, ".personalityindex cannot be used with .cantunwind");
+    UC.emitCantUnwindLocNotes();
+    return false;
+  }
+  if (UC.hasHandlerData()) {
+    Parser.eatToEndOfStatement();
+    Error(L, ".personalityindex must precede .handlerdata directive");
+    UC.emitHandlerDataLocNotes();
+    return false;
+  }
+  if (HasExistingPersonality) {
+    Parser.eatToEndOfStatement();
+    Error(L, "multiple personality directives");
+    UC.emitPersonalityLocNotes();
+    return false;
+  }
+
+  const MCExpr *IndexExpression;
+  SMLoc IndexLoc = Parser.getTok().getLoc();
+  if (Parser.parseExpression(IndexExpression)) {
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+
+  const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(IndexExpression);
+  if (!CE) {
+    Parser.eatToEndOfStatement();
+    Error(IndexLoc, "index must be a constant number");
+    return false;
+  }
+  if (CE->getValue() < 0 ||
+      CE->getValue() >= ARM::EHABI::NUM_PERSONALITY_INDEX) {
+    Parser.eatToEndOfStatement();
+    Error(IndexLoc, "personality routine index should be in range [0-3]");
+    return false;
+  }
+
+  getTargetStreamer().emitPersonalityIndex(CE->getValue());
+  return false;
+}
+
+/// parseDirectiveUnwindRaw
+///   ::= .unwind_raw offset, opcode [, opcode...]
+bool ARMAsmParser::parseDirectiveUnwindRaw(SMLoc L) {
+  if (!UC.hasFnStart()) {
+    Parser.eatToEndOfStatement();
+    Error(L, ".fnstart must precede .unwind_raw directives");
+    return false;
+  }
+
+  int64_t StackOffset;
+
+  const MCExpr *OffsetExpr;
+  SMLoc OffsetLoc = getLexer().getLoc();
+  if (getLexer().is(AsmToken::EndOfStatement) ||
+      getParser().parseExpression(OffsetExpr)) {
+    Error(OffsetLoc, "expected expression");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+
+  const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(OffsetExpr);
+  if (!CE) {
+    Error(OffsetLoc, "offset must be a constant");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+
+  StackOffset = CE->getValue();
+
+  if (getLexer().isNot(AsmToken::Comma)) {
+    Error(getLexer().getLoc(), "expected comma");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+  Parser.Lex();
+
+  SmallVector<uint8_t, 16> Opcodes;
+  for (;;) {
+    const MCExpr *OE;
+
+    SMLoc OpcodeLoc = getLexer().getLoc();
+    if (getLexer().is(AsmToken::EndOfStatement) || Parser.parseExpression(OE)) {
+      Error(OpcodeLoc, "expected opcode expression");
+      Parser.eatToEndOfStatement();
+      return false;
+    }
+
+    const MCConstantExpr *OC = dyn_cast<MCConstantExpr>(OE);
+    if (!OC) {
+      Error(OpcodeLoc, "opcode value must be a constant");
+      Parser.eatToEndOfStatement();
+      return false;
+    }
+
+    const int64_t Opcode = OC->getValue();
+    if (Opcode & ~0xff) {
+      Error(OpcodeLoc, "invalid opcode");
+      Parser.eatToEndOfStatement();
+      return false;
+    }
+
+    Opcodes.push_back(uint8_t(Opcode));
+
+    if (getLexer().is(AsmToken::EndOfStatement))
+      break;
+
+    if (getLexer().isNot(AsmToken::Comma)) {
+      Error(getLexer().getLoc(), "unexpected token in directive");
+      Parser.eatToEndOfStatement();
+      return false;
+    }
+
+    Parser.Lex();
+  }
+
+  getTargetStreamer().emitUnwindRaw(StackOffset, Opcodes);
+
+  Parser.Lex();
   return false;
 }
 
