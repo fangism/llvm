@@ -3,7 +3,7 @@
 ; which tests llvm-mc.
 
 ; RUN: llc -filetype=asm -relocation-model=pic -mcpu=g4 -mtriple=powerpc-apple-darwin8 %s -o - | tee %t1 | FileCheck -check-prefix=DARWIN-G4-ASM %s
-; RUN-WORKS-BUT-SKIPPING: llc -filetype=obj -relocation-model=pic -mcpu=g4 -mtriple=powerpc-apple-darwin8 %s -o - | tee %t2 | macho-dump | tee %t3 | FileCheck -check-prefix=DARWIN-G4-DUMP %s
+; RUN: llc -filetype=obj -relocation-model=pic -mcpu=g4 -mtriple=powerpc-apple-darwin8 %s -o - | tee %t2 | macho-dump | tee %t3 | FileCheck -check-prefix=DARWIN-G4-DUMP %s
 
 ; FIXME: validating .s->.o requires darwin asm syntax support in PPCAsmParser
 ; RUN-XFAIL: llvm-mc -relocation-model=pic -mcpu=g4 -triple=powerpc-apple-darwin8 %t1 -o - | tee %t4 | macho-dump | tee %t5 | FileCheck -check-prefix=DARWIN-G4-DUMP %s
