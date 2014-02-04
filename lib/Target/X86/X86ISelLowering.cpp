@@ -2584,9 +2584,21 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       X86Info->setTCReturnAddrDelta(FPDiff);
   }
 
+  unsigned NumBytesToPush = NumBytes;
+  unsigned NumBytesToPop = NumBytes;
+
+  // If we have an inalloca argument, all stack space has already been allocated
+  // for us and be right at the top of the stack.  We don't support multiple
+  // arguments passed in memory when using inalloca.
+  if (!Outs.empty() && Outs.back().Flags.isInAlloca()) {
+    NumBytesToPush = 0;
+    assert(ArgLocs.back().getLocMemOffset() == 0 &&
+           "an inalloca argument must be the only memory argument");
+  }
+
   if (!IsSibcall)
-    Chain = DAG.getCALLSEQ_START(Chain, DAG.getIntPtrConstant(NumBytes, true),
-                                 dl);
+    Chain = DAG.getCALLSEQ_START(
+        Chain, DAG.getIntPtrConstant(NumBytesToPush, true), dl);
 
   SDValue RetAddrFrIdx;
   // Load return address for tail calls.
@@ -2603,10 +2615,14 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   const X86RegisterInfo *RegInfo =
     static_cast<const X86RegisterInfo*>(getTargetMachine().getRegisterInfo());
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
+    // Skip inalloca arguments, they have already been written.
+    ISD::ArgFlagsTy Flags = Outs[i].Flags;
+    if (Flags.isInAlloca())
+      continue;
+
     CCValAssign &VA = ArgLocs[i];
     EVT RegVT = VA.getLocVT();
     SDValue Arg = OutVals[i];
-    ISD::ArgFlagsTy Flags = Outs[i].Flags;
     bool isByVal = Flags.isByVal();
 
     // Promote the value if needed.
@@ -2873,8 +2889,9 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   SmallVector<SDValue, 8> Ops;
 
   if (!IsSibcall && isTailCall) {
-    Chain = DAG.getCALLSEQ_END(Chain, DAG.getIntPtrConstant(NumBytes, true),
-                           DAG.getIntPtrConstant(0, true), InFlag, dl);
+    Chain = DAG.getCALLSEQ_END(Chain,
+                               DAG.getIntPtrConstant(NumBytesToPop, true),
+                               DAG.getIntPtrConstant(0, true), InFlag, dl);
     InFlag = Chain.getValue(1);
   }
 
@@ -2913,10 +2930,10 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   InFlag = Chain.getValue(1);
 
   // Create the CALLSEQ_END node.
-  unsigned NumBytesForCalleeToPush;
+  unsigned NumBytesForCalleeToPop;
   if (X86::isCalleePop(CallConv, Is64Bit, isVarArg,
                        getTargetMachine().Options.GuaranteedTailCallOpt))
-    NumBytesForCalleeToPush = NumBytes;    // Callee pops everything
+    NumBytesForCalleeToPop = NumBytes;    // Callee pops everything
   else if (!Is64Bit && !IsTailCallConvention(CallConv) &&
            !Subtarget->getTargetTriple().isOSMSVCRT() &&
            SR == StackStructReturn)
@@ -2924,15 +2941,15 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     // pops the hidden struct pointer, so we have to push it back.
     // This is common for Darwin/X86, Linux & Mingw32 targets.
     // For MSVC Win32 targets, the caller pops the hidden struct pointer.
-    NumBytesForCalleeToPush = 4;
+    NumBytesForCalleeToPop = 4;
   else
-    NumBytesForCalleeToPush = 0;  // Callee pops nothing.
+    NumBytesForCalleeToPop = 0;  // Callee pops nothing.
 
   // Returns a flag for retval copy to use.
   if (!IsSibcall) {
     Chain = DAG.getCALLSEQ_END(Chain,
-                               DAG.getIntPtrConstant(NumBytes, true),
-                               DAG.getIntPtrConstant(NumBytesForCalleeToPush,
+                               DAG.getIntPtrConstant(NumBytesToPop, true),
+                               DAG.getIntPtrConstant(NumBytesForCalleeToPop,
                                                      true),
                                InFlag, dl);
     InFlag = Chain.getValue(1);
@@ -17323,6 +17340,46 @@ static SDValue PerformSELECTCombine(SDNode *N, SelectionDAG &DAG,
         if (VT == MVT::v4i32 || VT == MVT::v4f32)
           return getTargetShuffleNode(X86ISD::MOVSS, DL, VT, A, B, DAG);
         return getTargetShuffleNode(X86ISD::MOVSD, DL, VT, A, B, DAG);
+      }
+
+      if (Subtarget->hasSSE2() && (VT == MVT::v4i32 || VT == MVT::v4f32)) {
+        // fold (v4i32: vselect <0,0,-1,-1>, A, B) ->
+        //      (v4i32 (bitcast (movsd (v2i64 (bitcast A)),
+        //                             (v2i64 (bitcast B)))))
+        //
+        // fold (v4f32: vselect <0,0,-1,-1>, A, B) ->
+        //      (v4f32 (bitcast (movsd (v2f64 (bitcast A)),
+        //                             (v2f64 (bitcast B)))))
+        //
+        // fold (v4i32: vselect <-1,-1,0,0>, A, B) ->
+        //      (v4i32 (bitcast (movsd (v2i64 (bitcast B)),
+        //                             (v2i64 (bitcast A)))))
+        //
+        // fold (v4f32: vselect <-1,-1,0,0>, A, B) ->
+        //      (v4f32 (bitcast (movsd (v2f64 (bitcast B)),
+        //                             (v2f64 (bitcast A)))))
+
+        CanFold = (isZero(Cond.getOperand(0)) &&
+                   isZero(Cond.getOperand(1)) &&
+                   isAllOnes(Cond.getOperand(2)) &&
+                   isAllOnes(Cond.getOperand(3)));
+
+        if (!CanFold && isAllOnes(Cond.getOperand(0)) &&
+            isAllOnes(Cond.getOperand(1)) &&
+            isZero(Cond.getOperand(2)) &&
+            isZero(Cond.getOperand(3))) {
+          CanFold = true;
+          std::swap(LHS, RHS);
+        }
+
+        if (CanFold) {
+          EVT NVT = (VT == MVT::v4i32) ? MVT::v2i64 : MVT::v2f64;
+          SDValue NewA = DAG.getNode(ISD::BITCAST, DL, NVT, LHS);
+          SDValue NewB = DAG.getNode(ISD::BITCAST, DL, NVT, RHS);
+          SDValue Select = getTargetShuffleNode(X86ISD::MOVSD, DL, NVT, NewA,
+                                                NewB, DAG);
+          return DAG.getNode(ISD::BITCAST, DL, VT, Select);
+        }
       }
     }
   }

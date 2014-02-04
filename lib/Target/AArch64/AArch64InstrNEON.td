@@ -461,9 +461,13 @@ multiclass Neon_bitwise3V_patterns<SDPatternOperator opnode,
             (INST8B VPR64:$src, VPR64:$Rn, VPR64:$Rm)>;
   def : Pat<(v2i32 (opnode (v2i32 VPR64:$src), VPR64:$Rn, VPR64:$Rm)),
             (INST8B VPR64:$src, VPR64:$Rn, VPR64:$Rm)>;
+  def : Pat<(v2f32 (opnode (v2i32 VPR64:$src), VPR64:$Rn, VPR64:$Rm)),
+            (INST8B VPR64:$src, VPR64:$Rn, VPR64:$Rm)>;
   def : Pat<(v4i16 (opnode (v4i16 VPR64:$src), VPR64:$Rn, VPR64:$Rm)),
             (INST8B VPR64:$src, VPR64:$Rn, VPR64:$Rm)>;
   def : Pat<(v1i64 (opnode (v1i64 VPR64:$src), VPR64:$Rn, VPR64:$Rm)),
+            (INST8B VPR64:$src, VPR64:$Rn, VPR64:$Rm)>;
+  def : Pat<(v1f64 (opnode (v1i64 VPR64:$src), VPR64:$Rn, VPR64:$Rm)),
             (INST8B VPR64:$src, VPR64:$Rn, VPR64:$Rm)>;
   def : Pat<(v16i8 (opnode (v16i8 VPR128:$src), VPR128:$Rn, VPR128:$Rm)),
             (INST16B VPR128:$src, VPR128:$Rn, VPR128:$Rm)>;
@@ -7102,6 +7106,20 @@ def : Pat<(v2f64 (Neon_vdup (f64 FPR64:$Rn))),
             (SUBREG_TO_REG (i64 0), FPR64:$Rn, sub_64),
             (i64 0)))>;
 
+multiclass NeonI_DUP_pattern<Instruction DUPELT, ValueType ResTy,
+                             ValueType OpTy, RegisterClass OpRC,
+                             Operand OpNImm, SubRegIndex SubIndex> {
+def : Pat<(ResTy (Neon_vduplane (OpTy OpRC:$Rn), OpNImm:$Imm)),
+          (ResTy (DUPELT
+            (SUBREG_TO_REG (i64 0), OpRC:$Rn, SubIndex), OpNImm:$Imm))>;
+}
+
+defm : NeonI_DUP_pattern<DUPELT4h, v4i16, v1i16, FPR16, neon_uimm2_bare,sub_16>;
+defm : NeonI_DUP_pattern<DUPELT4s, v4i32, v1i32, FPR32, neon_uimm2_bare,sub_32>;
+defm : NeonI_DUP_pattern<DUPELT8b, v8i8, v1i8, FPR8, neon_uimm3_bare, sub_8>;
+defm : NeonI_DUP_pattern<DUPELT8h, v8i16, v1i16, FPR16, neon_uimm3_bare,sub_16>;
+defm : NeonI_DUP_pattern<DUPELT16b, v16i8, v1i8, FPR8, neon_uimm4_bare, sub_8>;
+
 class NeonI_DUP<bit Q, string asmop, string rdlane,
                 RegisterOperand ResVPR, ValueType ResTy,
                 RegisterClass OpGPR, ValueType OpTy>
@@ -8845,13 +8863,15 @@ class NeonI_Cryptosha_ss<bits<2> size, bits<5> opcode,
   : NeonI_Crypto_SHA<size, opcode,
                      (outs FPR32:$Rd), (ins FPR32:$Rn),
                      asmop # "\t$Rd, $Rn",
-                     [(set (v1i32 FPR32:$Rd),
-                        (v1i32 (opnode (v1i32 FPR32:$Rn))))],
-                     NoItinerary> {
+                     [], NoItinerary> {
   let Predicates = [HasNEON, HasCrypto];
+  let hasSideEffects = 0;
 }
 
 def SHA1H : NeonI_Cryptosha_ss<0b00, 0b00000, "sha1h", int_arm_neon_sha1h>;
+def : Pat<(i32 (int_arm_neon_sha1h i32:$Rn)),
+          (COPY_TO_REGCLASS (SHA1H (COPY_TO_REGCLASS i32:$Rn, FPR32)), GPR32)>;
+
 
 class NeonI_Cryptosha3_vvv<bits<2> size, bits<3> opcode, string asmop,
                            SDPatternOperator opnode>
@@ -8893,24 +8913,30 @@ def SHA256H : NeonI_Cryptosha3_qqv<0b00, 0b100, "sha256h",
 def SHA256H2 : NeonI_Cryptosha3_qqv<0b00, 0b101, "sha256h2",
                                     int_arm_neon_sha256h2>;
 
-class NeonI_Cryptosha3_qsv<bits<2> size, bits<3> opcode, string asmop,
-                           SDPatternOperator opnode>
+class NeonI_Cryptosha3_qsv<bits<2> size, bits<3> opcode, string asmop>
   : NeonI_Crypto_3VSHA<size, opcode,
                        (outs FPR128:$Rd),
                        (ins FPR128:$src, FPR32:$Rn, VPR128:$Rm),
                        asmop # "\t$Rd, $Rn, $Rm.4s",
-                       [(set (v4i32 FPR128:$Rd),
-                          (v4i32 (opnode (v4i32 FPR128:$src),
-                                         (v1i32 FPR32:$Rn),
-                                         (v4i32 VPR128:$Rm))))],
-                       NoItinerary> {
+                       [], NoItinerary> {
   let Constraints = "$src = $Rd";
+  let hasSideEffects = 0;
   let Predicates = [HasNEON, HasCrypto];
 }
 
-def SHA1C : NeonI_Cryptosha3_qsv<0b00, 0b000, "sha1c", int_aarch64_neon_sha1c>;
-def SHA1P : NeonI_Cryptosha3_qsv<0b00, 0b001, "sha1p", int_aarch64_neon_sha1p>;
-def SHA1M : NeonI_Cryptosha3_qsv<0b00, 0b010, "sha1m", int_aarch64_neon_sha1m>;
+def SHA1C : NeonI_Cryptosha3_qsv<0b00, 0b000, "sha1c">;
+def SHA1P : NeonI_Cryptosha3_qsv<0b00, 0b001, "sha1p">;
+def SHA1M : NeonI_Cryptosha3_qsv<0b00, 0b010, "sha1m">;
+
+def : Pat<(int_arm_neon_sha1c v4i32:$hash_abcd, i32:$hash_e, v4i32:$wk),
+          (SHA1C v4i32:$hash_abcd,
+                 (COPY_TO_REGCLASS i32:$hash_e, FPR32), v4i32:$wk)>;
+def : Pat<(int_arm_neon_sha1m v4i32:$hash_abcd, i32:$hash_e, v4i32:$wk),
+          (SHA1M v4i32:$hash_abcd,
+                 (COPY_TO_REGCLASS i32:$hash_e, FPR32), v4i32:$wk)>;
+def : Pat<(int_arm_neon_sha1p v4i32:$hash_abcd, i32:$hash_e, v4i32:$wk),
+          (SHA1P v4i32:$hash_abcd,
+                 (COPY_TO_REGCLASS i32:$hash_e, FPR32), v4i32:$wk)>;
 
 // Additional patterns to match shl to USHL.
 def : Pat<(v8i8 (shl (v8i8 VPR64:$Rn), (v8i8 VPR64:$Rm))),

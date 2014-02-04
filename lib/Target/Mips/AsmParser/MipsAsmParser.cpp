@@ -906,7 +906,7 @@ bool MipsAsmParser::MatchAndEmitInstruction(
     if (processInstruction(Inst, IDLoc, Instructions))
       return true;
     for (unsigned i = 0; i < Instructions.size(); i++)
-      Out.EmitInstruction(Instructions[i]);
+      Out.EmitInstruction(Instructions[i], STI);
     return false;
   }
   case Match_MissingFeature:
@@ -1246,7 +1246,7 @@ MipsAsmParser::ParseOperand(SmallVectorImpl<MCParsedAsmOperand *> &Operands,
       return false;
     }
     // Look for the existing symbol, we should check if
-    // we need to assigne the proper RegisterKind.
+    // we need to assign the proper RegisterKind.
     if (searchSymbolAlias(Operands, MipsOperand::Kind_None))
       return false;
   // Else drop to expression parsing.

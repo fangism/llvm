@@ -1910,6 +1910,10 @@ bool X86FastISel::DoSelectCall(const Instruction *I, const char *MemIntName) {
   if (isVarArg && isWin64)
     return false;
 
+  // Don't know about inalloca yet.
+  if (CS.hasInAllocaArgument())
+    return false;
+
   // Fast-isel doesn't know about callee-pop yet.
   if (X86::isCalleePop(CC, Subtarget->is64Bit(), isVarArg,
                        TM.Options.GuaranteedTailCallOpt))
@@ -2483,6 +2487,7 @@ unsigned X86FastISel::TargetMaterializeAlloca(const AllocaInst *C) {
   // X86SelectAddrss, and TargetMaterializeAlloca.
   if (!FuncInfo.StaticAllocaMap.count(C))
     return 0;
+  assert(C->isStaticAlloca() && "dynamic alloca in the static alloca map?");
 
   X86AddressMode AM;
   if (!X86SelectAddress(C, AM))

@@ -87,13 +87,10 @@ const coff_section *COFFObjectFile::toSec(DataRefImpl Ref) const {
   return Addr;
 }
 
-error_code COFFObjectFile::getSymbolNext(DataRefImpl Ref,
-                                         SymbolRef &Result) const {
+void COFFObjectFile::moveSymbolNext(DataRefImpl &Ref) const {
   const coff_symbol *Symb = toSymb(Ref);
   Symb += 1 + Symb->NumberOfAuxSymbols;
   Ref.p = reinterpret_cast<uintptr_t>(Symb);
-  Result = SymbolRef(Ref, this);
-  return object_error::success;
 }
 
 error_code COFFObjectFile::getSymbolName(DataRefImpl Ref,
@@ -158,10 +155,9 @@ error_code COFFObjectFile::getSymbolType(DataRefImpl Ref,
   return object_error::success;
 }
 
-error_code COFFObjectFile::getSymbolFlags(DataRefImpl Ref,
-                                          uint32_t &Result) const {
+uint32_t COFFObjectFile::getSymbolFlags(DataRefImpl Ref) const {
   const coff_symbol *Symb = toSymb(Ref);
-  Result = SymbolRef::SF_None;
+  uint32_t Result = SymbolRef::SF_None;
 
   // TODO: Correctly set SF_FormatSpecific, SF_ThreadLocal, SF_Common
 
@@ -179,7 +175,7 @@ error_code COFFObjectFile::getSymbolFlags(DataRefImpl Ref,
   if (Symb->SectionNumber == COFF::IMAGE_SYM_ABSOLUTE)
     Result |= SymbolRef::SF_Absolute;
 
-  return object_error::success;
+  return Result;
 }
 
 error_code COFFObjectFile::getSymbolSize(DataRefImpl Ref,
@@ -221,13 +217,10 @@ error_code COFFObjectFile::getSymbolValue(DataRefImpl Ref,
   report_fatal_error("getSymbolValue unimplemented in COFFObjectFile");
 }
 
-error_code COFFObjectFile::getSectionNext(DataRefImpl Ref,
-                                          SectionRef &Result) const {
+void COFFObjectFile::moveSectionNext(DataRefImpl &Ref) const {
   const coff_section *Sec = toSec(Ref);
   Sec += 1;
   Ref.p = reinterpret_cast<uintptr_t>(Sec);
-  Result = SectionRef(Ref, this);
-  return object_error::success;
 }
 
 error_code COFFObjectFile::getSectionName(DataRefImpl Ref,
@@ -386,11 +379,8 @@ error_code COFFObjectFile::initSymbolTablePtr() {
 
 // Returns the file offset for the given RVA.
 error_code COFFObjectFile::getRvaPtr(uint32_t Rva, uintptr_t &Res) const {
-  error_code EC;
   for (section_iterator I = begin_sections(), E = end_sections(); I != E;
-       I.increment(EC)) {
-    if (EC)
-      return EC;
+       ++I) {
     const coff_section *Section = getCOFFSection(I);
     uint32_t SectionStart = Section->VirtualAddress;
     uint32_t SectionEnd = Section->VirtualAddress + Section->VirtualSize;
@@ -557,16 +547,6 @@ symbol_iterator COFFObjectFile::end_symbols() const {
   DataRefImpl Ret;
   Ret.p = reinterpret_cast<uintptr_t>(StringTable);
   return symbol_iterator(SymbolRef(Ret, this));
-}
-
-symbol_iterator COFFObjectFile::begin_dynamic_symbols() const {
-  // TODO: implement
-  report_fatal_error("Dynamic symbols unimplemented in COFFObjectFile");
-}
-
-symbol_iterator COFFObjectFile::end_dynamic_symbols() const {
-  // TODO: implement
-  report_fatal_error("Dynamic symbols unimplemented in COFFObjectFile");
 }
 
 library_iterator COFFObjectFile::begin_libraries_needed() const {
@@ -801,12 +781,9 @@ const coff_relocation *COFFObjectFile::toRel(DataRefImpl Rel) const {
   return reinterpret_cast<const coff_relocation*>(Rel.p);
 }
 
-error_code COFFObjectFile::getRelocationNext(DataRefImpl Rel,
-                                             RelocationRef &Res) const {
+void COFFObjectFile::moveRelocationNext(DataRefImpl &Rel) const {
   Rel.p = reinterpret_cast<uintptr_t>(
             reinterpret_cast<const coff_relocation*>(Rel.p) + 1);
-  Res = RelocationRef(Rel, this);
-  return object_error::success;
 }
 
 error_code COFFObjectFile::getRelocationAddress(DataRefImpl Rel,
@@ -932,10 +909,8 @@ operator==(const ImportDirectoryEntryRef &Other) const {
   return ImportTable == Other.ImportTable && Index == Other.Index;
 }
 
-error_code
-ImportDirectoryEntryRef::getNext(ImportDirectoryEntryRef &Result) const {
-  Result = ImportDirectoryEntryRef(ImportTable, Index + 1, OwningObject);
-  return object_error::success;
+void ImportDirectoryEntryRef::moveNext() {
+  ++Index;
 }
 
 error_code ImportDirectoryEntryRef::
@@ -967,10 +942,8 @@ operator==(const ExportDirectoryEntryRef &Other) const {
   return ExportTable == Other.ExportTable && Index == Other.Index;
 }
 
-error_code
-ExportDirectoryEntryRef::getNext(ExportDirectoryEntryRef &Result) const {
-  Result = ExportDirectoryEntryRef(ExportTable, Index + 1, OwningObject);
-  return object_error::success;
+void ExportDirectoryEntryRef::moveNext() {
+  ++Index;
 }
 
 // Returns the name of the current export symbol. If the symbol is exported only

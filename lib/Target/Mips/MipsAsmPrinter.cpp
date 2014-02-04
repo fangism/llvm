@@ -131,7 +131,7 @@ void MipsAsmPrinter::EmitInstruction(const MachineInstr *MI) {
 
     MCInst TmpInst0;
     MCInstLowering.Lower(I, TmpInst0);
-    OutStreamer.EmitInstruction(TmpInst0);
+    EmitToStreamer(OutStreamer, TmpInst0);
   } while ((++I != E) && I->isInsideBundle()); // Delay slot check
 }
 
@@ -619,12 +619,6 @@ void MipsAsmPrinter::EmitStartOfAsmFile(Module &M) {
 
   // return to the text section
   OutStreamer.SwitchSection(OutContext.getObjectFileInfo()->getTextSection());
-}
-
-void MipsAsmPrinter::EmitEndOfAsmFile(Module &M) {
-  // Emit Mips ELF register info
-  Subtarget->getMReginfo().emitMipsReginfoSectionCG(
-             OutStreamer, getObjFileLowering(), *Subtarget);
 }
 
 void MipsAsmPrinter::PrintDebugValueComment(const MachineInstr *MI,

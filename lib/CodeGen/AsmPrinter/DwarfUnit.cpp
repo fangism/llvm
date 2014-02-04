@@ -1016,18 +1016,21 @@ void DwarfUnit::addType(DIE *Entity, DIType Ty, dwarf::Attribute Attribute) {
 // to reference is in the string table. We do this since the names we
 // add may not only be identical to the names in the DIE.
 void DwarfUnit::addAccelName(StringRef Name, const DIE *Die) {
+  if (!DD->useDwarfAccelTables()) return;
   DU->getStringPoolEntry(Name);
   std::vector<const DIE *> &DIEs = AccelNames[Name];
   DIEs.push_back(Die);
 }
 
 void DwarfUnit::addAccelObjC(StringRef Name, const DIE *Die) {
+  if (!DD->useDwarfAccelTables()) return;
   DU->getStringPoolEntry(Name);
   std::vector<const DIE *> &DIEs = AccelObjC[Name];
   DIEs.push_back(Die);
 }
 
 void DwarfUnit::addAccelNamespace(StringRef Name, const DIE *Die) {
+  if (!DD->useDwarfAccelTables()) return;
   DU->getStringPoolEntry(Name);
   std::vector<const DIE *> &DIEs = AccelNamespace[Name];
   DIEs.push_back(Die);
@@ -1035,6 +1038,7 @@ void DwarfUnit::addAccelNamespace(StringRef Name, const DIE *Die) {
 
 void DwarfUnit::addAccelType(StringRef Name,
                              std::pair<const DIE *, unsigned> Die) {
+  if (!DD->useDwarfAccelTables()) return;
   DU->getStringPoolEntry(Name);
   std::vector<std::pair<const DIE *, unsigned> > &DIEs = AccelTypes[Name];
   DIEs.push_back(Die);
@@ -1881,7 +1885,7 @@ void DwarfUnit::constructMemberDIE(DIE &Buffer, DIDerivedType DT) {
         Offset = FieldSize - (Offset + Size);
       addUInt(MemberDie, dwarf::DW_AT_bit_offset, None, Offset);
 
-      // Here WD_AT_data_member_location points to the anonymous
+      // Here DW_AT_data_member_location points to the anonymous
       // field that includes this bit field.
       OffsetInBytes = FieldOffset >> 3;
     } else

@@ -127,7 +127,7 @@ class UnwindContext {
   int FPReg;
 
 public:
-  UnwindContext(MCAsmParser &P) : Parser(P), FPReg(-1) {}
+  UnwindContext(MCAsmParser &P) : Parser(P), FPReg(ARM::SP) {}
 
   bool hasFnStart() const { return !FnStartLocs.empty(); }
   bool cantUnwind() const { return !CantUnwindLocs.empty(); }
@@ -182,7 +182,7 @@ public:
     PersonalityLocs = Locs();
     HandlerDataLocs = Locs();
     PersonalityIndexLocs = Locs();
-    FPReg = -1;
+    FPReg = ARM::SP;
   }
 };
 
@@ -296,6 +296,9 @@ class ARMAsmParser : public MCTargetAsmParser {
   bool parseDirectiveEven(SMLoc L);
   bool parseDirectivePersonalityIndex(SMLoc L);
   bool parseDirectiveUnwindRaw(SMLoc L);
+  bool parseDirectiveTLSDescSeq(SMLoc L);
+  bool parseDirectiveMovSP(SMLoc L);
+  bool parseDirectiveObjectArch(SMLoc L);
 
   StringRef splitMnemonic(StringRef Mnemonic, unsigned &PredicationCode,
                           bool &CarrySetting, unsigned &ProcessorIMod,
@@ -7972,7 +7975,7 @@ MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       return false;
 
     Inst.setLoc(IDLoc);
-    Out.EmitInstruction(Inst);
+    Out.EmitInstruction(Inst, STI);
     return false;
   case Match_MissingFeature: {
     assert(ErrorInfo && "Unknown missing feature!");
@@ -8084,6 +8087,12 @@ bool ARMAsmParser::ParseDirective(AsmToken DirectiveID) {
     return parseDirectivePersonalityIndex(DirectiveID.getLoc());
   else if (IDVal == ".unwind_raw")
     return parseDirectiveUnwindRaw(DirectiveID.getLoc());
+  else if (IDVal == ".tlsdescseq")
+    return parseDirectiveTLSDescSeq(DirectiveID.getLoc());
+  else if (IDVal == ".movsp")
+    return parseDirectiveMovSP(DirectiveID.getLoc());
+  else if (IDVal == ".object_arch")
+    return parseDirectiveObjectArch(DirectiveID.getLoc());
   return true;
 }
 
@@ -8613,7 +8622,7 @@ bool ARMAsmParser::parseDirectiveSetFP(SMLoc L) {
   }
 
   // Consume comma
-  if (!Parser.getTok().is(AsmToken::Comma)) {
+  if (Parser.getTok().isNot(AsmToken::Comma)) {
     Error(Parser.getTok().getLoc(), "comma expected");
     return false;
   }
@@ -8998,6 +9007,132 @@ bool ARMAsmParser::parseDirectiveUnwindRaw(SMLoc L) {
   getTargetStreamer().emitUnwindRaw(StackOffset, Opcodes);
 
   Parser.Lex();
+  return false;
+}
+
+/// parseDirectiveTLSDescSeq
+///   ::= .tlsdescseq tls-variable
+bool ARMAsmParser::parseDirectiveTLSDescSeq(SMLoc L) {
+  if (getLexer().isNot(AsmToken::Identifier)) {
+    TokError("expected variable after '.tlsdescseq' directive");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+
+  const MCSymbolRefExpr *SRE =
+    MCSymbolRefExpr::Create(Parser.getTok().getIdentifier(),
+                            MCSymbolRefExpr::VK_ARM_TLSDESCSEQ, getContext());
+  Lex();
+
+  if (getLexer().isNot(AsmToken::EndOfStatement)) {
+    Error(Parser.getTok().getLoc(), "unexpected token");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+
+  getTargetStreamer().AnnotateTLSDescriptorSequence(SRE);
+  return false;
+}
+
+/// parseDirectiveMovSP
+///  ::= .movsp reg [, #offset]
+bool ARMAsmParser::parseDirectiveMovSP(SMLoc L) {
+  if (!UC.hasFnStart()) {
+    Parser.eatToEndOfStatement();
+    Error(L, ".fnstart must precede .movsp directives");
+    return false;
+  }
+  if (UC.getFPReg() != ARM::SP) {
+    Parser.eatToEndOfStatement();
+    Error(L, "unexpected .movsp directive");
+    return false;
+  }
+
+  SMLoc SPRegLoc = Parser.getTok().getLoc();
+  int SPReg = tryParseRegister();
+  if (SPReg == -1) {
+    Parser.eatToEndOfStatement();
+    Error(SPRegLoc, "register expected");
+    return false;
+  }
+
+  if (SPReg == ARM::SP || SPReg == ARM::PC) {
+    Parser.eatToEndOfStatement();
+    Error(SPRegLoc, "sp and pc are not permitted in .movsp directive");
+    return false;
+  }
+
+  int64_t Offset = 0;
+  if (Parser.getTok().is(AsmToken::Comma)) {
+    Parser.Lex();
+
+    if (Parser.getTok().isNot(AsmToken::Hash)) {
+      Error(Parser.getTok().getLoc(), "expected #constant");
+      Parser.eatToEndOfStatement();
+      return false;
+    }
+    Parser.Lex();
+
+    const MCExpr *OffsetExpr;
+    SMLoc OffsetLoc = Parser.getTok().getLoc();
+    if (Parser.parseExpression(OffsetExpr)) {
+      Parser.eatToEndOfStatement();
+      Error(OffsetLoc, "malformed offset expression");
+      return false;
+    }
+
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(OffsetExpr);
+    if (!CE) {
+      Parser.eatToEndOfStatement();
+      Error(OffsetLoc, "offset must be an immediate constant");
+      return false;
+    }
+
+    Offset = CE->getValue();
+  }
+
+  getTargetStreamer().emitMovSP(SPReg, Offset);
+  UC.saveFPReg(SPReg);
+
+  return false;
+}
+
+/// parseDirectiveObjectArch
+///   ::= .object_arch name
+bool ARMAsmParser::parseDirectiveObjectArch(SMLoc L) {
+  if (getLexer().isNot(AsmToken::Identifier)) {
+    Error(getLexer().getLoc(), "unexpected token");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+
+  StringRef Arch = Parser.getTok().getString();
+  SMLoc ArchLoc = Parser.getTok().getLoc();
+  getLexer().Lex();
+
+  unsigned ID = StringSwitch<unsigned>(Arch)
+#define ARM_ARCH_NAME(NAME, ID, DEFAULT_CPU_NAME, DEFAULT_CPU_ARCH) \
+    .Case(NAME, ARM::ID)
+#define ARM_ARCH_ALIAS(NAME, ID) \
+    .Case(NAME, ARM::ID)
+#include "MCTargetDesc/ARMArchName.def"
+#undef ARM_ARCH_NAME
+#undef ARM_ARCH_ALIAS
+    .Default(ARM::INVALID_ARCH);
+
+  if (ID == ARM::INVALID_ARCH) {
+    Error(ArchLoc, "unknown architecture '" + Arch + "'");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+
+  getTargetStreamer().emitObjectArch(ID);
+
+  if (getLexer().isNot(AsmToken::EndOfStatement)) {
+    Error(getLexer().getLoc(), "unexpected token");
+    Parser.eatToEndOfStatement();
+  }
+
   return false;
 }
 
