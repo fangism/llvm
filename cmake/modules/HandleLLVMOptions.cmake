@@ -6,14 +6,6 @@ include(AddLLVMDefinitions)
 include(CheckCCompilerFlag)
 include(CheckCXXCompilerFlag)
 
-if( CMAKE_COMPILER_IS_GNUCXX )
-  set(LLVM_COMPILER_IS_GCC_COMPATIBLE ON)
-elseif( MSVC )
-  set(LLVM_COMPILER_IS_GCC_COMPATIBLE OFF)
-elseif( "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" )
-  set(LLVM_COMPILER_IS_GCC_COMPATIBLE ON)
-endif()
-
 if(NOT LLVM_FORCE_USE_OLD_TOOLCHAIN)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.7)
@@ -291,13 +283,6 @@ elseif( LLVM_COMPILER_IS_GCC_COMPATIBLE )
     check_cxx_compiler_flag("-std=c++11" CXX_SUPPORTS_CXX11)
     append_if(CXX_SUPPORTS_CXX11 "-std=c++11" CMAKE_CXX_FLAGS)
   endif (LLVM_ENABLE_CXX11)
-  if(LLVM_ENABLE_LIBCXX)
-    check_cxx_compiler_flag("-stdlib=libc++" CXX_SUPPORTS_STDLIB)
-    append_if(CXX_SUPPORTS_STDLIB "-stdlib=libc++" CMAKE_CXX_FLAGS)
-    append_if(CXX_SUPPORTS_STDLIB "-stdlib=libc++" CMAKE_EXE_LINKER_FLAGS)
-    append_if(CXX_SUPPORTS_STDLIB "-stdlib=libc++" CMAKE_SHARED_LINKER_FLAGS)
-    append_if(CXX_SUPPORTS_STDLIB "-stdlib=libc++" CMAKE_MODULE_LINKER_FLAGS)
-  endif ()
 endif( MSVC )
 
 macro(append_common_sanitizer_flags)
@@ -350,23 +335,25 @@ if (UNIX AND
   append("-fcolor-diagnostics" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
 endif()
 
-# Clang prior to 3.5 ignored -fno-function-sections.
-# It's pretty hard to test directly, so we rely on the version number.
-if( ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang") AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 3.5) )
-  set(LLVM_COMPILER_HAS_BROKEN_FNO_FUNCTION_SECTIONS ON)
-endif()
-
 # Add flags for add_dead_strip().
 # FIXME: With MSVS, consider compiling with /Gy and linking with /OPT:REF?
 # But MinSizeRel seems to add that automatically, so maybe disable these
 # flags instead if LLVM_NO_DEAD_STRIP is set.
 if(NOT CYGWIN AND NOT WIN32)
   if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-    # Don't add -ffunction-section if it can be disabled with -fno-function-sections.
-    # Doing so will break sanitizers.
-    if (NOT LLVM_COMPILER_HAS_BROKEN_FNO_FUNCTION_SECTIONS)
-      append("-ffunction-sections -fdata-sections" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+    check_c_compiler_flag("-Werror -fno-function-sections" C_SUPPORTS_FNO_FUNCTION_SECTIONS)
+    if (C_SUPPORTS_FNO_FUNCTION_SECTIONS)
+      # Don't add -ffunction-section if it can be disabled with -fno-function-sections.
+      # Doing so will break sanitizers.
+      check_c_compiler_flag("-Werror -ffunction-sections" C_SUPPORTS_FFUNCTION_SECTIONS)
+      check_cxx_compiler_flag("-Werror -ffunction-sections" CXX_SUPPORTS_FFUNCTION_SECTIONS)
+      append_if(C_SUPPORTS_FFUNCTION_SECTIONS "-ffunction-sections" CMAKE_C_FLAGS)
+      append_if(CXX_SUPPORTS_FFUNCTION_SECTIONS "-ffunction-sections" CMAKE_CXX_FLAGS)
     endif()
+    check_c_compiler_flag("-Werror -fdata-sections" C_SUPPORTS_FDATA_SECTIONS)
+    check_cxx_compiler_flag("-Werror -fdata-sections" CXX_SUPPORTS_FDATA_SECTIONS)
+    append_if(C_SUPPORTS_FDATA_SECTIONS "-fdata-sections" CMAKE_C_FLAGS)
+    append_if(CXX_SUPPORTS_FDATA_SECTIONS "-fdata-sections" CMAKE_CXX_FLAGS)
   endif()
 endif()
 

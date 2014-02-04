@@ -493,8 +493,11 @@ struct StrChrOpt : public LibCallOptimization {
     // Otherwise, the character is a constant, see if the first argument is
     // a string literal.  If so, we can constant fold.
     StringRef Str;
-    if (!getConstantStringInfo(SrcStr, Str))
+    if (!getConstantStringInfo(SrcStr, Str)) {
+      if (TD && CharC->isZero()) // strchr(p, 0) -> p + strlen(p)
+        return B.CreateGEP(SrcStr, EmitStrLen(SrcStr, B, TD, TLI), "strchr");
       return 0;
+    }
 
     // Compute the offset, make sure to handle the case when we're searching for
     // zero (a weird way to spell strlen).
@@ -1383,7 +1386,7 @@ struct SinCosPiOpt : public LibCallOptimization {
         SinCalls.push_back(CI);
       else if (Func == LibFunc::cospif)
         CosCalls.push_back(CI);
-      else if (Func == LibFunc::sincospi_stretf)
+      else if (Func == LibFunc::sincospif_stret)
         SinCosCalls.push_back(CI);
     } else {
       if (Func == LibFunc::sinpi)
@@ -1412,7 +1415,7 @@ struct SinCosPiOpt : public LibCallOptimization {
 
     Triple T(OrigCallee->getParent()->getTargetTriple());
     if (UseFloat) {
-      Name = "__sincospi_stretf";
+      Name = "__sincospif_stret";
 
       assert(T.getArch() != Triple::x86 && "x86 messy and unsupported for now");
       // x86_64 can't use {float, float} since that would be returned in both
@@ -2297,8 +2300,6 @@ void LibCallSimplifier::replaceAllUsesWith(Instruction *I, Value *With) const {
 //   * sqrt(Nroot(x)) -> pow(x,1/(2*N))
 //   * sqrt(pow(x,y)) -> pow(|x|,y*0.5)
 //
-// strchr:
-//   * strchr(p, 0) -> strlen(p)
 // tan, tanf, tanl:
 //   * tan(atan(x)) -> x
 //

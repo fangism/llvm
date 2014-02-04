@@ -104,9 +104,6 @@ static unsigned GetArchDefaultCPUArch(unsigned ID) {
   return 0;
 }
 
-void ARMTargetStreamer::anchor() {}
-ARMTargetStreamer::ARMTargetStreamer(MCStreamer &S) : MCTargetStreamer(S) {}
-
 namespace {
 
 class ARMELFStreamer;
@@ -1037,7 +1034,7 @@ inline void ARMELFStreamer::SwitchToEHSection(const char *Prefix,
 
   // Switch to .ARM.extab or .ARM.exidx section
   SwitchSection(EHSection);
-  EmitCodeAlignment(4, 0);
+  EmitCodeAlignment(4);
 }
 
 inline void ARMELFStreamer::SwitchToExTabSection(const MCSymbol &FnStart) {
