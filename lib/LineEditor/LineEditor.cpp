@@ -14,7 +14,14 @@
 #include "llvm/Support/raw_ostream.h"
 #include <stdio.h>
 #ifdef HAVE_LIBEDIT
+// darwin8 and darwin9's histedit.h missing extern "C", darwin10+'s OK
+#ifdef	__cplusplus
+extern "C" {
+#endif
 #include <histedit.h>
+#ifdef	__cplusplus
+}
+#endif
 #endif
 
 using namespace llvm;
