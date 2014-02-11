@@ -120,3 +120,5 @@ add_llvm_library(LLVMSupport
 # fang's debugging tools
   stacktrace.cc
   )
+
+link_system_libs(LLVMSupport)

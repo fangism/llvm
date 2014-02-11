@@ -234,6 +234,36 @@ bool AsmPrinter::doInitialization(Module &M) {
   return false;
 }
 
+static bool canBeHidden(const GlobalValue *GV, const MCAsmInfo &MAI) {
+  GlobalValue::LinkageTypes Linkage = GV->getLinkage();
+  if (Linkage != GlobalValue::LinkOnceODRLinkage)
+    return false;
+
+  if (!MAI.hasWeakDefCanBeHiddenDirective())
+    return false;
+
+  if (GV->hasUnnamedAddr())
+    return true;
+
+  // This is only used for MachO, so right now it doesn't really matter how
+  // we handle alias. Revisit this once the MachO linker implements aliases.
+  if (isa<GlobalAlias>(GV))
+    return false;
+
+  // If it is a non constant variable, it needs to be uniqued across shared
+  // objects.
+  if (const GlobalVariable *Var = dyn_cast<GlobalVariable>(GV)) {
+    if (!Var->isConstant())
+      return false;
+  }
+
+  GlobalStatus GS;
+  if (!GlobalStatus::analyzeGlobal(GV, GS) && !GS.IsCompared)
+    return true;
+
+  return false;
+}
+
 void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
   GlobalValue::LinkageTypes Linkage = GV->getLinkage();
   switch (Linkage) {
@@ -247,20 +277,7 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
       // .globl _foo
       OutStreamer.EmitSymbolAttribute(GVSym, MCSA_Global);
 
-      bool CanBeHidden = false;
-
-      if (Linkage == GlobalValue::LinkOnceODRLinkage &&
-          MAI->hasWeakDefCanBeHiddenDirective()) {
-        if (GV->hasUnnamedAddr()) {
-          CanBeHidden = true;
-        } else {
-          GlobalStatus GS;
-          if (!GlobalStatus::analyzeGlobal(GV, GS) && !GS.IsCompared)
-            CanBeHidden = true;
-        }
-      }
-
-      if (!CanBeHidden)
+      if (!canBeHidden(GV, *MAI))
         // .weak_definition _foo
         OutStreamer.EmitSymbolAttribute(GVSym, MCSA_WeakDefinition);
       else
@@ -295,7 +312,7 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
 }
 
 MCSymbol *AsmPrinter::getSymbol(const GlobalValue *GV) const {
-  return getObjFileLowering().getSymbol(*Mang, GV);
+  return getObjFileLowering().getSymbol(GV, *Mang);
 }
 
 /// EmitGlobalVariable - Emit the specified global variable to the .s file.
@@ -355,7 +372,7 @@ void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
     // Handle local BSS symbols.
     if (MAI->hasMachoZeroFillDirective()) {
       const MCSection *TheSection =
-        getObjFileLowering().SectionForGlobal(GV, GVKind, Mang, TM);
+        getObjFileLowering().SectionForGlobal(GV, GVKind, *Mang, TM);
       // .zerofill __DATA, __bss, _foo, 400, 5
       OutStreamer.EmitZerofill(TheSection, GVSym, Size, Align);
       return;
@@ -384,7 +401,7 @@ void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
   }
 
   const MCSection *TheSection =
-    getObjFileLowering().SectionForGlobal(GV, GVKind, Mang, TM);
+    getObjFileLowering().SectionForGlobal(GV, GVKind, *Mang, TM);
 
   // Handle the zerofill directive on darwin, which is a special form of BSS
   // emission.
@@ -475,7 +492,8 @@ void AsmPrinter::EmitFunctionHeader() {
   // Print the 'header' of function.
   const Function *F = MF->getFunction();
 
-  OutStreamer.SwitchSection(getObjFileLowering().SectionForGlobal(F, Mang, TM));
+  OutStreamer.SwitchSection(
+      getObjFileLowering().SectionForGlobal(F, *Mang, TM));
   EmitVisibility(CurrentFnSym, F->getVisibility());
 
   EmitLinkage(F, CurrentFnSym);
@@ -765,9 +783,6 @@ void AsmPrinter::EmitFunctionBody() {
         if (isVerbose()) emitKill(II, *this);
         break;
       default:
-        if (!TM.hasMCUseLoc())
-          MCLineEntry::Make(&OutStreamer, getCurrentSection());
-
         EmitInstruction(II);
         break;
       }
@@ -921,7 +936,7 @@ bool AsmPrinter::doFinalization(Module &M) {
   SmallVector<Module::ModuleFlagEntry, 8> ModuleFlags;
   M.getModuleFlagsMetadata(ModuleFlags);
   if (!ModuleFlags.empty())
-    getObjFileLowering().emitModuleFlags(OutStreamer, ModuleFlags, Mang, TM);
+    getObjFileLowering().emitModuleFlags(OutStreamer, ModuleFlags, *Mang, TM);
 
   // Make sure we wrote out everything we need.
   OutStreamer.Flush();
@@ -1141,7 +1156,8 @@ void AsmPrinter::EmitJumpTableInfo() {
       // FIXME: this isn't the right predicate, should be based on the MCSection
       // for the function.
       F->isWeakForLinker()) {
-    OutStreamer.SwitchSection(getObjFileLowering().SectionForGlobal(F,Mang,TM));
+    OutStreamer.SwitchSection(
+        getObjFileLowering().SectionForGlobal(F, *Mang, TM));
   } else {
     // Otherwise, drop it in the readonly section.
     const MCSection *ReadOnlySection =
@@ -1325,7 +1341,7 @@ void AsmPrinter::EmitLLVMUsedList(const ConstantArray *InitList) {
   for (unsigned i = 0, e = InitList->getNumOperands(); i != e; ++i) {
     const GlobalValue *GV =
       dyn_cast<GlobalValue>(InitList->getOperand(i)->stripPointerCasts());
-    if (GV && getObjFileLowering().shouldEmitUsedDirectiveFor(GV, Mang))
+    if (GV && getObjFileLowering().shouldEmitUsedDirectiveFor(GV, *Mang))
       OutStreamer.EmitSymbolAttribute(getSymbol(GV), MCSA_NoDeadStrip);
   }
 }
@@ -1530,7 +1546,7 @@ static const MCExpr *lowerConstant(const Constant *CV, AsmPrinter &AP) {
   }
 
   if (const MCExpr *RelocExpr =
-          AP.getObjFileLowering().getExecutableRelativeSymbol(CE, AP.Mang))
+          AP.getObjFileLowering().getExecutableRelativeSymbol(CE, *AP.Mang))
     return RelocExpr;
 
   switch (CE->getOpcode()) {
@@ -2059,7 +2075,7 @@ MCSymbol *AsmPrinter::GetJTSetSymbol(unsigned UID, unsigned MBBID) const {
 
 MCSymbol *AsmPrinter::getSymbolWithGlobalValueBase(const GlobalValue *GV,
                                                    StringRef Suffix) const {
-  return getObjFileLowering().getSymbolWithGlobalValueBase(*Mang, GV, Suffix);
+  return getObjFileLowering().getSymbolWithGlobalValueBase(GV, Suffix, *Mang);
 }
 
 /// GetExternalSymbolSymbol - Return the MCSymbol for the specified

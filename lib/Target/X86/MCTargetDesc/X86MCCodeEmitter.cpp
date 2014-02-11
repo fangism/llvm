@@ -184,7 +184,7 @@ static bool isDisp8(int Value) {
 /// isCDisp8 - Return true if this signed displacement fits in a 8-bit
 /// compressed dispacement field.
 static bool isCDisp8(uint64_t TSFlags, int Value, int& CValue) {
-  assert(((TSFlags >> X86II::VEXShift) & X86II::EVEX) &&
+  assert((TSFlags & X86II::EncodingMask) >> X86II::EncodingShift == X86II::EVEX &&
          "Compressed 8-bit displacement is only valid for EVEX inst.");
 
   unsigned CD8E = (TSFlags >> X86II::EVEX_CD8EShift) & X86II::EVEX_CD8EMask;
@@ -386,7 +386,9 @@ void X86MCCodeEmitter::EmitMemModRMByte(const MCInst &MI, unsigned Op,
   const MCOperand &Scale    = MI.getOperand(Op+X86::AddrScaleAmt);
   const MCOperand &IndexReg = MI.getOperand(Op+X86::AddrIndexReg);
   unsigned BaseReg = Base.getReg();
-  bool HasEVEX = (TSFlags >> X86II::VEXShift) & X86II::EVEX;
+  unsigned char Encoding = (TSFlags & X86II::EncodingMask) >>
+                           X86II::EncodingShift;
+  bool HasEVEX = (Encoding == X86II::EVEX);
 
   // Handle %rip relative addressing.
   if (BaseReg == X86::RIP) {    // [disp32+RIP] in X86-64 mode
@@ -1054,6 +1056,7 @@ static unsigned DetermineREXPrefix(const MCInst &MI, uint64_t TSFlags,
     }
     break;
   }
+  case X86II::MRMXm:
   case X86II::MRM0m: case X86II::MRM1m:
   case X86II::MRM2m: case X86II::MRM3m:
   case X86II::MRM4m: case X86II::MRM5m:
@@ -1424,28 +1427,35 @@ EncodeInstruction(const MCInst &MI, raw_ostream &OS,
     break;
   }
 
+  case X86II::MRMXr:
   case X86II::MRM0r: case X86II::MRM1r:
   case X86II::MRM2r: case X86II::MRM3r:
   case X86II::MRM4r: case X86II::MRM5r:
-  case X86II::MRM6r: case X86II::MRM7r:
+  case X86II::MRM6r: case X86II::MRM7r: {
     if (HasVEX_4V) // Skip the register dst (which is encoded in VEX_VVVV).
       ++CurOp;
     EmitByte(BaseOpcode, CurByte, OS);
+    uint64_t Form = TSFlags & X86II::FormMask;
     EmitRegModRMByte(MI.getOperand(CurOp++),
-                     (TSFlags & X86II::FormMask)-X86II::MRM0r,
+                     (Form == X86II::MRMXr) ? 0 : Form-X86II::MRM0r,
                      CurByte, OS);
     break;
+  }
+
+  case X86II::MRMXm:
   case X86II::MRM0m: case X86II::MRM1m:
   case X86II::MRM2m: case X86II::MRM3m:
   case X86II::MRM4m: case X86II::MRM5m:
-  case X86II::MRM6m: case X86II::MRM7m:
+  case X86II::MRM6m: case X86II::MRM7m: {
     if (HasVEX_4V) // Skip the register dst (which is encoded in VEX_VVVV).
       ++CurOp;
     EmitByte(BaseOpcode, CurByte, OS);
-    EmitMemModRMByte(MI, CurOp, (TSFlags & X86II::FormMask)-X86II::MRM0m,
+    uint64_t Form = TSFlags & X86II::FormMask;
+    EmitMemModRMByte(MI, CurOp, (Form == X86II::MRMXm) ? 0 : Form-X86II::MRM0m,
                      TSFlags, CurByte, OS, Fixups, STI);
     CurOp += X86::AddrNumOperands;
     break;
+  }
   case X86II::MRM_C1: case X86II::MRM_C2: case X86II::MRM_C3:
   case X86II::MRM_C4: case X86II::MRM_C8: case X86II::MRM_C9:
   case X86II::MRM_CA: case X86II::MRM_CB: case X86II::MRM_D0:
