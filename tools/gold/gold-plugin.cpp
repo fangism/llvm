@@ -38,6 +38,12 @@
 # define read _read
 #endif
 
+#ifndef LDPO_PIE
+// FIXME: remove this declaration when we stop maintaining Ubuntu Quantal and
+// Precise and Debian Wheezy (binutils 2.23 is required)
+# define LDPO_PIE 3
+#endif
+
 using namespace llvm;
 
 namespace {

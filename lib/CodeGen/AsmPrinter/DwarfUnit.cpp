@@ -24,6 +24,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/Support/CommandLine.h"
@@ -54,9 +55,11 @@ DwarfCompileUnit::DwarfCompileUnit(unsigned UID, DIE *D, DICompileUnit Node,
   insertDIE(Node, D);
 }
 
-DwarfTypeUnit::DwarfTypeUnit(unsigned UID, DIE *D, DICompileUnit CUNode,
+DwarfTypeUnit::DwarfTypeUnit(unsigned UID, DIE *D, DwarfCompileUnit &CU,
                              AsmPrinter *A, DwarfDebug *DW, DwarfFile *DWU)
-    : DwarfUnit(UID, D, CUNode, A, DW, DWU) {}
+    : DwarfUnit(UID, D, CU.getCUNode(), A, DW, DWU), CU(CU) {
+  (void)CU;
+}
 
 /// ~Unit - Destructor for compile unit.
 DwarfUnit::~DwarfUnit() {
@@ -354,110 +357,67 @@ void DwarfUnit::addBlock(DIE *Die, dwarf::Attribute Attribute,
 
 /// addSourceLine - Add location information to specified debug information
 /// entry.
-void DwarfUnit::addSourceLine(DIE *Die, DIVariable V) {
-  // Verify variable.
-  if (!V.isVariable())
-    return;
-
-  unsigned Line = V.getLineNumber();
+void DwarfUnit::addSourceLine(DIE *Die, unsigned Line, StringRef File,
+                              StringRef Directory) {
   if (Line == 0)
     return;
+
   unsigned FileID =
-      DD->getOrCreateSourceID(V.getContext().getFilename(),
-                              V.getContext().getDirectory(), getUniqueID());
+      DD->getOrCreateSourceID(File, Directory, getCU().getUniqueID());
   assert(FileID && "Invalid file id");
   addUInt(Die, dwarf::DW_AT_decl_file, None, FileID);
   addUInt(Die, dwarf::DW_AT_decl_line, None, Line);
+}
+
+/// addSourceLine - Add location information to specified debug information
+/// entry.
+void DwarfUnit::addSourceLine(DIE *Die, DIVariable V) {
+  assert(V.isVariable());
+
+  addSourceLine(Die, V.getLineNumber(), V.getContext().getFilename(),
+                V.getContext().getDirectory());
 }
 
 /// addSourceLine - Add location information to specified debug information
 /// entry.
 void DwarfUnit::addSourceLine(DIE *Die, DIGlobalVariable G) {
-  // Verify global variable.
-  if (!G.isGlobalVariable())
-    return;
+  assert(G.isGlobalVariable());
 
-  unsigned Line = G.getLineNumber();
-  if (Line == 0)
-    return;
-  unsigned FileID =
-      DD->getOrCreateSourceID(G.getFilename(), G.getDirectory(), getUniqueID());
-  assert(FileID && "Invalid file id");
-  addUInt(Die, dwarf::DW_AT_decl_file, None, FileID);
-  addUInt(Die, dwarf::DW_AT_decl_line, None, Line);
+  addSourceLine(Die, G.getLineNumber(), G.getFilename(), G.getDirectory());
 }
 
 /// addSourceLine - Add location information to specified debug information
 /// entry.
 void DwarfUnit::addSourceLine(DIE *Die, DISubprogram SP) {
-  // Verify subprogram.
-  if (!SP.isSubprogram())
-    return;
+  assert(SP.isSubprogram());
 
-  // If the line number is 0, don't add it.
-  unsigned Line = SP.getLineNumber();
-  if (Line == 0)
-    return;
-
-  unsigned FileID = DD->getOrCreateSourceID(SP.getFilename(), SP.getDirectory(),
-                                            getUniqueID());
-  assert(FileID && "Invalid file id");
-  addUInt(Die, dwarf::DW_AT_decl_file, None, FileID);
-  addUInt(Die, dwarf::DW_AT_decl_line, None, Line);
+  addSourceLine(Die, SP.getLineNumber(), SP.getFilename(), SP.getDirectory());
 }
 
 /// addSourceLine - Add location information to specified debug information
 /// entry.
 void DwarfUnit::addSourceLine(DIE *Die, DIType Ty) {
-  // Verify type.
-  if (!Ty.isType())
-    return;
+  assert(Ty.isType());
 
-  unsigned Line = Ty.getLineNumber();
-  if (Line == 0)
-    return;
-  unsigned FileID = DD->getOrCreateSourceID(Ty.getFilename(), Ty.getDirectory(),
-                                            getUniqueID());
-  assert(FileID && "Invalid file id");
-  addUInt(Die, dwarf::DW_AT_decl_file, None, FileID);
-  addUInt(Die, dwarf::DW_AT_decl_line, None, Line);
+  addSourceLine(Die, Ty.getLineNumber(), Ty.getFilename(), Ty.getDirectory());
 }
 
 /// addSourceLine - Add location information to specified debug information
 /// entry.
 void DwarfUnit::addSourceLine(DIE *Die, DIObjCProperty Ty) {
-  // Verify type.
-  if (!Ty.isObjCProperty())
-    return;
+  assert(Ty.isObjCProperty());
 
-  unsigned Line = Ty.getLineNumber();
-  if (Line == 0)
-    return;
   DIFile File = Ty.getFile();
-  unsigned FileID = DD->getOrCreateSourceID(File.getFilename(),
-                                            File.getDirectory(), getUniqueID());
-  assert(FileID && "Invalid file id");
-  addUInt(Die, dwarf::DW_AT_decl_file, None, FileID);
-  addUInt(Die, dwarf::DW_AT_decl_line, None, Line);
+  addSourceLine(Die, Ty.getLineNumber(), File.getFilename(),
+                File.getDirectory());
 }
 
 /// addSourceLine - Add location information to specified debug information
 /// entry.
 void DwarfUnit::addSourceLine(DIE *Die, DINameSpace NS) {
-  // Verify namespace.
-  if (!NS.Verify())
-    return;
+  assert(NS.Verify());
 
-  unsigned Line = NS.getLineNumber();
-  if (Line == 0)
-    return;
-  StringRef FN = NS.getFilename();
-
-  unsigned FileID =
-      DD->getOrCreateSourceID(FN, NS.getDirectory(), getUniqueID());
-  assert(FileID && "Invalid file id");
-  addUInt(Die, dwarf::DW_AT_decl_file, None, FileID);
-  addUInt(Die, dwarf::DW_AT_decl_line, None, Line);
+  addSourceLine(Die, NS.getLineNumber(), NS.getFilename(), NS.getDirectory());
 }
 
 /// addVariableAddress - Add DW_AT_location attribute for a
@@ -476,12 +436,45 @@ void DwarfUnit::addVariableAddress(const DbgVariable &DV, DIE *Die,
 /// addRegisterOp - Add register operand.
 void DwarfUnit::addRegisterOp(DIEBlock *TheDie, unsigned Reg) {
   const TargetRegisterInfo *RI = Asm->TM.getRegisterInfo();
-  unsigned DWReg = RI->getDwarfRegNum(Reg, false);
+  int DWReg = RI->getDwarfRegNum(Reg, false);
+  bool isSubRegister = DWReg < 0;
+
+  unsigned Idx = 0;
+
+  // Go up the super-register chain until we hit a valid dwarf register number.
+  for (MCSuperRegIterator SR(Reg, RI); SR.isValid() && DWReg < 0; ++SR) {
+    DWReg = RI->getDwarfRegNum(*SR, false);
+    if (DWReg >= 0)
+      Idx = RI->getSubRegIndex(*SR, Reg);
+  }
+
+  if (DWReg < 0) {
+    DEBUG(llvm::dbgs() << "Invalid Dwarf register number.\n");
+    addUInt(TheDie, dwarf::DW_FORM_data1, dwarf::DW_OP_nop);
+    return;
+  }
+
+  // Emit register
   if (DWReg < 32)
     addUInt(TheDie, dwarf::DW_FORM_data1, dwarf::DW_OP_reg0 + DWReg);
   else {
     addUInt(TheDie, dwarf::DW_FORM_data1, dwarf::DW_OP_regx);
     addUInt(TheDie, dwarf::DW_FORM_udata, DWReg);
+  }
+
+  // Emit Mask
+  if (isSubRegister) {
+    unsigned Size = RI->getSubRegIdxSize(Idx);
+    unsigned Offset = RI->getSubRegIdxOffset(Idx);
+    if (Offset > 0) {
+      addUInt(TheDie, dwarf::DW_FORM_data1, dwarf::DW_OP_bit_piece);
+      addUInt(TheDie, dwarf::DW_FORM_data1, Size);
+      addUInt(TheDie, dwarf::DW_FORM_data1, Offset);
+    } else {
+      unsigned ByteSize = Size / 8; // Assuming 8 bits per byte.
+      addUInt(TheDie, dwarf::DW_FORM_data1, dwarf::DW_OP_piece);
+      addUInt(TheDie, dwarf::DW_FORM_data1, ByteSize);
+    }
   }
 }
 
@@ -956,7 +949,7 @@ DIE *DwarfUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
     DICompositeType CTy(Ty);
     if (GenerateDwarfTypeUnits && !Ty.isForwardDecl())
       if (MDString *TypeId = CTy.getIdentifier()) {
-        DD->addDwarfTypeUnitType(getCUNode(), TypeId->getString(), TyDIE, CTy);
+        DD->addDwarfTypeUnitType(getCU(), TypeId->getString(), TyDIE, CTy);
         // Skip updating the accellerator tables since this is not the full type
         return TyDIE;
       }
@@ -1016,21 +1009,24 @@ void DwarfUnit::addType(DIE *Entity, DIType Ty, dwarf::Attribute Attribute) {
 // to reference is in the string table. We do this since the names we
 // add may not only be identical to the names in the DIE.
 void DwarfUnit::addAccelName(StringRef Name, const DIE *Die) {
-  if (!DD->useDwarfAccelTables()) return;
+  if (!DD->useDwarfAccelTables())
+    return;
   DU->getStringPoolEntry(Name);
   std::vector<const DIE *> &DIEs = AccelNames[Name];
   DIEs.push_back(Die);
 }
 
 void DwarfUnit::addAccelObjC(StringRef Name, const DIE *Die) {
-  if (!DD->useDwarfAccelTables()) return;
+  if (!DD->useDwarfAccelTables())
+    return;
   DU->getStringPoolEntry(Name);
   std::vector<const DIE *> &DIEs = AccelObjC[Name];
   DIEs.push_back(Die);
 }
 
 void DwarfUnit::addAccelNamespace(StringRef Name, const DIE *Die) {
-  if (!DD->useDwarfAccelTables()) return;
+  if (!DD->useDwarfAccelTables())
+    return;
   DU->getStringPoolEntry(Name);
   std::vector<const DIE *> &DIEs = AccelNamespace[Name];
   DIEs.push_back(Die);
@@ -1038,7 +1034,8 @@ void DwarfUnit::addAccelNamespace(StringRef Name, const DIE *Die) {
 
 void DwarfUnit::addAccelType(StringRef Name,
                              std::pair<const DIE *, unsigned> Die) {
-  if (!DD->useDwarfAccelTables()) return;
+  if (!DD->useDwarfAccelTables())
+    return;
   DU->getStringPoolEntry(Name);
   std::vector<std::pair<const DIE *, unsigned> > &DIEs = AccelTypes[Name];
   DIEs.push_back(Die);

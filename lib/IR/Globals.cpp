@@ -53,9 +53,12 @@ void GlobalValue::copyAttributesFrom(const GlobalValue *Src) {
   setSection(Src->getSection());
   setVisibility(Src->getVisibility());
   setUnnamedAddr(Src->hasUnnamedAddr());
+  setDLLStorageClass(Src->getDLLStorageClass());
 }
 
 void GlobalValue::setAlignment(unsigned Align) {
+  assert((!isa<GlobalAlias>(this) || !Align) &&
+         "GlobalAlias should not have an alignment!");
   assert((Align & (Align-1)) == 0 && "Alignment is not a power of 2!");
   assert(Align <= MaximumAlignment &&
          "Alignment is greater than MaximumAlignment!");

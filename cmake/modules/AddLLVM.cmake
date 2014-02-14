@@ -163,9 +163,12 @@ function(set_output_directory target bindir libdir)
 endfunction()
 
 # llvm_add_library(name sources...
-#   MODULE;SHARED;STATIC
+#   SHARED;STATIC
 #     STATIC by default w/o BUILD_SHARED_LIBS.
 #     SHARED by default w/  BUILD_SHARED_LIBS.
+#   MODULE
+#     Target ${name} might not be created on unsupported platforms.
+#     Check with "if(TARGET ${name})".
 #   OUTPUT_NAME name
 #     Corresponds to OUTPUT_NAME in target properties.
 #   DEPENDS targets...
@@ -174,21 +177,29 @@ endfunction()
 #     Same as the variable LLVM_LINK_COMPONENTS.
 #   LINK_LIBS lib_targets...
 #     Same semantics as target_link_libraries().
-#   ADDITIONAL_HEADERS (implemented in LLVMProcessSources)
+#   ADDITIONAL_HEADERS
 #     May specify header files for IDE generators.
 #   )
 function(llvm_add_library name)
   cmake_parse_arguments(ARG
     "MODULE;SHARED;STATIC"
     "OUTPUT_NAME"
-    "DEPENDS;LINK_COMPONENTS;LINK_LIBS"
+    "ADDITIONAL_HEADERS;DEPENDS;LINK_COMPONENTS;LINK_LIBS"
     ${ARGN})
   list(APPEND LLVM_COMMON_DEPENDS ${ARG_DEPENDS})
-  llvm_process_sources(ALL_FILES ${ARG_UNPARSED_ARGUMENTS})
+  if(ARG_ADDITIONAL_HEADERS)
+    # Pass through ADDITIONAL_HEADERS.
+    set(ARG_ADDITIONAL_HEADERS ADDITIONAL_HEADERS ${ARG_ADDITIONAL_HEADERS})
+  endif()
+  llvm_process_sources(ALL_FILES ${ARG_UNPARSED_ARGUMENTS} ${ARG_ADDITIONAL_HEADERS})
 
   if(ARG_MODULE)
     if(ARG_SHARED OR ARG_STATIC)
       message(WARNING "MODULE with SHARED|STATIC doesn't make sense.")
+    endif()
+    if(NOT LLVM_ON_UNIX OR CYGWIN)
+      message(STATUS "${name} ignored -- Loadable modules not supported on this platform.")
+      return()
     endif()
   else()
     if(BUILD_SHARED_LIBS AND NOT ARG_STATIC)
@@ -217,7 +228,10 @@ function(llvm_add_library name)
   endif()
 
   if(ARG_MODULE)
-    set_property(TARGET ${name} PROPERTY SUFFIX ${LLVM_PLUGIN_EXT})
+    set_target_properties(${name} PROPERTIES
+      PREFIX ""
+      SUFFIX ${LLVM_PLUGIN_EXT}
+      )
   endif()
 
   if(ARG_SHARED)
@@ -274,21 +288,11 @@ macro(add_llvm_library name)
 endmacro(add_llvm_library name)
 
 macro(add_llvm_loadable_module name)
-  if( NOT LLVM_ON_UNIX OR CYGWIN )
-    message(STATUS "Loadable modules not supported on this platform.
-${name} ignored.")
+  llvm_add_library(${name} MODULE ${ARGN})
+  if(NOT TARGET ${name})
     # Add empty "phony" target
     add_custom_target(${name})
   else()
-    llvm_add_library(${name} MODULE ${ARGN})
-    set_target_properties( ${name} PROPERTIES PREFIX "" )
-
-    if (APPLE)
-      # Darwin-specific linker flags for loadable modules.
-      set_property(TARGET ${name} APPEND_STRING PROPERTY
-        LINK_FLAGS " -Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
-    endif()
-
     if( EXCLUDE_FROM_ALL )
       set_target_properties( ${name} PROPERTIES EXCLUDE_FROM_ALL ON)
     else()

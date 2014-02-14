@@ -6070,8 +6070,8 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
 
   // For AVX-length vectors, build the individual 128-bit pieces and use
   // shuffles to put them in place.
-  if (VT.is256BitVector()) {
-    SmallVector<SDValue, 32> V;
+  if (VT.is256BitVector() || VT.is512BitVector()) {
+    SmallVector<SDValue, 64> V;
     for (unsigned i = 0; i != NumElems; ++i)
       V.push_back(Op.getOperand(i));
 
@@ -6083,7 +6083,9 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
                                 NumElems/2);
 
     // Recreate the wider vector with the lower and upper part.
-    return Concat128BitVectors(Lower, Upper, VT, NumElems, DAG, dl);
+    if (VT.is256BitVector())
+      return Concat128BitVectors(Lower, Upper, VT, NumElems, DAG, dl);
+    return Concat256BitVectors(Lower, Upper, VT, NumElems, DAG, dl);
   }
 
   // Let legalizer expand 2-wide build_vectors.
@@ -7369,7 +7371,11 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
   if (V1IsUndef && V2IsUndef)
     return DAG.getUNDEF(VT);
 
-  assert(!V1IsUndef && "Op 1 of shuffle should not be undef");
+  // When we create a shuffle node we put the UNDEF node to second operand,
+  // but in some cases the first operand may be transformed to UNDEF.
+  // In this case we should just commute the node.
+  if (V1IsUndef)
+    return CommuteVectorShuffle(SVOp, DAG);
 
   // Vector shuffle lowering takes 3 steps:
   //
@@ -13148,6 +13154,39 @@ static SDValue LowerShift(SDValue Op, const X86Subtarget* Subtarget,
       return Op;
     if (Op.getOpcode() == ISD::SRA && (VT == MVT::v4i32 || VT == MVT::v8i32))
       return Op;
+  }
+
+  // If possible, lower this packed shift into a vector multiply instead of
+  // expanding it into a sequence of scalar shifts.
+  // Do this only if the vector shift count is a constant build_vector.
+  if (Op.getOpcode() == ISD::SHL && 
+      (VT == MVT::v8i16 || VT == MVT::v4i32 ||
+       (Subtarget->hasInt256() && VT == MVT::v16i16)) &&
+      ISD::isBuildVectorOfConstantSDNodes(Amt.getNode())) {
+    SmallVector<SDValue, 8> Elts;
+    EVT SVT = VT.getScalarType();
+    unsigned SVTBits = SVT.getSizeInBits();
+    const APInt &One = APInt(SVTBits, 1);
+    unsigned NumElems = VT.getVectorNumElements();
+
+    for (unsigned i=0; i !=NumElems; ++i) {
+      SDValue Op = Amt->getOperand(i);
+      if (Op->getOpcode() == ISD::UNDEF) {
+        Elts.push_back(Op);
+        continue;
+      }
+
+      ConstantSDNode *ND = cast<ConstantSDNode>(Op);
+      const APInt &C = APInt(SVTBits, ND->getAPIntValue().getZExtValue());
+      uint64_t ShAmt = C.getZExtValue();
+      if (ShAmt >= SVTBits) {
+        Elts.push_back(DAG.getUNDEF(SVT));
+        continue;
+      }
+      Elts.push_back(DAG.getConstant(One.shl(ShAmt), SVT));
+    }
+    SDValue BV = DAG.getNode(ISD::BUILD_VECTOR, dl, VT, &Elts[0], NumElems);
+    return DAG.getNode(ISD::MUL, dl, VT, R, BV);
   }
 
   // Lower SHL with variable shift amount.
