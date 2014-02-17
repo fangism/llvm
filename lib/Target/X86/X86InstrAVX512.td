@@ -969,7 +969,9 @@ let Predicates = [HasAVX512] in {
   def : Pat<(i64 (zext VK1:$src)),
             (SUBREG_TO_REG (i64 0),
              (KMOVWrk (COPY_TO_REGCLASS VK1:$src, VK16)), sub_32bit)>;
-             
+  def : Pat<(i16 (zext VK1:$src)),
+            (EXTRACT_SUBREG
+             (KMOVWrk (COPY_TO_REGCLASS VK1:$src, VK16)), sub_16bit)>;
 }
 // With AVX-512 only, 8-bit mask is promoted to 16-bit mask.
 let Predicates = [HasAVX512] in {
@@ -1062,11 +1064,6 @@ def : Pat<(xor VK1:$src1, VK1:$src2),
 def : Pat<(or VK1:$src1, VK1:$src2),
      (COPY_TO_REGCLASS (KORWrr (COPY_TO_REGCLASS VK1:$src1, VK16),
                                (COPY_TO_REGCLASS VK1:$src2, VK16)), VK1)>;
-
-def : Pat<(not VK1:$src),
-          (COPY_TO_REGCLASS (KXORWrr (COPY_TO_REGCLASS VK1:$src, VK16),
-           (COPY_TO_REGCLASS (VCMPSSZrr (f32 (IMPLICIT_DEF)),
-                              (f32 (IMPLICIT_DEF)), (i8 0)), VK16)), VK1)>;
 
 def : Pat<(and VK1:$src1, VK1:$src2),
      (COPY_TO_REGCLASS (KANDWrr (COPY_TO_REGCLASS VK1:$src1, VK16),

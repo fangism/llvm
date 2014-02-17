@@ -265,16 +265,12 @@ unsigned DwarfFile::getStringPoolIndex(StringRef Str) {
   return Entry.second;
 }
 
-unsigned DwarfFile::getAddrPoolIndex(const MCSymbol *Sym) {
-  return getAddrPoolIndex(MCSymbolRefExpr::Create(Sym, Asm->OutContext));
-}
-
-unsigned DwarfFile::getAddrPoolIndex(const MCExpr *Sym) {
-  std::pair<DenseMap<const MCExpr *, unsigned>::iterator, bool> P =
-      AddressPool.insert(std::make_pair(Sym, NextAddrPoolNumber));
+unsigned DwarfFile::getAddrPoolIndex(const MCSymbol *Sym, bool TLS) {
+  std::pair<AddrPool::iterator, bool> P = AddressPool.insert(
+      std::make_pair(Sym, AddressPoolEntry(NextAddrPoolNumber, TLS)));
   if (P.second)
     ++NextAddrPoolNumber;
-  return P.first->second;
+  return P.first->second.Number;
 }
 
 // Define a unique number for the abbreviation.
@@ -762,31 +758,9 @@ DwarfCompileUnit *DwarfDebug::constructDwarfCompileUnit(DICompileUnit DIUnit) {
                  DIUnit.getLanguage());
   NewCU->addString(Die, dwarf::DW_AT_name, FN);
 
-  // Define start line table label for each Compile Unit.
-  MCSymbol *LineTableStartSym =
-      Asm->GetTempSymbol("line_table_start", NewCU->getUniqueID());
-  Asm->OutStreamer.getContext().setMCLineTableSymbol(LineTableStartSym,
-                                                     NewCU->getUniqueID());
-
-  // Use a single line table if we are generating assembly.
-  bool UseTheFirstCU =
-      Asm->OutStreamer.hasRawTextSupport() || (NewCU->getUniqueID() == 0);
 
   if (!useSplitDwarf()) {
-    // DW_AT_stmt_list is a offset of line number information for this
-    // compile unit in debug_line section. For split dwarf this is
-    // left in the skeleton CU and so not included.
-    // The line table entries are not always emitted in assembly, so it
-    // is not okay to use line_table_start here.
-    if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-      NewCU->addSectionLabel(Die, dwarf::DW_AT_stmt_list,
-                             UseTheFirstCU ? DwarfLineSectionSym
-                                           : LineTableStartSym);
-    else if (UseTheFirstCU)
-      NewCU->addSectionOffset(Die, dwarf::DW_AT_stmt_list, 0);
-    else
-      NewCU->addSectionDelta(Die, dwarf::DW_AT_stmt_list, LineTableStartSym,
-                             DwarfLineSectionSym);
+    NewCU->initStmtList(DwarfLineSectionSym);
 
     // If we're using split dwarf the compilation dir is going to be in the
     // skeleton CU and so we don't need to duplicate it here.
@@ -2570,18 +2544,16 @@ void DwarfFile::emitAddresses(const MCSection *AddrSection) {
   // Order the address pool entries by ID
   SmallVector<const MCExpr *, 64> Entries(AddressPool.size());
 
-  for (DenseMap<const MCExpr *, unsigned>::iterator I = AddressPool.begin(),
-                                                    E = AddressPool.end();
+  for (AddrPool::iterator I = AddressPool.begin(), E = AddressPool.end();
        I != E; ++I)
-    Entries[I->second] = I->first;
+    Entries[I->second.Number] =
+        I->second.TLS
+            ? Asm->getObjFileLowering().getDebugThreadLocalSymbol(I->first)
+            : MCSymbolRefExpr::Create(I->first, Asm->OutContext);
 
-  for (unsigned i = 0, e = Entries.size(); i != e; ++i) {
-    // Emit an expression for reference from debug information entries.
-    if (const MCExpr *Expr = Entries[i])
-      Asm->OutStreamer.EmitValue(Expr, Asm->getDataLayout().getPointerSize());
-    else
-      Asm->OutStreamer.EmitIntValue(0, Asm->getDataLayout().getPointerSize());
-  }
+  for (unsigned i = 0, e = Entries.size(); i != e; ++i)
+    Asm->OutStreamer.EmitValue(Entries[i],
+                               Asm->getDataLayout().getPointerSize());
 }
 
 // Emit visible names into a debug str section.
@@ -2956,13 +2928,7 @@ DwarfCompileUnit *DwarfDebug::constructSkeletonCU(const DwarfCompileUnit *CU) {
   NewCU->initSection(Asm->getObjFileLowering().getDwarfInfoSection(),
                      DwarfInfoSectionSym);
 
-  // DW_AT_stmt_list is a offset of line number information for this
-  // compile unit in debug_line section.
-  // FIXME: Should handle multiple compile units.
-  if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-    NewCU->addSectionLabel(Die, dwarf::DW_AT_stmt_list, DwarfLineSectionSym);
-  else
-    NewCU->addSectionOffset(Die, dwarf::DW_AT_stmt_list, 0);
+  NewCU->initStmtList(DwarfLineSectionSym);
 
   initSkeletonUnit(CU, Die, NewCU);
 
@@ -2972,14 +2938,17 @@ DwarfCompileUnit *DwarfDebug::constructSkeletonCU(const DwarfCompileUnit *CU) {
 // This DIE has the following attributes: DW_AT_comp_dir, DW_AT_dwo_name,
 // DW_AT_addr_base.
 DwarfTypeUnit *DwarfDebug::constructSkeletonTU(DwarfTypeUnit *TU) {
+  DwarfCompileUnit &CU = static_cast<DwarfCompileUnit &>(
+      *SkeletonHolder.getUnits()[TU->getCU().getUniqueID()]);
 
   DIE *Die = new DIE(dwarf::DW_TAG_type_unit);
-  DwarfTypeUnit *NewTU = new DwarfTypeUnit(TU->getUniqueID(), Die, TU->getCU(),
-                                           Asm, this, &SkeletonHolder);
+  DwarfTypeUnit *NewTU =
+      new DwarfTypeUnit(TU->getUniqueID(), Die, CU, Asm, this, &SkeletonHolder);
   NewTU->setTypeSignature(TU->getTypeSignature());
   NewTU->setType(NULL);
   NewTU->initSection(
       Asm->getObjFileLowering().getDwarfTypesSection(TU->getTypeSignature()));
+  CU.applyStmtList(*Die);
 
   initSkeletonUnit(TU, Die, NewTU);
   return NewTU;
@@ -3048,6 +3017,8 @@ void DwarfDebug::addDwarfTypeUnitType(DwarfCompileUnit &CU,
   NewTU->setTypeSignature(Signature);
   if (useSplitDwarf())
     NewTU->setSkeleton(constructSkeletonTU(NewTU));
+  else
+    CU.applyStmtList(*UnitDie);
 
   NewTU->setType(NewTU->createTypeDIE(CTy));
 
