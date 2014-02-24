@@ -52,7 +52,7 @@ static std::string getDataLayoutString(const PPCSubtarget &ST) {
   if (ST.isPPC64() || ST.isSVR4ABI())
     Ret += "-i64:64";
   else
-    Ret += "-f64:32:64";
+    Ret += "-i64:32:64-f64:32:64";
 
   // PPC64 has 32 and 64 bit registers, PPC32 has only 32 bit ones.
   if (ST.isPPC64())
