@@ -88,14 +88,11 @@ struct PointerAlignElem {
   bool operator==(const PointerAlignElem &rhs) const;
 };
 
-
-/// DataLayout - This class holds a parsed version of the target data layout
-/// string in a module and provides methods for querying it.  The target data
-/// layout string is specified *by the target* - a frontend generating LLVM IR
-/// is required to generate the right target data for the target being codegen'd
-/// to.  If some measure of portability is desired, an empty string may be
-/// specified in the module.
-class DataLayout : public ImmutablePass {
+/// This class holds a parsed version of the target data layout string in a
+/// module and provides methods for querying it. The target data layout string
+/// is specified *by the target* - a frontend generating LLVM IR is required to
+/// generate the right target data for the target being codegen'd to.
+class DataLayout {
 private:
   bool          LittleEndian;          ///< Defaults to false
   unsigned      StackNaturalAlign;     ///< Stack natural alignment
@@ -113,7 +110,7 @@ private:
 
   /// Alignments - Where the primitive type alignment data is stored.
   ///
-  /// @sa init().
+  /// @sa reset().
   /// @note Could support multiple size pointer alignments, e.g., 32-bit
   /// pointers vs. 64-bit pointers by extending LayoutAlignment, but for now,
   /// we don't.
@@ -164,42 +161,35 @@ private:
   /// malformed.
   void parseSpecifier(StringRef LayoutDescription);
 
-public:
-  /// Default ctor.
-  ///
-  /// @note This has to exist, because this is a pass, but it should never be
-  /// used.
-  DataLayout();
+  // Free all internal data structures.
+  void clear();
 
-  /// Constructs a DataLayout from a specification string. See init().
-  explicit DataLayout(StringRef LayoutDescription)
-    : ImmutablePass(ID) {
-    init(LayoutDescription);
+public:
+  /// Constructs a DataLayout from a specification string. See reset().
+  explicit DataLayout(StringRef LayoutDescription) : LayoutMap(0) {
+    reset(LayoutDescription);
   }
 
   /// Initialize target data from properties stored in the module.
   explicit DataLayout(const Module *M);
 
-  DataLayout(const DataLayout &DL) :
-    ImmutablePass(ID),
-    LittleEndian(DL.isLittleEndian()),
-    StackNaturalAlign(DL.StackNaturalAlign),
-    ManglingMode(DL.ManglingMode),
-    LegalIntWidths(DL.LegalIntWidths),
-    Alignments(DL.Alignments),
-    Pointers(DL.Pointers),
-    LayoutMap(0)
-  { }
+  DataLayout(const DataLayout &DL) : LayoutMap(0) { *this = DL; }
+
+  DataLayout &operator=(const DataLayout &DL) {
+    clear();
+    LittleEndian = DL.isLittleEndian();
+    StackNaturalAlign = DL.StackNaturalAlign;
+    ManglingMode = DL.ManglingMode;
+    LegalIntWidths = DL.LegalIntWidths;
+    Alignments = DL.Alignments;
+    Pointers = DL.Pointers;
+    return *this;
+  }
 
   ~DataLayout();  // Not virtual, do not subclass this class
 
-  /// DataLayout is an immutable pass, but holds state.  This allows the pass
-  /// manager to clear its mutable state.
-  bool doFinalization(Module &M);
-
-  /// Parse a data layout string (with fallback to default values). Ensure that
-  /// the data layout pass is registered.
-  void init(StringRef LayoutDescription);
+  /// Parse a data layout string (with fallback to default values).
+  void reset(StringRef LayoutDescription);
 
   /// Layout endianness...
   bool isLittleEndian() const { return LittleEndian; }
@@ -458,6 +448,23 @@ public:
     assert((Alignment & (Alignment-1)) == 0 && "Alignment must be power of 2!");
     return (Val + (Alignment-1)) & ~UIntTy(Alignment-1);
   }
+};
+
+class DataLayoutPass : public ImmutablePass {
+  DataLayout DL;
+
+public:
+  /// This has to exist, because this is a pass, but it should never be used.
+  DataLayoutPass();
+  ~DataLayoutPass();
+
+  const DataLayout &getDataLayout() const { return DL; }
+
+  explicit DataLayoutPass(const DataLayout &DL);
+
+  explicit DataLayoutPass(StringRef LayoutDescription);
+
+  explicit DataLayoutPass(const Module *M);
 
   static char ID; // Pass identification, replacement for typeid
 };

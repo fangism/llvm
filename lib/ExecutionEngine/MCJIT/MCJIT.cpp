@@ -27,6 +27,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/MutexGuard.h"
+#include "llvm/Target/TargetLowering.h"
 
 using namespace llvm;
 
@@ -141,7 +142,7 @@ ObjectBufferStream* MCJIT::emitObject(Module *M) {
 
   PassManager PM;
 
-  PM.add(new DataLayout(*TM->getDataLayout()));
+  PM.add(new DataLayoutPass(*TM->getDataLayout()));
 
   // The RuntimeDyld will take ownership of this shortly
   OwningPtr<ObjectBufferStream> CompiledObject(new ObjectBufferStream());
@@ -371,7 +372,7 @@ void *MCJIT::getPointerToFunction(Function *F) {
   // load address of the symbol, not the local address.
   Mangler Mang(TM->getDataLayout());
   SmallString<128> Name;
-  Mang.getNameWithPrefix(Name, F);
+  TM->getNameWithPrefix(Name, F, Mang);
   return (void*)Dyld.getSymbolLoadAddress(Name);
 }
 
