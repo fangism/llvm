@@ -115,7 +115,15 @@ private:
   /// pointers vs. 64-bit pointers by extending LayoutAlignment, but for now,
   /// we don't.
   SmallVector<LayoutAlignElem, 16> Alignments;
-  DenseMap<unsigned, PointerAlignElem> Pointers;
+  typedef SmallVector<PointerAlignElem, 8> PointersTy;
+  PointersTy Pointers;
+
+  PointersTy::const_iterator
+  findPointerLowerBound(uint32_t AddressSpace) const {
+    return const_cast<DataLayout *>(this)->findPointerLowerBound(AddressSpace);
+  }
+
+  PointersTy::iterator findPointerLowerBound(uint32_t AddressSpace);
 
   /// InvalidAlignmentElem - This member is a signal that a requested alignment
   /// type and bit width were not found in the SmallVector.
@@ -185,6 +193,9 @@ public:
     Pointers = DL.Pointers;
     return *this;
   }
+
+  bool operator==(const DataLayout &Other) const;
+  bool operator!=(const DataLayout &Other) const { return !(*this == Other); }
 
   ~DataLayout();  // Not virtual, do not subclass this class
 
@@ -281,34 +292,18 @@ public:
   /// Layout pointer alignment
   /// FIXME: The defaults need to be removed once all of
   /// the backends/clients are updated.
-  unsigned getPointerABIAlignment(unsigned AS = 0) const {
-    DenseMap<unsigned, PointerAlignElem>::const_iterator val = Pointers.find(AS);
-    if (val == Pointers.end()) {
-      val = Pointers.find(0);
-    }
-    return val->second.ABIAlign;
-  }
+  unsigned getPointerABIAlignment(unsigned AS = 0) const;
 
   /// Return target's alignment for stack-based pointers
   /// FIXME: The defaults need to be removed once all of
   /// the backends/clients are updated.
-  unsigned getPointerPrefAlignment(unsigned AS = 0) const {
-    DenseMap<unsigned, PointerAlignElem>::const_iterator val = Pointers.find(AS);
-    if (val == Pointers.end()) {
-      val = Pointers.find(0);
-    }
-    return val->second.PrefAlign;
-  }
+  unsigned getPointerPrefAlignment(unsigned AS = 0) const;
+
   /// Layout pointer size
   /// FIXME: The defaults need to be removed once all of
   /// the backends/clients are updated.
-  unsigned getPointerSize(unsigned AS = 0) const {
-    DenseMap<unsigned, PointerAlignElem>::const_iterator val = Pointers.find(AS);
-    if (val == Pointers.end()) {
-      val = Pointers.find(0);
-    }
-    return val->second.TypeByteWidth;
-  }
+  unsigned getPointerSize(unsigned AS = 0) const;
+
   /// Layout pointer size, in bits
   /// FIXME: The defaults need to be removed once all of
   /// the backends/clients are updated.
@@ -460,9 +455,9 @@ public:
 
   const DataLayout &getDataLayout() const { return DL; }
 
+  // For use with the C API. C++ code should always use the constructor that
+  // takes a module.
   explicit DataLayoutPass(const DataLayout &DL);
-
-  explicit DataLayoutPass(StringRef LayoutDescription);
 
   explicit DataLayoutPass(const Module *M);
 

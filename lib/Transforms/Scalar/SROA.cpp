@@ -356,7 +356,7 @@ private:
                  bool IsSplittable = false) {
     // Completely skip uses which have a zero size or start either before or
     // past the end of the allocation.
-    if (Size == 0 || Offset.isNegative() || Offset.uge(AllocSize)) {
+    if (Size == 0 || Offset.uge(AllocSize)) {
       DEBUG(dbgs() << "WARNING: Ignoring " << Size << " byte use @" << Offset
                    << " which has zero size or starts outside of the "
                    << AllocSize << " byte alloca:\n"
@@ -480,8 +480,7 @@ private:
     // risk of overflow.
     // FIXME: We should instead consider the pointer to have escaped if this
     // function is being instrumented for addressing bugs or race conditions.
-    if (Offset.isNegative() || Size > AllocSize ||
-        Offset.ugt(AllocSize - Size)) {
+    if (Size > AllocSize || Offset.ugt(AllocSize - Size)) {
       DEBUG(dbgs() << "WARNING: Ignoring " << Size << " byte store @" << Offset
                    << " which extends past the end of the " << AllocSize
                    << " byte alloca:\n"
@@ -500,7 +499,7 @@ private:
     assert(II.getRawDest() == *U && "Pointer use is not the destination?");
     ConstantInt *Length = dyn_cast<ConstantInt>(II.getLength());
     if ((Length && Length->getValue() == 0) ||
-        (IsOffsetKnown && !Offset.isNegative() && Offset.uge(AllocSize)))
+        (IsOffsetKnown && Offset.uge(AllocSize)))
       // Zero-length mem transfer intrinsics can be ignored entirely.
       return markAsDead(II);
 
@@ -532,7 +531,7 @@ private:
     // if already added to our partitions.
     // FIXME: Yet another place we really should bypass this when
     // instrumenting for ASan.
-    if (!Offset.isNegative() && Offset.uge(AllocSize)) {
+    if (Offset.uge(AllocSize)) {
       SmallDenseMap<Instruction *, unsigned>::iterator MTPI = MemTransferSliceMap.find(&II);
       if (MTPI != MemTransferSliceMap.end())
         S.Slices[MTPI->second].kill();
@@ -667,8 +666,7 @@ private:
     // themselves which should be replaced with undef.
     // FIXME: This should instead be escaped in the event we're instrumenting
     // for address sanitization.
-    if ((Offset.isNegative() && (-Offset).uge(PHISize)) ||
-        (!Offset.isNegative() && Offset.uge(AllocSize))) {
+    if (Offset.uge(AllocSize)) {
       S.DeadOperands.push_back(U);
       return;
     }
@@ -708,8 +706,7 @@ private:
     // themselves which should be replaced with undef.
     // FIXME: This should instead be escaped in the event we're instrumenting
     // for address sanitization.
-    if ((Offset.isNegative() && Offset.uge(SelectSize)) ||
-        (!Offset.isNegative() && Offset.uge(AllocSize))) {
+    if (Offset.uge(AllocSize)) {
       S.DeadOperands.push_back(U);
       return;
     }
@@ -1293,6 +1290,9 @@ static Value *getNaturalGEPWithType(IRBuilderTy &IRB, const DataLayout &DL,
   if (Ty == TargetTy)
     return buildGEP(IRB, BasePtr, Indices, NamePrefix);
 
+  // Pointer size to use for the indices.
+  unsigned PtrSize = DL.getPointerTypeSizeInBits(BasePtr->getType());
+
   // See if we can descend into a struct and locate a field with the correct
   // type.
   unsigned NumLayers = 0;
@@ -1300,11 +1300,13 @@ static Value *getNaturalGEPWithType(IRBuilderTy &IRB, const DataLayout &DL,
   do {
     if (ElementTy->isPointerTy())
       break;
-    if (SequentialType *SeqTy = dyn_cast<SequentialType>(ElementTy)) {
-      ElementTy = SeqTy->getElementType();
-      // Note that we use the default address space as this index is over an
-      // array or a vector, not a pointer.
-      Indices.push_back(IRB.getInt(APInt(DL.getPointerSizeInBits(0), 0)));
+
+    if (ArrayType *ArrayTy = dyn_cast<ArrayType>(ElementTy)) {
+      ElementTy = ArrayTy->getElementType();
+      Indices.push_back(IRB.getIntN(PtrSize, 0));
+    } else if (VectorType *VectorTy = dyn_cast<VectorType>(ElementTy)) {
+      ElementTy = VectorTy->getElementType();
+      Indices.push_back(IRB.getInt32(0));
     } else if (StructType *STy = dyn_cast<StructType>(ElementTy)) {
       if (STy->element_begin() == STy->element_end())
         break; // Nothing left to descend into.
@@ -1404,7 +1406,7 @@ static Value *getNaturalGEPWithOffset(IRBuilderTy &IRB, const DataLayout &DL,
 
   // Don't consider any GEPs through an i8* as natural unless the TargetTy is
   // an i8.
-  if (Ty == IRB.getInt8PtrTy() && TargetTy->isIntegerTy(8))
+  if (Ty == IRB.getInt8PtrTy(Ty->getAddressSpace()) && TargetTy->isIntegerTy(8))
     return 0;
 
   Type *ElementTy = Ty->getElementType();
@@ -1506,8 +1508,9 @@ static Value *getAdjustedPtr(IRBuilderTy &IRB, const DataLayout &DL, Value *Ptr,
 
   if (!OffsetPtr) {
     if (!Int8Ptr) {
-      Int8Ptr = IRB.CreateBitCast(Ptr, IRB.getInt8PtrTy(),
-                                  NamePrefix + "sroa_raw_cast");
+      Int8Ptr = IRB.CreateBitCast(
+          Ptr, IRB.getInt8PtrTy(PointerTy->getPointerAddressSpace()),
+          NamePrefix + "sroa_raw_cast");
       Int8PtrOffset = Offset;
     }
 
@@ -2012,8 +2015,14 @@ class AllocaSliceRewriter : public InstVisitor<AllocaSliceRewriter, bool> {
   // integer type will be stored here for easy access during rewriting.
   IntegerType *IntTy;
 
-  // The offset of the slice currently being rewritten.
+  // The original offset of the slice currently being rewritten relative to
+  // the original alloca.
   uint64_t BeginOffset, EndOffset;
+  // The new offsets of the slice currently being rewritten relative to the
+  // original alloca.
+  uint64_t NewBeginOffset, NewEndOffset;
+
+  uint64_t SliceSize;
   bool IsSplittable;
   bool IsSplit;
   Use *OldUse;
@@ -2030,12 +2039,14 @@ class AllocaSliceRewriter : public InstVisitor<AllocaSliceRewriter, bool> {
 public:
   AllocaSliceRewriter(const DataLayout &DL, AllocaSlices &S, SROA &Pass,
                       AllocaInst &OldAI, AllocaInst &NewAI,
-                      uint64_t NewBeginOffset, uint64_t NewEndOffset,
-                      bool IsVectorPromotable, bool IsIntegerPromotable,
+                      uint64_t NewAllocaBeginOffset,
+                      uint64_t NewAllocaEndOffset, bool IsVectorPromotable,
+                      bool IsIntegerPromotable,
                       SmallPtrSetImpl<PHINode *> &PHIUsers,
                       SmallPtrSetImpl<SelectInst *> &SelectUsers)
       : DL(DL), S(S), Pass(Pass), OldAI(OldAI), NewAI(NewAI),
-        NewAllocaBeginOffset(NewBeginOffset), NewAllocaEndOffset(NewEndOffset),
+        NewAllocaBeginOffset(NewAllocaBeginOffset),
+        NewAllocaEndOffset(NewAllocaEndOffset),
         NewAllocaTy(NewAI.getAllocatedType()),
         VecTy(IsVectorPromotable ? cast<VectorType>(NewAllocaTy) : 0),
         ElementTy(VecTy ? VecTy->getElementType() : 0),
@@ -2065,6 +2076,14 @@ public:
     IsSplit =
         BeginOffset < NewAllocaBeginOffset || EndOffset > NewAllocaEndOffset;
 
+    // Compute the intersecting offset range.
+    assert(BeginOffset < NewAllocaEndOffset);
+    assert(EndOffset > NewAllocaBeginOffset);
+    NewBeginOffset = std::max(BeginOffset, NewAllocaBeginOffset);
+    NewEndOffset = std::min(EndOffset, NewAllocaEndOffset);
+
+    SliceSize = NewEndOffset - NewBeginOffset;
+
     OldUse = I->getUse();
     OldPtr = cast<Instruction>(OldUse->get());
 
@@ -2089,9 +2108,12 @@ private:
     llvm_unreachable("No rewrite rule for this instruction!");
   }
 
-  Value *getAdjustedAllocaPtr(IRBuilderTy &IRB, uint64_t Offset,
-                              Type *PointerTy) {
-    assert(Offset >= NewAllocaBeginOffset);
+  Value *getNewAllocaSlicePtr(IRBuilderTy &IRB, Type *PointerTy) {
+    // Note that the offset computation can use BeginOffset or NewBeginOffset
+    // interchangeably for unsplit slices.
+    assert(IsSplit || BeginOffset == NewBeginOffset);
+    uint64_t Offset = NewBeginOffset - NewAllocaBeginOffset;
+
 #ifndef NDEBUG
     StringRef OldName = OldPtr->getName();
     // Skip through the last '.sroa.' component of the name.
@@ -2112,9 +2134,9 @@ private:
     // Strip any SROA suffixes as well.
     OldName = OldName.substr(0, OldName.find(".sroa_"));
 #endif
-    return getAdjustedPtr(IRB, DL, &NewAI, APInt(DL.getPointerSizeInBits(),
-                                                 Offset - NewAllocaBeginOffset),
-                          PointerTy,
+
+    return getAdjustedPtr(IRB, DL, &NewAI,
+                          APInt(DL.getPointerSizeInBits(), Offset), PointerTy,
 #ifndef NDEBUG
                           Twine(OldName) + "."
 #else
@@ -2123,22 +2145,16 @@ private:
                           );
   }
 
-  /// \brief Compute suitable alignment to access an offset into the new alloca.
-  unsigned getOffsetAlign(uint64_t Offset) {
+  /// \brief Compute suitable alignment to access this slice of the *new* alloca.
+  ///
+  /// You can optionally pass a type to this routine and if that type's ABI
+  /// alignment is itself suitable, this will return zero.
+  unsigned getSliceAlign(Type *Ty = 0) {
     unsigned NewAIAlign = NewAI.getAlignment();
     if (!NewAIAlign)
       NewAIAlign = DL.getABITypeAlignment(NewAI.getAllocatedType());
-    return MinAlign(NewAIAlign, Offset);
-  }
-
-  /// \brief Compute suitable alignment to access a type at an offset of the
-  /// new alloca.
-  ///
-  /// \returns zero if the type's ABI alignment is a suitable alignment,
-  /// otherwise returns the maximal suitable alignment.
-  unsigned getOffsetTypeAlign(Type *Ty, uint64_t Offset) {
-    unsigned Align = getOffsetAlign(Offset);
-    return Align == DL.getABITypeAlignment(Ty) ? 0 : Align;
+    unsigned Align = MinAlign(NewAIAlign, NewBeginOffset - NewAllocaBeginOffset);
+    return (Ty && Align == DL.getABITypeAlignment(Ty)) ? 0 : Align;
   }
 
   unsigned getIndex(uint64_t Offset) {
@@ -2156,8 +2172,7 @@ private:
       Pass.DeadInsts.insert(I);
   }
 
-  Value *rewriteVectorizedLoadInst(uint64_t NewBeginOffset,
-                                   uint64_t NewEndOffset) {
+  Value *rewriteVectorizedLoadInst() {
     unsigned BeginIndex = getIndex(NewBeginOffset);
     unsigned EndIndex = getIndex(NewEndOffset);
     assert(EndIndex > BeginIndex && "Empty vector!");
@@ -2167,8 +2182,7 @@ private:
     return extractVector(IRB, V, BeginIndex, EndIndex, "vec");
   }
 
-  Value *rewriteIntegerLoad(LoadInst &LI, uint64_t NewBeginOffset,
-                            uint64_t NewEndOffset) {
+  Value *rewriteIntegerLoad(LoadInst &LI) {
     assert(IntTy && "We cannot insert an integer to the alloca");
     assert(!LI.isVolatile());
     Value *V = IRB.CreateAlignedLoad(&NewAI, NewAI.getAlignment(),
@@ -2187,32 +2201,23 @@ private:
     Value *OldOp = LI.getOperand(0);
     assert(OldOp == OldPtr);
 
-    // Compute the intersecting offset range.
-    assert(BeginOffset < NewAllocaEndOffset);
-    assert(EndOffset > NewAllocaBeginOffset);
-    uint64_t NewBeginOffset = std::max(BeginOffset, NewAllocaBeginOffset);
-    uint64_t NewEndOffset = std::min(EndOffset, NewAllocaEndOffset);
-
-    uint64_t Size = NewEndOffset - NewBeginOffset;
-
-    Type *TargetTy = IsSplit ? Type::getIntNTy(LI.getContext(), Size * 8)
+    Type *TargetTy = IsSplit ? Type::getIntNTy(LI.getContext(), SliceSize * 8)
                              : LI.getType();
     bool IsPtrAdjusted = false;
     Value *V;
     if (VecTy) {
-      V = rewriteVectorizedLoadInst(NewBeginOffset, NewEndOffset);
+      V = rewriteVectorizedLoadInst();
     } else if (IntTy && LI.getType()->isIntegerTy()) {
-      V = rewriteIntegerLoad(LI, NewBeginOffset, NewEndOffset);
+      V = rewriteIntegerLoad(LI);
     } else if (NewBeginOffset == NewAllocaBeginOffset &&
                canConvertValue(DL, NewAllocaTy, LI.getType())) {
       V = IRB.CreateAlignedLoad(&NewAI, NewAI.getAlignment(),
                                 LI.isVolatile(), LI.getName());
     } else {
       Type *LTy = TargetTy->getPointerTo();
-      V = IRB.CreateAlignedLoad(
-          getAdjustedAllocaPtr(IRB, NewBeginOffset, LTy),
-          getOffsetTypeAlign(TargetTy, NewBeginOffset - NewAllocaBeginOffset),
-          LI.isVolatile(), LI.getName());
+      V = IRB.CreateAlignedLoad(getNewAllocaSlicePtr(IRB, LTy),
+                                getSliceAlign(TargetTy), LI.isVolatile(),
+                                LI.getName());
       IsPtrAdjusted = true;
     }
     V = convertValue(DL, IRB, V, TargetTy);
@@ -2221,7 +2226,7 @@ private:
       assert(!LI.isVolatile());
       assert(LI.getType()->isIntegerTy() &&
              "Only integer type loads and stores are split");
-      assert(Size < DL.getTypeStoreSize(LI.getType()) &&
+      assert(SliceSize < DL.getTypeStoreSize(LI.getType()) &&
              "Split load isn't smaller than original load");
       assert(LI.getType()->getIntegerBitWidth() ==
              DL.getTypeStoreSizeInBits(LI.getType()) &&
@@ -2249,9 +2254,7 @@ private:
     return !LI.isVolatile() && !IsPtrAdjusted;
   }
 
-  bool rewriteVectorizedStoreInst(Value *V, StoreInst &SI, Value *OldOp,
-                                  uint64_t NewBeginOffset,
-                                  uint64_t NewEndOffset) {
+  bool rewriteVectorizedStoreInst(Value *V, StoreInst &SI, Value *OldOp) {
     if (V->getType() != VecTy) {
       unsigned BeginIndex = getIndex(NewBeginOffset);
       unsigned EndIndex = getIndex(NewEndOffset);
@@ -2277,8 +2280,7 @@ private:
     return true;
   }
 
-  bool rewriteIntegerStore(Value *V, StoreInst &SI,
-                           uint64_t NewBeginOffset, uint64_t NewEndOffset) {
+  bool rewriteIntegerStore(Value *V, StoreInst &SI) {
     assert(IntTy && "We cannot extract an integer from the alloca");
     assert(!SI.isVolatile());
     if (DL.getTypeSizeInBits(V->getType()) != IntTy->getBitWidth()) {
@@ -2311,30 +2313,22 @@ private:
       if (AllocaInst *AI = dyn_cast<AllocaInst>(V->stripInBoundsOffsets()))
         Pass.PostPromotionWorklist.insert(AI);
 
-    // Compute the intersecting offset range.
-    assert(BeginOffset < NewAllocaEndOffset);
-    assert(EndOffset > NewAllocaBeginOffset);
-    uint64_t NewBeginOffset = std::max(BeginOffset, NewAllocaBeginOffset);
-    uint64_t NewEndOffset = std::min(EndOffset, NewAllocaEndOffset);
-
-    uint64_t Size = NewEndOffset - NewBeginOffset;
-    if (Size < DL.getTypeStoreSize(V->getType())) {
+    if (SliceSize < DL.getTypeStoreSize(V->getType())) {
       assert(!SI.isVolatile());
       assert(V->getType()->isIntegerTy() &&
              "Only integer type loads and stores are split");
       assert(V->getType()->getIntegerBitWidth() ==
              DL.getTypeStoreSizeInBits(V->getType()) &&
              "Non-byte-multiple bit width");
-      IntegerType *NarrowTy = Type::getIntNTy(SI.getContext(), Size * 8);
+      IntegerType *NarrowTy = Type::getIntNTy(SI.getContext(), SliceSize * 8);
       V = extractInteger(DL, IRB, V, NarrowTy, NewBeginOffset,
                          "extract");
     }
 
     if (VecTy)
-      return rewriteVectorizedStoreInst(V, SI, OldOp, NewBeginOffset,
-                                        NewEndOffset);
+      return rewriteVectorizedStoreInst(V, SI, OldOp);
     if (IntTy && V->getType()->isIntegerTy())
-      return rewriteIntegerStore(V, SI, NewBeginOffset, NewEndOffset);
+      return rewriteIntegerStore(V, SI);
 
     StoreInst *NewSI;
     if (NewBeginOffset == NewAllocaBeginOffset &&
@@ -2344,12 +2338,9 @@ private:
       NewSI = IRB.CreateAlignedStore(V, &NewAI, NewAI.getAlignment(),
                                      SI.isVolatile());
     } else {
-      Value *NewPtr = getAdjustedAllocaPtr(IRB, NewBeginOffset,
-                                           V->getType()->getPointerTo());
-      NewSI = IRB.CreateAlignedStore(
-          V, NewPtr, getOffsetTypeAlign(V->getType(),
-                                        NewBeginOffset - NewAllocaBeginOffset),
-          SI.isVolatile());
+      Value *NewPtr = getNewAllocaSlicePtr(IRB, V->getType()->getPointerTo());
+      NewSI = IRB.CreateAlignedStore(V, NewPtr, getSliceAlign(V->getType()),
+                                     SI.isVolatile());
     }
     (void)NewSI;
     Pass.DeadInsts.insert(&SI);
@@ -2401,10 +2392,10 @@ private:
     // pointer to the new alloca.
     if (!isa<Constant>(II.getLength())) {
       assert(!IsSplit);
-      assert(BeginOffset >= NewAllocaBeginOffset);
-      II.setDest(getAdjustedAllocaPtr(IRB, BeginOffset, OldPtr->getType()));
+      assert(NewBeginOffset == BeginOffset);
+      II.setDest(getNewAllocaSlicePtr(IRB, OldPtr->getType()));
       Type *CstTy = II.getAlignmentCst()->getType();
-      II.setAlignment(ConstantInt::get(CstTy, getOffsetAlign(BeginOffset)));
+      II.setAlignment(ConstantInt::get(CstTy, getSliceAlign()));
 
       deleteIfTriviallyDead(OldPtr);
       return false;
@@ -2415,13 +2406,6 @@ private:
 
     Type *AllocaTy = NewAI.getAllocatedType();
     Type *ScalarTy = AllocaTy->getScalarType();
-
-    // Compute the intersecting offset range.
-    assert(BeginOffset < NewAllocaEndOffset);
-    assert(EndOffset > NewAllocaBeginOffset);
-    uint64_t NewBeginOffset = std::max(BeginOffset, NewAllocaBeginOffset);
-    uint64_t NewEndOffset = std::min(EndOffset, NewAllocaEndOffset);
-    uint64_t SliceOffset = NewBeginOffset - NewAllocaBeginOffset;
 
     // If this doesn't map cleanly onto the alloca type, and that type isn't
     // a single value type, just emit a memset.
@@ -2434,8 +2418,8 @@ private:
       Type *SizeTy = II.getLength()->getType();
       Constant *Size = ConstantInt::get(SizeTy, NewEndOffset - NewBeginOffset);
       CallInst *New = IRB.CreateMemSet(
-          getAdjustedAllocaPtr(IRB, NewBeginOffset, OldPtr->getType()),
-          II.getValue(), Size, getOffsetAlign(SliceOffset), II.isVolatile());
+          getNewAllocaSlicePtr(IRB, OldPtr->getType()), II.getValue(), Size,
+          getSliceAlign(), II.isVolatile());
       (void)New;
       DEBUG(dbgs() << "          to: " << *New << "\n");
       return false;
@@ -2512,26 +2496,11 @@ private:
 
     DEBUG(dbgs() << "    original: " << II << "\n");
 
-    // Compute the intersecting offset range.
-    assert(BeginOffset < NewAllocaEndOffset);
-    assert(EndOffset > NewAllocaBeginOffset);
-    uint64_t NewBeginOffset = std::max(BeginOffset, NewAllocaBeginOffset);
-    uint64_t NewEndOffset = std::min(EndOffset, NewAllocaEndOffset);
-
     bool IsDest = &II.getRawDestUse() == OldUse;
     assert((IsDest && II.getRawDest() == OldPtr) ||
            (!IsDest && II.getRawSource() == OldPtr));
 
-    // Compute the relative offset within the transfer.
-    unsigned IntPtrWidth = DL.getPointerSizeInBits();
-    APInt RelOffset(IntPtrWidth, NewBeginOffset - BeginOffset);
-
-    unsigned Align = II.getAlignment();
-    uint64_t SliceOffset = NewBeginOffset - NewAllocaBeginOffset;
-    if (Align > 1)
-      Align =
-          MinAlign(RelOffset.zextOrTrunc(64).getZExtValue(),
-                   MinAlign(II.getAlignment(), getOffsetAlign(SliceOffset)));
+    unsigned SliceAlign = getSliceAlign();
 
     // For unsplit intrinsics, we simply modify the source and destination
     // pointers in place. This isn't just an optimization, it is a matter of
@@ -2541,15 +2510,17 @@ private:
     // memcpy, and so simply updating the pointers is the necessary for us to
     // update both source and dest of a single call.
     if (!IsSplittable) {
-      Value *AdjustedPtr =
-          getAdjustedAllocaPtr(IRB, BeginOffset, OldPtr->getType());
+      Value *AdjustedPtr = getNewAllocaSlicePtr(IRB, OldPtr->getType());
       if (IsDest)
         II.setDest(AdjustedPtr);
       else
         II.setSource(AdjustedPtr);
 
-      Type *CstTy = II.getAlignmentCst()->getType();
-      II.setAlignment(ConstantInt::get(CstTy, Align));
+      if (II.getAlignment() > SliceAlign) {
+        Type *CstTy = II.getAlignmentCst()->getType();
+        II.setAlignment(
+            ConstantInt::get(CstTy, MinAlign(II.getAlignment(), SliceAlign)));
+      }
 
       DEBUG(dbgs() << "          to: " << II << "\n");
       deleteIfTriviallyDead(OldPtr);
@@ -2594,32 +2565,32 @@ private:
       Pass.Worklist.insert(AI);
     }
 
-    if (EmitMemCpy) {
-      Type *OtherPtrTy = OtherPtr->getType();
+    Type *OtherPtrTy = OtherPtr->getType();
+    unsigned OtherAS = OtherPtrTy->getPointerAddressSpace();
 
+    // Compute the relative offset for the other pointer within the transfer.
+    unsigned IntPtrWidth = DL.getPointerSizeInBits(OtherAS);
+    APInt OtherOffset(IntPtrWidth, NewBeginOffset - BeginOffset);
+    unsigned OtherAlign = MinAlign(II.getAlignment() ? II.getAlignment() : 1,
+                                   OtherOffset.zextOrTrunc(64).getZExtValue());
+
+    if (EmitMemCpy) {
       // Compute the other pointer, folding as much as possible to produce
       // a single, simple GEP in most cases.
-      OtherPtr = getAdjustedPtr(IRB, DL, OtherPtr, RelOffset, OtherPtrTy,
+      OtherPtr = getAdjustedPtr(IRB, DL, OtherPtr, OtherOffset, OtherPtrTy,
                                 OtherPtr->getName() + ".");
 
-      Value *OurPtr =
-          getAdjustedAllocaPtr(IRB, NewBeginOffset, OldPtr->getType());
+      Value *OurPtr = getNewAllocaSlicePtr(IRB, OldPtr->getType());
       Type *SizeTy = II.getLength()->getType();
       Constant *Size = ConstantInt::get(SizeTy, NewEndOffset - NewBeginOffset);
 
-      CallInst *New = IRB.CreateMemCpy(IsDest ? OurPtr : OtherPtr,
-                                       IsDest ? OtherPtr : OurPtr,
-                                       Size, Align, II.isVolatile());
+      CallInst *New = IRB.CreateMemCpy(
+          IsDest ? OurPtr : OtherPtr, IsDest ? OtherPtr : OurPtr, Size,
+          MinAlign(SliceAlign, OtherAlign), II.isVolatile());
       (void)New;
       DEBUG(dbgs() << "          to: " << *New << "\n");
       return false;
     }
-
-    // Note that we clamp the alignment to 1 here as a 0 alignment for a memcpy
-    // is equivalent to 1, but that isn't true if we end up rewriting this as
-    // a load or store.
-    if (!Align)
-      Align = 1;
 
     bool IsWholeAlloca = NewBeginOffset == NewAllocaBeginOffset &&
                          NewEndOffset == NewAllocaEndOffset;
@@ -2630,23 +2601,30 @@ private:
     IntegerType *SubIntTy
       = IntTy ? Type::getIntNTy(IntTy->getContext(), Size*8) : 0;
 
-    Type *OtherPtrTy = NewAI.getType();
+    // Reset the other pointer type to match the register type we're going to
+    // use, but using the address space of the original other pointer.
     if (VecTy && !IsWholeAlloca) {
       if (NumElements == 1)
         OtherPtrTy = VecTy->getElementType();
       else
         OtherPtrTy = VectorType::get(VecTy->getElementType(), NumElements);
 
-      OtherPtrTy = OtherPtrTy->getPointerTo();
+      OtherPtrTy = OtherPtrTy->getPointerTo(OtherAS);
     } else if (IntTy && !IsWholeAlloca) {
-      OtherPtrTy = SubIntTy->getPointerTo();
+      OtherPtrTy = SubIntTy->getPointerTo(OtherAS);
+    } else {
+      OtherPtrTy = NewAllocaTy->getPointerTo(OtherAS);
     }
 
-    Value *SrcPtr = getAdjustedPtr(IRB, DL, OtherPtr, RelOffset, OtherPtrTy,
+    Value *SrcPtr = getAdjustedPtr(IRB, DL, OtherPtr, OtherOffset, OtherPtrTy,
                                    OtherPtr->getName() + ".");
+    unsigned SrcAlign = OtherAlign;
     Value *DstPtr = &NewAI;
-    if (!IsDest)
+    unsigned DstAlign = SliceAlign;
+    if (!IsDest) {
       std::swap(SrcPtr, DstPtr);
+      std::swap(SrcAlign, DstAlign);
+    }
 
     Value *Src;
     if (VecTy && !IsWholeAlloca && !IsDest) {
@@ -2660,7 +2638,7 @@ private:
       uint64_t Offset = NewBeginOffset - NewAllocaBeginOffset;
       Src = extractInteger(DL, IRB, Src, SubIntTy, Offset, "extract");
     } else {
-      Src = IRB.CreateAlignedLoad(SrcPtr, Align, II.isVolatile(),
+      Src = IRB.CreateAlignedLoad(SrcPtr, SrcAlign, II.isVolatile(),
                                   "copyload");
     }
 
@@ -2678,7 +2656,7 @@ private:
     }
 
     StoreInst *Store = cast<StoreInst>(
-      IRB.CreateAlignedStore(Src, DstPtr, Align, II.isVolatile()));
+        IRB.CreateAlignedStore(Src, DstPtr, DstAlign, II.isVolatile()));
     (void)Store;
     DEBUG(dbgs() << "          to: " << *Store << "\n");
     return !II.isVolatile();
@@ -2690,19 +2668,13 @@ private:
     DEBUG(dbgs() << "    original: " << II << "\n");
     assert(II.getArgOperand(1) == OldPtr);
 
-    // Compute the intersecting offset range.
-    assert(BeginOffset < NewAllocaEndOffset);
-    assert(EndOffset > NewAllocaBeginOffset);
-    uint64_t NewBeginOffset = std::max(BeginOffset, NewAllocaBeginOffset);
-    uint64_t NewEndOffset = std::min(EndOffset, NewAllocaEndOffset);
-
     // Record this instruction for deletion.
     Pass.DeadInsts.insert(&II);
 
     ConstantInt *Size
       = ConstantInt::get(cast<IntegerType>(II.getArgOperand(0)->getType()),
                          NewEndOffset - NewBeginOffset);
-    Value *Ptr = getAdjustedAllocaPtr(IRB, NewBeginOffset, OldPtr->getType());
+    Value *Ptr = getNewAllocaSlicePtr(IRB, OldPtr->getType());
     Value *New;
     if (II.getIntrinsicID() == Intrinsic::lifetime_start)
       New = IRB.CreateLifetimeStart(Ptr, Size);
@@ -2727,8 +2699,7 @@ private:
     PtrBuilder.SetInsertPoint(OldPtr);
     PtrBuilder.SetCurrentDebugLocation(OldPtr->getDebugLoc());
 
-    Value *NewPtr =
-        getAdjustedAllocaPtr(PtrBuilder, BeginOffset, OldPtr->getType());
+    Value *NewPtr = getNewAllocaSlicePtr(PtrBuilder, OldPtr->getType());
     // Replace the operands which were using the old pointer.
     std::replace(PN.op_begin(), PN.op_end(), cast<Value>(OldPtr), NewPtr);
 
@@ -2749,7 +2720,7 @@ private:
     assert(BeginOffset >= NewAllocaBeginOffset && "Selects are unsplittable");
     assert(EndOffset <= NewAllocaEndOffset && "Selects are unsplittable");
 
-    Value *NewPtr = getAdjustedAllocaPtr(IRB, BeginOffset, OldPtr->getType());
+    Value *NewPtr = getNewAllocaSlicePtr(IRB, OldPtr->getType());
     // Replace the operands which were using the old pointer.
     if (SI.getOperand(1) == OldPtr)
       SI.setOperand(1, NewPtr);
