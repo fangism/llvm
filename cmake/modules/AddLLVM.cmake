@@ -238,7 +238,7 @@ function(llvm_add_library name)
     # static
     set(name_static "${name}_static")
     if(ARG_OUTPUT_NAME)
-      set(output_name OUTPUT_NAME "${ARG_OUTPUT_NAME}_static")
+      set(output_name OUTPUT_NAME "${ARG_OUTPUT_NAME}")
     endif()
     # DEPENDS has been appended to LLVM_COMMON_LIBS.
     llvm_add_library(${name_static} STATIC
@@ -571,15 +571,6 @@ function(configure_lit_site_cfg input output)
     set(LLVM_SHARED_LIBS_ENABLED "0")
   endif(BUILD_SHARED_LIBS)
 
-  if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-    set(SHLIBPATH_VAR "DYLD_LIBRARY_PATH")
-  else() # Default for all other unix like systems.
-    # CMake hardcodes the library locaction using rpath.
-    # Therefore LD_LIBRARY_PATH is not required to run binaries in the
-    # build dir. We pass it anyways.
-    set(SHLIBPATH_VAR "LD_LIBRARY_PATH")
-  endif()
-
   # Configuration-time: See Unit/lit.site.cfg.in
   if (CMAKE_CFG_INTDIR STREQUAL ".")
     set(LLVM_BUILD_MODE ".")
@@ -598,7 +589,6 @@ function(configure_lit_site_cfg input output)
 
   set(PYTHON_EXECUTABLE ${PYTHON_EXECUTABLE})
   set(ENABLE_SHARED ${LLVM_SHARED_LIBS_ENABLED})
-  set(SHLIBPATH_VAR ${SHLIBPATH_VAR})
 
   if(LLVM_ENABLE_ASSERTIONS AND NOT MSVC_IDE)
     set(ENABLE_ASSERTIONS "1")

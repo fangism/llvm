@@ -36,7 +36,6 @@
 #include <cerrno>
 #include <cstdlib>
 #include <map>
-#include <set>
 using namespace llvm;
 using namespace cl;
 
@@ -126,8 +125,21 @@ static ManagedStatic<OptionCatSet> RegisteredOptionCategories;
 // Initialise the general option category.
 OptionCategory llvm::cl::GeneralCategory("General options");
 
+struct HasName {
+  HasName(StringRef Name) : Name(Name) {}
+  bool operator()(const OptionCategory *Category) const {
+    return Name == Category->getName();
+  }
+  StringRef Name;
+};
+
 void OptionCategory::registerCategory()
 {
+  assert(std::count_if(RegisteredOptionCategories->begin(),
+                       RegisteredOptionCategories->end(),
+                       HasName(getName())) == 0 &&
+         "Duplicate option categories");
+
   RegisteredOptionCategories->insert(this);
 }
 
@@ -1485,7 +1497,7 @@ public:
     MoreHelp->clear();
 
     // Halt the program since help information was printed
-    exit(1);
+    exit(0);
   }
 };
 
@@ -1507,7 +1519,6 @@ protected:
   virtual void printOptions(StrOptionPairVector &Opts, size_t MaxArgLen) {
     std::vector<OptionCategory *> SortedCategories;
     std::map<OptionCategory *, std::vector<Option *> > CategorizedOptions;
-    std::set<std::string> CategoryNames;
 
     // Collect registered option categories into vector in preparation for
     // sorting.
@@ -1515,11 +1526,6 @@ protected:
                                       E = RegisteredOptionCategories->end();
          I != E; ++I) {
       SortedCategories.push_back(*I);
-      // FIXME: Move this check to OptionCategory::registerCategory after the
-      // problem with analyzer plugins linking to llvm/Support and causing
-      // assertion on the duplicate llvm::cl::GeneralCategory is solved.
-      assert(CategoryNames.insert((*I)->getName()).second &&
-             "Duplicate option categories");
     }
 
     // Sort the different option categories alphabetically.
@@ -1727,7 +1733,7 @@ public:
 
     if (OverrideVersionPrinter != 0) {
       (*OverrideVersionPrinter)();
-      exit(1);
+      exit(0);
     }
     print();
 
@@ -1741,7 +1747,7 @@ public:
         (*I)();
     }
 
-    exit(1);
+    exit(0);
   }
 };
 } // End anonymous namespace

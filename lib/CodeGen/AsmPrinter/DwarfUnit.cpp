@@ -348,14 +348,14 @@ DIE *DwarfUnit::createAndAddDIE(unsigned Tag, DIE &Parent, DIDescriptor N) {
 /// addBlock - Add block data.
 ///
 void DwarfUnit::addBlock(DIE *Die, dwarf::Attribute Attribute, DIELoc *Loc) {
-  Loc->setSize(Loc->ComputeSize(Asm));
+  Loc->ComputeSize(Asm);
   DIELocs.push_back(Loc); // Memoize so we can call the destructor later on.
   Die->addValue(Attribute, Loc->BestForm(DD->getDwarfVersion()), Loc);
 }
 
 void DwarfUnit::addBlock(DIE *Die, dwarf::Attribute Attribute,
                          DIEBlock *Block) {
-  Block->setSize(Block->ComputeSize(Asm));
+  Block->ComputeSize(Asm);
   DIEBlocks.push_back(Block); // Memoize so we can call the destructor later on.
   Die->addValue(Attribute, Block->BestForm(), Block);
 }
@@ -454,7 +454,7 @@ void DwarfUnit::addRegisterOp(DIELoc *TheDie, unsigned Reg) {
   }
 
   if (DWReg < 0) {
-    DEBUG(llvm::dbgs() << "Invalid Dwarf register number.\n");
+    DEBUG(dbgs() << "Invalid Dwarf register number.\n");
     addUInt(TheDie, dwarf::DW_FORM_data1, dwarf::DW_OP_nop);
     return;
   }
