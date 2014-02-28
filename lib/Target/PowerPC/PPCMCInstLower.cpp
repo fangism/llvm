@@ -25,7 +25,8 @@
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
-#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetLowering.h"
+#include "llvm/Target/TargetLoweringObjectFile.h"
 
 #define	ENABLE_STACKTRACE		0
 #include "llvm/Support/stacktrace.h"
@@ -40,7 +41,9 @@ static MachineModuleInfoMachO &getMachOMMI(AsmPrinter &AP) {
 
 static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
   STACKTRACE_VERBOSE;
-  const DataLayout *DL = AP.TM.getDataLayout();
+  const TargetMachine &TM = AP.TM;
+  Mangler *Mang = AP.Mang;
+  const DataLayout *DL = TM.getDataLayout();
   MCContext &Ctx = AP.OutContext;
 
   SmallString<128> Name;
@@ -58,11 +61,11 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
   if (!MO.isGlobal()) {
     STACKTRACE_INDENT_PRINT("!MO.isGlobal()" << endl);
     assert(MO.isSymbol() && "Isn't a symbol reference");
-    AP.Mang->getNameWithPrefix(Name, MO.getSymbolName());
+    Mang->getNameWithPrefix(Name, MO.getSymbolName());
   } else {
     STACKTRACE_INDENT_PRINT("MO.isGlobal()" << endl);
     const GlobalValue *GV = MO.getGlobal();
-    AP.Mang->getNameWithPrefix(Name, GV);
+    TM.getNameWithPrefix(Name, GV, *Mang);
   }
   STACKTRACE_INDENT_PRINT("base Name: " << Name << endl);
 
