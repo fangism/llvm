@@ -15,7 +15,6 @@
 
 #define DEBUG_TYPE "regalloc"
 #include "RegisterCoalescer.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
@@ -801,9 +800,9 @@ bool RegisterCoalescer::reMaterializeTrivialDef(CoalescerPair &CP,
 
   MachineBasicBlock *MBB = CopyMI->getParent();
   MachineBasicBlock::iterator MII =
-    llvm::next(MachineBasicBlock::iterator(CopyMI));
+    std::next(MachineBasicBlock::iterator(CopyMI));
   TII->reMaterialize(*MBB, MII, DstReg, SrcIdx, DefMI, *TRI);
-  MachineInstr *NewMI = prior(MII);
+  MachineInstr *NewMI = std::prev(MII);
 
   LIS->ReplaceMachineInstrInMaps(CopyMI, NewMI);
   CopyMI->eraseFromParent();
@@ -952,7 +951,7 @@ void RegisterCoalescer::updateRegDefsUses(unsigned SrcReg,
 
     SmallVector<unsigned,8> Ops;
     bool Reads, Writes;
-    tie(Reads, Writes) = UseMI->readsWritesVirtualRegister(SrcReg, &Ops);
+    std::tie(Reads, Writes) = UseMI->readsWritesVirtualRegister(SrcReg, &Ops);
 
     // If SrcReg wasn't read, it may still be the case that DstReg is live-in
     // because SrcReg is a sub-register.

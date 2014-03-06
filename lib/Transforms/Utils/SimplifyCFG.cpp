@@ -23,6 +23,8 @@
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -34,14 +36,12 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/NoFolder.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/IR/Type.h"
-#include "llvm/Support/CFG.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/ConstantRange.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/NoFolder.h"
-#include "llvm/Support/PatternMatch.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <algorithm>
@@ -1422,7 +1422,7 @@ static bool SpeculativelyExecuteBB(BranchInst *BI, BasicBlock *ThenBB) {
   Value *SpeculatedStoreValue = 0;
   StoreInst *SpeculatedStore = 0;
   for (BasicBlock::iterator BBI = ThenBB->begin(),
-                            BBE = llvm::prior(ThenBB->end());
+                            BBE = std::prev(ThenBB->end());
        BBI != BBE; ++BBI) {
     Instruction *I = BBI;
     // Skip debug info.
@@ -1532,7 +1532,7 @@ static bool SpeculativelyExecuteBB(BranchInst *BI, BasicBlock *ThenBB) {
 
   // Hoist the instructions.
   BB->getInstList().splice(BI, ThenBB->getInstList(), ThenBB->begin(),
-                           llvm::prior(ThenBB->end()));
+                           std::prev(ThenBB->end()));
 
   // Insert selects and rewrite the PHI operands.
   IRBuilder<true, NoFolder> Builder(BI);

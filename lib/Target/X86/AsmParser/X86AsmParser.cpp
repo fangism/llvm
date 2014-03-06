@@ -936,17 +936,24 @@ X86AsmParser::CreateMemForInlineAsm(unsigned SegReg, const MCExpr *Disp,
                                     unsigned Scale, SMLoc Start, SMLoc End,
                                     unsigned Size, StringRef Identifier,
                                     InlineAsmIdentifierInfo &Info){
-  if (isa<MCSymbolRefExpr>(Disp)) {
-    // If this is not a VarDecl then assume it is a FuncDecl or some other label
-    // reference.  We need an 'r' constraint here, so we need to create register
-    // operand to ensure proper matching.  Just pick a GPR based on the size of
-    // a pointer.
-    if (!Info.IsVarDecl) {
-      unsigned RegNo =
-          is64BitMode() ? X86::RBX : (is32BitMode() ? X86::EBX : X86::BX);
-      return X86Operand::CreateReg(RegNo, Start, End, /*AddressOf=*/true,
-                                   SMLoc(), Identifier, Info.OpDecl);
-    }
+  // If this is not a VarDecl then assume it is a FuncDecl or some other label
+  // reference.  We need an 'r' constraint here, so we need to create register
+  // operand to ensure proper matching.  Just pick a GPR based on the size of
+  // a pointer.
+  if (isa<MCSymbolRefExpr>(Disp) && !Info.IsVarDecl) {
+    unsigned RegNo =
+        is64BitMode() ? X86::RBX : (is32BitMode() ? X86::EBX : X86::BX);
+    return X86Operand::CreateReg(RegNo, Start, End, /*AddressOf=*/true,
+                                 SMLoc(), Identifier, Info.OpDecl);
+  }
+
+  // We either have a direct symbol reference, or an offset from a symbol.  The
+  // parser always puts the symbol on the LHS, so look there for size
+  // calculation purposes.
+  const MCBinaryExpr *BinOp = dyn_cast<MCBinaryExpr>(Disp);
+  bool IsSymRef =
+      isa<MCSymbolRefExpr>(BinOp ? BinOp->getLHS() : Disp);
+  if (IsSymRef) {
     if (!Size) {
       Size = Info.Type * 8; // Size is in terms of bits in this context.
       if (Size)
@@ -1154,7 +1161,7 @@ X86Operand *X86AsmParser::ParseIntelBracExpression(unsigned SegReg, SMLoc Start,
   if (ParseIntelExpression(SM, End))
     return 0;
 
-  const MCExpr *Disp;
+  const MCExpr *Disp = 0;
   if (const MCExpr *Sym = SM.getSym()) {
     // A symbolic displacement.
     Disp = Sym;
@@ -1162,9 +1169,14 @@ X86Operand *X86AsmParser::ParseIntelBracExpression(unsigned SegReg, SMLoc Start,
       RewriteIntelBracExpression(InstInfo->AsmRewrites, SM.getSymName(),
                                  ImmDisp, SM.getImm(), BracLoc, StartInBrac,
                                  End);
-  } else {
-    // An immediate displacement only.   
-    Disp = MCConstantExpr::Create(SM.getImm(), getContext());
+  }
+
+  if (SM.getImm() || !Disp) {
+    const MCExpr *Imm = MCConstantExpr::Create(SM.getImm(), getContext());
+    if (Disp)
+      Disp = MCBinaryExpr::CreateAdd(Disp, Imm, getContext());
+    else
+      Disp = Imm;  // An immediate displacement only.
   }
 
   // Parse the dot operator (e.g., [ebx].foo.bar).
@@ -1295,6 +1307,7 @@ X86Operand *X86AsmParser::ParseIntelMemOperand(int64_t ImmDisp, SMLoc Start,
   // Parse ImmDisp [ BaseReg + Scale*IndexReg + Disp ].
   if (getLexer().is(AsmToken::LBrac))
     return ParseIntelBracExpression(/*SegReg=*/0, Start, ImmDisp, Size);
+  assert(ImmDisp == 0);
 
   const MCExpr *Val;
   if (!isParsingInlineAsm()) {
@@ -1309,8 +1322,39 @@ X86Operand *X86AsmParser::ParseIntelMemOperand(int64_t ImmDisp, SMLoc Start,
   if (ParseIntelIdentifier(Val, Identifier, Info,
                            /*Unevaluated=*/false, End))
     return 0;
-  return CreateMemForInlineAsm(/*SegReg=*/0, Val, /*BaseReg=*/0, /*IndexReg=*/0,
-                               /*Scale=*/1, Start, End, Size, Identifier, Info);
+
+  if (!getLexer().is(AsmToken::LBrac))
+    return CreateMemForInlineAsm(/*SegReg=*/0, Val, /*BaseReg=*/0, /*IndexReg=*/0,
+                                 /*Scale=*/1, Start, End, Size, Identifier, Info);
+
+  Parser.Lex(); // Eat '['
+
+  // Parse Identifier [ ImmDisp ]
+  IntelExprStateMachine SM(/*ImmDisp=*/0, /*StopOnLBrac=*/true,
+                           /*AddImmPrefix=*/false);
+  if (ParseIntelExpression(SM, End))
+    return 0;
+
+  if (SM.getSym()) {
+    Error(Start, "cannot use more than one symbol in memory operand");
+    return 0;
+  }
+  if (SM.getBaseReg()) {
+    Error(Start, "cannot use base register with variable reference");
+    return 0;
+  }
+  if (SM.getIndexReg()) {
+    Error(Start, "cannot use index register with variable reference");
+    return 0;
+  }
+
+  const MCExpr *Disp = MCConstantExpr::Create(SM.getImm(), getContext());
+  // BaseReg is non-zero to avoid assertions.  In the context of inline asm,
+  // we're pointing to a local variable in memory, so the base register is
+  // really the frame or stack pointer.
+  return X86Operand::CreateMem(/*SegReg=*/0, Disp, /*BaseReg=*/1, /*IndexReg=*/0,
+                               /*Scale=*/1, Start, End, Size, Identifier,
+                               Info.OpDecl);
 }
 
 /// Parse the '.' operator.

@@ -2649,7 +2649,8 @@ static SDValue LowerF128Store(SDValue Op, SelectionDAG &DAG) {
 }
 
 static SDValue LowerFNEGorFABS(SDValue Op, SelectionDAG &DAG, bool isV9) {
-  assert((Op.getOpcode() == ISD::FNEG || Op.getOpcode() == ISD::FABS) && "invalid");
+  assert((Op.getOpcode() == ISD::FNEG || Op.getOpcode() == ISD::FABS)
+         && "invalid opcode");
 
   if (Op.getValueType() == MVT::f64)
     return LowerF64Op(Op, DAG, Op.getOpcode());
@@ -2939,7 +2940,7 @@ SparcTargetLowering::expandSelectCC(MachineInstr *MI,
 
   // Transfer the remainder of BB and its successor edges to sinkMBB.
   sinkMBB->splice(sinkMBB->begin(), BB,
-                  llvm::next(MachineBasicBlock::iterator(MI)),
+                  std::next(MachineBasicBlock::iterator(MI)),
                   BB->end());
   sinkMBB->transferSuccessorsAndUpdatePHIs(BB);
 

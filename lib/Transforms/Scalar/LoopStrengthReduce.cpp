@@ -68,9 +68,9 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/ValueHandle.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -979,21 +979,11 @@ void Cost::Lose() {
 
 /// operator< - Choose the lower cost.
 bool Cost::operator<(const Cost &Other) const {
-  if (NumRegs != Other.NumRegs)
-    return NumRegs < Other.NumRegs;
-  if (AddRecCost != Other.AddRecCost)
-    return AddRecCost < Other.AddRecCost;
-  if (NumIVMuls != Other.NumIVMuls)
-    return NumIVMuls < Other.NumIVMuls;
-  if (NumBaseAdds != Other.NumBaseAdds)
-    return NumBaseAdds < Other.NumBaseAdds;
-  if (ScaleCost != Other.ScaleCost)
-    return ScaleCost < Other.ScaleCost;
-  if (ImmCost != Other.ImmCost)
-    return ImmCost < Other.ImmCost;
-  if (SetupCost != Other.SetupCost)
-    return SetupCost < Other.SetupCost;
-  return false;
+  return std::tie(NumRegs, AddRecCost, NumIVMuls, NumBaseAdds, ScaleCost,
+                  ImmCost, SetupCost) <
+         std::tie(Other.NumRegs, Other.AddRecCost, Other.NumIVMuls,
+                  Other.NumBaseAdds, Other.ScaleCost, Other.ImmCost,
+                  Other.SetupCost);
 }
 
 void Cost::print(raw_ostream &OS) const {
@@ -1294,7 +1284,7 @@ void LSRUse::print(raw_ostream &OS) const {
   for (SmallVectorImpl<int64_t>::const_iterator I = Offsets.begin(),
        E = Offsets.end(); I != E; ++I) {
     OS << *I;
-    if (llvm::next(I) != E)
+    if (std::next(I) != E)
       OS << ',';
   }
   OS << '}';
@@ -1561,7 +1551,7 @@ struct IVChain {
   // begin - return the first increment in the chain.
   const_iterator begin() const {
     assert(!Incs.empty());
-    return llvm::next(Incs.begin());
+    return std::next(Incs.begin());
   }
   const_iterator end() const {
     return Incs.end();
@@ -2337,7 +2327,7 @@ void LSRInstance::CollectInterestingTypesAndFactors() {
   for (SmallSetVector<const SCEV *, 4>::const_iterator
        I = Strides.begin(), E = Strides.end(); I != E; ++I)
     for (SmallSetVector<const SCEV *, 4>::const_iterator NewStrideIter =
-         llvm::next(I); NewStrideIter != E; ++NewStrideIter) {
+         std::next(I); NewStrideIter != E; ++NewStrideIter) {
       const SCEV *OldStride = *I;
       const SCEV *NewStride = *NewStrideIter;
 
@@ -2737,7 +2727,7 @@ void LSRInstance::CollectChains() {
         Instruction *IVOpInst = cast<Instruction>(*IVOpIter);
         if (UniqueOperands.insert(IVOpInst))
           ChainInstruction(I, IVOpInst, ChainUsersVec);
-        IVOpIter = findIVOperand(llvm::next(IVOpIter), IVOpEnd, L, SE);
+        IVOpIter = findIVOperand(std::next(IVOpIter), IVOpEnd, L, SE);
       }
     } // Continue walking down the instructions.
   } // Continue walking down the domtree.
@@ -2828,7 +2818,7 @@ void LSRInstance::GenerateIVChain(const IVChain &Chain, SCEVExpander &Rewriter,
         || SE.getSCEV(IVSrc) == Head.IncExpr) {
       break;
     }
-    IVOpIter = findIVOperand(llvm::next(IVOpIter), IVOpEnd, L, SE);
+    IVOpIter = findIVOperand(std::next(IVOpIter), IVOpEnd, L, SE);
   }
   if (IVOpIter == IVOpEnd) {
     // Gracefully give up on this chain.
@@ -3220,10 +3210,10 @@ void LSRInstance::GenerateReassociations(LSRUse &LU, unsigned LUIdx,
         continue;
 
       // Collect all operands except *J.
-      SmallVector<const SCEV *, 8> InnerAddOps
-        (((const SmallVector<const SCEV *, 8> &)AddOps).begin(), J);
-      InnerAddOps.append
-        (llvm::next(J), ((const SmallVector<const SCEV *, 8> &)AddOps).end());
+      SmallVector<const SCEV *, 8> InnerAddOps(
+          ((const SmallVector<const SCEV *, 8> &)AddOps).begin(), J);
+      InnerAddOps.append(std::next(J),
+                         ((const SmallVector<const SCEV *, 8> &)AddOps).end());
 
       // Don't leave just a constant behind in a register if the constant could
       // be folded into an immediate field.
@@ -3625,8 +3615,9 @@ void LSRInstance::GenerateCrossUseConstantOffsets() {
       // Conservatively examine offsets between this orig reg a few selected
       // other orig regs.
       ImmMapTy::const_iterator OtherImms[] = {
-        Imms.begin(), prior(Imms.end()),
-        Imms.lower_bound((Imms.begin()->first + prior(Imms.end())->first) / 2)
+        Imms.begin(), std::prev(Imms.end()),
+        Imms.lower_bound((Imms.begin()->first + std::prev(Imms.end())->first) /
+                         2)
       };
       for (size_t i = 0, e = array_lengthof(OtherImms); i != e; ++i) {
         ImmMapTy::const_iterator M = OtherImms[i];
@@ -4292,7 +4283,7 @@ LSRInstance::HoistInsertPosition(BasicBlock::iterator IP,
       // instead of at the end, so that it can be used for other expansions.
       if (IDom == Inst->getParent() &&
           (!BetterPos || !DT.dominates(Inst, BetterPos)))
-        BetterPos = llvm::next(BasicBlock::iterator(Inst));
+        BetterPos = std::next(BasicBlock::iterator(Inst));
     }
     if (!AllDominate)
       break;
@@ -4876,8 +4867,8 @@ public:
   LoopStrengthReduce();
 
 private:
-  bool runOnLoop(Loop *L, LPPassManager &LPM);
-  void getAnalysisUsage(AnalysisUsage &AU) const;
+  bool runOnLoop(Loop *L, LPPassManager &LPM) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 
 }

@@ -18,7 +18,6 @@
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
@@ -125,20 +124,12 @@ static ManagedStatic<OptionCatSet> RegisteredOptionCategories;
 // Initialise the general option category.
 OptionCategory llvm::cl::GeneralCategory("General options");
 
-struct HasName {
-  HasName(StringRef Name) : Name(Name) {}
-  bool operator()(const OptionCategory *Category) const {
-    return Name == Category->getName();
-  }
-  StringRef Name;
-};
-
-void OptionCategory::registerCategory()
-{
+void OptionCategory::registerCategory() {
   assert(std::count_if(RegisteredOptionCategories->begin(),
                        RegisteredOptionCategories->end(),
-                       HasName(getName())) == 0 &&
-         "Duplicate option categories");
+                       [this](const OptionCategory *Category) {
+                         return getName() == Category->getName();
+                       }) == 0 && "Duplicate option categories");
 
   RegisteredOptionCategories->insert(this);
 }
@@ -629,7 +620,7 @@ void cl::TokenizeWindowsCommandLine(StringRef Src, StringSaver &Saver,
 static bool ExpandResponseFile(const char *FName, StringSaver &Saver,
                                TokenizerCallback Tokenizer,
                                SmallVectorImpl<const char *> &NewArgv) {
-  OwningPtr<MemoryBuffer> MemBuf;
+  std::unique_ptr<MemoryBuffer> MemBuf;
   if (MemoryBuffer::getFile(FName, MemBuf))
     return false;
   StringRef Str(MemBuf->getBufferStart(), MemBuf->getBufferSize());
@@ -698,7 +689,7 @@ namespace {
         free(Dup);
       }
     }
-    const char *SaveString(const char *Str) LLVM_OVERRIDE {
+    const char *SaveString(const char *Str) override {
       char *Dup = strdup(Str);
       Dups.push_back(Dup);
       return Dup;
@@ -1516,7 +1507,7 @@ public:
   using HelpPrinter::operator= ;
 
 protected:
-  virtual void printOptions(StrOptionPairVector &Opts, size_t MaxArgLen) {
+  void printOptions(StrOptionPairVector &Opts, size_t MaxArgLen) override {
     std::vector<OptionCategory *> SortedCategories;
     std::map<OptionCategory *, std::vector<Option *> > CategorizedOptions;
 

@@ -1682,16 +1682,6 @@ Value *BoUpSLP::vectorizeTree() {
   return VectorizableTree[0].VectorizedValue;
 }
 
-class DTCmp {
-  const DominatorTree *DT;
-
-public:
-  DTCmp(const DominatorTree *DT) : DT(DT) {}
-  bool operator()(const BasicBlock *A, const BasicBlock *B) const {
-    return DT->properlyDominates(A, B);
-  }
-};
-
 void BoUpSLP::optimizeGatherSequence() {
   DEBUG(dbgs() << "SLP: Optimizing " << GatherSeq.size()
         << " gather sequences instructions.\n");
@@ -1730,7 +1720,10 @@ void BoUpSLP::optimizeGatherSequence() {
   // Sort blocks by domination. This ensures we visit a block after all blocks
   // dominating it are visited.
   SmallVector<BasicBlock *, 8> CSEWorkList(CSEBlocks.begin(), CSEBlocks.end());
-  std::stable_sort(CSEWorkList.begin(), CSEWorkList.end(), DTCmp(DT));
+  std::stable_sort(CSEWorkList.begin(), CSEWorkList.end(),
+                   [this](const BasicBlock *A, const BasicBlock *B) {
+    return DT->properlyDominates(A, B);
+  });
 
   // Perform O(N^2) search over the gather sequences and merge identical
   // instructions. TODO: We can further optimize this scan if we split the
@@ -1739,7 +1732,7 @@ void BoUpSLP::optimizeGatherSequence() {
   for (SmallVectorImpl<BasicBlock *>::iterator I = CSEWorkList.begin(),
                                                E = CSEWorkList.end();
        I != E; ++I) {
-    assert((I == CSEWorkList.begin() || !DT->dominates(*I, *llvm::prior(I))) &&
+    assert((I == CSEWorkList.begin() || !DT->dominates(*I, *std::prev(I))) &&
            "Worklist not sorted properly!");
     BasicBlock *BB = *I;
     // For all instructions in blocks containing gather sequences:
@@ -1790,7 +1783,7 @@ struct SLPVectorizer : public FunctionPass {
   LoopInfo *LI;
   DominatorTree *DT;
 
-  virtual bool runOnFunction(Function &F) {
+  bool runOnFunction(Function &F) override {
     if (skipOptnoneFunction(F))
       return false;
 
@@ -1849,7 +1842,7 @@ struct SLPVectorizer : public FunctionPass {
     return Changed;
   }
 
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
     FunctionPass::getAnalysisUsage(AU);
     AU.addRequired<ScalarEvolution>();
     AU.addRequired<AliasAnalysis>();

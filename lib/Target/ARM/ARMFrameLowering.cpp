@@ -175,7 +175,7 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF) const {
   if (MF.getFunction()->getCallingConv() == CallingConv::GHC)
     return;
 
-  // Allocate the vararg register save area. This is not counted in NumBytes.
+  // Allocate the vararg register save area.
   if (ArgRegsSaveSize) {
     emitSPUpdate(isARM, MBB, MBBI, dl, TII, -ArgRegsSaveSize,
                  MachineInstr::FrameSetup);
@@ -188,13 +188,13 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF) const {
   }
 
   if (!AFI->hasStackFrame()) {
-    if (NumBytes != 0) {
-      emitSPUpdate(isARM, MBB, MBBI, dl, TII, -NumBytes,
+    if (NumBytes - ArgRegsSaveSize != 0) {
+      emitSPUpdate(isARM, MBB, MBBI, dl, TII, -(NumBytes - ArgRegsSaveSize),
                    MachineInstr::FrameSetup);
       MCSymbol *SPLabel = Context.CreateTempSymbol();
       BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::PROLOG_LABEL))
           .addSym(SPLabel);
-      CFAOffset -= NumBytes;
+      CFAOffset -= NumBytes - ArgRegsSaveSize;
       MMI.addFrameInst(MCCFIInstruction::createDefCfaOffset(SPLabel,
                                                             CFAOffset));
     }
@@ -246,12 +246,14 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF) const {
 
   // Determine starting offsets of spill areas.
   bool HasFP = hasFP(MF);
-  unsigned DPRCSOffset  = NumBytes - (GPRCS1Size + GPRCS2Size + DPRCSSize);
+  unsigned DPRCSOffset  = NumBytes - (ArgRegsSaveSize + GPRCS1Size
+                                      + GPRCS2Size + DPRCSSize);
   unsigned GPRCS2Offset = DPRCSOffset + DPRCSSize;
   unsigned GPRCS1Offset = GPRCS2Offset + GPRCS2Size;
   int FramePtrOffsetInPush = 0;
   if (HasFP) {
-    FramePtrOffsetInPush = MFI->getObjectOffset(FramePtrSpillFI) + GPRCS1Size;
+    FramePtrOffsetInPush = MFI->getObjectOffset(FramePtrSpillFI)
+                           + GPRCS1Size + ArgRegsSaveSize;
     AFI->setFramePtrSpillOffset(MFI->getObjectOffset(FramePtrSpillFI) +
                                 NumBytes);
   }
@@ -339,7 +341,7 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF) const {
       case ARM::LR:
         MMI.addFrameInst(MCCFIInstruction::createOffset(SPLabel,
            MRI->getDwarfRegNum(Reg, true),
-           MFI->getObjectOffset(FI) - ArgRegsSaveSize));
+           MFI->getObjectOffset(FI)));
         break;
       }
     }
@@ -390,7 +392,7 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF) const {
       case ARM::R12:
         if (STI.isTargetMachO()) {
           unsigned DwarfReg =  MRI->getDwarfRegNum(Reg, true);
-          unsigned Offset = MFI->getObjectOffset(FI) - ArgRegsSaveSize;
+          unsigned Offset = MFI->getObjectOffset(FI);
           MMI.addFrameInst(
               MCCFIInstruction::createOffset(SPLabel, DwarfReg, Offset));
         }
@@ -536,8 +538,8 @@ void ARMFrameLowering::emitEpilogue(MachineFunction &MF,
     return;
 
   if (!AFI->hasStackFrame()) {
-    if (NumBytes != 0)
-      emitSPUpdate(isARM, MBB, MBBI, dl, TII, NumBytes);
+    if (NumBytes - ArgRegsSaveSize != 0)
+      emitSPUpdate(isARM, MBB, MBBI, dl, TII, NumBytes - ArgRegsSaveSize);
   } else {
     // Unwind MBBI to point to first LDR / VLDRD.
     const uint16_t *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
@@ -550,7 +552,8 @@ void ARMFrameLowering::emitEpilogue(MachineFunction &MF,
     }
 
     // Move SP to start of FP callee save spill area.
-    NumBytes -= (AFI->getGPRCalleeSavedArea1Size() +
+    NumBytes -= (ArgRegsSaveSize +
+                 AFI->getGPRCalleeSavedArea1Size() +
                  AFI->getGPRCalleeSavedArea2Size() +
                  AFI->getDPRCalleeSavedAreaSize());
 
@@ -632,7 +635,7 @@ void ARMFrameLowering::emitEpilogue(MachineFunction &MF,
         addReg(JumpTarget.getReg(), RegState::Kill);
     }
 
-    MachineInstr *NewMI = prior(MBBI);
+    MachineInstr *NewMI = std::prev(MBBI);
     for (unsigned i = 1, e = MBBI->getNumOperands(); i != e; ++i)
       NewMI->addOperand(MBBI->getOperand(i));
 
@@ -1017,7 +1020,7 @@ static void emitAlignedDPRCS2Spills(MachineBasicBlock &MBB,
   }
 
   // The last spill instruction inserted should kill the scratch register r4.
-  llvm::prior(MI)->addRegisterKilled(ARM::R4, TRI);
+  std::prev(MI)->addRegisterKilled(ARM::R4, TRI);
 }
 
 /// Skip past the code inserted by emitAlignedDPRCS2Spills, and return an
@@ -1127,7 +1130,7 @@ static void emitAlignedDPRCS2Restores(MachineBasicBlock &MBB,
                    .addReg(ARM::R4).addImm(2*(NextReg-R4BaseReg)));
 
   // Last store kills r4.
-  llvm::prior(MI)->addRegisterKilled(ARM::R4, TRI);
+  std::prev(MI)->addRegisterKilled(ARM::R4, TRI);
 }
 
 bool ARMFrameLowering::spillCalleeSavedRegisters(MachineBasicBlock &MBB,

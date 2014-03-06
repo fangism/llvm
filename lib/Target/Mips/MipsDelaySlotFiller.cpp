@@ -65,20 +65,6 @@ namespace {
   typedef MachineBasicBlock::reverse_iterator ReverseIter;
   typedef SmallDenseMap<MachineBasicBlock*, MachineInstr*, 2> BB2BrMap;
 
-  /// \brief A functor comparing edge weight of two blocks.
-  struct CmpWeight {
-    CmpWeight(const MachineBasicBlock &S,
-              const MachineBranchProbabilityInfo &P) : Src(S), Prob(P) {}
-
-    bool operator()(const MachineBasicBlock *Dst0,
-                    const MachineBasicBlock *Dst1) const {
-      return Prob.getEdgeWeight(&Src, Dst0) < Prob.getEdgeWeight(&Src, Dst1);
-    }
-
-    const MachineBasicBlock &Src;
-    const MachineBranchProbabilityInfo &Prob;
-  };
-
   class RegDefsUses {
   public:
     RegDefsUses(TargetMachine &TM);
@@ -514,8 +500,8 @@ bool Filler::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
     // Bundle the NOP to the instruction with the delay slot.
     const MipsInstrInfo *TII =
       static_cast<const MipsInstrInfo*>(TM.getInstrInfo());
-    BuildMI(MBB, llvm::next(I), I->getDebugLoc(), TII->get(Mips::NOP));
-    MIBundleBuilder(MBB, I, llvm::next(llvm::next(I)));
+    BuildMI(MBB, std::next(I), I->getDebugLoc(), TII->get(Mips::NOP));
+    MIBundleBuilder(MBB, I, std::next(I, 2));
   }
 
   return Changed;
@@ -565,8 +551,8 @@ bool Filler::searchBackward(MachineBasicBlock &MBB, Iter Slot) const {
   if (!searchRange(MBB, ReverseIter(Slot), MBB.rend(), RegDU, MemDU, Filler))
     return false;
 
-  MBB.splice(llvm::next(Slot), &MBB, llvm::next(Filler).base());
-  MIBundleBuilder(MBB, Slot, llvm::next(llvm::next(Slot)));
+  MBB.splice(std::next(Slot), &MBB, std::next(Filler).base());
+  MIBundleBuilder(MBB, Slot, std::next(Slot, 2));
   ++UsefulSlots;
   return true;
 }
@@ -582,11 +568,11 @@ bool Filler::searchForward(MachineBasicBlock &MBB, Iter Slot) const {
 
   RegDU.setCallerSaved(*Slot);
 
-  if (!searchRange(MBB, llvm::next(Slot), MBB.end(), RegDU, NM, Filler))
+  if (!searchRange(MBB, std::next(Slot), MBB.end(), RegDU, NM, Filler))
     return false;
 
-  MBB.splice(llvm::next(Slot), &MBB, Filler);
-  MIBundleBuilder(MBB, Slot, llvm::next(llvm::next(Slot)));
+  MBB.splice(std::next(Slot), &MBB, Filler);
+  MIBundleBuilder(MBB, Slot, std::next(Slot, 2));
   ++UsefulSlots;
   return true;
 }
@@ -640,8 +626,12 @@ MachineBasicBlock *Filler::selectSuccBB(MachineBasicBlock &B) const {
     return NULL;
 
   // Select the successor with the larget edge weight.
-  CmpWeight Cmp(B, getAnalysis<MachineBranchProbabilityInfo>());
-  MachineBasicBlock *S = *std::max_element(B.succ_begin(), B.succ_end(), Cmp);
+  auto &Prob = getAnalysis<MachineBranchProbabilityInfo>();
+  MachineBasicBlock *S = *std::max_element(B.succ_begin(), B.succ_end(),
+                                           [&](const MachineBasicBlock *Dst0,
+                                               const MachineBasicBlock *Dst1) {
+    return Prob.getEdgeWeight(&B, Dst0) < Prob.getEdgeWeight(&B, Dst1);
+  });
   return S->isLandingPad() ? NULL : S;
 }
 

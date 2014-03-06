@@ -22,21 +22,21 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/MathExtras.h"
-#include "llvm/Support/ValueHandle.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Transforms/Utils/GlobalStatus.h"
@@ -63,7 +63,7 @@ STATISTIC(NumCXXDtorsRemoved, "Number of global C++ destructors removed");
 
 namespace {
   struct GlobalOpt : public ModulePass {
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.addRequired<TargetLibraryInfo>();
     }
     static char ID; // Pass identification, replacement for typeid
@@ -71,7 +71,7 @@ namespace {
       initializeGlobalOptPass(*PassRegistry::getPassRegistry());
     }
 
-    bool runOnModule(Module &M);
+    bool runOnModule(Module &M) override;
 
   private:
     GlobalVariable *FindGlobalCtors(Module &M);
@@ -1926,7 +1926,8 @@ bool GlobalOpt::OptimizeFunctions(Module &M) {
       Changed = true;
       ++NumFnDeleted;
     } else if (F->hasLocalLinkage()) {
-      if (isProfitableToMakeFastCC(F) && !F->isVarArg() && !F->hasAddressTaken()) {
+      if (isProfitableToMakeFastCC(F) && !F->isVarArg() &&
+          !F->hasAddressTaken()) {
         // If this function has a calling convention worth changing, is not a
         // varargs function, and is only called directly, promote it to use the
         // Fast calling convention.
@@ -2187,7 +2188,7 @@ static bool isSimpleEnoughPointerToCommit(Constant *C) {
         return false;
 
       // The first index must be zero.
-      ConstantInt *CI = dyn_cast<ConstantInt>(*llvm::next(CE->op_begin()));
+      ConstantInt *CI = dyn_cast<ConstantInt>(*std::next(CE->op_begin()));
       if (!CI || !CI->isZero()) return false;
 
       // The remaining indices must be compile-time known integers within the

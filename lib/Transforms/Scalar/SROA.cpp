@@ -32,19 +32,19 @@
 #include "llvm/Analysis/Loads.h"
 #include "llvm/Analysis/PtrUseVisitor.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/DIBuilder.h"
-#include "llvm/DebugInfo.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Operator.h"
-#include "llvm/InstVisitor.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
@@ -556,7 +556,7 @@ private:
     // they both point to the same alloca.
     bool Inserted;
     SmallDenseMap<Instruction *, unsigned>::iterator MTPI;
-    llvm::tie(MTPI, Inserted) =
+    std::tie(MTPI, Inserted) =
         MemTransferSliceMap.insert(std::make_pair(&II, S.Slices.size()));
     unsigned PrevIdx = MTPI->second;
     if (!Inserted) {
@@ -615,7 +615,7 @@ private:
     Size = 0;
     do {
       Instruction *I, *UsedI;
-      llvm::tie(UsedI, I) = Uses.pop_back_val();
+      std::tie(UsedI, I) = Uses.pop_back_val();
 
       if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
         Size = std::max(Size, DL.getTypeStoreSize(LI->getType()));
@@ -836,8 +836,8 @@ public:
       DVIs.pop_back_val()->eraseFromParent();
   }
 
-  virtual bool isInstInList(Instruction *I,
-                            const SmallVectorImpl<Instruction*> &Insts) const {
+  bool isInstInList(Instruction *I,
+                    const SmallVectorImpl<Instruction*> &Insts) const override {
     Value *Ptr;
     if (LoadInst *LI = dyn_cast<LoadInst>(I))
       Ptr = LI->getOperand(0);
@@ -864,7 +864,7 @@ public:
     return false;
   }
 
-  virtual void updateDebugInfo(Instruction *Inst) const {
+  void updateDebugInfo(Instruction *Inst) const override {
     for (SmallVectorImpl<DbgDeclareInst *>::const_iterator I = DDIs.begin(),
            E = DDIs.end(); I != E; ++I) {
       DbgDeclareInst *DDI = *I;
@@ -975,10 +975,10 @@ public:
         C(0), DL(0), DT(0) {
     initializeSROAPass(*PassRegistry::getPassRegistry());
   }
-  bool runOnFunction(Function &F);
-  void getAnalysisUsage(AnalysisUsage &AU) const;
+  bool runOnFunction(Function &F) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 
-  const char *getPassName() const { return "SROA"; }
+  const char *getPassName() const override { return "SROA"; }
   static char ID;
 
 private:
@@ -2232,7 +2232,7 @@ private:
              DL.getTypeStoreSizeInBits(LI.getType()) &&
              "Non-byte-multiple bit width");
       // Move the insertion point just past the load so that we can refer to it.
-      IRB.SetInsertPoint(llvm::next(BasicBlock::iterator(&LI)));
+      IRB.SetInsertPoint(std::next(BasicBlock::iterator(&LI)));
       // Create a placeholder value with the same type as LI to use as the
       // basis for the new value. This allows us to replace the uses of LI with
       // the computed value, and then replace the placeholder with LI, leaving
@@ -3255,18 +3255,6 @@ bool SROA::rewritePartition(AllocaInst &AI, AllocaSlices &S,
   return true;
 }
 
-namespace {
-struct IsSliceEndLessOrEqualTo {
-  uint64_t UpperBound;
-
-  IsSliceEndLessOrEqualTo(uint64_t UpperBound) : UpperBound(UpperBound) {}
-
-  bool operator()(const AllocaSlices::iterator &I) {
-    return I->endOffset() <= UpperBound;
-  }
-};
-}
-
 static void
 removeFinishedSplitUses(SmallVectorImpl<AllocaSlices::iterator> &SplitUses,
                         uint64_t &MaxSplitUseEndOffset, uint64_t Offset) {
@@ -3278,7 +3266,9 @@ removeFinishedSplitUses(SmallVectorImpl<AllocaSlices::iterator> &SplitUses,
 
   size_t SplitUsesOldSize = SplitUses.size();
   SplitUses.erase(std::remove_if(SplitUses.begin(), SplitUses.end(),
-                                 IsSliceEndLessOrEqualTo(Offset)),
+                                 [Offset](const AllocaSlices::iterator &I) {
+                    return I->endOffset() <= Offset;
+                  }),
                   SplitUses.end());
   if (SplitUsesOldSize == SplitUses.size())
     return;
@@ -3305,7 +3295,7 @@ bool SROA::splitAlloca(AllocaInst &AI, AllocaSlices &S) {
 
   uint64_t BeginOffset = S.begin()->beginOffset();
 
-  for (AllocaSlices::iterator SI = S.begin(), SJ = llvm::next(SI), SE = S.end();
+  for (AllocaSlices::iterator SI = S.begin(), SJ = std::next(SI), SE = S.end();
        SI != SE; SI = SJ) {
     uint64_t MaxEndOffset = SI->endOffset();
 
@@ -3457,9 +3447,8 @@ bool SROA::runOnAlloca(AllocaInst &AI) {
                                         DE = S.dead_user_end();
        DI != DE; ++DI) {
     // Free up everything used by this instruction.
-    for (User::op_iterator DOI = (*DI)->op_begin(), DOE = (*DI)->op_end();
-         DOI != DOE; ++DOI)
-      clobberUse(*DOI);
+    for (Use &DeadOp : (*DI)->operands())
+      clobberUse(DeadOp);
 
     // Now replace the uses of this instruction.
     (*DI)->replaceAllUsesWith(UndefValue::get((*DI)->getType()));
@@ -3508,10 +3497,10 @@ void SROA::deleteDeadInstructions(SmallPtrSet<AllocaInst*, 4> &DeletedAllocas) {
 
     I->replaceAllUsesWith(UndefValue::get(I->getType()));
 
-    for (User::op_iterator OI = I->op_begin(), E = I->op_end(); OI != E; ++OI)
-      if (Instruction *U = dyn_cast<Instruction>(*OI)) {
+    for (Use &Operand : I->operands())
+      if (Instruction *U = dyn_cast<Instruction>(Operand)) {
         // Zero out the operand and see if it becomes trivially dead.
-        *OI = 0;
+        Operand = 0;
         if (isInstructionTriviallyDead(U))
           DeadInsts.insert(U);
       }
@@ -3616,20 +3605,6 @@ bool SROA::promoteAllocas(Function &F) {
   return true;
 }
 
-namespace {
-  /// \brief A predicate to test whether an alloca belongs to a set.
-  class IsAllocaInSet {
-    typedef SmallPtrSet<AllocaInst *, 4> SetType;
-    const SetType &Set;
-
-  public:
-    typedef AllocaInst *argument_type;
-
-    IsAllocaInSet(const SetType &Set) : Set(Set) {}
-    bool operator()(AllocaInst *AI) const { return Set.count(AI); }
-  };
-}
-
 bool SROA::runOnFunction(Function &F) {
   if (skipOptnoneFunction(F))
     return false;
@@ -3647,7 +3622,7 @@ bool SROA::runOnFunction(Function &F) {
   DT = DTWP ? &DTWP->getDomTree() : 0;
 
   BasicBlock &EntryBB = F.getEntryBlock();
-  for (BasicBlock::iterator I = EntryBB.begin(), E = llvm::prior(EntryBB.end());
+  for (BasicBlock::iterator I = EntryBB.begin(), E = std::prev(EntryBB.end());
        I != E; ++I)
     if (AllocaInst *AI = dyn_cast<AllocaInst>(I))
       Worklist.insert(AI);
@@ -3665,11 +3640,14 @@ bool SROA::runOnFunction(Function &F) {
       // Remove the deleted allocas from various lists so that we don't try to
       // continue processing them.
       if (!DeletedAllocas.empty()) {
-        Worklist.remove_if(IsAllocaInSet(DeletedAllocas));
-        PostPromotionWorklist.remove_if(IsAllocaInSet(DeletedAllocas));
+        auto IsInSet = [&](AllocaInst *AI) {
+          return DeletedAllocas.count(AI);
+        };
+        Worklist.remove_if(IsInSet);
+        PostPromotionWorklist.remove_if(IsInSet);
         PromotableAllocas.erase(std::remove_if(PromotableAllocas.begin(),
                                                PromotableAllocas.end(),
-                                               IsAllocaInSet(DeletedAllocas)),
+                                               IsInSet),
                                 PromotableAllocas.end());
         DeletedAllocas.clear();
       }

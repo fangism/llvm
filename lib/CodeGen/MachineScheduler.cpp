@@ -15,7 +15,6 @@
 #define DEBUG_TYPE "misched"
 
 #include "llvm/CodeGen/MachineScheduler.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/PriorityQueue.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/CodeGen/LiveIntervalAnalysis.h"
@@ -321,7 +320,7 @@ bool MachineScheduler::runOnMachineFunction(MachineFunction &mf) {
 
   // Instantiate the selected scheduler for this target, function, and
   // optimization level.
-  OwningPtr<ScheduleDAGInstrs> Scheduler(createMachineScheduler());
+  std::unique_ptr<ScheduleDAGInstrs> Scheduler(createMachineScheduler());
   scheduleRegions(*Scheduler);
 
   DEBUG(LIS->dump());
@@ -342,7 +341,7 @@ bool PostMachineScheduler::runOnMachineFunction(MachineFunction &mf) {
 
   // Instantiate the selected scheduler for this target, function, and
   // optimization level.
-  OwningPtr<ScheduleDAGInstrs> Scheduler(createPostMachineScheduler());
+  std::unique_ptr<ScheduleDAGInstrs> Scheduler(createPostMachineScheduler());
   scheduleRegions(*Scheduler);
 
   if (VerifyScheduling)
@@ -408,8 +407,8 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler) {
         RegionEnd != MBB->begin(); RegionEnd = Scheduler.begin()) {
 
       // Avoid decrementing RegionEnd for blocks with no terminator.
-      if (RegionEnd != MBB->end()
-          || isSchedBoundary(llvm::prior(RegionEnd), MBB, MF, TII, IsPostRA)) {
+      if (RegionEnd != MBB->end() ||
+          isSchedBoundary(std::prev(RegionEnd), MBB, MF, TII, IsPostRA)) {
         --RegionEnd;
         // Count the boundary instruction.
         --RemainingInstrs;
@@ -420,7 +419,7 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler) {
       unsigned NumRegionInstrs = 0;
       MachineBasicBlock::iterator I = RegionEnd;
       for(;I != MBB->begin(); --I, --RemainingInstrs, ++NumRegionInstrs) {
-        if (isSchedBoundary(llvm::prior(I), MBB, MF, TII, IsPostRA))
+        if (isSchedBoundary(std::prev(I), MBB, MF, TII, IsPostRA))
           break;
       }
       // Notify the scheduler of the region, even if we may skip scheduling
@@ -428,7 +427,7 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler) {
       Scheduler.enterRegion(MBB, I, RegionEnd, NumRegionInstrs);
 
       // Skip empty scheduling regions (0 or 1 schedulable instructions).
-      if (I == RegionEnd || I == llvm::prior(RegionEnd)) {
+      if (I == RegionEnd || I == std::prev(RegionEnd)) {
         // Close the current region. Bundle the terminator if needed.
         // This invalidates 'RegionEnd' and 'I'.
         Scheduler.exitRegion();
@@ -770,13 +769,13 @@ void ScheduleDAGMI::placeDebugValues() {
 
   for (std::vector<std::pair<MachineInstr *, MachineInstr *> >::iterator
          DI = DbgValues.end(), DE = DbgValues.begin(); DI != DE; --DI) {
-    std::pair<MachineInstr *, MachineInstr *> P = *prior(DI);
+    std::pair<MachineInstr *, MachineInstr *> P = *std::prev(DI);
     MachineInstr *DbgValue = P.first;
     MachineBasicBlock::iterator OrigPrevMI = P.second;
     if (&*RegionBegin == DbgValue)
       ++RegionBegin;
     BB->splice(++OrigPrevMI, BB, DbgValue);
-    if (OrigPrevMI == llvm::prior(RegionEnd))
+    if (OrigPrevMI == std::prev(RegionEnd))
       RegionEnd = DbgValue;
   }
   DbgValues.clear();
@@ -816,8 +815,7 @@ void ScheduleDAGMILive::enterRegion(MachineBasicBlock *bb,
   ScheduleDAGMI::enterRegion(bb, begin, end, regioninstrs);
 
   // For convenience remember the end of the liveness region.
-  LiveRegionEnd =
-    (RegionEnd == bb->end()) ? RegionEnd : llvm::next(RegionEnd);
+  LiveRegionEnd = (RegionEnd == bb->end()) ? RegionEnd : std::next(RegionEnd);
 
   SUPressureDiffs.clear();
 
@@ -1446,19 +1444,19 @@ void CopyConstrain::constrainLocalCopy(SUnit *CopySU, ScheduleDAGMILive *DAG) {
   // Check if GlobalLI contains a hole in the vicinity of LocalLI.
   if (GlobalSegment != GlobalLI->begin()) {
     // Two address defs have no hole.
-    if (SlotIndex::isSameInstr(llvm::prior(GlobalSegment)->end,
+    if (SlotIndex::isSameInstr(std::prev(GlobalSegment)->end,
                                GlobalSegment->start)) {
       return;
     }
     // If the prior global segment may be defined by the same two-address
     // instruction that also defines LocalLI, then can't make a hole here.
-    if (SlotIndex::isSameInstr(llvm::prior(GlobalSegment)->start,
+    if (SlotIndex::isSameInstr(std::prev(GlobalSegment)->start,
                                LocalLI->beginIndex())) {
       return;
     }
     // If GlobalLI has a prior segment, it must be live into the EBB. Otherwise
     // it would be a disconnected component in the live range.
-    assert(llvm::prior(GlobalSegment)->start < LocalLI->beginIndex() &&
+    assert(std::prev(GlobalSegment)->start < LocalLI->beginIndex() &&
            "Disconnected LRG within the scheduling region.");
   }
   MachineInstr *GlobalDef = LIS->getInstructionFromIndex(GlobalSegment->start);
@@ -2454,27 +2452,27 @@ public:
 
   virtual void initPolicy(MachineBasicBlock::iterator Begin,
                           MachineBasicBlock::iterator End,
-                          unsigned NumRegionInstrs) LLVM_OVERRIDE;
+                          unsigned NumRegionInstrs) override;
 
-  virtual bool shouldTrackPressure() const LLVM_OVERRIDE {
+  virtual bool shouldTrackPressure() const override {
     return RegionPolicy.ShouldTrackPressure;
   }
 
-  virtual void initialize(ScheduleDAGMI *dag) LLVM_OVERRIDE;
+  virtual void initialize(ScheduleDAGMI *dag) override;
 
-  virtual SUnit *pickNode(bool &IsTopNode) LLVM_OVERRIDE;
+  virtual SUnit *pickNode(bool &IsTopNode) override;
 
-  virtual void schedNode(SUnit *SU, bool IsTopNode) LLVM_OVERRIDE;
+  virtual void schedNode(SUnit *SU, bool IsTopNode) override;
 
-  virtual void releaseTopNode(SUnit *SU) LLVM_OVERRIDE {
+  virtual void releaseTopNode(SUnit *SU) override {
     Top.releaseTopNode(SU);
   }
 
-  virtual void releaseBottomNode(SUnit *SU) LLVM_OVERRIDE {
+  virtual void releaseBottomNode(SUnit *SU) override {
     Bot.releaseBottomNode(SU);
   }
 
-  virtual void registerRoots() LLVM_OVERRIDE;
+  virtual void registerRoots() override;
 
 protected:
   void checkAcyclicLatency();
@@ -3047,14 +3045,14 @@ public:
 
   virtual void initPolicy(MachineBasicBlock::iterator Begin,
                           MachineBasicBlock::iterator End,
-                          unsigned NumRegionInstrs) LLVM_OVERRIDE {
+                          unsigned NumRegionInstrs) override {
     /* no configurable policy */
   };
 
   /// PostRA scheduling does not track pressure.
-  virtual bool shouldTrackPressure() const LLVM_OVERRIDE { return false; }
+  virtual bool shouldTrackPressure() const override { return false; }
 
-  virtual void initialize(ScheduleDAGMI *Dag) LLVM_OVERRIDE {
+  virtual void initialize(ScheduleDAGMI *Dag) override {
     DAG = Dag;
     SchedModel = DAG->getSchedModel();
     TRI = DAG->TRI;
@@ -3073,22 +3071,22 @@ public:
     }
   }
 
-  virtual void registerRoots() LLVM_OVERRIDE;
+  virtual void registerRoots() override;
 
-  virtual SUnit *pickNode(bool &IsTopNode) LLVM_OVERRIDE;
+  virtual SUnit *pickNode(bool &IsTopNode) override;
 
-  virtual void scheduleTree(unsigned SubtreeID) LLVM_OVERRIDE {
+  virtual void scheduleTree(unsigned SubtreeID) override {
     llvm_unreachable("PostRA scheduler does not support subtree analysis.");
   }
 
-  virtual void schedNode(SUnit *SU, bool IsTopNode) LLVM_OVERRIDE;
+  virtual void schedNode(SUnit *SU, bool IsTopNode) override;
 
-  virtual void releaseTopNode(SUnit *SU) LLVM_OVERRIDE {
+  virtual void releaseTopNode(SUnit *SU) override {
     Top.releaseTopNode(SU);
   }
 
   // Only called for roots.
-  virtual void releaseBottomNode(SUnit *SU) LLVM_OVERRIDE {
+  virtual void releaseBottomNode(SUnit *SU) override {
     BotRoots.push_back(SU);
   }
 

@@ -101,7 +101,7 @@ class RAGreedy : public MachineFunctionPass,
   LiveDebugVariables *DebugVars;
 
   // state
-  OwningPtr<Spiller> SpillerInstance;
+  std::unique_ptr<Spiller> SpillerInstance;
   PQueue Queue;
   unsigned NextCascade;
 
@@ -190,15 +190,14 @@ class RAGreedy : public MachineFunctionPass,
     void setBrokenHints(unsigned NHints) { BrokenHints = NHints; }
 
     bool operator<(const EvictionCost &O) const {
-      if (BrokenHints != O.BrokenHints)
-        return BrokenHints < O.BrokenHints;
-      return MaxWeight < O.MaxWeight;
+      return std::tie(BrokenHints, MaxWeight) <
+             std::tie(O.BrokenHints, O.MaxWeight);
     }
   };
 
   // splitting state.
-  OwningPtr<SplitAnalysis> SA;
-  OwningPtr<SplitEditor> SE;
+  std::unique_ptr<SplitAnalysis> SA;
+  std::unique_ptr<SplitEditor> SE;
 
   /// Cached per-block interference maps
   InterferenceCache IntfCache;
@@ -247,7 +246,7 @@ class RAGreedy : public MachineFunctionPass,
   /// class.
   SmallVector<GlobalSplitCandidate, 32> GlobalCand;
 
-  enum LLVM_ENUM_INT_TYPE(unsigned) { NoCand = ~0u };
+  enum : unsigned { NoCand = ~0u };
 
   /// Candidate map. Each edge bundle is assigned to a GlobalCand entry, or to
   /// NoCand which indicates the stack interval.

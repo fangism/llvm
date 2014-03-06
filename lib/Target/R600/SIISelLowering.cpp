@@ -128,6 +128,9 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
   setLoadExtAction(ISD::SEXTLOAD, MVT::i32, Expand);
   setLoadExtAction(ISD::SEXTLOAD, MVT::i8, Custom);
   setLoadExtAction(ISD::SEXTLOAD, MVT::i16, Custom);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, Expand);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, Custom);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::i16, Custom);
   setLoadExtAction(ISD::SEXTLOAD, MVT::v8i16, Expand);
   setLoadExtAction(ISD::SEXTLOAD, MVT::v16i16, Expand);
 
@@ -150,7 +153,7 @@ SITargetLowering::SITargetLowering(TargetMachine &TM) :
   // We only support LOAD/STORE and vector manipulation ops for vectors
   // with > 4 elements.
   MVT VecTypes[] = {
-    MVT::v8i32, MVT::v8f32
+    MVT::v8i32, MVT::v8f32, MVT::v16i32, MVT::v16f32
   };
 
   const size_t NumVecTypes = array_lengthof(VecTypes);

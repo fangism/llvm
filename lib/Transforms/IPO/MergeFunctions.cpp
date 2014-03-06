@@ -50,6 +50,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/IRBuilder.h"
@@ -58,11 +59,10 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/ValueHandle.h"
 #include "llvm/Support/raw_ostream.h"
 #include <vector>
 using namespace llvm;
@@ -561,7 +561,7 @@ public:
     initializeMergeFunctionsPass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnModule(Module &M);
+  bool runOnModule(Module &M) override;
 
 private:
   typedef DenseSet<ComparableFunction> FnSetType;

@@ -141,81 +141,9 @@ inline mapped_iterator<ItTy, FuncTy> map_iterator(const ItTy &I, FuncTy F) {
   return mapped_iterator<ItTy, FuncTy>(I, F);
 }
 
-
-// next/prior - These functions unlike std::advance do not modify the
-// passed iterator but return a copy.
-//
-// next(myIt) returns copy of myIt incremented once
-// next(myIt, n) returns copy of myIt incremented n times
-// prior(myIt) returns copy of myIt decremented once
-// prior(myIt, n) returns copy of myIt decremented n times
-
-template <typename ItTy, typename Dist>
-inline ItTy next(ItTy it, Dist n)
-{
-  std::advance(it, n);
-  return it;
-}
-
-template <typename ItTy>
-inline ItTy next(ItTy it)
-{
-  return ++it;
-}
-
-template <typename ItTy, typename Dist>
-inline ItTy prior(ItTy it, Dist n)
-{
-  std::advance(it, -n);
-  return it;
-}
-
-template <typename ItTy>
-inline ItTy prior(ItTy it)
-{
-  return --it;
-}
-
 //===----------------------------------------------------------------------===//
 //     Extra additions to <utility>
 //===----------------------------------------------------------------------===//
-
-// tie - this function ties two objects and returns a temporary object
-// that is assignable from a std::pair. This can be used to make code
-// more readable when using values returned from functions bundled in
-// a std::pair. Since an example is worth 1000 words:
-//
-// typedef std::map<int, int> Int2IntMap;
-//
-// Int2IntMap myMap;
-// Int2IntMap::iterator where;
-// bool inserted;
-// tie(where, inserted) = myMap.insert(std::make_pair(123,456));
-//
-// if (inserted)
-//   // do stuff
-// else
-//   // do other stuff
-template <typename T1, typename T2>
-struct tier {
-  typedef T1 &first_type;
-  typedef T2 &second_type;
-
-  first_type first;
-  second_type second;
-
-  tier(first_type f, second_type s) : first(f), second(s) { }
-  tier& operator=(const std::pair<T1, T2>& p) {
-    first = p.first;
-    second = p.second;
-    return *this;
-  }
-};
-
-template <typename T1, typename T2>
-inline tier<T1, T2> tie(T1& f, T2& s) {
-  return tier<T1, T2>(f, s);
-}
 
 /// \brief Function object to check whether the first component of a std::pair
 /// compares less than the first component of another std::pair.

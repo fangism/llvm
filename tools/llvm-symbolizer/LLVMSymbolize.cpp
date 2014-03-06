@@ -231,7 +231,7 @@ static std::string getDarwinDWARFResourceForPath(const std::string &Path) {
 }
 
 static bool checkFileCRC(StringRef Path, uint32_t CRCHash) {
-  OwningPtr<MemoryBuffer> MB;
+  std::unique_ptr<MemoryBuffer> MB;
   if (MemoryBuffer::getFileOrSTDIN(Path, MB))
     return false;
   return !zlib::isAvailable() || CRCHash == zlib::crc32(MB->getBuffer());
@@ -313,9 +313,9 @@ LLVMSymbolizer::getOrCreateBinary(const std::string &Path) {
   Binary *DbgBin = 0;
   ErrorOr<Binary *> BinaryOrErr = createBinary(Path);
   if (!error(BinaryOrErr.getError())) {
-    OwningPtr<Binary> ParsedBinary(BinaryOrErr.get());
+    std::unique_ptr<Binary> ParsedBinary(BinaryOrErr.get());
     // Check if it's a universal binary.
-    Bin = ParsedBinary.take();
+    Bin = ParsedBinary.release();
     ParsedBinariesAndObjects.push_back(Bin);
     if (Bin->isMachO() || Bin->isMachOUniversalBinary()) {
       // On Darwin we may find DWARF in separate object file in
@@ -361,9 +361,9 @@ LLVMSymbolizer::getObjectFileFromBinary(Binary *Bin, const std::string &ArchName
         std::make_pair(UB, ArchName));
     if (I != ObjectFileForArch.end())
       return I->second;
-    OwningPtr<ObjectFile> ParsedObj;
+    std::unique_ptr<ObjectFile> ParsedObj;
     if (!UB->getObjectForArch(Triple(ArchName).getArch(), ParsedObj)) {
-      Res = ParsedObj.take();
+      Res = ParsedObj.release();
       ParsedBinariesAndObjects.push_back(Res);
     }
     ObjectFileForArch[std::make_pair(UB, ArchName)] = Res;

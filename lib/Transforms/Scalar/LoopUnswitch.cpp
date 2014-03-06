@@ -156,13 +156,13 @@ namespace {
         initializeLoopUnswitchPass(*PassRegistry::getPassRegistry());
       }
 
-    bool runOnLoop(Loop *L, LPPassManager &LPM);
+    bool runOnLoop(Loop *L, LPPassManager &LPM) override;
     bool processCurrentLoop();
 
     /// This transformation requires natural loop information & requires that
     /// loop preheaders be inserted into the CFG.
     ///
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.addRequiredID(LoopSimplifyID);
       AU.addPreservedID(LoopSimplifyID);
       AU.addRequired<LoopInfo>();
@@ -176,7 +176,7 @@ namespace {
 
   private:
 
-    virtual void releaseMemory() {
+    void releaseMemory() override {
       BranchesInfo.forgetLoop(currentLoop);
     }
 
@@ -225,7 +225,7 @@ bool LUAnalysisCache::countLoop(const Loop *L, const TargetTransformInfo &TTI) {
 
   LoopPropsMapIt PropsIt;
   bool Inserted;
-  llvm::tie(PropsIt, Inserted) =
+  std::tie(PropsIt, Inserted) =
       LoopsProperties.insert(std::make_pair(L, LoopProperties()));
 
   LoopProperties &Props = PropsIt->second;

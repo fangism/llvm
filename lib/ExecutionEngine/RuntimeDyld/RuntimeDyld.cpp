@@ -96,7 +96,7 @@ ObjectImage *RuntimeDyldImpl::loadObject(ObjectBuffer *InputBuffer) {
 ObjectImage *RuntimeDyldImpl::loadObject(ObjectImage *InputObject) {
   MutexGuard locked(lock);
 
-  OwningPtr<ObjectImage> Obj(InputObject);
+  std::unique_ptr<ObjectImage> Obj(InputObject);
   if (!Obj)
     return NULL;
 
@@ -205,7 +205,7 @@ ObjectImage *RuntimeDyldImpl::loadObject(ObjectImage *InputObject) {
   // Give the subclasses a chance to tie-up any loose ends.
   finalizeLoad(LocalSections);
 
-  return Obj.take();
+  return Obj.release();
 }
 
 // A helper method for computeTotalAllocSize.

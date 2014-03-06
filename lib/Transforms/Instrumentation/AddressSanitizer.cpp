@@ -19,25 +19,24 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DepthFirstIterator.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/DIBuilder.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
-#include "llvm/InstVisitor.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/Debug.h"
@@ -301,7 +300,7 @@ struct AddressSanitizer : public FunctionPass {
         CheckLifetime(CheckLifetime || ClCheckLifetime),
         BlacklistFile(BlacklistFile.empty() ? ClBlacklistFile
                                             : BlacklistFile) {}
-  virtual const char *getPassName() const {
+  const char *getPassName() const override {
     return "AddressSanitizerFunctionPass";
   }
   void instrumentMop(Instruction *I);
@@ -319,9 +318,9 @@ struct AddressSanitizer : public FunctionPass {
                                    Value *Size,
                                    Instruction *InsertBefore, bool IsWrite);
   Value *memToShadow(Value *Shadow, IRBuilder<> &IRB);
-  bool runOnFunction(Function &F);
+  bool runOnFunction(Function &F) override;
   bool maybeInsertAsanInitAtFunctionEntry(Function &F);
-  virtual bool doInitialization(Module &M);
+  bool doInitialization(Module &M) override;
   static char ID;  // Pass identification, replacement for typeid
 
  private:
@@ -349,7 +348,7 @@ struct AddressSanitizer : public FunctionPass {
   Function *AsanHandleNoReturnFunc;
   Function *AsanCovFunction;
   Function *AsanPtrCmpFunction, *AsanPtrSubFunction;
-  OwningPtr<SpecialCaseList> BL;
+  std::unique_ptr<SpecialCaseList> BL;
   // This array is indexed by AccessIsWrite and log2(AccessSize).
   Function *AsanErrorCallback[2][kNumberOfAccessSizes];
   // This array is indexed by AccessIsWrite.
@@ -368,9 +367,9 @@ class AddressSanitizerModule : public ModulePass {
         CheckInitOrder(CheckInitOrder || ClInitializers),
         BlacklistFile(BlacklistFile.empty() ? ClBlacklistFile
                                             : BlacklistFile) {}
-  bool runOnModule(Module &M);
+  bool runOnModule(Module &M) override;
   static char ID;  // Pass identification, replacement for typeid
-  virtual const char *getPassName() const {
+  const char *getPassName() const override {
     return "AddressSanitizerModule";
   }
 
@@ -386,7 +385,7 @@ class AddressSanitizerModule : public ModulePass {
   bool CheckInitOrder;
   SmallString<64> BlacklistFile;
 
-  OwningPtr<SpecialCaseList> BL;
+  std::unique_ptr<SpecialCaseList> BL;
   SetOfDynamicallyInitializedGlobals DynamicallyInitializedGlobals;
   Type *IntptrTy;
   LLVMContext *C;

@@ -154,11 +154,9 @@ public:
       switchToLarge(new BitVector(*RHS.getPointer()));
   }
 
-#if LLVM_HAS_RVALUE_REFERENCES
   SmallBitVector(SmallBitVector &&RHS) : X(RHS.X) {
     RHS.X = 1;
   }
-#endif
 
   ~SmallBitVector() {
     if (!isSmall())
@@ -507,7 +505,6 @@ public:
     return *this;
   }
 
-#if LLVM_HAS_RVALUE_REFERENCES
   const SmallBitVector &operator=(SmallBitVector &&RHS) {
     if (this != &RHS) {
       clear();
@@ -515,7 +512,6 @@ public:
     }
     return *this;
   }
-#endif
 
   void swap(SmallBitVector &RHS) {
     std::swap(X, RHS.X);

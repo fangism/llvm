@@ -81,9 +81,9 @@ struct ThreadSanitizer : public FunctionPass {
         DL(0),
         BlacklistFile(BlacklistFile.empty() ? ClBlacklistFile
                                             : BlacklistFile) { }
-  const char *getPassName() const;
-  bool runOnFunction(Function &F);
-  bool doInitialization(Module &M);
+  const char *getPassName() const override;
+  bool runOnFunction(Function &F) override;
+  bool doInitialization(Module &M) override;
   static char ID;  // Pass identification, replacement for typeid.
 
  private:
@@ -99,7 +99,7 @@ struct ThreadSanitizer : public FunctionPass {
   const DataLayout *DL;
   Type *IntptrTy;
   SmallString<64> BlacklistFile;
-  OwningPtr<SpecialCaseList> BL;
+  std::unique_ptr<SpecialCaseList> BL;
   IntegerType *OrdTy;
   // Callbacks to run-time library are computed in doInitialization.
   Function *TsanFuncEntry;

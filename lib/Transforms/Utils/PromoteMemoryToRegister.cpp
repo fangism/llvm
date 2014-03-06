@@ -36,16 +36,16 @@
 #include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/DIBuilder.h"
-#include "llvm/DebugInfo.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Metadata.h"
-#include "llvm/Support/CFG.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
 #include <queue>
@@ -485,7 +485,7 @@ static void promoteSingleBlockAlloca(AllocaInst *AI, const AllocaInfo &Info,
       LI->replaceAllUsesWith(UndefValue::get(LI->getType()));
     else
       // Otherwise, there was a store before this load, the load takes its value.
-      LI->replaceAllUsesWith(llvm::prior(I)->second->getOperand(0));
+      LI->replaceAllUsesWith(std::prev(I)->second->getOperand(0));
 
     if (AST && LI->getType()->isPointerTy())
       AST->deleteValue(LI);

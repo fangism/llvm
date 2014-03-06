@@ -53,7 +53,7 @@ namespace {
       initializeDSEPass(*PassRegistry::getPassRegistry());
     }
 
-    virtual bool runOnFunction(Function &F) {
+    bool runOnFunction(Function &F) override {
       if (skipOptnoneFunction(F))
         return false;
 
@@ -79,7 +79,7 @@ namespace {
     void RemoveAccessedObjects(const AliasAnalysis::Location &LoadedLoc,
                                SmallSetVector<Value*, 16> &DeadStackObjects);
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.setPreservesCFG();
       AU.addRequired<DominatorTreeWrapperPass>();
       AU.addRequired<AliasAnalysis>();
@@ -680,7 +680,7 @@ bool DSE::HandleFree(CallInst *F) {
       if (!AA->isMustAlias(F->getArgOperand(0), DepPointer))
         break;
 
-      Instruction *Next = llvm::next(BasicBlock::iterator(Dependency));
+      Instruction *Next = std::next(BasicBlock::iterator(Dependency));
 
       // DCE instructions only used to calculate that store
       DeleteDeadInstruction(Dependency, *MD, TLI);
@@ -700,22 +700,6 @@ bool DSE::HandleFree(CallInst *F) {
   }
 
   return MadeChange;
-}
-
-namespace {
-  struct CouldRef {
-    typedef Value *argument_type;
-    const CallSite CS;
-    AliasAnalysis *AA;
-
-    bool operator()(Value *I) {
-      // See if the call site touches the value.
-      AliasAnalysis::ModRefResult A =
-        AA->getModRefInfo(CS, I, getPointerSize(I, *AA));
-
-      return A == AliasAnalysis::ModRef || A == AliasAnalysis::Ref;
-    }
-  };
 }
 
 /// handleEndBlock - Remove dead stores to stack-allocated locations in the
@@ -777,7 +761,7 @@ bool DSE::handleEndBlock(BasicBlock &BB) {
               for (SmallVectorImpl<Value *>::iterator I = Pointers.begin(),
                    E = Pointers.end(); I != E; ++I) {
                 dbgs() << **I;
-                if (llvm::next(I) != E)
+                if (std::next(I) != E)
                   dbgs() << ", ";
               }
               dbgs() << '\n');
@@ -819,8 +803,13 @@ bool DSE::handleEndBlock(BasicBlock &BB) {
 
       // If the call might load from any of our allocas, then any store above
       // the call is live.
-      CouldRef Pred = { CS, AA };
-      DeadStackObjects.remove_if(Pred);
+      DeadStackObjects.remove_if([&](Value *I) {
+        // See if the call site touches the value.
+        AliasAnalysis::ModRefResult A =
+            AA->getModRefInfo(CS, I, getPointerSize(I, *AA));
+
+        return A == AliasAnalysis::ModRef || A == AliasAnalysis::Ref;
+      });
 
       // If all of the allocas were clobbered by the call then we're not going
       // to find anything else to process.
@@ -863,20 +852,6 @@ bool DSE::handleEndBlock(BasicBlock &BB) {
   return MadeChange;
 }
 
-namespace {
-  struct CouldAlias {
-    typedef Value *argument_type;
-    const AliasAnalysis::Location &LoadedLoc;
-    AliasAnalysis *AA;
-
-    bool operator()(Value *I) {
-      // See if the loaded location could alias the stack location.
-      AliasAnalysis::Location StackLoc(I, getPointerSize(I, *AA));
-      return !AA->isNoAlias(StackLoc, LoadedLoc);
-    }
-  };
-}
-
 /// RemoveAccessedObjects - Check to see if the specified location may alias any
 /// of the stack objects in the DeadStackObjects set.  If so, they become live
 /// because the location is being loaded.
@@ -896,6 +871,9 @@ void DSE::RemoveAccessedObjects(const AliasAnalysis::Location &LoadedLoc,
   }
 
   // Remove objects that could alias LoadedLoc.
-  CouldAlias Pred = { LoadedLoc, AA };
-  DeadStackObjects.remove_if(Pred);
+  DeadStackObjects.remove_if([&](Value *I) {
+    // See if the loaded location could alias the stack location.
+    AliasAnalysis::Location StackLoc(I, getPointerSize(I, *AA));
+    return !AA->isNoAlias(StackLoc, LoadedLoc);
+  });
 }

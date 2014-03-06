@@ -11,18 +11,18 @@
 // different components in LLVM.
 //
 //===----------------------------------------------------------------------===//
-#include "llvm/ADT/OwningPtr.h"
+
 #include "llvm/Analysis/CallGraphSCCPass.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRPrintingPasses.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LegacyPassNameParser.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/PassManager.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/PassNameParser.h"
 #include "llvm/Support/PluginLoader.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -625,15 +625,15 @@ static void FillFunction(Function *F, Random &R) {
 
   // List of modifiers which add new random instructions.
   std::vector<Modifier*> Modifiers;
-  OwningPtr<Modifier> LM(new LoadModifier(BB, &PT, &R));
-  OwningPtr<Modifier> SM(new StoreModifier(BB, &PT, &R));
-  OwningPtr<Modifier> EE(new ExtractElementModifier(BB, &PT, &R));
-  OwningPtr<Modifier> SHM(new ShuffModifier(BB, &PT, &R));
-  OwningPtr<Modifier> IE(new InsertElementModifier(BB, &PT, &R));
-  OwningPtr<Modifier> BM(new BinModifier(BB, &PT, &R));
-  OwningPtr<Modifier> CM(new CastModifier(BB, &PT, &R));
-  OwningPtr<Modifier> SLM(new SelectModifier(BB, &PT, &R));
-  OwningPtr<Modifier> PM(new CmpModifier(BB, &PT, &R));
+  std::unique_ptr<Modifier> LM(new LoadModifier(BB, &PT, &R));
+  std::unique_ptr<Modifier> SM(new StoreModifier(BB, &PT, &R));
+  std::unique_ptr<Modifier> EE(new ExtractElementModifier(BB, &PT, &R));
+  std::unique_ptr<Modifier> SHM(new ShuffModifier(BB, &PT, &R));
+  std::unique_ptr<Modifier> IE(new InsertElementModifier(BB, &PT, &R));
+  std::unique_ptr<Modifier> BM(new BinModifier(BB, &PT, &R));
+  std::unique_ptr<Modifier> CM(new CastModifier(BB, &PT, &R));
+  std::unique_ptr<Modifier> SLM(new SelectModifier(BB, &PT, &R));
+  std::unique_ptr<Modifier> PM(new CmpModifier(BB, &PT, &R));
   Modifiers.push_back(LM.get());
   Modifiers.push_back(SM.get());
   Modifiers.push_back(EE.get());
@@ -687,7 +687,7 @@ int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "llvm codegen stress-tester\n");
   llvm_shutdown_obj Y;
 
-  OwningPtr<Module> M(new Module("/tmp/autogen.bc", getGlobalContext()));
+  std::unique_ptr<Module> M(new Module("/tmp/autogen.bc", getGlobalContext()));
   Function *F = GenEmptyFunction(M.get());
 
   // Pick an initial seed value
@@ -698,7 +698,7 @@ int main(int argc, char **argv) {
   IntroduceControlFlow(F, R);
 
   // Figure out what stream we are supposed to write to...
-  OwningPtr<tool_output_file> Out;
+  std::unique_ptr<tool_output_file> Out;
   // Default to standard output.
   if (OutputFilename.empty())
     OutputFilename = "-";

@@ -86,11 +86,11 @@ public:
     initializeConstantHoistingPass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnFunction(Function &F);
+  bool runOnFunction(Function &F) override;
 
-  const char *getPassName() const { return "Constant Hoisting"; }
+  const char *getPassName() const override { return "Constant Hoisting"; }
 
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<TargetTransformInfo>();
@@ -229,7 +229,7 @@ void ConstantHoisting::FindAndMakeBaseConstant(ConstantMapType::iterator S,
     ConstantInfo::RebasedConstantInfo RCI;
     RCI.OriginalConstant = I->first;
     RCI.Offset = ConstantInt::get(Ty, Diff);
-    RCI.Uses = llvm_move(I->second.Uses);
+    RCI.Uses = std::move(I->second.Uses);
     CI.RebasedConstants.push_back(RCI);
   }
   Constants.push_back(CI);
@@ -244,7 +244,7 @@ void ConstantHoisting::FindBaseConstants() {
   // Simple linear scan through the sorted constant map for viable merge
   // candidates.
   ConstantMapType::iterator MinValItr = ConstantMap.begin();
-  for (ConstantMapType::iterator I = llvm::next(ConstantMap.begin()),
+  for (ConstantMapType::iterator I = std::next(ConstantMap.begin()),
        E = ConstantMap.end(); I != E; ++I) {
     if (MinValItr->first->getType() == I->first->getType()) {
       // Check if the constant is in range of an add with immediate.
@@ -315,7 +315,7 @@ FindConstantInsertionPoint(Function &F, const ConstantInfo &CI) const {
   while (BBs.size() >= 2) {
     BasicBlock *BB, *BB1, *BB2;
     BB1 = *BBs.begin();
-    BB2 = *llvm::next(BBs.begin());
+    BB2 = *std::next(BBs.begin());
     BB = DT->findNearestCommonDominator(BB1, BB2);
     if (BB == Entry)
       return getMatInsertPt(&Entry->front(), DT);

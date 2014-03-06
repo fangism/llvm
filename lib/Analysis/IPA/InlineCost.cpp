@@ -21,15 +21,15 @@
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Operator.h"
-#include "llvm/InstVisitor.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -525,9 +525,9 @@ bool CallAnalyzer::visitCmpInst(CmpInst &I) {
   // a common base.
   Value *LHSBase, *RHSBase;
   APInt LHSOffset, RHSOffset;
-  llvm::tie(LHSBase, LHSOffset) = ConstantOffsetPtrs.lookup(LHS);
+  std::tie(LHSBase, LHSOffset) = ConstantOffsetPtrs.lookup(LHS);
   if (LHSBase) {
-    llvm::tie(RHSBase, RHSOffset) = ConstantOffsetPtrs.lookup(RHS);
+    std::tie(RHSBase, RHSOffset) = ConstantOffsetPtrs.lookup(RHS);
     if (RHSBase && LHSBase == RHSBase) {
       // We have common bases, fold the icmp to a constant based on the
       // offsets.
@@ -575,9 +575,9 @@ bool CallAnalyzer::visitSub(BinaryOperator &I) {
   Value *LHS = I.getOperand(0), *RHS = I.getOperand(1);
   Value *LHSBase, *RHSBase;
   APInt LHSOffset, RHSOffset;
-  llvm::tie(LHSBase, LHSOffset) = ConstantOffsetPtrs.lookup(LHS);
+  std::tie(LHSBase, LHSOffset) = ConstantOffsetPtrs.lookup(LHS);
   if (LHSBase) {
-    llvm::tie(RHSBase, RHSOffset) = ConstantOffsetPtrs.lookup(RHS);
+    std::tie(RHSBase, RHSOffset) = ConstantOffsetPtrs.lookup(RHS);
     if (RHSBase && LHSBase == RHSBase) {
       // We have common bases, fold the subtract to a constant based on the
       // offsets.

@@ -28,7 +28,6 @@
 #define LLVM_SUPPORT_FILESYSTEM_H
 
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/DataTypes.h"
@@ -39,6 +38,7 @@
 #include <iterator>
 #include <stack>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #ifdef HAVE_SYS_STAT_H
@@ -135,8 +135,7 @@ public:
   }
   bool operator!=(const UniqueID &Other) const { return !(*this == Other); }
   bool operator<(const UniqueID &Other) const {
-    return Device < Other.Device ||
-           (Device == Other.Device && File < Other.File);
+    return std::tie(Device, File) < std::tie(Other.Device, Other.File);
   }
   uint64_t getDevice() const { return Device; }
   uint64_t getFile() const { return File; }
@@ -293,6 +292,14 @@ error_code create_directory(const Twine &path, bool IgnoreExisting = true);
 /// @returns errc::success if exists(to) && exists(from) && equivalent(to, from)
 ///          , otherwise a platform specific error_code.
 error_code create_hard_link(const Twine &to, const Twine &from);
+
+/// @brief Create a symbolic link from \a from to \a to.
+///
+/// @param to The path to link to.
+/// @param from The path to link from. This is created.
+/// @returns errc::success if successful
+///          , otherwise a platform specific error_code.
+error_code create_symbolic_link(const Twine &to, const Twine &from);
 
 /// @brief Get the current path.
 ///
@@ -664,10 +671,8 @@ private:
 public:
   typedef char char_type;
 
-#if LLVM_HAS_RVALUE_REFERENCES
   mapped_file_region(mapped_file_region&&);
   mapped_file_region &operator =(mapped_file_region&&);
-#endif
 
   /// Construct a mapped_file_region at \a path starting at \a offset of length
   /// \a length and with access \a mode.

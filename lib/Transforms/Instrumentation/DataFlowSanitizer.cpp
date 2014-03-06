@@ -52,11 +52,11 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "llvm/InstVisitor.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -190,7 +190,7 @@ class DataFlowSanitizer : public ModulePass {
   Constant *DFSanSetLabelFn;
   Constant *DFSanNonzeroLabelFn;
   MDNode *ColdCallWeights;
-  OwningPtr<SpecialCaseList> ABIList;
+  std::unique_ptr<SpecialCaseList> ABIList;
   DenseMap<Value *, Function *> UnwrappedFnMap;
   AttributeSet ReadOnlyNoneAttrs;
 
@@ -213,8 +213,8 @@ class DataFlowSanitizer : public ModulePass {
   DataFlowSanitizer(StringRef ABIListFile = StringRef(),
                     void *(*getArgTLS)() = 0, void *(*getRetValTLS)() = 0);
   static char ID;
-  bool doInitialization(Module &M);
-  bool runOnModule(Module &M);
+  bool doInitialization(Module &M) override;
+  bool runOnModule(Module &M) override;
 };
 
 struct DFSanFunction {

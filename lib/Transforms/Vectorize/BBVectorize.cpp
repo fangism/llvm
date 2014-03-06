@@ -41,10 +41,10 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/ValueHandle.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
@@ -431,7 +431,7 @@ namespace {
       return changed;
     }
 
-    virtual bool runOnBasicBlock(BasicBlock &BB) {
+    bool runOnBasicBlock(BasicBlock &BB) override {
       // OptimizeNone check deferred to vectorizeBB().
 
       AA = &getAnalysis<AliasAnalysis>();
@@ -444,7 +444,7 @@ namespace {
       return vectorizeBB(BB);
     }
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       BasicBlockPass::getAnalysisUsage(AU);
       AU.addRequired<AliasAnalysis>();
       AU.addRequired<DominatorTreeWrapperPass>();
@@ -1231,7 +1231,7 @@ namespace {
       if (I->mayWriteToMemory()) WriteSet.add(I);
 
       bool JAfterStart = IAfterStart;
-      BasicBlock::iterator J = llvm::next(I);
+      BasicBlock::iterator J = std::next(I);
       for (unsigned ss = 0; J != E && ss <= Config.SearchLimit; ++J, ++ss) {
         if (J == Start) JAfterStart = true;
 
@@ -1276,7 +1276,7 @@ namespace {
         // The next call to this function must start after the last instruction
         // selected during this invocation.
         if (JAfterStart) {
-          Start = llvm::next(J);
+          Start = std::next(J);
           IAfterStart = JAfterStart = false;
         }
 
@@ -1453,7 +1453,7 @@ namespace {
       AliasSetTracker WriteSet(*AA);
       if (I->mayWriteToMemory()) WriteSet.add(I);
 
-      for (BasicBlock::iterator J = llvm::next(I); J != E; ++J) {
+      for (BasicBlock::iterator J = std::next(I); J != E; ++J) {
         (void) trackUsesOfI(Users, WriteSet, I, J);
 
         if (J == EL)
@@ -2841,7 +2841,7 @@ namespace {
                      DenseSet<ValuePair> &LoadMoveSetPairs,
                      Instruction *I, Instruction *J) {
     // Skip to the first instruction past I.
-    BasicBlock::iterator L = llvm::next(BasicBlock::iterator(I));
+    BasicBlock::iterator L = std::next(BasicBlock::iterator(I));
 
     DenseSet<Value *> Users;
     AliasSetTracker WriteSet(*AA);
@@ -2863,7 +2863,7 @@ namespace {
                      Instruction *&InsertionPt,
                      Instruction *I, Instruction *J) {
     // Skip to the first instruction past I.
-    BasicBlock::iterator L = llvm::next(BasicBlock::iterator(I));
+    BasicBlock::iterator L = std::next(BasicBlock::iterator(I));
 
     DenseSet<Value *> Users;
     AliasSetTracker WriteSet(*AA);
@@ -2894,7 +2894,7 @@ namespace {
                      DenseSet<ValuePair> &LoadMoveSetPairs,
                      Instruction *I) {
     // Skip to the first instruction past I.
-    BasicBlock::iterator L = llvm::next(BasicBlock::iterator(I));
+    BasicBlock::iterator L = std::next(BasicBlock::iterator(I));
 
     DenseSet<Value *> Users;
     AliasSetTracker WriteSet(*AA);
@@ -3165,7 +3165,7 @@ namespace {
       }
 
       // Before removing I, set the iterator to the next instruction.
-      PI = llvm::next(BasicBlock::iterator(I));
+      PI = std::next(BasicBlock::iterator(I));
       if (cast<Instruction>(PI) == J)
         ++PI;
 

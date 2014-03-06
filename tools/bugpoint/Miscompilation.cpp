@@ -21,7 +21,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/Linker.h"
+#include "llvm/Linker/Linker.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileUtilities.h"
@@ -128,8 +128,8 @@ ReduceMiscompilingPasses::doTest(std::vector<std::string> &Prefix,
   // Ok, so now we know that the prefix passes work, try running the suffix
   // passes on the result of the prefix passes.
   //
-  OwningPtr<Module> PrefixOutput(ParseInputFile(BitcodeResult,
-                                                BD.getContext()));
+  std::unique_ptr<Module> PrefixOutput(
+      ParseInputFile(BitcodeResult, BD.getContext()));
   if (!PrefixOutput) {
     errs() << BD.getToolName() << ": Error reading bitcode file '"
            << BitcodeResult << "'!\n";
@@ -145,7 +145,8 @@ ReduceMiscompilingPasses::doTest(std::vector<std::string> &Prefix,
             << "' passes compile correctly after the '"
             << getPassesString(Prefix) << "' passes: ";
 
-  OwningPtr<Module> OriginalInput(BD.swapProgramIn(PrefixOutput.take()));
+  std::unique_ptr<Module> OriginalInput(
+      BD.swapProgramIn(PrefixOutput.release()));
   if (BD.runPasses(BD.getProgram(), Suffix, BitcodeResult, false/*delete*/,
                    true/*quiet*/)) {
     errs() << " Error running this sequence of passes"
@@ -168,7 +169,7 @@ ReduceMiscompilingPasses::doTest(std::vector<std::string> &Prefix,
   // Otherwise, we must not be running the bad pass anymore.
   outs() << " yup.\n";      // No miscompilation!
   // Restore orig program & free test.
-  delete BD.swapProgramIn(OriginalInput.take());
+  delete BD.swapProgramIn(OriginalInput.release());
   return NoFailure;
 }
 

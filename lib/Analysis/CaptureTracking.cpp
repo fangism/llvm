@@ -20,24 +20,24 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/CaptureTracking.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/Support/CallSite.h"
 
 using namespace llvm;
 
 CaptureTracker::~CaptureTracker() {}
 
-bool CaptureTracker::shouldExplore(Use *U) { return true; }
+bool CaptureTracker::shouldExplore(const Use *U) { return true; }
 
 namespace {
   struct SimpleCaptureTracker : public CaptureTracker {
     explicit SimpleCaptureTracker(bool ReturnCaptures)
       : ReturnCaptures(ReturnCaptures), Captured(false) {}
 
-    void tooManyUses() { Captured = true; }
+    void tooManyUses() override { Captured = true; }
 
-    bool captured(Use *U) {
+    bool captured(const Use *U) override {
       if (isa<ReturnInst>(U->getUser()) && !ReturnCaptures)
         return false;
 
@@ -81,8 +81,8 @@ static int const Threshold = 20;
 
 void llvm::PointerMayBeCaptured(const Value *V, CaptureTracker *Tracker) {
   assert(V->getType()->isPointerTy() && "Capture is for pointers only!");
-  SmallVector<Use*, Threshold> Worklist;
-  SmallSet<Use*, Threshold> Visited;
+  SmallVector<const Use *, Threshold> Worklist;
+  SmallSet<const Use *, Threshold> Visited;
   int Count = 0;
 
   for (Value::const_use_iterator UI = V->use_begin(), UE = V->use_end();
@@ -99,7 +99,7 @@ void llvm::PointerMayBeCaptured(const Value *V, CaptureTracker *Tracker) {
   }
 
   while (!Worklist.empty()) {
-    Use *U = Worklist.pop_back_val();
+    const Use *U = Worklist.pop_back_val();
     Instruction *I = cast<Instruction>(U->getUser());
     V = U->get();
 

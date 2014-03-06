@@ -285,6 +285,19 @@ error_code create_hard_link(const Twine &to, const Twine &from) {
   return error_code::success();
 }
 
+error_code create_symbolic_link(const Twine &to, const Twine &from) {
+  // Get arguments.
+  SmallString<128> from_storage;
+  SmallString<128> to_storage;
+  StringRef f = from.toNullTerminatedStringRef(from_storage);
+  StringRef t = to.toNullTerminatedStringRef(to_storage);
+
+  if (::symlink(t.begin(), f.begin()) == -1)
+    return error_code(errno, system_category());
+
+  return error_code::success();
+}
+
 error_code remove(const Twine &path, bool IgnoreNonExisting) {
   SmallString<128> path_storage;
   StringRef p = path.toNullTerminatedStringRef(path_storage);
@@ -538,12 +551,10 @@ mapped_file_region::~mapped_file_region() {
     ::munmap(Mapping, Size);
 }
 
-#if LLVM_HAS_RVALUE_REFERENCES
 mapped_file_region::mapped_file_region(mapped_file_region &&other)
   : Mode(other.Mode), Size(other.Size), Mapping(other.Mapping) {
   other.Mapping = 0;
 }
-#endif
 
 mapped_file_region::mapmode mapped_file_region::flags() const {
   assert(Mapping && "Mapping failed but used anyway!");

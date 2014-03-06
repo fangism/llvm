@@ -12,7 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/DebugInfo.h"
+#include "llvm/IR/DebugInfo.h"
+#include "LLVMContextImpl.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
@@ -23,9 +24,9 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Dwarf.h"
-#include "llvm/Support/ValueHandle.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 using namespace llvm::dwarf;
@@ -600,7 +601,7 @@ bool DISubrange::Verify() const {
 
 /// \brief Verify that the lexical block descriptor is well formed.
 bool DILexicalBlock::Verify() const {
-  return isLexicalBlock() && DbgNode->getNumOperands() == 6;
+  return isLexicalBlock() && DbgNode->getNumOperands() == 7;
 }
 
 /// \brief Verify that the file-scoped lexical block descriptor is well formed.
@@ -816,6 +817,29 @@ DIArray DICompileUnit::getImportedEntities() const {
     return DIArray();
 
   return DIArray(getNodeField(DbgNode, 11));
+}
+
+/// copyWithNewScope - Return a copy of this location, replacing the
+/// current scope with the given one.
+DILocation DILocation::copyWithNewScope(LLVMContext &Ctx,
+                                        DILexicalBlock NewScope) {
+  SmallVector<Value *, 10> Elts;
+  assert(Verify());
+  for (unsigned I = 0; I < DbgNode->getNumOperands(); ++I) {
+    if (I != 2)
+      Elts.push_back(DbgNode->getOperand(I));
+    else
+      Elts.push_back(NewScope);
+  }
+  MDNode *NewDIL = MDNode::get(Ctx, Elts);
+  return DILocation(NewDIL);
+}
+
+/// computeNewDiscriminator - Generate a new discriminator value for this
+/// file and line location.
+unsigned DILocation::computeNewDiscriminator(LLVMContext &Ctx) {
+  std::pair<const char *, unsigned> Key(getFilename().data(), getLineNumber());
+  return ++Ctx.pImpl->DiscriminatorTable[Key];
 }
 
 /// fixupSubprogramName - Replace contains special characters used

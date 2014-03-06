@@ -9,11 +9,11 @@
 
 #include "llvm/Analysis/LazyCallGraph.h"
 #include "llvm/ADT/SCCIterator.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/InstVisitor.h"
 
 using namespace llvm;
 
@@ -40,11 +40,9 @@ static void findCallees(
       continue;
     }
 
-    for (User::value_op_iterator OI = C->value_op_begin(),
-                                 OE = C->value_op_end();
-         OI != OE; ++OI)
-      if (Visited.insert(cast<Constant>(*OI)))
-        Worklist.push_back(cast<Constant>(*OI));
+    for (Value *Op : C->operand_values())
+      if (Visited.insert(cast<Constant>(Op)))
+        Worklist.push_back(cast<Constant>(Op));
   }
 }
 
@@ -56,10 +54,8 @@ LazyCallGraph::Node::Node(LazyCallGraph &G, Function &F) : G(G), F(F) {
   for (Function::iterator BBI = F.begin(), BBE = F.end(); BBI != BBE; ++BBI)
     for (BasicBlock::iterator II = BBI->begin(), IE = BBI->end(); II != IE;
          ++II)
-      for (User::value_op_iterator OI = II->value_op_begin(),
-                                   OE = II->value_op_end();
-           OI != OE; ++OI)
-        if (Constant *C = dyn_cast<Constant>(*OI))
+      for (Value *Op : II->operand_values())
+        if (Constant *C = dyn_cast<Constant>(Op))
           if (Visited.insert(C))
             Worklist.push_back(C);
 
@@ -83,7 +79,6 @@ LazyCallGraph::Node::Node(LazyCallGraph &G, const Node &OtherN)
       Callees.push_back(G.copyInto(*OI->get<Node *>()));
 }
 
-#if LLVM_HAS_RVALUE_REFERENCES
 LazyCallGraph::Node::Node(LazyCallGraph &G, Node &&OtherN)
     : G(G), F(OtherN.F), Callees(std::move(OtherN.Callees)),
       CalleeSet(std::move(OtherN.CalleeSet)) {
@@ -94,7 +89,6 @@ LazyCallGraph::Node::Node(LazyCallGraph &G, Node &&OtherN)
     if (Node *ChildN = CI->dyn_cast<Node *>())
       *CI = G.moveInto(std::move(*ChildN));
 }
-#endif
 
 LazyCallGraph::LazyCallGraph(Module &M) : M(M) {
   for (Module::iterator FI = M.begin(), FE = M.end(); FI != FE; ++FI)
@@ -125,7 +119,6 @@ LazyCallGraph::LazyCallGraph(const LazyCallGraph &G)
       EntryNodes.push_back(copyInto(*EI->get<Node *>()));
 }
 
-#if LLVM_HAS_RVALUE_REFERENCES
 // FIXME: This would be crazy simpler if BumpPtrAllocator were movable without
 // invalidating any of the allocated memory. We should make that be the case at
 // some point and delete this.
@@ -141,7 +134,6 @@ LazyCallGraph::LazyCallGraph(LazyCallGraph &&G)
     if (Node *EntryN = EI->dyn_cast<Node *>())
       *EI = moveInto(std::move(*EntryN));
 }
-#endif
 
 LazyCallGraph::Node *LazyCallGraph::insertInto(Function &F, Node *&MappedN) {
   return new (MappedN = BPA.Allocate()) Node(*this, F);
@@ -155,7 +147,6 @@ LazyCallGraph::Node *LazyCallGraph::copyInto(const Node &OtherN) {
   return new (N = BPA.Allocate()) Node(*this, OtherN);
 }
 
-#if LLVM_HAS_RVALUE_REFERENCES
 LazyCallGraph::Node *LazyCallGraph::moveInto(Node &&OtherN) {
   Node *&N = NodeMap[&OtherN.F];
   if (N)
@@ -163,7 +154,6 @@ LazyCallGraph::Node *LazyCallGraph::moveInto(Node &&OtherN) {
 
   return new (N = BPA.Allocate()) Node(*this, std::move(OtherN));
 }
-#endif
 
 char LazyCallGraphAnalysis::PassID;
 

@@ -18,16 +18,16 @@
 #include "DIE.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/MapVector.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/LexicalScopes.h"
-#include "llvm/DebugInfo.h"
+#include "llvm/IR/DebugInfo.h"
+#include "llvm/IR/DebugLoc.h"
 #include "llvm/MC/MachineLocation.h"
 #include "llvm/Support/Allocator.h"
-#include "llvm/Support/DebugLoc.h"
 
 namespace llvm {
 
@@ -739,23 +739,30 @@ public:
 
   /// \brief Returns whether or not to emit tables that dwarf consumers can
   /// use to accelerate lookup.
-  bool useDwarfAccelTables() { return HasDwarfAccelTables; }
+  bool useDwarfAccelTables() const { return HasDwarfAccelTables; }
 
   /// \brief Returns whether or not to change the current debug info for the
   /// split dwarf proposal support.
-  bool useSplitDwarf() { return HasSplitDwarf; }
+  bool useSplitDwarf() const { return HasSplitDwarf; }
 
   /// \brief Returns whether or not to use AT_ranges for compilation units.
-  bool useCURanges() { return HasCURanges; }
+  bool useCURanges() const { return HasCURanges; }
 
   /// Returns the Dwarf Version.
   unsigned getDwarfVersion() const { return DwarfVersion; }
+
+  /// Returns the section symbol for the .debug_loc section.
+  MCSymbol *getDebugLocSym() const { return DwarfDebugLocSectionSym; }
 
   /// Find the MDNode for the given reference.
   template <typename T> T resolve(DIRef<T> Ref) const {
     return Ref.resolve(TypeIdentifierMap);
   }
 
+  /// Find the DwarfCompileUnit for the given CU Die.
+  DwarfCompileUnit *lookupUnit(const DIE *CU) const {
+    return CUDieMap.lookup(CU);
+  }
   /// isSubprogramContext - Return true if Context is either a subprogram
   /// or another context nested inside a subprogram.
   bool isSubprogramContext(const MDNode *Context);

@@ -27,9 +27,10 @@ set(CMAKE_MODULE_PATH
 
 set(LLVM_VERSION_MAJOR 3)
 set(LLVM_VERSION_MINOR 5)
+set(LLVM_VERSION_PATCH 0)
 
 if (NOT PACKAGE_VERSION)
-  set(PACKAGE_VERSION "${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}svn")
+  set(PACKAGE_VERSION "${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}svn")
 endif()
 
 option(LLVM_INSTALL_TOOLCHAIN_ONLY "Only include toolchain files in the 'install' target." OFF)
@@ -60,6 +61,7 @@ set(CPACK_PACKAGE_INSTALL_DIRECTORY "LLVM")
 set(CPACK_PACKAGE_VENDOR "LLVM")
 set(CPACK_PACKAGE_VERSION_MAJOR ${LLVM_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${LLVM_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${LLVM_VERSION_PATCH})
 set(CPACK_PACKAGE_VERSION ${PACKAGE_VERSION})
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.TXT")
 if(WIN32 AND NOT UNIX)
@@ -150,11 +152,6 @@ set(LLVM_EXPERIMENTAL_TARGETS_TO_BUILD ""
 option(BUILD_SHARED_LIBS
   "Build all libraries as shared libraries instead of static" OFF)
 
-option(LLVM_ENABLE_CBE_PRINTF_A "Set to ON if CBE is enabled for printf %a output" ON)
-if(LLVM_ENABLE_CBE_PRINTF_A)
-  set(ENABLE_CBE_PRINTF_A 1)
-endif()
-
 option(LLVM_ENABLE_TIMESTAMPS "Enable embedding timestamp information in build" ON)
 if(LLVM_ENABLE_TIMESTAMPS)
   set(ENABLE_TIMESTAMPS 1)
@@ -203,7 +200,7 @@ else( MSVC )
   option(LLVM_ENABLE_WARNINGS "Enable compiler warnings." ON)
 endif()
 
-option(LLVM_ENABLE_CXX11 "Compile with C++11 enabled." OFF)
+option(LLVM_ENABLE_CXX1Y "Compile with C++1y enabled." OFF)
 option(LLVM_ENABLE_LIBCXX "Use libc++ if available." OFF)
 option(LLVM_ENABLE_PEDANTIC "Compile with pedantic enabled." ON)
 option(LLVM_ENABLE_WERROR "Fail and stop if a warning is triggered." OFF)
@@ -567,14 +564,5 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
     PATTERN "CMakeFiles" EXCLUDE
     PATTERN ".svn" EXCLUDE
     )
-endif()
-
-# Workaround for MSVS10 to avoid the Dialog Hell
-# FIXME: This could be removed with future version of CMake.
-if(MSVC_VERSION EQUAL 1600)
-  set(LLVM_SLN_FILENAME "${CMAKE_CURRENT_BINARY_DIR}/LLVM.sln")
-  if( EXISTS "${LLVM_SLN_FILENAME}" )
-    file(APPEND "${LLVM_SLN_FILENAME}" "\n# This should be regenerated!\n")
-  endif()
 endif()
 

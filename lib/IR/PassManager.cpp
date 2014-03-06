@@ -31,7 +31,7 @@ PreservedAnalyses ModulePassManager::run(Module *M, ModuleAnalysisManager *AM) {
     PreservedAnalyses PassPA = Passes[Idx]->run(M, AM);
     if (AM)
       AM->invalidate(M, PassPA);
-    PA.intersect(llvm_move(PassPA));
+    PA.intersect(std::move(PassPA));
   }
 
   if (DebugPM)
@@ -44,7 +44,7 @@ ModuleAnalysisManager::ResultConceptT &
 ModuleAnalysisManager::getResultImpl(void *PassID, Module *M) {
   ModuleAnalysisResultMapT::iterator RI;
   bool Inserted;
-  llvm::tie(RI, Inserted) = ModuleAnalysisResults.insert(std::make_pair(
+  std::tie(RI, Inserted) = ModuleAnalysisResults.insert(std::make_pair(
       PassID, polymorphic_ptr<detail::AnalysisResultConcept<Module *> >()));
 
   // If we don't have a cached result for this module, look up the pass and run
@@ -89,7 +89,7 @@ PreservedAnalyses FunctionPassManager::run(Function *F, FunctionAnalysisManager 
     PreservedAnalyses PassPA = Passes[Idx]->run(F, AM);
     if (AM)
       AM->invalidate(F, PassPA);
-    PA.intersect(llvm_move(PassPA));
+    PA.intersect(std::move(PassPA));
   }
 
   if (DebugPM)
@@ -115,7 +115,7 @@ FunctionAnalysisManager::ResultConceptT &
 FunctionAnalysisManager::getResultImpl(void *PassID, Function *F) {
   FunctionAnalysisResultMapT::iterator RI;
   bool Inserted;
-  llvm::tie(RI, Inserted) = FunctionAnalysisResults.insert(std::make_pair(
+  std::tie(RI, Inserted) = FunctionAnalysisResults.insert(std::make_pair(
       std::make_pair(PassID, F), FunctionAnalysisResultListT::iterator()));
 
   // If we don't have a cached result for this function, look up the pass and
@@ -123,7 +123,7 @@ FunctionAnalysisManager::getResultImpl(void *PassID, Function *F) {
   if (Inserted) {
     FunctionAnalysisResultListT &ResultList = FunctionAnalysisResultLists[F];
     ResultList.push_back(std::make_pair(PassID, lookupPass(PassID).run(F, this)));
-    RI->second = llvm::prior(ResultList.end());
+    RI->second = std::prev(ResultList.end());
   }
 
   return *RI->second->second;

@@ -24,9 +24,9 @@
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/InstIterator.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include <set>
 using namespace llvm;
@@ -40,9 +40,9 @@ namespace {
       initializeConstantPropagationPass(*PassRegistry::getPassRegistry());
     }
 
-    bool runOnFunction(Function &F);
+    bool runOnFunction(Function &F) override;
 
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
       AU.setPreservesCFG();
       AU.addRequired<TargetLibraryInfo>();
     }

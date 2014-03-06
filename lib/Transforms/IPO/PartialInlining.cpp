@@ -15,11 +15,11 @@
 #define DEBUG_TYPE "partialinlining"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/CFG.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/CodeExtractor.h"
 using namespace llvm;
@@ -28,14 +28,14 @@ STATISTIC(NumPartialInlined, "Number of functions partially inlined");
 
 namespace {
   struct PartialInliner : public ModulePass {
-    virtual void getAnalysisUsage(AnalysisUsage &AU) const { }
+    void getAnalysisUsage(AnalysisUsage &AU) const override { }
     static char ID; // Pass identification, replacement for typeid
     PartialInliner() : ModulePass(ID) {
       initializePartialInlinerPass(*PassRegistry::getPassRegistry());
     }
-    
-    bool runOnModule(Module& M);
-    
+
+    bool runOnModule(Module& M) override;
+
   private:
     Function* unswitchFunction(Function* F);
   };

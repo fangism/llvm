@@ -57,11 +57,7 @@ TEST(polymorphic_ptr_test, Basic) {
   EXPECT_EQ(s, p.get());
   EXPECT_EQ(42, p->x);
 
-  polymorphic_ptr<S> p2((llvm_move(p)));
-#if !LLVM_HAS_RVALUE_REFERENCES
-  // 'p' may not have been moved from in C++98, fake it for the test.
-  p2 = p.take();
-#endif
+  polymorphic_ptr<S> p2((std::move(p)));
   EXPECT_FALSE((bool)p);
   EXPECT_TRUE(!p);
   EXPECT_TRUE((bool)p2);

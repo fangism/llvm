@@ -31,6 +31,7 @@
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -43,7 +44,6 @@
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
@@ -7697,7 +7697,8 @@ static SDValue LowerEXTRACT_VECTOR_ELT_SSE4(SDValue Op, SelectionDAG &DAG) {
 
 /// Extract one bit from mask vector, like v16i1 or v8i1.
 /// AVX-512 feature.
-static SDValue ExtractBitFromMaskVector(SDValue Op, SelectionDAG &DAG) {
+SDValue
+X86TargetLowering::ExtractBitFromMaskVector(SDValue Op, SelectionDAG &DAG) const {
   SDValue Vec = Op.getOperand(0);
   SDLoc dl(Vec);
   MVT VecVT = Vec.getSimpleValueType();
@@ -7717,7 +7718,8 @@ static SDValue ExtractBitFromMaskVector(SDValue Op, SelectionDAG &DAG) {
   }
 
   unsigned IdxVal = cast<ConstantSDNode>(Idx)->getZExtValue();
-  unsigned MaxSift = VecVT.getSizeInBits() - 1;
+  const TargetRegisterClass* rc = getRegClassFor(VecVT);
+  unsigned MaxSift = rc->getSize()*8 - 1;
   Vec = DAG.getNode(X86ISD::VSHLI, dl, VecVT, Vec,
                     DAG.getConstant(MaxSift - IdxVal, MVT::i8));
   Vec = DAG.getNode(X86ISD::VSRLI, dl, VecVT, Vec,
@@ -9132,24 +9134,14 @@ SDValue X86TargetLowering::LowerTRUNCATE(SDValue Op, SelectionDAG &DAG) const {
                          DAG.getIntPtrConstant(0));
     }
 
-    // On AVX, v4i64 -> v4i32 becomes a sequence that uses PSHUFD and MOVLHPS.
     SDValue OpLo = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, MVT::v2i64, In,
                                DAG.getIntPtrConstant(0));
     SDValue OpHi = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, MVT::v2i64, In,
                                DAG.getIntPtrConstant(2));
-
     OpLo = DAG.getNode(ISD::BITCAST, DL, MVT::v4i32, OpLo);
     OpHi = DAG.getNode(ISD::BITCAST, DL, MVT::v4i32, OpHi);
-
-    // The PSHUFD mask:
-    static const int ShufMask1[] = {0, 2, 0, 0};
-    SDValue Undef = DAG.getUNDEF(VT);
-    OpLo = DAG.getVectorShuffle(VT, DL, OpLo, Undef, ShufMask1);
-    OpHi = DAG.getVectorShuffle(VT, DL, OpHi, Undef, ShufMask1);
-
-    // The MOVLHPS mask:
-    static const int ShufMask2[] = {0, 1, 4, 5};
-    return DAG.getVectorShuffle(VT, DL, OpLo, OpHi, ShufMask2);
+    static const int ShufMask[] = {0, 2, 4, 6};
+    return DAG.getVectorShuffle(VT, DL, OpLo, OpHi, ShufMask);
   }
 
   if ((VT == MVT::v8i16) && (InVT == MVT::v8i32)) {
@@ -14443,7 +14435,7 @@ static MachineBasicBlock *EmitXBegin(MachineInstr *MI, MachineBasicBlock *MBB,
 
   // Transfer the remainder of BB and its successor edges to sinkMBB.
   sinkMBB->splice(sinkMBB->begin(), MBB,
-                  llvm::next(MachineBasicBlock::iterator(MI)), MBB->end());
+                  std::next(MachineBasicBlock::iterator(MI)), MBB->end());
   sinkMBB->transferSuccessorsAndUpdatePHIs(MBB);
 
   // thisMBB:
@@ -14677,7 +14669,7 @@ X86TargetLowering::EmitAtomicLoadArith(MachineInstr *MI,
 
   // Transfer the remainder of BB and its successor edges to sinkMBB.
   sinkMBB->splice(sinkMBB->begin(), MBB,
-                  llvm::next(MachineBasicBlock::iterator(MI)), MBB->end());
+                  std::next(MachineBasicBlock::iterator(MI)), MBB->end());
   sinkMBB->transferSuccessorsAndUpdatePHIs(MBB);
 
   // thisMBB:
@@ -14963,7 +14955,7 @@ X86TargetLowering::EmitAtomicLoadArith6432(MachineInstr *MI,
 
   // Transfer the remainder of BB and its successor edges to sinkMBB.
   sinkMBB->splice(sinkMBB->begin(), MBB,
-                  llvm::next(MachineBasicBlock::iterator(MI)), MBB->end());
+                  std::next(MachineBasicBlock::iterator(MI)), MBB->end());
   sinkMBB->transferSuccessorsAndUpdatePHIs(MBB);
 
   // thisMBB:
@@ -15359,8 +15351,7 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
 
     // Transfer the remainder of MBB and its successor edges to endMBB.
     endMBB->splice(endMBB->begin(), thisMBB,
-                    llvm::next(MachineBasicBlock::iterator(MI)),
-                    thisMBB->end());
+                   std::next(MachineBasicBlock::iterator(MI)), thisMBB->end());
     endMBB->transferSuccessorsAndUpdatePHIs(thisMBB);
 
     // Make offsetMBB and overflowMBB successors of thisMBB
@@ -15530,8 +15521,7 @@ X86TargetLowering::EmitVAStartSaveXMMRegsWithCustomInserter(
 
   // Transfer the remainder of MBB and its successor edges to EndMBB.
   EndMBB->splice(EndMBB->begin(), MBB,
-                 llvm::next(MachineBasicBlock::iterator(MI)),
-                 MBB->end());
+                 std::next(MachineBasicBlock::iterator(MI)), MBB->end());
   EndMBB->transferSuccessorsAndUpdatePHIs(MBB);
 
   // The original block will now fall through to the XMM save block.
@@ -15593,7 +15583,7 @@ static bool checkAndUpdateEFLAGSKill(MachineBasicBlock::iterator SelectItr,
                                      MachineBasicBlock* BB,
                                      const TargetRegisterInfo* TRI) {
   // Scan forward through BB for a use/def of EFLAGS.
-  MachineBasicBlock::iterator miI(llvm::next(SelectItr));
+  MachineBasicBlock::iterator miI(std::next(SelectItr));
   for (MachineBasicBlock::iterator miE = BB->end(); miI != miE; ++miI) {
     const MachineInstr& mi = *miI;
     if (mi.readsRegister(X86::EFLAGS))
@@ -15658,8 +15648,7 @@ X86TargetLowering::EmitLoweredSelect(MachineInstr *MI,
 
   // Transfer the remainder of BB and its successor edges to sinkMBB.
   sinkMBB->splice(sinkMBB->begin(), BB,
-                  llvm::next(MachineBasicBlock::iterator(MI)),
-                  BB->end());
+                  std::next(MachineBasicBlock::iterator(MI)), BB->end());
   sinkMBB->transferSuccessorsAndUpdatePHIs(BB);
 
   // Add the true and fallthrough blocks as its successors.
@@ -15739,8 +15728,8 @@ X86TargetLowering::EmitLoweredSegAlloca(MachineInstr *MI, MachineBasicBlock *BB,
   MF->insert(MBBIter, mallocMBB);
   MF->insert(MBBIter, continueMBB);
 
-  continueMBB->splice(continueMBB->begin(), BB, llvm::next
-                      (MachineBasicBlock::iterator(MI)), BB->end());
+  continueMBB->splice(continueMBB->begin(), BB,
+                      std::next(MachineBasicBlock::iterator(MI)), BB->end());
   continueMBB->transferSuccessorsAndUpdatePHIs(BB);
 
   // Add code to the main basic block to check if the stack limit has been hit,
@@ -15981,7 +15970,7 @@ X86TargetLowering::emitEHSjLjSetJmp(MachineInstr *MI,
 
   // Transfer the remainder of BB and its successor edges to sinkMBB.
   sinkMBB->splice(sinkMBB->begin(), MBB,
-                  llvm::next(MachineBasicBlock::iterator(MI)), MBB->end());
+                  std::next(MachineBasicBlock::iterator(MI)), MBB->end());
   sinkMBB->transferSuccessorsAndUpdatePHIs(MBB);
 
   // thisMBB:

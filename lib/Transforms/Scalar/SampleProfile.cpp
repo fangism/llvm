@@ -26,17 +26,17 @@
 
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/PostDominators.h"
-#include "llvm/DebugInfo.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
@@ -45,7 +45,6 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/InstIterator.h"
 #include "llvm/Support/LineIterator.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Regex.h"
@@ -240,19 +239,19 @@ public:
   static char ID;
 
   SampleProfileLoader(StringRef Name = SampleProfileFile)
-      : FunctionPass(ID), Profiler(0), Filename(Name) {
+      : FunctionPass(ID), Profiler(), Filename(Name) {
     initializeSampleProfileLoaderPass(*PassRegistry::getPassRegistry());
   }
 
-  virtual bool doInitialization(Module &M);
+  bool doInitialization(Module &M) override;
 
   void dump() { Profiler->dump(); }
 
-  virtual const char *getPassName() const { return "Sample profile pass"; }
+  const char *getPassName() const override { return "Sample profile pass"; }
 
-  virtual bool runOnFunction(Function &F);
+  bool runOnFunction(Function &F) override;
 
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
     AU.addRequired<LoopInfo>();
     AU.addRequired<DominatorTreeWrapperPass>();
@@ -261,7 +260,7 @@ public:
 
 protected:
   /// \brief Profile reader object.
-  OwningPtr<SampleModuleProfile> Profiler;
+  std::unique_ptr<SampleModuleProfile> Profiler;
 
   /// \brief Name of the profile file to load.
   StringRef Filename;
@@ -399,7 +398,7 @@ void SampleModuleProfile::dump() {
 /// profiles for large programs, as the representation is extremely
 /// inefficient.
 void SampleModuleProfile::loadText() {
-  OwningPtr<MemoryBuffer> Buffer;
+  std::unique_ptr<MemoryBuffer> Buffer;
   error_code EC = MemoryBuffer::getFile(Filename, Buffer);
   if (EC)
     report_fatal_error("Could not open file " + Filename + ": " + EC.message());

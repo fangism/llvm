@@ -43,14 +43,14 @@
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/Support/CFG.h"
+#include "llvm/IR/PatternMatch.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
-#include "llvm/Support/PatternMatch.h"
-#include "llvm/Support/ValueHandle.h"
 #include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
@@ -2508,7 +2508,7 @@ public:
 
   /// replaceAllUsesWith - override so that instruction replacement
   /// can be defined in terms of the instruction combiner framework.
-  virtual void replaceAllUsesWith(Instruction *I, Value *With) const {
+  void replaceAllUsesWith(Instruction *I, Value *With) const override {
     IC->ReplaceInstUsesWith(*I, With);
   }
 };

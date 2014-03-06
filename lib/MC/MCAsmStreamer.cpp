@@ -8,7 +8,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/MC/MCStreamer.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
@@ -41,9 +40,9 @@ protected:
   formatted_raw_ostream &OS;
   const MCAsmInfo *MAI;
 private:
-  OwningPtr<MCInstPrinter> InstPrinter;
-  OwningPtr<MCCodeEmitter> Emitter;
-  OwningPtr<MCAsmBackend> AsmBackend;
+  std::unique_ptr<MCInstPrinter> InstPrinter;
+  std::unique_ptr<MCCodeEmitter> Emitter;
+  std::unique_ptr<MCAsmBackend> AsmBackend;
 
   SmallString<128> CommentToEmit;
   raw_svector_ostream CommentStream;
@@ -114,7 +113,7 @@ public:
     return CommentStream;
   }
 
-  void emitRawComment(const Twine &T, bool TabPrefix = true) LLVM_OVERRIDE;
+  void emitRawComment(const Twine &T, bool TabPrefix = true) override;
 
   /// AddBlankLine - Emit a blank line to a .s file to pretty it up.
   virtual void AddBlankLine() {
@@ -126,11 +125,6 @@ public:
 
   virtual void ChangeSection(const MCSection *Section,
                              const MCExpr *Subsection);
-
-  virtual void InitSections(bool Force) {
-    if (Force)
-      SwitchSection(getContext().getObjectFileInfo()->getTextSection());
-  }
 
   virtual void EmitLabel(MCSymbol *Symbol);
   virtual void EmitDebugLabel(MCSymbol *Symbol);

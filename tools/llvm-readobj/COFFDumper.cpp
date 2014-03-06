@@ -47,12 +47,12 @@ public:
     cacheRelocations();
   }
 
-  virtual void printFileHeaders() LLVM_OVERRIDE;
-  virtual void printSections() LLVM_OVERRIDE;
-  virtual void printRelocations() LLVM_OVERRIDE;
-  virtual void printSymbols() LLVM_OVERRIDE;
-  virtual void printDynamicSymbols() LLVM_OVERRIDE;
-  virtual void printUnwindInfo() LLVM_OVERRIDE;
+  virtual void printFileHeaders() override;
+  virtual void printSections() override;
+  virtual void printRelocations() override;
+  virtual void printSymbols() override;
+  virtual void printDynamicSymbols() override;
+  virtual void printUnwindInfo() override;
 
 private:
   void printSymbol(symbol_iterator SymI);
@@ -104,9 +104,8 @@ private:
 
 namespace llvm {
 
-error_code createCOFFDumper(const object::ObjectFile *Obj,
-                            StreamWriter& Writer,
-                            OwningPtr<ObjDumper> &Result) {
+error_code createCOFFDumper(const object::ObjectFile *Obj, StreamWriter &Writer,
+                            std::unique_ptr<ObjDumper> &Result) {
   const COFFObjectFile *COFFObj = dyn_cast<COFFObjectFile>(Obj);
   if (!COFFObj)
     return readobj_error::unsupported_obj_file_format;

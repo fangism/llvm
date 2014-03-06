@@ -471,31 +471,22 @@ DLL storage class:
     exists for defining a dll interface, the compiler, assembler and linker know
     it is externally referenced and must refrain from deleting the symbol.
 
-Named Types
------------
+Structure Types
+---------------
 
-LLVM IR allows you to specify name aliases for certain types. This can
-make it easier to read the IR and make the IR more condensed
-(particularly when recursive types are involved). An example of a name
-specification is:
+LLVM IR allows you to specify both "identified" and "literal" :ref:`structure
+types <t_struct>`.  Literal types are uniqued structurally, but identified types
+are never uniqued.  An :ref:`opaque structural type <t_opaque>` can also be used
+to forward declare a type which is not yet available.
+
+An example of a identified structure specification is:
 
 .. code-block:: llvm
 
     %mytype = type { %mytype*, i32 }
 
-You may give a name to any :ref:`type <typesystem>` except
-":ref:`void <t_void>`". Type name aliases may be used anywhere a type is
-expected with the syntax "%mytype".
-
-Note that type names are aliases for the structural type that they
-indicate, and that you can therefore specify multiple names for the same
-type. This often leads to confusing behavior when dumping out a .ll
-file. Since LLVM IR uses structural typing, the name is not part of the
-type. When printing out LLVM IR, the printer will pick *one name* to
-render all types of a particular shape. This means that if you have code
-where two different source types end up having the same LLVM type, that
-the dumper will sometimes print the "wrong" or unexpected type. This is
-an important design point and isn't going to change.
+Prior to the LLVM 3.0 release, identified types were structurally uniqued.  Only
+literal types are uniqued in recent versions of LLVM.
 
 .. _globalvars:
 
@@ -1752,14 +1743,12 @@ Floating Point Types
    * - ``ppc_fp128``
      - 128-bit floating point value (two 64-bits)
 
-.. _t_x86mmx:
-
-X86mmx Type
-"""""""""""
+X86_mmx Type
+""""""""""""
 
 :Overview:
 
-The x86mmx type represents a value held in an MMX register on an x86
+The x86_mmx type represents a value held in an MMX register on an x86
 machine. The operations allowed on it are quite limited: parameters and
 return values, load and store, and bitcast. User-specified MMX
 instructions are represented as intrinsic or asm calls with arguments
@@ -1770,7 +1759,7 @@ of this type.
 
 ::
 
-      x86mmx
+      x86_mmx
 
 
 .. _t_pointer:
@@ -2055,7 +2044,7 @@ The IEEE 16-bit format (half precision) is represented by ``0xH``
 followed by 4 hexadecimal digits. All hexadecimal formats are big-endian
 (sign bit at the left).
 
-There are no constants of type x86mmx.
+There are no constants of type x86_mmx.
 
 .. _complexconstants:
 
@@ -2803,9 +2792,9 @@ metadata types that refer to the same loop identifier metadata.
 
    for.body:
      ...
-     %0 = load i32* %arrayidx, align 4, !llvm.mem.parallel_loop_access !0
+     %val0 = load i32* %arrayidx, !llvm.mem.parallel_loop_access !0
      ...
-     store i32 %0, i32* %arrayidx4, align 4, !llvm.mem.parallel_loop_access !0
+     store i32 %val0, i32* %arrayidx1, !llvm.mem.parallel_loop_access !0
      ...
      br i1 %exitcond, label %for.end, label %for.body, !llvm.loop !0
 
@@ -2820,21 +2809,22 @@ the loop identifier metadata node directly:
 .. code-block:: llvm
 
    outer.for.body:
-   ...
+     ...
+     %val1 = load i32* %arrayidx3, !llvm.mem.parallel_loop_access !2
+     ...
+     br label %inner.for.body
 
    inner.for.body:
      ...
-     %0 = load i32* %arrayidx, align 4, !llvm.mem.parallel_loop_access !0
+     %val0 = load i32* %arrayidx1, !llvm.mem.parallel_loop_access !0
      ...
-     store i32 %0, i32* %arrayidx4, align 4, !llvm.mem.parallel_loop_access !0
+     store i32 %val0, i32* %arrayidx2, !llvm.mem.parallel_loop_access !0
      ...
      br i1 %exitcond, label %inner.for.end, label %inner.for.body, !llvm.loop !1
 
    inner.for.end:
      ...
-     %0 = load i32* %arrayidx, align 4, !llvm.mem.parallel_loop_access !0
-     ...
-     store i32 %0, i32* %arrayidx4, align 4, !llvm.mem.parallel_loop_access !0
+     store i32 %val1, i32* %arrayidx4, !llvm.mem.parallel_loop_access !2
      ...
      br i1 %exitcond, label %outer.for.end, label %outer.for.body, !llvm.loop !2
 

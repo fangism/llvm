@@ -31,9 +31,22 @@ dnl===
 dnl===-----------------------------------------------------------------------===
 dnl Initialize autoconf and define the package name, version number and
 dnl address for reporting bugs.
-AC_INIT([LLVM],[3.5svn],[http://llvm.org/bugs/])
-LLVM_DEFINE_SUBST([LLVM_VERSION_MAJOR], [3], [Major version of the LLVM API])
-LLVM_DEFINE_SUBST([LLVM_VERSION_MINOR], [5], [Minor version of the LLVM API])
+
+AC_INIT([LLVM],[3.5.0svn],[http://llvm.org/bugs/])
+
+LLVM_VERSION_MAJOR=3
+LLVM_VERSION_MINOR=5
+LLVM_VERSION_PATCH=0
+LLVM_VERSION_SUFFIX=svn
+
+AC_DEFINE_UNQUOTED([LLVM_VERSION_MAJOR], $LLVM_VERSION_MAJOR, [Major version of the LLVM API])
+AC_DEFINE_UNQUOTED([LLVM_VERSION_MINOR], $LLVM_VERSION_MINOR, [Minor version of the LLVM API])
+AC_DEFINE_UNQUOTED([LLVM_VERSION_PATCH], $LLVM_VERSION_PATCH, [Patch version of the LLVM API])
+
+AC_SUBST([LLVM_VERSION_MAJOR])
+AC_SUBST([LLVM_VERSION_MINOR])
+AC_SUBST([LLVM_VERSION_PATCH])
+AC_SUBST([LLVM_VERSION_SUFFIX])
 
 dnl Provide a copyright substitution and ensure the copyright notice is included
 dnl in the output of --version option of the generated configure script.
@@ -589,19 +602,19 @@ bypass these sanity checks.])])
     ;;
 esac
 
-dnl --enable-cxx11 : check whether or not to use -std=c++11 on the command line
-AC_ARG_ENABLE(cxx11,
-              AS_HELP_STRING([--enable-cxx11],
-                             [Use c++11 if available (default is NO)]),,
+dnl --enable-cxx1y : check whether or not to use -std=c++1y on the command line
+AC_ARG_ENABLE(cxx1y,
+              AS_HELP_STRING([--enable-cxx1y],
+                             [Use c++1y if available (default is NO)]),,
                              enableval=default)
 case "$enableval" in
-  yes) AC_SUBST(ENABLE_CXX11,[1]) ;;
-  no)  AC_SUBST(ENABLE_CXX11,[0]) ;;
-  default) AC_SUBST(ENABLE_CXX11,[0]);;
-  *) AC_MSG_ERROR([Invalid setting for --enable-cxx11. Use "yes" or "no"]) ;;
+  yes) AC_SUBST(ENABLE_CXX1Y,[1]) ;;
+  no)  AC_SUBST(ENABLE_CXX1Y,[0]) ;;
+  default) AC_SUBST(ENABLE_CXX1Y,[0]);;
+  *) AC_MSG_ERROR([Invalid setting for --enable-cxx1y. Use "yes" or "no"]) ;;
 esac
 
-dnl --enable-fission : check whether or not to use -gsplit-dwarf on the command
+dnl --enable-split-dwarf : check whether or not to use -gsplit-dwarf on the command
 dnl line
 AC_ARG_ENABLE(split-dwarf,
               AS_HELP_STRING([--enable-split-dwarf],
