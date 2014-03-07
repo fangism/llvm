@@ -135,9 +135,7 @@ public:
 ///   Record   - This is a record with a specific AbbrevID.
 ///
 struct BitstreamEntry {
-// anonymous enum named as workaround to g++-4.0.1 bug (fixed in 4.0.2):
-// http://gcc.gnu.org/bugzilla/show_bug.cgi?id=20589
-  enum KindEnum {
+  enum {
     Error,
     EndBlock,
     SubBlock,
