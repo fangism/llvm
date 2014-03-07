@@ -219,15 +219,8 @@ class MemorySanitizer : public FunctionPass {
  private:
   void initializeCallbacks(Module &M);
 
-// workaround accessibility bug in g++-4.0
-#if !__GNUC_PREREQ(4, 2)
- public:
-#endif
   /// \brief Track origins (allocation points) of uninitialized values.
   bool TrackOrigins;
-#if !__GNUC_PREREQ(4, 2)
- private:
-#endif
 
   const DataLayout *DL;
   LLVMContext *C;

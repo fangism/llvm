@@ -68,14 +68,7 @@ struct ILPValue {
 class SchedDFSResult {
   friend class SchedDFSImpl;
 
-// workaround gcc-4.0 accessibility bug
-#if !__GNUC_PREREQ(4, 2)
-public:
-#endif
   static const unsigned InvalidSubtreeID = ~0u;
-#if !__GNUC_PREREQ(4, 2)
-private:
-#endif
 
   /// \brief Per-SUnit data computed during DFS for various metrics.
   ///
