@@ -255,7 +255,7 @@ void InstrInfoEmitter::emitOperandNameMappings(raw_ostream &OS,
   OS << "namespace llvm {";
   OS << "namespace " << Namespace << " {\n";
   OS << "namespace " << OpNameNS << " { \n";
-  OS << "enum OperandEnum {\n";
+  OS << "enum {\n";
   for (StrUintMapIter i = Operands.begin(), e = Operands.end(); i != e; ++i)
     OS << "  " << i->first << " = " << i->second << ",\n";
 
@@ -585,7 +585,7 @@ void InstrInfoEmitter::emitEnums(raw_ostream &OS) {
     Target.getInstructionsByEnumValue();
 
   OS << "namespace " << Namespace << " {\n";
-  OS << "  enum InstructionEnum {\n";
+  OS << "  enum {\n";
   for (unsigned i = 0, e = NumberedInstructions.size(); i != e; ++i) {
     OS << "    " << NumberedInstructions[i]->TheDef->getName()
        << "\t= " << i << ",\n";
