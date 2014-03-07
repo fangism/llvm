@@ -34,7 +34,7 @@ std::atomic<float> x(0.0f);
 int main() { return (float)x; }"
         LLVM_NO_OLD_LIBSTDCXX)
       if(NOT LLVM_NO_OLD_LIBSTDCXX)
-        message(WARNING "Host Clang must be able to find libstdc++4.7 or newer! (unless you have the right patches)")
+        message(FATAL_ERROR "Host Clang must be able to find libstdc++4.7 or newer!")
       endif()
       set(CMAKE_REQUIRED_FLAGS ${OLD_CMAKE_REQUIRED_FLAGS})
       set(CMAKE_REQUIRED_LIBRARIES ${OLD_CMAKE_REQUIRED_LIBRARIES})
