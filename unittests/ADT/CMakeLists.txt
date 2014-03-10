@@ -20,10 +20,12 @@ set(ADTSources
   IntEqClassesTest.cpp
   IntervalMapTest.cpp
   IntrusiveRefCntPtrTest.cpp
+  MakeUniqueTest.cpp
   MapVectorTest.cpp
   OptionalTest.cpp
   OwningPtrTest.cpp
   PackedVectorTest.cpp
+  PointerIntPairTest.cpp
   PointerUnionTest.cpp
   SCCIteratorTest.cpp
   SmallPtrSetTest.cpp
@@ -38,7 +40,6 @@ set(ADTSources
   TripleTest.cpp
   TwineTest.cpp
   VariadicFunctionTest.cpp
-  polymorphic_ptr_test.cpp
  )
 
 add_llvm_unittest(ADTTests

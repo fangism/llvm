@@ -31,6 +31,7 @@
 
 namespace llvm {
 
+class ByteStreamer;
 class DwarfUnit;
 class DwarfCompileUnit;
 class ConstantInt;
@@ -124,8 +125,8 @@ public:
 
   /// \brief Empty entries are also used as a trigger to emit temp label. Such
   /// labels are referenced is used to find debug_loc offset for a given DIE.
-  bool isEmpty() { return Begin == 0 && End == 0; }
-  bool isMerged() { return Merged; }
+  bool isEmpty() const { return Begin == 0 && End == 0; }
+  bool isMerged() const { return Merged; }
   void Merge(DotDebugLocEntry *Next) {
     if (!(Begin && Loc == Next->Loc && End == Next->Begin))
       return;
@@ -680,6 +681,9 @@ class DwarfDebug : public AsmPrinterHandler {
   /// \brief Return Label immediately following the instruction.
   MCSymbol *getLabelAfterInsn(const MachineInstr *MI);
 
+  void attachLowHighPC(DwarfCompileUnit *Unit, DIE *D, MCSymbol *Begin,
+                       MCSymbol *End);
+
 public:
   //===--------------------------------------------------------------------===//
   // Main entry points.
@@ -698,19 +702,19 @@ public:
   void beginModule();
 
   /// \brief Emit all Dwarf sections that should come after the content.
-  void endModule();
+  void endModule() override;
 
   /// \brief Gather pre-function debug information.
-  void beginFunction(const MachineFunction *MF);
+  void beginFunction(const MachineFunction *MF) override;
 
   /// \brief Gather and emit post-function debug information.
-  void endFunction(const MachineFunction *MF);
+  void endFunction(const MachineFunction *MF) override;
 
   /// \brief Process beginning of an instruction.
-  void beginInstruction(const MachineInstr *MI);
+  void beginInstruction(const MachineInstr *MI) override;
 
   /// \brief Process end of an instruction.
-  void endInstruction();
+  void endInstruction() override;
 
   /// \brief Add a DIE to the set of types that we're going to pull into
   /// type units.
@@ -722,7 +726,7 @@ public:
 
   /// \brief For symbols that have a size designated (e.g. common symbols),
   /// this tracks that size.
-  void setSymbolSize(const MCSymbol *Sym, uint64_t Size) {
+  void setSymbolSize(const MCSymbol *Sym, uint64_t Size) override {
     SymSize[Sym] = Size;
   }
 
@@ -753,6 +757,15 @@ public:
 
   /// Returns the section symbol for the .debug_loc section.
   MCSymbol *getDebugLocSym() const { return DwarfDebugLocSectionSym; }
+
+  /// Returns the entries for the .debug_loc section.
+  const SmallVectorImpl<DotDebugLocEntry> &getDebugLocEntries() const {
+    return DotDebugLocEntries;
+  }
+
+  /// \brief Emit an entry for the debug loc section. This can be used to
+  /// handle an entry that's going to be emitted into the debug loc section.
+  void emitDebugLocEntry(ByteStreamer &Streamer, const DotDebugLocEntry &Entry);
 
   /// Find the MDNode for the given reference.
   template <typename T> T resolve(DIRef<T> Ref) const {

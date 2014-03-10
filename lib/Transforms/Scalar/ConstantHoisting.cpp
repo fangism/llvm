@@ -191,18 +191,6 @@ void ConstantHoisting::CollectConstants(Function &F) {
       CollectConstants(I);
 }
 
-/// \brief Compare function for sorting integer constants by type and by value
-/// within a type in ConstantMaps.
-static bool
-ConstantMapLessThan(const std::pair<ConstantInt *, ConstantCandidate> &LHS,
-                    const std::pair<ConstantInt *, ConstantCandidate> &RHS) {
-  if (LHS.first->getType() == RHS.first->getType())
-    return LHS.first->getValue().ult(RHS.first->getValue());
-  else
-    return LHS.first->getType()->getBitWidth() <
-           RHS.first->getType()->getBitWidth();
-}
-
 /// \brief Find the base constant within the given range and rebase all other
 /// constants with respect to the base constant.
 void ConstantHoisting::FindAndMakeBaseConstant(ConstantMapType::iterator S,
@@ -239,7 +227,14 @@ void ConstantHoisting::FindAndMakeBaseConstant(ConstantMapType::iterator S,
 /// an add from a common base constant.
 void ConstantHoisting::FindBaseConstants() {
   // Sort the constants by value and type. This invalidates the mapping.
-  std::sort(ConstantMap.begin(), ConstantMap.end(), ConstantMapLessThan);
+  std::sort(ConstantMap.begin(), ConstantMap.end(),
+            [](const std::pair<ConstantInt *, ConstantCandidate> &LHS,
+               const std::pair<ConstantInt *, ConstantCandidate> &RHS) {
+    if (LHS.first->getType() != RHS.first->getType())
+      return LHS.first->getType()->getBitWidth() <
+             RHS.first->getType()->getBitWidth();
+    return LHS.first->getValue().ult(RHS.first->getValue());
+  });
 
   // Simple linear scan through the sorted constant map for viable merge
   // candidates.
@@ -271,12 +266,11 @@ static void CollectBasicBlocks(SmallPtrSet<BasicBlock *, 4> &BBs, Function &F,
     BBs.insert(I->getParent());
   else if (ConstantExpr *CE = dyn_cast<ConstantExpr>(U))
     // Find all users of this constant expression.
-    for (Value::use_iterator UU = CE->use_begin(), E = CE->use_end();
-         UU != E; ++UU)
+    for (User *UU : CE->users())
       // Only record users that are instructions. We don't want to go down a
       // nested constant expression chain. Also check if the instruction is even
       // in the current function.
-      if (Instruction *I = dyn_cast<Instruction>(*UU))
+      if (Instruction *I = dyn_cast<Instruction>(UU))
         if(I->getParent()->getParent() == &F)
           BBs.insert(I->getParent());
 }
@@ -355,12 +349,11 @@ void ConstantHoisting::EmitBaseConstants(Function &F, User *U,
   ConstantExpr *CE = cast<ConstantExpr>(U);
   SmallVector<std::pair<Instruction *, Instruction *>, 8> WorkList;
   DEBUG(dbgs() << "Visit ConstantExpr " << *CE << '\n');
-  for (Value::use_iterator UU = CE->use_begin(), E = CE->use_end();
-       UU != E; ++UU) {
+  for (User *UU : CE->users()) {
     DEBUG(dbgs() << "Check user "; UU->print(dbgs()); dbgs() << '\n');
     // We only handel instructions here and won't walk down a ConstantExpr chain
     // to replace all ConstExpr with instructions.
-    if (Instruction *I = dyn_cast<Instruction>(*UU)) {
+    if (Instruction *I = dyn_cast<Instruction>(UU)) {
       // Only update constant expressions in the current function.
       if (I->getParent()->getParent() != &F) {
         DEBUG(dbgs() << "Not in the same function - skip.\n");
@@ -428,9 +421,9 @@ bool ConstantHoisting::EmitBaseConstants(Function &F) {
 
     // Use the same debug location as the last user of the constant.
     assert(!Base->use_empty() && "The use list is empty!?");
-    assert(isa<Instruction>(Base->use_back()) &&
+    assert(isa<Instruction>(Base->user_back()) &&
            "All uses should be instructions.");
-    Base->setDebugLoc(cast<Instruction>(Base->use_back())->getDebugLoc());
+    Base->setDebugLoc(cast<Instruction>(Base->user_back())->getDebugLoc());
 
     // Correct for base constant, which we counted above too.
     NumConstantsRebased--;

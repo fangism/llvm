@@ -84,7 +84,7 @@ LLVMDisasmContextRef LLVMCreateDisasmCPU(const char *Triple, const char *CPU,
 
   std::unique_ptr<MCSymbolizer> Symbolizer(TheTarget->createMCSymbolizer(
       Triple, GetOpInfo, SymbolLookUp, DisInfo, Ctx, RelInfo.release()));
-  DisAsm->setSymbolizer(Symbolizer);
+  DisAsm->setSymbolizer(std::move(Symbolizer));
   DisAsm->setupForSymbolicDisassembly(GetOpInfo, SymbolLookUp, DisInfo,
                                       Ctx, RelInfo);
   // Set up the instruction printer.
@@ -131,11 +131,11 @@ class DisasmMemoryObject : public MemoryObject {
 public:
   DisasmMemoryObject(uint8_t *bytes, uint64_t size, uint64_t basePC) :
                      Bytes(bytes), Size(size), BasePC(basePC) {}
- 
-  uint64_t getBase() const { return BasePC; }
-  uint64_t getExtent() const { return Size; }
 
-  int readByte(uint64_t Addr, uint8_t *Byte) const {
+  uint64_t getBase() const override { return BasePC; }
+  uint64_t getExtent() const override { return Size; }
+
+  int readByte(uint64_t Addr, uint8_t *Byte) const override {
     if (Addr - BasePC >= Size)
       return -1;
     *Byte = Bytes[Addr - BasePC];

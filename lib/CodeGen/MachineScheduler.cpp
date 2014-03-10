@@ -100,7 +100,7 @@ class MachineSchedulerBase : public MachineSchedContext,
 public:
   MachineSchedulerBase(char &ID): MachineFunctionPass(ID) {}
 
-  virtual void print(raw_ostream &O, const Module* = 0) const;
+  void print(raw_ostream &O, const Module* = 0) const override;
 
 protected:
   void scheduleRegions(ScheduleDAGInstrs &Scheduler);
@@ -111,9 +111,9 @@ class MachineScheduler : public MachineSchedulerBase {
 public:
   MachineScheduler();
 
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 
-  virtual bool runOnMachineFunction(MachineFunction&);
+  bool runOnMachineFunction(MachineFunction&) override;
 
   static char ID; // Class identification, replacement for typeinfo
 
@@ -126,9 +126,9 @@ class PostMachineScheduler : public MachineSchedulerBase {
 public:
   PostMachineScheduler();
 
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 
-  virtual bool runOnMachineFunction(MachineFunction&);
+  bool runOnMachineFunction(MachineFunction&) override;
 
   static char ID; // Class identification, replacement for typeinfo
 
@@ -1205,9 +1205,11 @@ class LoadClusterMutation : public ScheduleDAGMutation {
     unsigned Offset;
     LoadInfo(SUnit *su, unsigned reg, unsigned ofs)
       : SU(su), BaseReg(reg), Offset(ofs) {}
+
+    bool operator<(const LoadInfo &RHS) const {
+      return std::tie(BaseReg, Offset) < std::tie(RHS.BaseReg, RHS.Offset);
+    }
   };
-  static bool LoadInfoLess(const LoadClusterMutation::LoadInfo &LHS,
-                           const LoadClusterMutation::LoadInfo &RHS);
 
   const TargetInstrInfo *TII;
   const TargetRegisterInfo *TRI;
@@ -1216,19 +1218,11 @@ public:
                       const TargetRegisterInfo *tri)
     : TII(tii), TRI(tri) {}
 
-  virtual void apply(ScheduleDAGMI *DAG);
+  void apply(ScheduleDAGMI *DAG) override;
 protected:
   void clusterNeighboringLoads(ArrayRef<SUnit*> Loads, ScheduleDAGMI *DAG);
 };
 } // anonymous
-
-bool LoadClusterMutation::LoadInfoLess(
-  const LoadClusterMutation::LoadInfo &LHS,
-  const LoadClusterMutation::LoadInfo &RHS) {
-  if (LHS.BaseReg != RHS.BaseReg)
-    return LHS.BaseReg < RHS.BaseReg;
-  return LHS.Offset < RHS.Offset;
-}
 
 void LoadClusterMutation::clusterNeighboringLoads(ArrayRef<SUnit*> Loads,
                                                   ScheduleDAGMI *DAG) {
@@ -1242,7 +1236,7 @@ void LoadClusterMutation::clusterNeighboringLoads(ArrayRef<SUnit*> Loads,
   }
   if (LoadRecords.size() < 2)
     return;
-  std::sort(LoadRecords.begin(), LoadRecords.end(), LoadInfoLess);
+  std::sort(LoadRecords.begin(), LoadRecords.end());
   unsigned ClusterLength = 1;
   for (unsigned Idx = 0, End = LoadRecords.size(); Idx < (End - 1); ++Idx) {
     if (LoadRecords[Idx].BaseReg != LoadRecords[Idx+1].BaseReg) {
@@ -1319,7 +1313,7 @@ class MacroFusion : public ScheduleDAGMutation {
 public:
   MacroFusion(const TargetInstrInfo *tii): TII(tii) {}
 
-  virtual void apply(ScheduleDAGMI *DAG);
+  void apply(ScheduleDAGMI *DAG) override;
 };
 } // anonymous
 
@@ -1368,7 +1362,7 @@ class CopyConstrain : public ScheduleDAGMutation {
 public:
   CopyConstrain(const TargetInstrInfo *, const TargetRegisterInfo *) {}
 
-  virtual void apply(ScheduleDAGMI *DAG);
+  void apply(ScheduleDAGMI *DAG) override;
 
 protected:
   void constrainLocalCopy(SUnit *CopySU, ScheduleDAGMILive *DAG);
@@ -2450,29 +2444,29 @@ public:
     GenericSchedulerBase(C), DAG(0), Top(SchedBoundary::TopQID, "TopQ"),
     Bot(SchedBoundary::BotQID, "BotQ") {}
 
-  virtual void initPolicy(MachineBasicBlock::iterator Begin,
-                          MachineBasicBlock::iterator End,
-                          unsigned NumRegionInstrs) override;
+  void initPolicy(MachineBasicBlock::iterator Begin,
+                  MachineBasicBlock::iterator End,
+                  unsigned NumRegionInstrs) override;
 
-  virtual bool shouldTrackPressure() const override {
+  bool shouldTrackPressure() const override {
     return RegionPolicy.ShouldTrackPressure;
   }
 
-  virtual void initialize(ScheduleDAGMI *dag) override;
+  void initialize(ScheduleDAGMI *dag) override;
 
-  virtual SUnit *pickNode(bool &IsTopNode) override;
+  SUnit *pickNode(bool &IsTopNode) override;
 
-  virtual void schedNode(SUnit *SU, bool IsTopNode) override;
+  void schedNode(SUnit *SU, bool IsTopNode) override;
 
-  virtual void releaseTopNode(SUnit *SU) override {
+  void releaseTopNode(SUnit *SU) override {
     Top.releaseTopNode(SU);
   }
 
-  virtual void releaseBottomNode(SUnit *SU) override {
+  void releaseBottomNode(SUnit *SU) override {
     Bot.releaseBottomNode(SU);
   }
 
-  virtual void registerRoots() override;
+  void registerRoots() override;
 
 protected:
   void checkAcyclicLatency();
@@ -3043,16 +3037,16 @@ public:
 
   virtual ~PostGenericScheduler() {}
 
-  virtual void initPolicy(MachineBasicBlock::iterator Begin,
-                          MachineBasicBlock::iterator End,
-                          unsigned NumRegionInstrs) override {
+  void initPolicy(MachineBasicBlock::iterator Begin,
+                  MachineBasicBlock::iterator End,
+                  unsigned NumRegionInstrs) override {
     /* no configurable policy */
   };
 
   /// PostRA scheduling does not track pressure.
-  virtual bool shouldTrackPressure() const override { return false; }
+  bool shouldTrackPressure() const override { return false; }
 
-  virtual void initialize(ScheduleDAGMI *Dag) override {
+  void initialize(ScheduleDAGMI *Dag) override {
     DAG = Dag;
     SchedModel = DAG->getSchedModel();
     TRI = DAG->TRI;
@@ -3071,22 +3065,22 @@ public:
     }
   }
 
-  virtual void registerRoots() override;
+  void registerRoots() override;
 
-  virtual SUnit *pickNode(bool &IsTopNode) override;
+  SUnit *pickNode(bool &IsTopNode) override;
 
-  virtual void scheduleTree(unsigned SubtreeID) override {
+  void scheduleTree(unsigned SubtreeID) override {
     llvm_unreachable("PostRA scheduler does not support subtree analysis.");
   }
 
-  virtual void schedNode(SUnit *SU, bool IsTopNode) override;
+  void schedNode(SUnit *SU, bool IsTopNode) override;
 
-  virtual void releaseTopNode(SUnit *SU) override {
+  void releaseTopNode(SUnit *SU) override {
     Top.releaseTopNode(SU);
   }
 
   // Only called for roots.
-  virtual void releaseBottomNode(SUnit *SU) override {
+  void releaseBottomNode(SUnit *SU) override {
     BotRoots.push_back(SU);
   }
 
@@ -3251,7 +3245,7 @@ class ILPScheduler : public MachineSchedStrategy {
 public:
   ILPScheduler(bool MaximizeILP): DAG(0), Cmp(MaximizeILP) {}
 
-  virtual void initialize(ScheduleDAGMI *dag) {
+  void initialize(ScheduleDAGMI *dag) override {
     assert(dag->hasVRegLiveness() && "ILPScheduler needs vreg liveness");
     DAG = static_cast<ScheduleDAGMILive*>(dag);
     DAG->computeDFSResult();
@@ -3260,7 +3254,7 @@ public:
     ReadyQ.clear();
   }
 
-  virtual void registerRoots() {
+  void registerRoots() override {
     // Restore the heap in ReadyQ with the updated DFS results.
     std::make_heap(ReadyQ.begin(), ReadyQ.end(), Cmp);
   }
@@ -3269,7 +3263,7 @@ public:
   /// -----------------------------------------
 
   /// Callback to select the highest priority node from the ready Q.
-  virtual SUnit *pickNode(bool &IsTopNode) {
+  SUnit *pickNode(bool &IsTopNode) override {
     if (ReadyQ.empty()) return NULL;
     std::pop_heap(ReadyQ.begin(), ReadyQ.end(), Cmp);
     SUnit *SU = ReadyQ.back();
@@ -3285,19 +3279,19 @@ public:
   }
 
   /// \brief Scheduler callback to notify that a new subtree is scheduled.
-  virtual void scheduleTree(unsigned SubtreeID) {
+  void scheduleTree(unsigned SubtreeID) override {
     std::make_heap(ReadyQ.begin(), ReadyQ.end(), Cmp);
   }
 
   /// Callback after a node is scheduled. Mark a newly scheduled tree, notify
   /// DFSResults, and resort the priority Q.
-  virtual void schedNode(SUnit *SU, bool IsTopNode) {
+  void schedNode(SUnit *SU, bool IsTopNode) override {
     assert(!IsTopNode && "SchedDFSResult needs bottom-up");
   }
 
-  virtual void releaseTopNode(SUnit *) { /*only called for top roots*/ }
+  void releaseTopNode(SUnit *) override { /*only called for top roots*/ }
 
-  virtual void releaseBottomNode(SUnit *SU) {
+  void releaseBottomNode(SUnit *SU) override {
     ReadyQ.push_back(SU);
     std::push_heap(ReadyQ.begin(), ReadyQ.end(), Cmp);
   }

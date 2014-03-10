@@ -146,7 +146,7 @@ public:
   /// @name Lifetime management Methods
   /// @{
 
-  virtual void reset();
+  void reset() override;
 
   /// @}
 
@@ -256,7 +256,7 @@ public:
 
   void RecordRelocation(const MCAssembler &Asm, const MCAsmLayout &Layout,
                         const MCFragment *Fragment, const MCFixup &Fixup,
-                        MCValue Target, uint64_t &FixedValue);
+                        MCValue Target, uint64_t &FixedValue) override;
 
   void BindIndirectSymbols(MCAssembler &Asm);
 
@@ -273,15 +273,16 @@ public:
 
   void markAbsoluteVariableSymbols(MCAssembler &Asm,
                                    const MCAsmLayout &Layout);
-  void ExecutePostLayoutBinding(MCAssembler &Asm, const MCAsmLayout &Layout);
+  void ExecutePostLayoutBinding(MCAssembler &Asm,
+                                const MCAsmLayout &Layout) override;
 
-  virtual bool IsSymbolRefDifferenceFullyResolvedImpl(const MCAssembler &Asm,
-                                                      const MCSymbolData &DataA,
-                                                      const MCFragment &FB,
-                                                      bool InSet,
-                                                      bool IsPCRel) const;
+  bool IsSymbolRefDifferenceFullyResolvedImpl(const MCAssembler &Asm,
+                                              const MCSymbolData &DataA,
+                                              const MCFragment &FB,
+                                              bool InSet,
+                                              bool IsPCRel) const override;
 
-  void WriteObject(MCAssembler &Asm, const MCAsmLayout &Layout);
+  void WriteObject(MCAssembler &Asm, const MCAsmLayout &Layout) override;
 };
 
 

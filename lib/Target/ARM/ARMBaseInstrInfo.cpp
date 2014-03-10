@@ -573,15 +573,10 @@ unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
   // If this machine instr is an inline asm, measure it.
   if (MI->getOpcode() == ARM::INLINEASM)
     return getInlineAsmLength(MI->getOperand(0).getSymbolName(), *MAI);
-  if (MI->isLabel())
-    return 0;
   unsigned Opc = MI->getOpcode();
   switch (Opc) {
-  case TargetOpcode::IMPLICIT_DEF:
-  case TargetOpcode::KILL:
-  case TargetOpcode::PROLOG_LABEL:
-  case TargetOpcode::EH_LABEL:
-  case TargetOpcode::DBG_VALUE:
+  default:
+    // pseudo-instruction sizes are zero.
     return 0;
   case TargetOpcode::BUNDLE:
     return getInstBundleLength(MI);
@@ -644,9 +639,6 @@ unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
       ++NumEntries;
     return NumEntries * EntrySize + InstSize;
   }
-  default:
-    // Otherwise, pseudo-instruction sizes are zero.
-    return 0;
   }
 }
 
@@ -1551,7 +1543,7 @@ bool ARMBaseInstrInfo::isSchedulingBoundary(const MachineInstr *MI,
     return false;
 
   // Terminators and labels can't be scheduled around.
-  if (MI->isTerminator() || MI->isLabel())
+  if (MI->isTerminator() || MI->isPosition())
     return true;
 
   // Treat the start of the IT block as a scheduling boundary, but schedule

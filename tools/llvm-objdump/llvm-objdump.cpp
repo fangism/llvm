@@ -166,7 +166,7 @@ static const Target *getTarget(const ObjectFile *Obj = NULL) {
       // TheTriple defaults to ELF, and COFF doesn't have an environment:
       // the best we can do here is indicate that it is mach-o.
       if (Obj->isMachO())
-        TheTriple.setEnvironment(Triple::MachO);
+        TheTriple.setObjectFormat(Triple::MachO);
     }
   } else
     TheTriple.setTriple(Triple::normalize(TripleName));
@@ -327,7 +327,7 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
       std::unique_ptr<MCSymbolizer> Symzer(
           MCObjectSymbolizer::createObjectSymbolizer(*Ctx.get(), RelInfo, Obj));
       if (Symzer)
-        DisAsm->setSymbolizer(Symzer);
+        DisAsm->setSymbolizer(std::move(Symzer));
     }
   }
 

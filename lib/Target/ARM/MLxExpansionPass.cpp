@@ -40,9 +40,9 @@ namespace {
     static char ID;
     MLxExpansion() : MachineFunctionPass(ID) {}
 
-    virtual bool runOnMachineFunction(MachineFunction &Fn);
+    bool runOnMachineFunction(MachineFunction &Fn) override;
 
-    virtual const char *getPassName() const {
+    const char *getPassName() const override {
       return "ARM MLA / MLS expansion pass";
     }
 
@@ -335,7 +335,7 @@ bool MLxExpansion::ExpandFPMLxInstructions(MachineBasicBlock &MBB) {
   while (MII != E) {
     MachineInstr *MI = &*MII;
 
-    if (MI->isLabel() || MI->isImplicitDef() || MI->isCopy()) {
+    if (MI->isPosition() || MI->isImplicitDef() || MI->isCopy()) {
       ++MII;
       continue;
     }

@@ -229,6 +229,7 @@ namespace {
     SDValue visitSHL(SDNode *N);
     SDValue visitSRA(SDNode *N);
     SDValue visitSRL(SDNode *N);
+    SDValue visitRotate(SDNode *N);
     SDValue visitCTLZ(SDNode *N);
     SDValue visitCTLZ_ZERO_UNDEF(SDNode *N);
     SDValue visitCTTZ(SDNode *N);
@@ -408,7 +409,7 @@ public:
   explicit WorkListRemover(DAGCombiner &dc)
     : SelectionDAG::DAGUpdateListener(dc.getDAG()), DC(dc) {}
 
-  virtual void NodeDeleted(SDNode *N, SDNode *E) {
+  void NodeDeleted(SDNode *N, SDNode *E) override {
     DC.removeFromWorkList(N);
   }
 };
@@ -1194,6 +1195,8 @@ SDValue DAGCombiner::visit(SDNode *N) {
   case ISD::SHL:                return visitSHL(N);
   case ISD::SRA:                return visitSRA(N);
   case ISD::SRL:                return visitSRL(N);
+  case ISD::ROTR:
+  case ISD::ROTL:               return visitRotate(N);
   case ISD::CTLZ:               return visitCTLZ(N);
   case ISD::CTLZ_ZERO_UNDEF:    return visitCTLZ_ZERO_UNDEF(N);
   case ISD::CTTZ:               return visitCTTZ(N);
@@ -3200,6 +3203,60 @@ SDValue DAGCombiner::visitOR(SDNode *N) {
       return N0;
     if (ISD::isBuildVectorAllOnes(N1.getNode()))
       return N1;
+
+    // fold (or (shuf A, V_0, MA), (shuf B, V_0, MB)) -> (shuf A, B, Mask1)
+    // fold (or (shuf A, V_0, MA), (shuf B, V_0, MB)) -> (shuf B, A, Mask2)
+    // Do this only if the resulting shuffle is legal.
+    if (isa<ShuffleVectorSDNode>(N0) &&
+        isa<ShuffleVectorSDNode>(N1) &&
+        N0->getOperand(1) == N1->getOperand(1) &&
+        ISD::isBuildVectorAllZeros(N0.getOperand(1).getNode())) {
+      bool CanFold = true;
+      unsigned NumElts = VT.getVectorNumElements();
+      const ShuffleVectorSDNode *SV0 = cast<ShuffleVectorSDNode>(N0);
+      const ShuffleVectorSDNode *SV1 = cast<ShuffleVectorSDNode>(N1);
+      // We construct two shuffle masks:
+      // - Mask1 is a shuffle mask for a shuffle with N0 as the first operand
+      // and N1 as the second operand.
+      // - Mask2 is a shuffle mask for a shuffle with N1 as the first operand
+      // and N0 as the second operand.
+      // We do this because OR is commutable and therefore there might be
+      // two ways to fold this node into a shuffle.
+      SmallVector<int,4> Mask1;
+      SmallVector<int,4> Mask2;
+      
+      for (unsigned i = 0; i != NumElts && CanFold; ++i) {
+        int M0 = SV0->getMaskElt(i);
+        int M1 = SV1->getMaskElt(i);
+   
+        // Both shuffle indexes are undef. Propagate Undef.
+        if (M0 < 0 && M1 < 0) {
+          Mask1.push_back(M0);
+          Mask2.push_back(M0);
+          continue;
+        }
+
+        if (M0 < 0 || M1 < 0 ||
+            (M0 < (int)NumElts && M1 < (int)NumElts) ||
+            (M0 >= (int)NumElts && M1 >= (int)NumElts)) {
+          CanFold = false;
+          break;
+        }
+        
+        Mask1.push_back(M0 < (int)NumElts ? M0 : M1 + NumElts);
+        Mask2.push_back(M1 < (int)NumElts ? M1 : M0 + NumElts);
+      }
+
+      if (CanFold) {
+        // Fold this sequence only if the resulting shuffle is 'legal'.
+        if (TLI.isShuffleMaskLegal(Mask1, VT))
+          return DAG.getVectorShuffle(VT, SDLoc(N), N0->getOperand(0),
+                                      N1->getOperand(0), &Mask1[0]);
+        if (TLI.isShuffleMaskLegal(Mask2, VT))
+          return DAG.getVectorShuffle(VT, SDLoc(N), N1->getOperand(0),
+                                      N0->getOperand(0), &Mask2[0]);
+      }
+    }
   }
 
   // fold (or x, undef) -> -1
@@ -3360,9 +3417,9 @@ static bool MatchRotateHalf(SDValue Op, SDValue &Shift, SDValue &Mask) {
 //
 //     (or (shift1 X, Neg), (shift2 X, Pos))
 //
-// reduces to a rotate in direction shift2 by Pos and a rotate in direction
-// shift1 by Neg.  The range [0, OpSize) means that we only need to consider
-// shift amounts with defined behavior.
+// reduces to a rotate in direction shift2 by Pos or (equivalently) a rotate
+// in direction shift1 by Neg.  The range [0, OpSize) means that we only need
+// to consider shift amounts with defined behavior.
 static bool matchRotateSub(SDValue Pos, SDValue Neg, unsigned OpSize) {
   // If OpSize is a power of 2 then:
   //
@@ -3383,7 +3440,7 @@ static bool matchRotateSub(SDValue Pos, SDValue Neg, unsigned OpSize) {
   //
   // for all Neg and Pos.  Note that the (or ...) then invokes undefined
   // behavior if Pos == 0 (and consequently Neg == OpSize).
-  // 
+  //
   // We could actually use [A] whenever OpSize is a power of 2, but the
   // only extra cases that it would match are those uninteresting ones
   // where Neg and Pos are never in range at the same time.  E.g. for
@@ -3395,13 +3452,13 @@ static bool matchRotateSub(SDValue Pos, SDValue Neg, unsigned OpSize) {
   // always invokes undefined behavior for 32-bit X.
   //
   // Below, Mask == OpSize - 1 when using [A] and is all-ones otherwise.
-  unsigned LoBits = 0;
+  unsigned MaskLoBits = 0;
   if (Neg.getOpcode() == ISD::AND &&
       isPowerOf2_64(OpSize) &&
       Neg.getOperand(1).getOpcode() == ISD::Constant &&
       cast<ConstantSDNode>(Neg.getOperand(1))->getAPIntValue() == OpSize - 1) {
     Neg = Neg.getOperand(0);
-    LoBits = Log2_64(OpSize);
+    MaskLoBits = Log2_64(OpSize);
   }
 
   // Check whether Neg has the form (sub NegC, NegOp1) for some NegC and NegOp1.
@@ -3411,6 +3468,14 @@ static bool matchRotateSub(SDValue Pos, SDValue Neg, unsigned OpSize) {
   if (!NegC)
     return 0;
   SDValue NegOp1 = Neg.getOperand(1);
+
+  // On the RHS of [A], if Pos is Pos' & (OpSize - 1), just replace Pos with
+  // Pos'.  The truncation is redundant for the purpose of the equality.
+  if (MaskLoBits &&
+      Pos.getOpcode() == ISD::AND &&
+      Pos.getOperand(1).getOpcode() == ISD::Constant &&
+      cast<ConstantSDNode>(Pos.getOperand(1))->getAPIntValue() == OpSize - 1)
+    Pos = Pos.getOperand(0);
 
   // The condition we need is now:
   //
@@ -3442,8 +3507,9 @@ static bool matchRotateSub(SDValue Pos, SDValue Neg, unsigned OpSize) {
     return false;
 
   // Now we just need to check that OpSize & Mask == Width & Mask.
-  if (LoBits)
-    return Width.getLoBits(LoBits) == 0;
+  if (MaskLoBits)
+    // Opsize & Mask is 0 since Mask is Opsize - 1.
+    return Width.getLoBits(MaskLoBits) == 0;
   return Width == OpSize;
 }
 
@@ -3836,6 +3902,19 @@ SDValue DAGCombiner::distributeTruncateThroughAnd(SDNode *N) {
 
   return SDValue();
 }
+
+SDValue DAGCombiner::visitRotate(SDNode *N) {
+  // fold (rot* x, (trunc (and y, c))) -> (rot* x, (and (trunc y), (trunc c))).
+  if (N->getOperand(1).getOpcode() == ISD::TRUNCATE &&
+      N->getOperand(1).getOperand(0).getOpcode() == ISD::AND) {
+    SDValue NewOp1 = distributeTruncateThroughAnd(N->getOperand(1).getNode());
+    if (NewOp1.getNode())
+      return DAG.getNode(N->getOpcode(), SDLoc(N), N->getValueType(0),
+                         N->getOperand(0), NewOp1);
+  }
+  return SDValue();
+}
+
 SDValue DAGCombiner::visitSHL(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   SDValue N1 = N->getOperand(1);

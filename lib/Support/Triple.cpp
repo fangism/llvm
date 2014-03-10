@@ -154,9 +154,7 @@ const char *Triple::getEnvironmentTypeName(EnvironmentType Kind) {
   case CODE16: return "code16";
   case EABI: return "eabi";
   case EABIHF: return "eabihf";
-  case MachO: return "macho";
   case Android: return "android";
-  case ELF: return "elf";
   }
 
   llvm_unreachable("Invalid EnvironmentType!");
@@ -310,10 +308,34 @@ static Triple::EnvironmentType parseEnvironment(StringRef EnvironmentName) {
     .StartsWith("gnux32", Triple::GNUX32)
     .StartsWith("code16", Triple::CODE16)
     .StartsWith("gnu", Triple::GNU)
-    .StartsWith("macho", Triple::MachO)
     .StartsWith("android", Triple::Android)
-    .StartsWith("elf", Triple::ELF)
     .Default(Triple::UnknownEnvironment);
+}
+
+static Triple::ObjectFormatType parseFormat(StringRef EnvironmentName) {
+  return StringSwitch<Triple::ObjectFormatType>(EnvironmentName)
+    .EndsWith("coff", Triple::COFF)
+    .EndsWith("elf", Triple::ELF)
+    .EndsWith("macho", Triple::MachO)
+    .Default(Triple::UnknownObjectFormat);
+}
+
+static const char *getObjectFormatTypeName(Triple::ObjectFormatType Kind) {
+  switch (Kind) {
+  case Triple::UnknownObjectFormat: return "";
+  case Triple::COFF: return "coff";
+  case Triple::ELF: return "elf";
+  case Triple::MachO: return "macho";
+  }
+  llvm_unreachable("unknown object format type");
+}
+
+static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
+  if (T.isOSDarwin())
+    return Triple::MachO;
+  else if (T.isOSWindows())
+    return Triple::COFF;
+  return Triple::ELF;
 }
 
 /// \brief Construct a triple from the string representation provided.
@@ -325,7 +347,10 @@ Triple::Triple(const Twine &Str)
       Arch(parseArch(getArchName())),
       Vendor(parseVendor(getVendorName())),
       OS(parseOS(getOSName())),
-      Environment(parseEnvironment(getEnvironmentName())) {
+      Environment(parseEnvironment(getEnvironmentName())),
+      ObjectFormat(parseFormat(getEnvironmentName())) {
+  if (ObjectFormat == Triple::UnknownObjectFormat)
+    ObjectFormat = getDefaultFormat(*this);
 }
 
 /// \brief Construct a triple from string representations of the architecture,
@@ -339,7 +364,8 @@ Triple::Triple(const Twine &ArchStr, const Twine &VendorStr, const Twine &OSStr)
       Arch(parseArch(ArchStr.str())),
       Vendor(parseVendor(VendorStr.str())),
       OS(parseOS(OSStr.str())),
-      Environment() {
+      Environment(), ObjectFormat(Triple::UnknownObjectFormat) {
+  ObjectFormat = getDefaultFormat(*this);
 }
 
 /// \brief Construct a triple from string representations of the architecture,
@@ -354,7 +380,10 @@ Triple::Triple(const Twine &ArchStr, const Twine &VendorStr, const Twine &OSStr,
       Arch(parseArch(ArchStr.str())),
       Vendor(parseVendor(VendorStr.str())),
       OS(parseOS(OSStr.str())),
-      Environment(parseEnvironment(EnvironmentStr.str())) {
+      Environment(parseEnvironment(EnvironmentStr.str())),
+      ObjectFormat(parseFormat(EnvironmentStr.str())) {
+  if (ObjectFormat == Triple::UnknownObjectFormat)
+    ObjectFormat = getDefaultFormat(*this);
 }
 
 std::string Triple::normalize(StringRef Str) {
@@ -379,6 +408,7 @@ std::string Triple::normalize(StringRef Str) {
   EnvironmentType Environment = UnknownEnvironment;
   if (Components.size() > 3)
     Environment = parseEnvironment(Components[3]);
+  ObjectFormatType ObjectFormat = UnknownObjectFormat;
 
   // Note which components are already in their final position.  These will not
   // be moved.
@@ -420,6 +450,10 @@ std::string Triple::normalize(StringRef Str) {
       case 3:
         Environment = parseEnvironment(Comp);
         Valid = Environment != UnknownEnvironment;
+        if (!Valid) {
+          ObjectFormat = parseFormat(Comp);
+          Valid = ObjectFormat != UnknownObjectFormat;
+        }
         break;
       }
       if (!Valid)
@@ -641,6 +675,10 @@ void Triple::setEnvironment(EnvironmentType Kind) {
   setEnvironmentName(getEnvironmentTypeName(Kind));
 }
 
+void Triple::setObjectFormat(ObjectFormatType Kind) {
+  setEnvironmentName(getObjectFormatTypeName(Kind));
+}
+
 void Triple::setArchName(StringRef Str) {
   // Work around a miscompilation bug for Twines in gcc 4.0.3.
   SmallString<64> Triple;
@@ -759,7 +797,7 @@ Triple Triple::get32BitArchVariant() const {
   case Triple::mips64:    T.setArch(Triple::mips);    break;
   case Triple::mips64el:  T.setArch(Triple::mipsel);  break;
   case Triple::nvptx64:   T.setArch(Triple::nvptx);   break;
-  case Triple::ppc64:     T.setArch(Triple::ppc);   break;
+  case Triple::ppc64:     T.setArch(Triple::ppc);     break;
   case Triple::sparcv9:   T.setArch(Triple::sparc);   break;
   case Triple::x86_64:    T.setArch(Triple::x86);     break;
   case Triple::spir64:    T.setArch(Triple::spir);    break;
