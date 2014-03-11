@@ -55,12 +55,6 @@ STATISTIC(NumTailCalls, "Number of tail calls");
 STATISTIC(NumMovwMovt, "Number of GAs materialized with movw + movt");
 STATISTIC(NumLoopByVals, "Number of loops generated for byval arguments");
 
-// This option should go away when tail calls fully work.
-static cl::opt<bool>
-EnableARMTailCalls("arm-tail-calls", cl::Hidden,
-  cl::desc("Generate tail calls (TEMPORARY OPTION)."),
-  cl::init(false));
-
 cl::opt<bool>
 EnableARMLongCalls("arm-long-calls", cl::Hidden,
   cl::desc("Generate calls via indirect call instructions"),
@@ -1445,9 +1439,11 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   bool isStructRet    = (Outs.empty()) ? false : Outs[0].Flags.isSRet();
   bool isThisReturn   = false;
   bool isSibCall      = false;
+
   // Disable tail calls if they're not supported.
-  if (!EnableARMTailCalls && !Subtarget->supportsTailCall())
+  if (!Subtarget->supportsTailCall() || MF.getTarget().Options.DisableTailCalls)
     isTailCall = false;
+
   if (isTailCall) {
     // Check if it's really possible to do a tail call.
     isTailCall = IsEligibleForTailCallOptimization(Callee, CallConv,
@@ -2276,10 +2272,10 @@ bool ARMTargetLowering::isUsedByReturnOnly(SDNode *N, SDValue &Chain) const {
 }
 
 bool ARMTargetLowering::mayBeEmittedAsTailCall(CallInst *CI) const {
-  if (!EnableARMTailCalls && !Subtarget->supportsTailCall())
+  if (!Subtarget->supportsTailCall())
     return false;
 
-  if (!CI->isTailCall())
+  if (!CI->isTailCall() || getTargetMachine().Options.DisableTailCalls)
     return false;
 
   return !Subtarget->isThumb1Only();
@@ -6054,10 +6050,10 @@ ReplaceATOMIC_OP_64(SDNode *Node, SmallVectorImpl<SDValue>& Results,
                               Node->getOperand(i), DAG.getIntPtrConstant(1)));
   }
   SDVTList Tys = DAG.getVTList(MVT::i32, MVT::i32, MVT::Other);
-  SDValue Result =
-    DAG.getAtomic(Node->getOpcode(), dl, MVT::i64, Tys, Ops.data(), Ops.size(),
-                  cast<MemSDNode>(Node)->getMemOperand(), AN->getOrdering(),
-                  AN->getSynchScope());
+  SDValue Result = DAG.getAtomic(
+      Node->getOpcode(), dl, MVT::i64, Tys, Ops.data(), Ops.size(),
+      cast<MemSDNode>(Node)->getMemOperand(), AN->getSuccessOrdering(),
+      AN->getFailureOrdering(), AN->getSynchScope());
   SDValue OpsF[] = { Result.getValue(0), Result.getValue(1) };
   Results.push_back(DAG.getNode(ISD::BUILD_PAIR, dl, MVT::i64, OpsF, 2));
   Results.push_back(Result.getValue(2));
@@ -6517,15 +6513,13 @@ ARMTargetLowering::EmitAtomicBinary64(MachineInstr *MI, MachineBasicBlock *BB,
   MachineFunction::iterator It = BB;
   ++It;
 
-  bool isStore = (MI->getOpcode() == ARM::ATOMIC_STORE_I64);
-  unsigned offset = (isStore ? -2 : 0);
   unsigned destlo = MI->getOperand(0).getReg();
   unsigned desthi = MI->getOperand(1).getReg();
-  unsigned ptr = MI->getOperand(offset+2).getReg();
-  unsigned vallo = MI->getOperand(offset+3).getReg();
-  unsigned valhi = MI->getOperand(offset+4).getReg();
-  unsigned OrdIdx = offset + (IsCmpxchg ? 7 : 5);
-  AtomicOrdering Ord = static_cast<AtomicOrdering>(MI->getOperand(OrdIdx).getImm());
+  unsigned ptr = MI->getOperand(2).getReg();
+  unsigned vallo = MI->getOperand(3).getReg();
+  unsigned valhi = MI->getOperand(4).getReg();
+  AtomicOrdering Ord =
+      static_cast<AtomicOrdering>(MI->getOperand(IsCmpxchg ? 7 : 5).getImm());
   DebugLoc dl = MI->getDebugLoc();
   bool isThumb2 = Subtarget->isThumb2();
 
@@ -6579,23 +6573,22 @@ ARMTargetLowering::EmitAtomicBinary64(MachineInstr *MI, MachineBasicBlock *BB,
   //   fallthrough --> exitMBB
   BB = loopMBB;
 
-  if (!isStore) {
-    // Load
-    if (isThumb2) {
-      AddDefaultPred(BuildMI(BB, dl, TII->get(ldrOpc))
-                     .addReg(destlo, RegState::Define)
-                     .addReg(desthi, RegState::Define)
-                     .addReg(ptr));
-    } else {
-      unsigned GPRPair0 = MRI.createVirtualRegister(&ARM::GPRPairRegClass);
-      AddDefaultPred(BuildMI(BB, dl, TII->get(ldrOpc))
-                     .addReg(GPRPair0, RegState::Define).addReg(ptr));
-      // Copy r2/r3 into dest.  (This copy will normally be coalesced.)
-      BuildMI(BB, dl, TII->get(TargetOpcode::COPY), destlo)
+  // Load
+  if (isThumb2) {
+    AddDefaultPred(BuildMI(BB, dl, TII->get(ldrOpc))
+                       .addReg(destlo, RegState::Define)
+                       .addReg(desthi, RegState::Define)
+                       .addReg(ptr));
+  } else {
+    unsigned GPRPair0 = MRI.createVirtualRegister(&ARM::GPRPairRegClass);
+    AddDefaultPred(BuildMI(BB, dl, TII->get(ldrOpc))
+                       .addReg(GPRPair0, RegState::Define)
+                       .addReg(ptr));
+    // Copy r2/r3 into dest.  (This copy will normally be coalesced.)
+    BuildMI(BB, dl, TII->get(TargetOpcode::COPY), destlo)
         .addReg(GPRPair0, 0, ARM::gsub_0);
-      BuildMI(BB, dl, TII->get(TargetOpcode::COPY), desthi)
+    BuildMI(BB, dl, TII->get(TargetOpcode::COPY), desthi)
         .addReg(GPRPair0, 0, ARM::gsub_1);
-    }
   }
 
   unsigned StoreLo, StoreHi;
@@ -7761,7 +7754,6 @@ ARMTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
   case ARM::ATOMIC_LOAD_AND_I64:
     return EmitAtomicBinary64(MI, BB, isThumb2 ? ARM::t2ANDrr : ARM::ANDrr,
                               isThumb2 ? ARM::t2ANDrr : ARM::ANDrr);
-  case ARM::ATOMIC_STORE_I64:
   case ARM::ATOMIC_SWAP_I64:
     return EmitAtomicBinary64(MI, BB, 0, 0, false);
   case ARM::ATOMIC_CMP_SWAP_I64:

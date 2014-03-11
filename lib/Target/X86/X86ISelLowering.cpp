@@ -505,7 +505,9 @@ void X86TargetLowering::resetOperationActions() {
   }
 
   setOperationAction(ISD::READCYCLECOUNTER , MVT::i64  , Custom);
-  setOperationAction(ISD::BSWAP            , MVT::i16  , Expand);
+
+  if (!Subtarget->hasMOVBE())
+    setOperationAction(ISD::BSWAP          , MVT::i16  , Expand);
 
   // These should be promoted to a larger select which is supported.
   setOperationAction(ISD::SELECT          , MVT::i1   , Promote);
@@ -13803,6 +13805,7 @@ static void ReplaceATOMIC_LOAD(SDNode *Node,
                                Node->getOperand(1), Zero, Zero,
                                cast<AtomicSDNode>(Node)->getMemOperand(),
                                cast<AtomicSDNode>(Node)->getOrdering(),
+                               cast<AtomicSDNode>(Node)->getOrdering(),
                                cast<AtomicSDNode>(Node)->getSynchScope());
   Results.push_back(Swap.getValue(0));
   Results.push_back(Swap.getValue(1));
@@ -18041,7 +18044,6 @@ static SDValue CMPEQCombine(SDNode *N, SelectionDAG &DAG,
 
         if ((cc0 == X86::COND_E  && cc1 == X86::COND_NP) ||
             (cc0 == X86::COND_NE && cc1 == X86::COND_P)) {
-          bool is64BitFP = (CMP00.getValueType() == MVT::f64);
           // FIXME: need symbolic constants for these magic numbers.
           // See X86ATTInstPrinter.cpp:printSSECC().
           unsigned x86cc = (cc0 == X86::COND_E) ? 0 : 4;
@@ -18056,9 +18058,26 @@ static SDValue CMPEQCombine(SDNode *N, SelectionDAG &DAG,
           SDValue OnesOrZeroesF = DAG.getNode(X86ISD::FSETCC, DL,
                                               CMP00.getValueType(), CMP00, CMP01,
                                               DAG.getConstant(x86cc, MVT::i8));
-          MVT IntVT = (is64BitFP ? MVT::i64 : MVT::i32); 
-          SDValue OnesOrZeroesI = DAG.getNode(ISD::BITCAST, DL, IntVT,
-                                              OnesOrZeroesF);
+
+          bool is64BitFP = (CMP00.getValueType() == MVT::f64);
+          MVT IntVT = is64BitFP ? MVT::i64 : MVT::i32;
+
+          if (is64BitFP && !Subtarget->is64Bit()) {
+            // On a 32-bit target, we cannot bitcast the 64-bit float to a
+            // 64-bit integer, since that's not a legal type. Since
+            // OnesOrZeroesF is all ones of all zeroes, we don't need all the
+            // bits, but can do this little dance to extract the lowest 32 bits
+            // and work with those going forward.
+            SDValue Vector64 = DAG.getNode(ISD::SCALAR_TO_VECTOR, DL, MVT::v2f64,
+                                           OnesOrZeroesF);
+            SDValue Vector32 = DAG.getNode(ISD::BITCAST, DL, MVT::v4f32,
+                                           Vector64);
+            OnesOrZeroesF = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, MVT::f32,
+                                        Vector32, DAG.getIntPtrConstant(0));
+            IntVT = MVT::i32;
+          }
+
+          SDValue OnesOrZeroesI = DAG.getNode(ISD::BITCAST, DL, IntVT, OnesOrZeroesF);
           SDValue ANDed = DAG.getNode(ISD::AND, DL, IntVT, OnesOrZeroesI,
                                       DAG.getConstant(1, IntVT));
           SDValue OneBitOfTruth = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, ANDed);

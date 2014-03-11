@@ -281,9 +281,8 @@ bool Instruction::isIdenticalToWhenDefined(const Instruction *I) const {
 
   // We have two instructions of identical opcode and #operands.  Check to see
   // if all operands are the same.
-  for (unsigned i = 0, e = getNumOperands(); i != e; ++i)
-    if (getOperand(i) != I->getOperand(i))
-      return false;
+  if (!std::equal(op_begin(), op_end(), I->op_begin()))
+    return false;
 
   // Check special state that is a part of some instructions.
   if (const LoadInst *LI = dyn_cast<LoadInst>(this))
@@ -314,7 +313,10 @@ bool Instruction::isIdenticalToWhenDefined(const Instruction *I) const {
            FI->getSynchScope() == cast<FenceInst>(FI)->getSynchScope();
   if (const AtomicCmpXchgInst *CXI = dyn_cast<AtomicCmpXchgInst>(this))
     return CXI->isVolatile() == cast<AtomicCmpXchgInst>(I)->isVolatile() &&
-           CXI->getOrdering() == cast<AtomicCmpXchgInst>(I)->getOrdering() &&
+           CXI->getSuccessOrdering() ==
+               cast<AtomicCmpXchgInst>(I)->getSuccessOrdering() &&
+           CXI->getFailureOrdering() ==
+               cast<AtomicCmpXchgInst>(I)->getFailureOrdering() &&
            CXI->getSynchScope() == cast<AtomicCmpXchgInst>(I)->getSynchScope();
   if (const AtomicRMWInst *RMWI = dyn_cast<AtomicRMWInst>(this))
     return RMWI->getOperation() == cast<AtomicRMWInst>(I)->getOperation() &&
@@ -323,11 +325,8 @@ bool Instruction::isIdenticalToWhenDefined(const Instruction *I) const {
            RMWI->getSynchScope() == cast<AtomicRMWInst>(I)->getSynchScope();
   if (const PHINode *thisPHI = dyn_cast<PHINode>(this)) {
     const PHINode *otherPHI = cast<PHINode>(I);
-    for (unsigned i = 0, e = thisPHI->getNumOperands(); i != e; ++i) {
-      if (thisPHI->getIncomingBlock(i) != otherPHI->getIncomingBlock(i))
-        return false;
-    }
-    return true;
+    return std::equal(thisPHI->block_begin(), thisPHI->block_end(),
+                      otherPHI->block_begin());
   }
   return true;
 }
@@ -388,7 +387,10 @@ bool Instruction::isSameOperationAs(const Instruction *I,
            FI->getSynchScope() == cast<FenceInst>(I)->getSynchScope();
   if (const AtomicCmpXchgInst *CXI = dyn_cast<AtomicCmpXchgInst>(this))
     return CXI->isVolatile() == cast<AtomicCmpXchgInst>(I)->isVolatile() &&
-           CXI->getOrdering() == cast<AtomicCmpXchgInst>(I)->getOrdering() &&
+           CXI->getSuccessOrdering() ==
+               cast<AtomicCmpXchgInst>(I)->getSuccessOrdering() &&
+           CXI->getFailureOrdering() ==
+               cast<AtomicCmpXchgInst>(I)->getFailureOrdering() &&
            CXI->getSynchScope() == cast<AtomicCmpXchgInst>(I)->getSynchScope();
   if (const AtomicRMWInst *RMWI = dyn_cast<AtomicRMWInst>(this))
     return RMWI->getOperation() == cast<AtomicRMWInst>(I)->getOperation() &&
@@ -552,8 +554,8 @@ Instruction *Instruction::clone() const {
   // new one.
   SmallVector<std::pair<unsigned, MDNode*>, 4> TheMDs;
   getAllMetadataOtherThanDebugLoc(TheMDs);
-  for (unsigned i = 0, e = TheMDs.size(); i != e; ++i)
-    New->setMetadata(TheMDs[i].first, TheMDs[i].second);
+  for (const auto &MD : TheMDs)
+    New->setMetadata(MD.first, MD.second);
 
   New->setDebugLoc(getDebugLoc());
   return New;
