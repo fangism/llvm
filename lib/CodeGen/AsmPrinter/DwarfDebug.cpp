@@ -60,10 +60,6 @@ static cl::opt<bool> UnknownLocations(
     cl::desc("Make an absence of debug location information explicit."),
     cl::init(false));
 
-static cl::opt<bool> GenerateCUHash("generate-cu-hash", cl::Hidden,
-                                    cl::desc("Add the CU hash as the dwo_id."),
-                                    cl::init(false));
-
 static cl::opt<bool>
 GenerateGnuPubSections("generate-gnu-dwarf-pub-sections", cl::Hidden,
                        cl::desc("Generate GNU-style pubnames and pubtypes"),
@@ -105,11 +101,6 @@ DwarfPubSections("generate-dwarf-pub-sections", cl::Hidden,
 static cl::opt<unsigned>
 DwarfVersionNumber("dwarf-version", cl::Hidden,
                    cl::desc("Generate DWARF for dwarf version."), cl::init(0));
-
-static cl::opt<bool>
-DwarfCURanges("generate-dwarf-cu-ranges", cl::Hidden,
-              cl::desc("Generate DW_AT_ranges for compile units"),
-              cl::init(false));
 
 static const char *const DWARFGroupName = "DWARF Emission";
 static const char *const DbgTimerName = "DWARF Debug Writer";
@@ -373,6 +364,7 @@ bool DwarfDebug::isSubprogramContext(const MDNode *Context) {
 // scope then create and insert DIEs for these variables.
 DIE *DwarfDebug::updateSubprogramScopeDIE(DwarfCompileUnit *SPCU,
                                           DISubprogram SP) {
+  SP = SPCU->getOdrUniqueSubprogram(resolve(SP.getContext()), SP);
   DIE *SPDie = SPCU->getDIE(SP);
 
   assert(SPDie && "Unable to find subprogram DIE!");
@@ -689,8 +681,10 @@ unsigned DwarfDebug::getOrCreateSourceID(StringRef FileName, StringRef DirName,
     CUID = 0;
 
   // If FE did not provide a file name, then assume stdin.
-  if (FileName.empty())
-    return getOrCreateSourceID("<stdin>", StringRef(), CUID);
+  if (FileName.empty()) {
+    FileName = "<stdin>";
+    DirName = "";
+  }
 
   // TODO: this might not belong here. See if we can factor this better.
   if (DirName == CompilationDir)
@@ -838,11 +832,9 @@ void DwarfDebug::constructImportedEntityDIE(DwarfCompileUnit *TheCU,
     EntityDie = TheCU->getOrCreateTypeDIE(DIType(Entity));
   else
     EntityDie = TheCU->getDIE(Entity);
-  unsigned FileID = getOrCreateSourceID(Module.getContext().getFilename(),
-                                        Module.getContext().getDirectory(),
-                                        TheCU->getUniqueID());
-  TheCU->addUInt(IMDie, dwarf::DW_AT_decl_file, None, FileID);
-  TheCU->addUInt(IMDie, dwarf::DW_AT_decl_line, None, Module.getLineNumber());
+  TheCU->addSourceLine(IMDie, Module.getLineNumber(),
+                       Module.getContext().getFilename(),
+                       Module.getContext().getDirectory());
   TheCU->addDIEEntry(IMDie, dwarf::DW_AT_import, EntityDie);
   StringRef Name = Module.getName();
   if (!Name.empty())
@@ -980,12 +972,8 @@ void DwarfDebug::finalizeModuleInfo() {
       DwarfCompileUnit *SkCU =
           static_cast<DwarfCompileUnit *>(TheU->getSkeleton());
       if (useSplitDwarf()) {
-        // This should be a unique identifier when we want to build .dwp files.
-        uint64_t ID = 0;
-        if (GenerateCUHash) {
-          DIEHash CUHash(Asm);
-          ID = CUHash.computeCUSignature(*TheU->getUnitDie());
-        }
+        // Emit a unique identifier for this CU.
+        uint64_t ID = DIEHash(Asm).computeCUSignature(*TheU->getUnitDie());
         TheU->addUInt(TheU->getUnitDie(), dwarf::DW_AT_GNU_dwo_id,
                       dwarf::DW_FORM_data8, ID);
         SkCU->addUInt(SkCU->getUnitDie(), dwarf::DW_AT_GNU_dwo_id,
@@ -1067,13 +1055,12 @@ void DwarfDebug::endSections() {
     SectionMap[Section].push_back(SymbolCU(NULL, Sym));
   }
 
-  // For now only turn on CU ranges if we've explicitly asked for it,
-  // we have -ffunction-sections enabled, we've emitted a function
-  // into a unique section, or we're using LTO. If we're using LTO then
-  // we can't know that any particular function in the module is correlated
-  // to a particular CU and so we need to be conservative. At this point all
-  // sections should be finalized except for dwarf sections.
-  HasCURanges = DwarfCURanges || UsedNonDefaultText || (CUMap.size() > 1) ||
+  // For now only turn on CU ranges if we have -ffunction-sections enabled,
+  // we've emitted a function into a unique section, or we're using LTO. If
+  // we're using LTO then we can't know that any particular function in the
+  // module is correlated to a particular CU and so we need to be conservative.
+  // At this point all sections should be finalized except for dwarf sections.
+  HasCURanges = UsedNonDefaultText || (CUMap.size() > 1) ||
                 TargetMachine::getFunctionSections();
 }
 
@@ -1468,8 +1455,10 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
   // Grab the lexical scopes for the function, if we don't have any of those
   // then we're not going to be able to do anything.
   LScopes.initialize(*MF);
-  if (LScopes.empty())
+  if (LScopes.empty()) {
+    UsedNonDefaultText = true;
     return;
+  }
 
   assert(UserVariables.empty() && DbgValues.empty() && "Maps weren't cleaned");
 
@@ -2204,8 +2193,20 @@ void DwarfDebug::emitDebugPubNames(bool GnuStyle) {
       GnuStyle ? Asm->getObjFileLowering().getDwarfGnuPubNamesSection()
                : Asm->getObjFileLowering().getDwarfPubNamesSection();
 
+  emitDebugPubSection(GnuStyle, PSec, "Names", &DwarfUnit::getGlobalNames);
+}
+
+void DwarfDebug::emitDebugPubSection(
+    bool GnuStyle, const MCSection *PSec, StringRef Name,
+    const StringMap<const DIE *> &(DwarfUnit::*Accessor)() const) {
   for (const auto &NU : CUMap) {
     DwarfCompileUnit *TheU = NU.second;
+
+    const auto &Globals = (TheU->*Accessor)();
+
+    if (Globals.empty())
+      continue;
+
     if (auto Skeleton = static_cast<DwarfCompileUnit *>(TheU->getSkeleton()))
       TheU = Skeleton;
     unsigned ID = TheU->getUniqueID();
@@ -2213,14 +2214,10 @@ void DwarfDebug::emitDebugPubNames(bool GnuStyle) {
     // Start the dwarf pubnames section.
     Asm->OutStreamer.SwitchSection(PSec);
 
-    // Emit a label so we can reference the beginning of this pubname section.
-    if (GnuStyle)
-      Asm->OutStreamer.EmitLabel(Asm->GetTempSymbol("gnu_pubnames", ID));
-
     // Emit the header.
-    Asm->OutStreamer.AddComment("Length of Public Names Info");
-    MCSymbol *BeginLabel = Asm->GetTempSymbol("pubnames_begin", ID);
-    MCSymbol *EndLabel = Asm->GetTempSymbol("pubnames_end", ID);
+    Asm->OutStreamer.AddComment("Length of Public " + Name + " Info");
+    MCSymbol *BeginLabel = Asm->GetTempSymbol("pub" + Name + "_begin", ID);
+    MCSymbol *EndLabel = Asm->GetTempSymbol("pub" + Name + "_end", ID);
     Asm->EmitLabelDifference(EndLabel, BeginLabel, 4);
 
     Asm->OutStreamer.EmitLabel(BeginLabel);
@@ -2235,7 +2232,7 @@ void DwarfDebug::emitDebugPubNames(bool GnuStyle) {
     Asm->EmitLabelDifference(TheU->getLabelEnd(), TheU->getLabelBegin(), 4);
 
     // Emit the pubnames for this compilation unit.
-    for (const auto &GI : getUnits()[ID]->getGlobalNames()) {
+    for (const auto &GI : Globals) {
       const char *Name = GI.getKeyData();
       const DIE *Entity = GI.second;
 
@@ -2265,62 +2262,7 @@ void DwarfDebug::emitDebugPubTypes(bool GnuStyle) {
       GnuStyle ? Asm->getObjFileLowering().getDwarfGnuPubTypesSection()
                : Asm->getObjFileLowering().getDwarfPubTypesSection();
 
-  for (const auto &NU : CUMap) {
-    DwarfCompileUnit *TheU = NU.second;
-    if (auto Skeleton = static_cast<DwarfCompileUnit *>(TheU->getSkeleton()))
-      TheU = Skeleton;
-    unsigned ID = TheU->getUniqueID();
-
-    // Start the dwarf pubtypes section.
-    Asm->OutStreamer.SwitchSection(PSec);
-
-    // Emit a label so we can reference the beginning of this pubtype section.
-    if (GnuStyle)
-      Asm->OutStreamer.EmitLabel(Asm->GetTempSymbol("gnu_pubtypes", ID));
-
-    // Emit the header.
-    Asm->OutStreamer.AddComment("Length of Public Types Info");
-    MCSymbol *BeginLabel = Asm->GetTempSymbol("pubtypes_begin", ID);
-    MCSymbol *EndLabel = Asm->GetTempSymbol("pubtypes_end", ID);
-    Asm->EmitLabelDifference(EndLabel, BeginLabel, 4);
-
-    Asm->OutStreamer.EmitLabel(BeginLabel);
-
-    Asm->OutStreamer.AddComment("DWARF Version");
-    Asm->EmitInt16(dwarf::DW_PUBTYPES_VERSION);
-
-    Asm->OutStreamer.AddComment("Offset of Compilation Unit Info");
-    Asm->EmitSectionOffset(TheU->getLabelBegin(), TheU->getSectionSym());
-
-    Asm->OutStreamer.AddComment("Compilation Unit Length");
-    Asm->EmitLabelDifference(TheU->getLabelEnd(), TheU->getLabelBegin(), 4);
-
-    // Emit the pubtypes.
-    for (const auto &GI : getUnits()[ID]->getGlobalTypes()) {
-      const char *Name = GI.getKeyData();
-      const DIE *Entity = GI.second;
-
-      Asm->OutStreamer.AddComment("DIE offset");
-      Asm->EmitInt32(Entity->getOffset());
-
-      if (GnuStyle) {
-        dwarf::PubIndexEntryDescriptor Desc = computeIndexValue(TheU, Entity);
-        Asm->OutStreamer.AddComment(
-            Twine("Kind: ") + dwarf::GDBIndexEntryKindString(Desc.Kind) + ", " +
-            dwarf::GDBIndexEntryLinkageString(Desc.Linkage));
-        Asm->EmitInt8(Desc.toBits());
-      }
-
-      Asm->OutStreamer.AddComment("External Name");
-
-      // Emit the name with a terminating null byte.
-      Asm->OutStreamer.EmitBytes(StringRef(Name, GI.getKeyLength() + 1));
-    }
-
-    Asm->OutStreamer.AddComment("End Mark");
-    Asm->EmitInt32(0);
-    Asm->OutStreamer.EmitLabel(EndLabel);
-  }
+  emitDebugPubSection(GnuStyle, PSec, "Types", &DwarfUnit::getGlobalTypes);
 }
 
 // Emit strings into a string section.

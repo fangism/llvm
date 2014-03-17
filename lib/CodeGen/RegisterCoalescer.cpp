@@ -282,7 +282,6 @@ bool CoalescerPair::setRegisters(const MachineInstr *MI) {
     if (SrcSub) {
       Dst = TRI.getMatchingSuperReg(Dst, SrcSub, MRI.getRegClass(Src));
       if (!Dst) return false;
-      SrcSub = 0;
     } else if (!MRI.getRegClass(Src)->contains(Dst)) {
       return false;
     }
@@ -624,7 +623,7 @@ bool RegisterCoalescer::removeCopyByCommutingDef(const CoalescerPair &CP,
   for (MachineRegisterInfo::use_nodbg_iterator UI =
          MRI->use_nodbg_begin(IntA.reg),
        UE = MRI->use_nodbg_end(); UI != UE; ++UI) {
-    MachineInstr *UseMI = &*UI;
+    MachineInstr *UseMI = UI->getParent();
     SlotIndex UseIdx = LIS->getInstructionIndex(UseMI);
     LiveInterval::iterator US = IntA.FindSegmentContaining(UseIdx);
     if (US == IntA.end() || US->valno != AValNo)
@@ -668,8 +667,8 @@ bool RegisterCoalescer::removeCopyByCommutingDef(const CoalescerPair &CP,
   // Update uses of IntA of the specific Val# with IntB.
   for (MachineRegisterInfo::use_iterator UI = MRI->use_begin(IntA.reg),
          UE = MRI->use_end(); UI != UE;) {
-    MachineOperand &UseMO = UI.getOperand();
-    MachineInstr *UseMI = &*UI;
+    MachineOperand &UseMO = *UI;
+    MachineInstr *UseMI = UseMO.getParent();
     ++UI;
     if (UseMI->isDebugValue()) {
       // FIXME These don't have an instruction index.  Not clear we have enough
@@ -914,7 +913,7 @@ bool RegisterCoalescer::eliminateUndefCopy(MachineInstr *CopyMI,
   for (MachineRegisterInfo::reg_nodbg_iterator
          I = MRI->reg_nodbg_begin(DstInt->reg), E = MRI->reg_nodbg_end();
        I != E; ++I) {
-    MachineOperand &MO = I.getOperand();
+    MachineOperand &MO = *I;
     if (MO.isDef() || MO.isUndef())
       continue;
     MachineInstr *MI = MO.getParent();
@@ -939,8 +938,11 @@ void RegisterCoalescer::updateRegDefsUses(unsigned SrcReg,
   LiveInterval *DstInt = DstIsPhys ? 0 : &LIS->getInterval(DstReg);
 
   SmallPtrSet<MachineInstr*, 8> Visited;
-  for (MachineRegisterInfo::reg_iterator I = MRI->reg_begin(SrcReg);
-       MachineInstr *UseMI = I.skipInstruction();) {
+  for (MachineRegisterInfo::reg_instr_iterator
+       I = MRI->reg_instr_begin(SrcReg), E = MRI->reg_instr_end();
+       I != E; ) {
+    MachineInstr *UseMI = &*(I++);
+
     // Each instruction can only be rewritten once because sub-register
     // composition is not always idempotent. When SrcReg != DstReg, rewriting
     // the UseMI operands removes them from the SrcReg use-def chain, but when

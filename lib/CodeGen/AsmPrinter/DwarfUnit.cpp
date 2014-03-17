@@ -751,8 +751,9 @@ static uint64_t getBaseTypeSize(DwarfDebug *DD, DIDerivedType Ty) {
 
   DIType BaseType = DD->resolve(Ty.getTypeDerivedFrom());
 
-  // If this type is not derived from any type then take conservative approach.
-  if (!BaseType.isValid())
+  // If this type is not derived from any type or the type is a declaration then
+  // take conservative approach.
+  if (!BaseType.isValid() || BaseType.isForwardDecl())
     return Ty.getSizeInBits();
 
   // If this is a derived type, go ahead and get the base type, unless it's a
@@ -957,6 +958,9 @@ DIE *DwarfUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
   DIE *ContextDIE = getOrCreateContextDIE(Context);
   assert(ContextDIE);
 
+  // Unique the type. This is a noop if the type has no unique identifier.
+  Ty = DIType(resolve(Ty.getRef()));
+
   DIE *TyDIE = getDIE(Ty);
   if (TyDIE)
     return TyDIE;
@@ -973,7 +977,7 @@ DIE *DwarfUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
     if (GenerateDwarfTypeUnits && !Ty.isForwardDecl())
       if (MDString *TypeId = CTy.getIdentifier()) {
         DD->addDwarfTypeUnitType(getCU(), TypeId->getString(), TyDIE, CTy);
-        // Skip updating the accellerator tables since this is not the full type
+        // Skip updating the accelerator tables since this is not the full type.
         return TyDIE;
       }
     constructTypeDIE(*TyDIE, CTy);
@@ -998,8 +1002,9 @@ void DwarfUnit::updateAcceleratorTables(DIScope Context, DIType Ty,
     unsigned Flags = IsImplementation ? dwarf::DW_FLAG_type_implementation : 0;
     addAccelType(Ty.getName(), std::make_pair(TyDIE, Flags));
 
-    if (!Context || Context.isCompileUnit() || Context.isFile() ||
-        Context.isNameSpace())
+    if ((!Context || Context.isCompileUnit() || Context.isFile() ||
+         Context.isNameSpace()) &&
+        getCUNode().getEmissionKind() != DIBuilder::LineTablesOnly)
       GlobalTypes[getParentContextString(Context) + Ty.getName().str()] = TyDIE;
   }
 }
@@ -1064,6 +1069,8 @@ void DwarfUnit::addAccelType(StringRef Name,
 
 /// addGlobalName - Add a new global name to the compile unit.
 void DwarfUnit::addGlobalName(StringRef Name, DIE *Die, DIScope Context) {
+  if (getCUNode().getEmissionKind() == DIBuilder::LineTablesOnly)
+    return;
   std::string FullName = getParentContextString(Context) + Name.str();
   GlobalNames[FullName] = Die;
 }
@@ -1401,12 +1408,33 @@ DIE *DwarfUnit::getOrCreateNameSpace(DINameSpace NS) {
   return NDie;
 }
 
+/// Unique C++ member function declarations based on their
+/// context and mangled name.
+DISubprogram
+DwarfUnit::getOdrUniqueSubprogram(DIScope Context, DISubprogram SP) const {
+  if (!hasODR() ||
+      !Context.isCompositeType() ||
+      SP.getLinkageName().empty() ||
+      SP.isDefinition())
+    return SP;
+  // Create a key with the UID of the parent class and this SP's name.
+  Twine Key = SP.getContext().getName() + SP.getLinkageName();
+  const MDNode *&Entry = DD->getOrCreateOdrMember(Key.str());
+  if (!Entry)
+    Entry = &*SP;
+
+  return DISubprogram(Entry);
+}
+
 /// getOrCreateSubprogramDIE - Create new DIE using SP.
 DIE *DwarfUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   // Construct the context before querying for the existence of the DIE in case
   // such construction creates the DIE (as is the case for member function
   // declarations).
-  DIE *ContextDIE = getOrCreateContextDIE(resolve(SP.getContext()));
+  DIScope Context = resolve(SP.getContext());
+  DIE *ContextDIE = getOrCreateContextDIE(Context);
+  // Unique declarations based on the ODR, where applicable.
+  SP = getOdrUniqueSubprogram(Context, SP);
 
   DIE *SPDie = getDIE(SP);
   if (SPDie)
@@ -1647,7 +1675,8 @@ void DwarfCompileUnit::createGlobalVariableDIE(DIGlobalVariable GV) {
       // TAG_variable.
       addString(IsStaticMember && VariableSpecDIE ? VariableSpecDIE
                                                   : VariableDIE,
-                dwarf::DW_AT_MIPS_linkage_name,
+                DD->getDwarfVersion() >= 4 ? dwarf::DW_AT_linkage_name
+                                           : dwarf::DW_AT_MIPS_linkage_name,
                 GlobalValue::getRealLinkageName(LinkageName));
   } else if (const ConstantInt *CI =
                  dyn_cast_or_null<ConstantInt>(GV.getConstant())) {
@@ -1888,10 +1917,9 @@ void DwarfUnit::constructMemberDIE(DIE &Buffer, DIDerivedType DT) {
     uint64_t OffsetInBytes;
 
     if (Size != FieldSize) {
-      // Handle bitfield.
-      addUInt(MemberDie, dwarf::DW_AT_byte_size, None,
-              getBaseTypeSize(DD, DT) >> 3);
-      addUInt(MemberDie, dwarf::DW_AT_bit_size, None, DT.getSizeInBits());
+      // Handle bitfield, assume bytes are 8 bits.
+      addUInt(MemberDie, dwarf::DW_AT_byte_size, None, FieldSize/8);
+      addUInt(MemberDie, dwarf::DW_AT_bit_size, None, Size);
 
       uint64_t Offset = DT.getOffsetInBits();
       uint64_t AlignMask = ~(DT.getAlignInBits() - 1);

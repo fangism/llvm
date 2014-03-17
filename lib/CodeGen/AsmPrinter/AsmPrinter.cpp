@@ -272,7 +272,6 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
   case GlobalValue::LinkOnceODRLinkage:
   case GlobalValue::WeakAnyLinkage:
   case GlobalValue::WeakODRLinkage:
-  case GlobalValue::LinkerPrivateWeakLinkage:
     if (MAI->hasWeakDefDirective()) {
       // .globl _foo
       OutStreamer.EmitSymbolAttribute(GVSym, MCSA_Global);
@@ -301,7 +300,6 @@ void AsmPrinter::EmitLinkage(const GlobalValue *GV, MCSymbol *GVSym) const {
     return;
   case GlobalValue::PrivateLinkage:
   case GlobalValue::InternalLinkage:
-  case GlobalValue::LinkerPrivateLinkage:
     return;
   case GlobalValue::AvailableExternallyLinkage:
     llvm_unreachable("Should never emit this");
@@ -928,11 +926,7 @@ bool AsmPrinter::doFinalization(Module &M) {
       MCSymbol *Name = getSymbol(I);
 
       const GlobalValue *GV = I->getAliasedGlobal();
-      if (GV->isDeclaration()) {
-        report_fatal_error(Name->getName() +
-                           ": Target doesn't support aliases to declarations");
-      }
-
+      assert(!GV->isDeclaration());
       MCSymbol *Target = getSymbol(GV);
 
       if (I->hasExternalLinkage() || !MAI->getWeakRefDirective())
@@ -1978,7 +1972,7 @@ void AsmPrinter::printOffset(int64_t Offset, raw_ostream &OS) const {
 
 /// GetTempSymbol - Return the MCSymbol corresponding to the assembler
 /// temporary label with the specified stem and unique ID.
-MCSymbol *AsmPrinter::GetTempSymbol(StringRef Name, unsigned ID) const {
+MCSymbol *AsmPrinter::GetTempSymbol(Twine Name, unsigned ID) const {
   const DataLayout *DL = TM.getDataLayout();
   return OutContext.GetOrCreateSymbol(Twine(DL->getPrivateGlobalPrefix()) +
                                       Name + Twine(ID));
@@ -1986,7 +1980,7 @@ MCSymbol *AsmPrinter::GetTempSymbol(StringRef Name, unsigned ID) const {
 
 /// GetTempSymbol - Return an assembler temporary label with the specified
 /// stem.
-MCSymbol *AsmPrinter::GetTempSymbol(StringRef Name) const {
+MCSymbol *AsmPrinter::GetTempSymbol(Twine Name) const {
   const DataLayout *DL = TM.getDataLayout();
   return OutContext.GetOrCreateSymbol(Twine(DL->getPrivateGlobalPrefix())+
                                       Name);
