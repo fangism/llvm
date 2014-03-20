@@ -15,6 +15,7 @@
 #ifndef LLVM_MC_MCDWARF_H
 #define LLVM_MC_MCDWARF_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -181,9 +182,26 @@ struct MCDwarfLineTableHeader {
   SmallVector<std::string, 3> MCDwarfDirs;
   SmallVector<MCDwarfFile, 3> MCDwarfFiles;
   StringMap<unsigned> SourceIdMap;
+  StringRef CompilationDir;
+
   MCDwarfLineTableHeader() : Label(nullptr) {}
-  unsigned getFile(StringRef Directory, StringRef FileName, unsigned FileNumber = 0);
+  unsigned getFile(StringRef &Directory, StringRef &FileName,
+                   unsigned FileNumber = 0);
   std::pair<MCSymbol *, MCSymbol *> Emit(MCStreamer *MCOS) const;
+  std::pair<MCSymbol *, MCSymbol *>
+  Emit(MCStreamer *MCOS, ArrayRef<char> SpecialOpcodeLengths) const;
+};
+
+class MCDwarfDwoLineTable {
+  MCDwarfLineTableHeader Header;
+public:
+  void setCompilationDir(StringRef CompilationDir) {
+    Header.CompilationDir = CompilationDir;
+  }
+  unsigned getFile(StringRef Directory, StringRef FileName) {
+    return Header.getFile(Directory, FileName);
+  }
+  void Emit(MCStreamer &MCOS) const;
 };
 
 class MCDwarfLineTable {
@@ -197,7 +215,8 @@ public:
   // This emits the Dwarf file and the line tables for a given Compile Unit.
   const MCSymbol *EmitCU(MCStreamer *MCOS) const;
 
-  unsigned getFile(StringRef Directory, StringRef FileName, unsigned FileNumber = 0);
+  unsigned getFile(StringRef &Directory, StringRef &FileName,
+                   unsigned FileNumber = 0);
 
   MCSymbol *getLabel() const {
     return Header.Label;
@@ -205,6 +224,10 @@ public:
 
   void setLabel(MCSymbol *Label) {
     Header.Label = Label;
+  }
+
+  void setCompilationDir(StringRef CompilationDir) {
+    Header.CompilationDir = CompilationDir;
   }
 
   const SmallVectorImpl<std::string> &getMCDwarfDirs() const {

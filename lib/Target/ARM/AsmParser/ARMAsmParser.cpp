@@ -8799,6 +8799,7 @@ bool ARMAsmParser::parseDirectiveEven(SMLoc L) {
     Section = getStreamer().getCurrentSection().first;
   }
 
+  assert(Section && "must have section to emit alignment");
   if (Section->UseCodeAlign())
     getStreamer().EmitCodeAlignment(2);
   else

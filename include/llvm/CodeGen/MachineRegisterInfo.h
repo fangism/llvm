@@ -16,6 +16,7 @@
 
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/IndexedMap.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
@@ -224,6 +225,10 @@ public:
   }
   static reg_iterator reg_end() { return reg_iterator(0); }
 
+  inline iterator_range<reg_iterator>  reg_operands(unsigned Reg) const {
+    return iterator_range<reg_iterator>(reg_begin(Reg), reg_end());
+  }
+
   /// reg_instr_iterator/reg_instr_begin/reg_instr_end - Walk all defs and uses
   /// of the specified register, stepping by MachineInstr.
   typedef defusechain_instr_iterator<true,true,false,false,true,false>
@@ -233,6 +238,12 @@ public:
   }
   static reg_instr_iterator reg_instr_end() { return reg_instr_iterator(0); }
 
+  inline iterator_range<reg_instr_iterator>
+  reg_instructions(unsigned Reg) const {
+    return iterator_range<reg_instr_iterator>(reg_instr_begin(Reg),
+                                              reg_instr_end());
+  }
+
   /// reg_bundle_iterator/reg_bundle_begin/reg_bundle_end - Walk all defs and uses
   /// of the specified register, stepping by bundle.
   typedef defusechain_instr_iterator<true,true,false,false,false,true>
@@ -241,6 +252,11 @@ public:
     return reg_bundle_iterator(getRegUseDefListHead(RegNo));
   }
   static reg_bundle_iterator reg_bundle_end() { return reg_bundle_iterator(0); }
+
+  inline iterator_range<reg_bundle_iterator> reg_bundles(unsigned Reg) const {
+    return iterator_range<reg_bundle_iterator>(reg_bundle_begin(Reg),
+                                               reg_bundle_end());
+  }
 
   /// reg_empty - Return true if there are no instructions using or defining the
   /// specified register (it may be live-in).
@@ -255,6 +271,12 @@ public:
   }
   static reg_nodbg_iterator reg_nodbg_end() { return reg_nodbg_iterator(0); }
 
+  inline iterator_range<reg_nodbg_iterator>
+  reg_nodbg_operands(unsigned Reg) const {
+    return iterator_range<reg_nodbg_iterator>(reg_nodbg_begin(Reg),
+                                              reg_nodbg_end());
+  }
+
   /// reg_instr_nodbg_iterator/reg_instr_nodbg_begin/reg_instr_nodbg_end - Walk
   /// all defs and uses of the specified register, stepping by MachineInstr,
   /// skipping those marked as Debug.
@@ -267,6 +289,12 @@ public:
     return reg_instr_nodbg_iterator(0);
   }
 
+  inline iterator_range<reg_instr_nodbg_iterator>
+  reg_nodbg_instructions(unsigned Reg) const {
+    return iterator_range<reg_instr_nodbg_iterator>(reg_instr_nodbg_begin(Reg),
+                                                    reg_instr_nodbg_end());
+  }
+
   /// reg_bundle_nodbg_iterator/reg_bundle_nodbg_begin/reg_bundle_nodbg_end - Walk
   /// all defs and uses of the specified register, stepping by bundle,
   /// skipping those marked as Debug.
@@ -277,6 +305,12 @@ public:
   }
   static reg_bundle_nodbg_iterator reg_bundle_nodbg_end() {
     return reg_bundle_nodbg_iterator(0);
+  }
+
+  inline iterator_range<reg_bundle_nodbg_iterator> 
+  reg_nodbg_bundles(unsigned Reg) const {
+    return iterator_range<reg_bundle_nodbg_iterator>(reg_bundle_nodbg_begin(Reg),
+                                                     reg_bundle_nodbg_end());
   }
 
   /// reg_nodbg_empty - Return true if the only instructions using or defining
@@ -293,6 +327,10 @@ public:
   }
   static def_iterator def_end() { return def_iterator(0); }
 
+  inline iterator_range<def_iterator> def_operands(unsigned Reg) const {
+    return iterator_range<def_iterator>(def_begin(Reg), def_end());
+  }
+
   /// def_instr_iterator/def_instr_begin/def_instr_end - Walk all defs of the
   /// specified register, stepping by MachineInst.
   typedef defusechain_instr_iterator<false,true,false,false,true,false>
@@ -302,6 +340,12 @@ public:
   }
   static def_instr_iterator def_instr_end() { return def_instr_iterator(0); }
 
+  inline iterator_range<def_instr_iterator>
+  def_instructions(unsigned Reg) const {
+    return iterator_range<def_instr_iterator>(def_instr_begin(Reg),
+                                              def_instr_end());
+  }
+
   /// def_bundle_iterator/def_bundle_begin/def_bundle_end - Walk all defs of the
   /// specified register, stepping by bundle.
   typedef defusechain_instr_iterator<false,true,false,false,false,true>
@@ -310,6 +354,11 @@ public:
     return def_bundle_iterator(getRegUseDefListHead(RegNo));
   }
   static def_bundle_iterator def_bundle_end() { return def_bundle_iterator(0); }
+
+  inline iterator_range<def_bundle_iterator> def_bundles(unsigned Reg) const {
+    return iterator_range<def_bundle_iterator>(def_bundle_begin(Reg),
+                                               def_bundle_end());
+  }
 
   /// def_empty - Return true if there are no instructions defining the
   /// specified register (it may be live-in).
@@ -332,6 +381,10 @@ public:
   }
   static use_iterator use_end() { return use_iterator(0); }
 
+  inline iterator_range<use_iterator> use_operands(unsigned Reg) const {
+    return iterator_range<use_iterator>(use_begin(Reg), use_end());
+  }
+
   /// use_instr_iterator/use_instr_begin/use_instr_end - Walk all uses of the
   /// specified register, stepping by MachineInstr.
   typedef defusechain_instr_iterator<true,false,false,false,true,false>
@@ -341,6 +394,12 @@ public:
   }
   static use_instr_iterator use_instr_end() { return use_instr_iterator(0); }
 
+  inline iterator_range<use_instr_iterator>
+  use_instructions(unsigned Reg) const {
+    return iterator_range<use_instr_iterator>(use_instr_begin(Reg),
+                                              use_instr_end());
+  }
+
   /// use_bundle_iterator/use_bundle_begin/use_bundle_end - Walk all uses of the
   /// specified register, stepping by bundle.
   typedef defusechain_instr_iterator<true,false,false,false,false,true>
@@ -349,6 +408,11 @@ public:
     return use_bundle_iterator(getRegUseDefListHead(RegNo));
   }
   static use_bundle_iterator use_bundle_end() { return use_bundle_iterator(0); }
+
+  inline iterator_range<use_bundle_iterator> use_bundles(unsigned Reg) const {
+    return iterator_range<use_bundle_iterator>(use_bundle_begin(Reg),
+                                               use_bundle_end());
+  }
 
   /// use_empty - Return true if there are no instructions using the specified
   /// register.
@@ -372,6 +436,12 @@ public:
   }
   static use_nodbg_iterator use_nodbg_end() { return use_nodbg_iterator(0); }
 
+  inline iterator_range<use_nodbg_iterator>
+  use_nodbg_operands(unsigned Reg) const {
+    return iterator_range<use_nodbg_iterator>(use_nodbg_begin(Reg),
+                                              use_nodbg_end());
+  }
+
   /// use_instr_nodbg_iterator/use_instr_nodbg_begin/use_instr_nodbg_end - Walk
   /// all uses of the specified register, stepping by MachineInstr, skipping
   /// those marked as Debug.
@@ -384,6 +454,12 @@ public:
     return use_instr_nodbg_iterator(0);
   }
 
+  inline iterator_range<use_instr_nodbg_iterator>
+  use_nodbg_instructions(unsigned Reg) const {
+    return iterator_range<use_instr_nodbg_iterator>(use_instr_nodbg_begin(Reg),
+                                                    use_instr_nodbg_end());
+  }
+
   /// use_bundle_nodbg_iterator/use_bundle_nodbg_begin/use_bundle_nodbg_end - Walk
   /// all uses of the specified register, stepping by bundle, skipping
   /// those marked as Debug.
@@ -394,6 +470,12 @@ public:
   }
   static use_bundle_nodbg_iterator use_bundle_nodbg_end() {
     return use_bundle_nodbg_iterator(0);
+  }
+
+  inline iterator_range<use_bundle_nodbg_iterator>
+  use_nodbg_bundles(unsigned Reg) const {
+    return iterator_range<use_bundle_nodbg_iterator>(use_bundle_nodbg_begin(Reg),
+                                                     use_bundle_nodbg_end());
   }
 
   /// use_nodbg_empty - Return true if there are no non-Debug instructions

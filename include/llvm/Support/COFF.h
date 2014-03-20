@@ -30,6 +30,9 @@
 namespace llvm {
 namespace COFF {
 
+  // The maximum number of sections that a COFF object can have (inclusive).
+  const int MaxNumberOfSections = 65299;
+
   // The PE signature bytes that follows the DOS stub header.
   static const char PEMagic[] = { 'P', 'E', '\0', '\0' };
 
@@ -209,6 +212,10 @@ namespace COFF {
     SCT_COMPLEX_TYPE_SHIFT   = 4
   };
 
+  enum AuxSymbolType {
+    IMAGE_AUX_SYMBOL_TYPE_TOKEN_DEF = 1
+  };
+
   struct section {
     char     Name[NameSize];
     uint32_t VirtualSize;
@@ -334,7 +341,7 @@ namespace COFF {
     uint32_t TotalSize;
     uint32_t PointerToLinenumber;
     uint32_t PointerToNextFunction;
-    uint8_t  unused[2];
+    char     unused[2];
   };
 
   struct AuxiliarybfAndefSymbol {
@@ -369,7 +376,14 @@ namespace COFF {
     uint32_t CheckSum;
     uint16_t Number;
     uint8_t  Selection;
-    uint8_t  unused[3];
+    char     unused[3];
+  };
+
+  struct AuxiliaryCLRToken {
+    uint8_t  AuxType;
+    uint8_t  unused1;
+    uint32_t SymbolTableIndex;
+    char     unused2[12];
   };
 
   union Auxiliary {
@@ -624,6 +638,10 @@ namespace COFF {
     DEBUG_STRING_TABLE_SUBSECTION = 0xF3,
     DEBUG_INDEX_SUBSECTION        = 0xF4
   };
+
+  inline bool isReservedSectionNumber(int N) {
+    return N == IMAGE_SYM_UNDEFINED || N > MaxNumberOfSections;
+  }
 
 } // End namespace COFF.
 } // End namespace llvm.

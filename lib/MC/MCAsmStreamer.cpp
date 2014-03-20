@@ -133,6 +133,8 @@ public:
   void EmitAssemblerFlag(MCAssemblerFlag Flag) override;
   void EmitLinkerOptions(ArrayRef<std::string> Options) override;
   void EmitDataRegion(MCDataRegionType Kind) override;
+  void EmitVersionMin(MCVersionMinType Kind, unsigned Major, unsigned Minor,
+                      unsigned Update) override;
   void EmitThumbFunc(MCSymbol *Func) override;
 
   void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) override;
@@ -377,6 +379,18 @@ void MCAsmStreamer::EmitDataRegion(MCDataRegionType Kind) {
   case MCDR_DataRegionJT32:        OS << "\t.data_region jt32"; break;
   case MCDR_DataRegionEnd:         OS << "\t.end_data_region"; break;
   }
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitVersionMin(MCVersionMinType Kind, unsigned Major,
+                                   unsigned Minor, unsigned Update) {
+  switch (Kind) {
+  case MCVM_IOSVersionMin:        OS << "\t.ios_version_min"; break;
+  case MCVM_OSXVersionMin:        OS << "\t.macosx_version_min"; break;
+  }
+  OS << " " << Major << ", " << Minor;
+  if (Update)
+    OS << ", " << Update;
   EmitEOL();
 }
 
@@ -848,13 +862,27 @@ unsigned MCAsmStreamer::EmitDwarfFileDirective(unsigned FileNo,
                                                StringRef Directory,
                                                StringRef Filename,
                                                unsigned CUID) {
+  assert(CUID == 0);
+
+  MCDwarfLineTable &Table = getContext().getMCDwarfLineTable(CUID);
+  unsigned NumFiles = Table.getMCDwarfFiles().size();
+  FileNo = Table.getFile(Directory, Filename, FileNo);
+  if (FileNo == 0)
+    return 0;
+  if (NumFiles == Table.getMCDwarfFiles().size())
+    return FileNo;
+
+  SmallString<128> FullPathName;
+
   if (!UseDwarfDirectory && !Directory.empty()) {
     if (sys::path::is_absolute(Filename))
-      return EmitDwarfFileDirective(FileNo, "", Filename, CUID);
-
-    SmallString<128> FullPathName = Directory;
-    sys::path::append(FullPathName, Filename);
-    return EmitDwarfFileDirective(FileNo, "", FullPathName, CUID);
+      Directory = "";
+    else {
+      FullPathName = Directory;
+      sys::path::append(FullPathName, Filename);
+      Directory = "";
+      Filename = FullPathName;
+    }
   }
 
   OS << "\t.file\t" << FileNo << ' ';
@@ -864,11 +892,8 @@ unsigned MCAsmStreamer::EmitDwarfFileDirective(unsigned FileNo,
   }
   PrintQuotedString(Filename, OS);
   EmitEOL();
-  // All .file will belong to a single CUID.
-  CUID = 0;
 
-  return this->MCStreamer::EmitDwarfFileDirective(FileNo, Directory, Filename,
-                                                  CUID);
+  return FileNo;
 }
 
 void MCAsmStreamer::EmitDwarfLocDirective(unsigned FileNo, unsigned Line,

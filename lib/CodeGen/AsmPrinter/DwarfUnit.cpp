@@ -56,8 +56,13 @@ DwarfCompileUnit::DwarfCompileUnit(unsigned UID, DIE *D, DICompileUnit Node,
 }
 
 DwarfTypeUnit::DwarfTypeUnit(unsigned UID, DIE *D, DwarfCompileUnit &CU,
-                             AsmPrinter *A, DwarfDebug *DW, DwarfFile *DWU)
-    : DwarfUnit(UID, D, CU.getCUNode(), A, DW, DWU), CU(CU) {}
+                             AsmPrinter *A, DwarfDebug *DW, DwarfFile *DWU,
+                             MCDwarfDwoLineTable *SplitLineTable)
+    : DwarfUnit(UID, D, CU.getCUNode(), A, DW, DWU), CU(CU),
+      SplitLineTable(SplitLineTable) {
+  if (SplitLineTable)
+    addSectionOffset(UnitDie.get(), dwarf::DW_AT_stmt_list, 0);
+}
 
 /// ~Unit - Destructor for compile unit.
 DwarfUnit::~DwarfUnit() {
@@ -296,6 +301,22 @@ void DwarfCompileUnit::addLabelAddress(DIE *Die, dwarf::Attribute Attribute,
   }
 }
 
+unsigned DwarfCompileUnit::getOrCreateSourceID(StringRef FileName, StringRef DirName) {
+  // If we print assembly, we can't separate .file entries according to
+  // compile units. Thus all files will belong to the default compile unit.
+
+  // FIXME: add a better feature test than hasRawTextSupport. Even better,
+  // extend .file to support this.
+  return Asm->OutStreamer.EmitDwarfFileDirective(
+      0, DirName, FileName,
+      Asm->OutStreamer.hasRawTextSupport() ? 0 : getUniqueID());
+}
+
+unsigned DwarfTypeUnit::getOrCreateSourceID(StringRef FileName, StringRef DirName) {
+  return SplitLineTable ? SplitLineTable->getFile(DirName, FileName)
+                        : getCU().getOrCreateSourceID(FileName, DirName);
+}
+
 /// addOpAddress - Add a dwarf op address data and value using the
 /// form given and an op of either DW_FORM_addr or DW_FORM_GNU_addr_index.
 ///
@@ -383,8 +404,7 @@ void DwarfUnit::addSourceLine(DIE *Die, unsigned Line, StringRef File,
   if (Line == 0)
     return;
 
-  unsigned FileID =
-      DD->getOrCreateSourceID(File, Directory, getCU().getUniqueID());
+  unsigned FileID = getOrCreateSourceID(File, Directory);
   assert(FileID && "Invalid file id");
   addUInt(Die, dwarf::DW_AT_decl_file, None, FileID);
   addUInt(Die, dwarf::DW_AT_decl_line, None, Line);
@@ -951,15 +971,14 @@ DIE *DwarfUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
 
   DIType Ty(TyNode);
   assert(Ty.isType());
+  assert(*&Ty == resolve(Ty.getRef()) &&
+         "type was not uniqued, possible ODR violation.");
 
   // Construct the context before querying for the existence of the DIE in case
   // such construction creates the DIE.
   DIScope Context = resolve(Ty.getContext());
   DIE *ContextDIE = getOrCreateContextDIE(Context);
   assert(ContextDIE);
-
-  // Unique the type. This is a noop if the type has no unique identifier.
-  Ty = DIType(resolve(Ty.getRef()));
 
   DIE *TyDIE = getDIE(Ty);
   if (TyDIE)
@@ -1408,24 +1427,6 @@ DIE *DwarfUnit::getOrCreateNameSpace(DINameSpace NS) {
   return NDie;
 }
 
-/// Unique C++ member function declarations based on their
-/// context and mangled name.
-DISubprogram
-DwarfUnit::getOdrUniqueSubprogram(DIScope Context, DISubprogram SP) const {
-  if (!hasODR() ||
-      !Context.isCompositeType() ||
-      SP.getLinkageName().empty() ||
-      SP.isDefinition())
-    return SP;
-  // Create a key with the UID of the parent class and this SP's name.
-  Twine Key = SP.getContext().getName() + SP.getLinkageName();
-  const MDNode *&Entry = DD->getOrCreateOdrMember(Key.str());
-  if (!Entry)
-    Entry = &*SP;
-
-  return DISubprogram(Entry);
-}
-
 /// getOrCreateSubprogramDIE - Create new DIE using SP.
 DIE *DwarfUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   // Construct the context before querying for the existence of the DIE in case
@@ -1433,8 +1434,10 @@ DIE *DwarfUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   // declarations).
   DIScope Context = resolve(SP.getContext());
   DIE *ContextDIE = getOrCreateContextDIE(Context);
+
   // Unique declarations based on the ODR, where applicable.
-  SP = getOdrUniqueSubprogram(Context, SP);
+  SP = DISubprogram(DD->resolve(SP.getRef()));
+  assert(SP.Verify());
 
   DIE *SPDie = getDIE(SP);
   if (SPDie)
@@ -1584,7 +1587,7 @@ void DwarfCompileUnit::createGlobalVariableDIE(DIGlobalVariable GV) {
   assert(GV.isGlobalVariable());
 
   DIScope GVContext = GV.getContext();
-  DIType GTy = GV.getType();
+  DIType GTy = DD->resolve(GV.getType());
 
   // If this is a static data member definition, some attributes belong
   // to the declaration DIE.

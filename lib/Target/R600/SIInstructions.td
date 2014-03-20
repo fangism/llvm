@@ -631,7 +631,18 @@ let neverHasSideEffects = 1, isMoveImm = 1 in {
 defm V_MOV_B32 : VOP1_32 <0x00000001, "V_MOV_B32", []>;
 } // End neverHasSideEffects = 1, isMoveImm = 1
 
-defm V_READFIRSTLANE_B32 : VOP1_32 <0x00000002, "V_READFIRSTLANE_B32", []>;
+let Uses = [EXEC] in {
+
+def V_READFIRSTLANE_B32 : VOP1 <
+  0x00000002,
+  (outs SReg_32:$vdst),
+  (ins VReg_32:$src0),
+  "V_READFIRSTLANE_B32 $vdst, $src0",
+  []
+>;
+
+}
+
 defm V_CVT_I32_F64 : VOP1_32_64 <0x00000003, "V_CVT_I32_F64",
   [(set i32:$dst, (fp_to_sint f64:$src0))]
 >;
@@ -1063,8 +1074,14 @@ def V_CUBEID_F32 : VOP3_32 <0x00000144, "V_CUBEID_F32", []>;
 def V_CUBESC_F32 : VOP3_32 <0x00000145, "V_CUBESC_F32", []>;
 def V_CUBETC_F32 : VOP3_32 <0x00000146, "V_CUBETC_F32", []>;
 def V_CUBEMA_F32 : VOP3_32 <0x00000147, "V_CUBEMA_F32", []>;
-def V_BFE_U32 : VOP3_32 <0x00000148, "V_BFE_U32", []>;
-def V_BFE_I32 : VOP3_32 <0x00000149, "V_BFE_I32", []>;
+
+let neverHasSideEffects = 1, mayLoad = 0, mayStore = 0 in {
+def V_BFE_U32 : VOP3_32 <0x00000148, "V_BFE_U32",
+  [(set i32:$dst, (AMDGPUbfe_u32 i32:$src0, i32:$src1, i32:$src2))]>;
+def V_BFE_I32 : VOP3_32 <0x00000149, "V_BFE_I32",
+  [(set i32:$dst, (AMDGPUbfe_i32 i32:$src0, i32:$src1, i32:$src2))]>;
+}
+
 def V_BFI_B32 : VOP3_32 <0x0000014a, "V_BFI_B32", []>;
 defm : BFIPatterns <V_BFI_B32>;
 def V_FMA_F32 : VOP3_32 <0x0000014b, "V_FMA_F32",
