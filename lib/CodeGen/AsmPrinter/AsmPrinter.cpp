@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <tuple>		// for std::tie
 #define DEBUG_TYPE "asm-printer"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "DwarfDebug.h"
@@ -188,10 +189,12 @@ bool AsmPrinter::doInitialization(Module &M) {
   // anyway.
   Triple TT(getTargetTriple());
   if (TT.isOSDarwin()) {
+    static const unsigned MinMajor = 10, MinMinor = 9, MinUpdate = 0;
     unsigned Major, Minor, Update;
     TT.getOSVersion(Major, Minor, Update);
     // If there is a version specified, Major will be non-zero.
-    if (Major)
+    // Suppress this target directive for older toolchains (pre-darwin13).
+    if (Major && (std::tie(Major, Minor, Update) >= std::tie(MinMajor, MinMinor, MinUpdate)))
       OutStreamer.EmitVersionMin((TT.isMacOSX() ?
                                   MCVM_OSXVersionMin : MCVM_IOSVersionMin),
                                  Major, Minor, Update);
