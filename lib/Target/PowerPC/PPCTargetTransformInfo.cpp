@@ -241,14 +241,16 @@ unsigned PPCTTI::getMemoryOpCost(unsigned Opcode, Type *Src, unsigned Alignment,
   assert((Opcode == Instruction::Load || Opcode == Instruction::Store) &&
          "Invalid Opcode");
 
-  // Each load/store unit costs 1.
-  unsigned Cost = LT.first * 1;
+  unsigned Cost =
+    TargetTransformInfo::getMemoryOpCost(Opcode, Src, Alignment, AddressSpace);
+
+  // FIXME: Update this for VSX loads/stores that support unaligned access.
 
   // PPC in general does not support unaligned loads and stores. They'll need
   // to be decomposed based on the alignment factor.
   unsigned SrcBytes = LT.second.getStoreSize();
   if (SrcBytes && Alignment && Alignment < SrcBytes)
-    Cost *= (SrcBytes/Alignment);
+    Cost += LT.first*(SrcBytes/Alignment-1);
 
   return Cost;
 }

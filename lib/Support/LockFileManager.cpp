@@ -11,6 +11,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -29,16 +30,13 @@ using namespace llvm;
 /// \returns The process ID of the process that owns this lock file
 Optional<std::pair<std::string, int> >
 LockFileManager::readLockFile(StringRef LockFileName) {
-  // Check whether the lock file exists. If not, clearly there's nothing
-  // to read, so we just return.
-  if (!sys::fs::exists(LockFileName))
-    return None;
-
   // Read the owning host and PID out of the lock file. If it appears that the
   // owning process is dead, the lock file is invalid.
   std::unique_ptr<MemoryBuffer> MB;
-  if (MemoryBuffer::getFile(LockFileName, MB))
+  if (MemoryBuffer::getFile(LockFileName, MB)) {
+    sys::fs::remove(LockFileName);
     return None;
+  }
 
   StringRef Hostname;
   StringRef PIDStr;
@@ -70,7 +68,11 @@ bool LockFileManager::processStillExecuting(StringRef Hostname, int PID) {
 LockFileManager::LockFileManager(StringRef FileName)
 {
   this->FileName = FileName;
-  LockFileName = FileName;
+  if (error_code EC = sys::fs::make_absolute(this->FileName)) {
+    Error = EC;
+    return;
+  }
+  LockFileName = this->FileName;
   LockFileName += ".lock";
 
   // If the lock file already exists, don't bother to try to create our own

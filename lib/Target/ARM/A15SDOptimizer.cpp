@@ -27,18 +27,13 @@
 #define DEBUG_TYPE "a15-sd-optimizer"
 #include "ARM.h"
 #include "ARMBaseInstrInfo.h"
-#include "ARMISelLowering.h"
-#include "ARMSubtarget.h"
-#include "ARMTargetMachine.h"
-#include "llvm/ADT/SmallPtrSet.h"
+#include "ARMBaseRegisterInfo.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include <set>
 
@@ -416,7 +411,8 @@ SmallVector<unsigned, 8> A15SDOptimizer::getReadDPRs(MachineInstr *MI) {
     if (!MO.isReg() || !MO.isUse())
       continue;
     if (!usesRegClass(MO, &ARM::DPRRegClass) &&
-        !usesRegClass(MO, &ARM::QPRRegClass))
+        !usesRegClass(MO, &ARM::QPRRegClass) &&
+        !usesRegClass(MO, &ARM::DPairRegClass)) // Treat DPair as QPR
       continue;
 
     Defs.push_back(MO.getReg());
@@ -536,7 +532,10 @@ A15SDOptimizer::optimizeAllLanesPattern(MachineInstr *MI, unsigned Reg) {
   InsertPt++;
   unsigned Out;
 
-  if (MRI->getRegClass(Reg)->hasSuperClassEq(&ARM::QPRRegClass)) {
+  // DPair has the same length as QPR and also has two DPRs as subreg.
+  // Treat DPair as QPR.
+  if (MRI->getRegClass(Reg)->hasSuperClassEq(&ARM::QPRRegClass) ||
+      MRI->getRegClass(Reg)->hasSuperClassEq(&ARM::DPairRegClass)) {
     unsigned DSub0 = createExtractSubreg(MBB, InsertPt, DL, Reg,
                                          ARM::dsub_0, &ARM::DPRRegClass);
     unsigned DSub1 = createExtractSubreg(MBB, InsertPt, DL, Reg,
@@ -569,7 +568,9 @@ A15SDOptimizer::optimizeAllLanesPattern(MachineInstr *MI, unsigned Reg) {
       default: llvm_unreachable("Unknown preferred lane!");
     }
 
-    bool UsesQPR = usesRegClass(MI->getOperand(0), &ARM::QPRRegClass);
+    // Treat DPair as QPR
+    bool UsesQPR = usesRegClass(MI->getOperand(0), &ARM::QPRRegClass) ||
+                   usesRegClass(MI->getOperand(0), &ARM::DPairRegClass);
 
     Out = createImplicitDef(MBB, InsertPt, DL);
     Out = createInsertSubreg(MBB, InsertPt, DL, Out, PrefLane, Reg);

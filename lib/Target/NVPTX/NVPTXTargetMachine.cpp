@@ -16,7 +16,6 @@
 #include "NVPTX.h"
 #include "NVPTXAllocaHoisting.h"
 #include "NVPTXLowerAggrCopies.h"
-#include "NVPTXSplitBBatBar.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/CodeGen/AsmPrinter.h"
@@ -50,6 +49,7 @@ using namespace llvm;
 namespace llvm {
 void initializeNVVMReflectPass(PassRegistry&);
 void initializeGenericToNVVMPass(PassRegistry&);
+void initializeNVPTXAssignValidGlobalNamesPass(PassRegistry&);
 }
 
 extern "C" void LLVMInitializeNVPTXTarget() {
@@ -61,6 +61,7 @@ extern "C" void LLVMInitializeNVPTXTarget() {
   // but it's very NVPTX-specific.
   initializeNVVMReflectPass(*PassRegistry::getPassRegistry());
   initializeGenericToNVVMPass(*PassRegistry::getPassRegistry());
+  initializeNVPTXAssignValidGlobalNamesPass(*PassRegistry::getPassRegistry());
 }
 
 static std::string computeDataLayout(const NVPTXSubtarget &ST) {
@@ -140,12 +141,12 @@ void NVPTXPassConfig::addIRPasses() {
   disablePass(&TailDuplicateID);
 
   TargetPassConfig::addIRPasses();
+  addPass(createNVPTXAssignValidGlobalNamesPass());
   addPass(createGenericToNVVMPass());
 }
 
 bool NVPTXPassConfig::addInstSelector() {
   addPass(createLowerAggrCopies());
-  addPass(createSplitBBatBarPass());
   addPass(createAllocaHoisting());
   addPass(createNVPTXISelDag(getNVPTXTargetMachine(), getOptLevel()));
   return false;

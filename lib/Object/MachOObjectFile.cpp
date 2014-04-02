@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Object/MachO.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Support/DataExtractor.h"
 #include "llvm/Support/Format.h"
@@ -818,6 +819,16 @@ MachOObjectFile::section_rel_end(DataRefImpl Sec) const {
   return relocation_iterator(RelocationRef(Ret, this));
 }
 
+bool MachOObjectFile::section_rel_empty(DataRefImpl Sec) const {
+  if (is64Bit()) {
+    MachO::section_64 Sect = getSection64(Sec);
+    return Sect.nreloc == 0;
+  } else {
+    MachO::section Sect = getSection(Sec);
+    return Sect.nreloc == 0;
+  }
+}
+
 void MachOObjectFile::moveRelocationNext(DataRefImpl &Rel) const {
   const MachO::any_relocation_info *P =
     reinterpret_cast<const MachO::any_relocation_info *>(Rel.p);
@@ -919,6 +930,23 @@ MachOObjectFile::getRelocationTypeName(DataRefImpl Rel,
         "ARM_RELOC_HALF_SECTDIFF" };
 
       if (RType > 9)
+        res = "Unknown";
+      else
+        res = Table[RType];
+      break;
+    }
+    case Triple::arm64:
+    case Triple::aarch64: {
+      static const char *const Table[] = {
+        "ARM64_RELOC_UNSIGNED",           "ARM64_RELOC_SUBTRACTOR",
+        "ARM64_RELOC_BRANCH26",           "ARM64_RELOC_PAGE21",
+        "ARM64_RELOC_PAGEOFF12",          "ARM64_RELOC_GOT_LOAD_PAGE21",
+        "ARM64_RELOC_GOT_LOAD_PAGEOFF12", "ARM64_RELOC_POINTER_TO_GOT",
+        "ARM64_RELOC_TLVP_LOAD_PAGE21",   "ARM64_RELOC_TLVP_LOAD_PAGEOFF12",
+        "ARM64_RELOC_ADDEND"
+      };
+
+      if (RType >= array_lengthof(Table))
         res = "Unknown";
       else
         res = Table[RType];
@@ -1246,6 +1274,8 @@ StringRef MachOObjectFile::getFileFormatName() const {
   switch (CPUType) {
   case llvm::MachO::CPU_TYPE_X86_64:
     return "Mach-O 64-bit x86-64";
+  case llvm::MachO::CPU_TYPE_ARM64:
+    return "Mach-O arm64";
   case llvm::MachO::CPU_TYPE_POWERPC64:
     return "Mach-O 64-bit ppc64";
   default:
@@ -1261,6 +1291,8 @@ Triple::ArchType MachOObjectFile::getArch(uint32_t CPUType) {
     return Triple::x86_64;
   case llvm::MachO::CPU_TYPE_ARM:
     return Triple::arm;
+  case llvm::MachO::CPU_TYPE_ARM64:
+    return Triple::arm64;
   case llvm::MachO::CPU_TYPE_POWERPC:
     return Triple::ppc;
   case llvm::MachO::CPU_TYPE_POWERPC64:

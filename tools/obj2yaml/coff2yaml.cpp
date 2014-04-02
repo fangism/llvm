@@ -157,7 +157,7 @@ void COFFDumper::dumpSymbols(unsigned NumSymbols) {
             reinterpret_cast<const object::coff_aux_function_definition *>(
                 AuxData.data());
         dumpFunctionDefinition(&Sym, ObjFD);
-      } else if (Symbol->StorageClass == COFF::IMAGE_SYM_CLASS_FUNCTION) {
+      } else if (Symbol->isFunctionLineInfo()) {
         // This symbol describes function line number information.
         assert(Symbol->NumberOfAuxSymbols == 1 &&
                "Exepected a single aux symbol to describe this section!");
@@ -178,7 +178,8 @@ void COFFDumper::dumpSymbols(unsigned NumSymbols) {
       } else if (Symbol->isFileRecord()) {
         // This symbol represents a file record.
         Sym.File = StringRef(reinterpret_cast<const char *>(AuxData.data()),
-                             Symbol->NumberOfAuxSymbols * COFF::SymbolSize);
+                             Symbol->NumberOfAuxSymbols * COFF::SymbolSize)
+                       .rtrim(StringRef("\0", /*length=*/1));
       } else if (Symbol->isSectionDefinition()) {
         // This symbol represents a section definition.
         assert(Symbol->NumberOfAuxSymbols == 1 &&

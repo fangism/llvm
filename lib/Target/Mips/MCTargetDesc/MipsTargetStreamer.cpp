@@ -89,6 +89,10 @@ void MipsTargetAsmStreamer::emitDirectiveOptionPic0() {
   OS << "\t.option\tpic0\n";
 }
 
+void MipsTargetAsmStreamer::emitDirectiveOptionPic2() {
+  OS << "\t.option\tpic2\n";
+}
+
 void MipsTargetAsmStreamer::emitFrame(unsigned StackReg, unsigned StackSize,
                                       unsigned ReturnReg) {
   OS << "\t.frame\t$"
@@ -99,6 +103,14 @@ void MipsTargetAsmStreamer::emitFrame(unsigned StackReg, unsigned StackSize,
 
 void MipsTargetAsmStreamer::emitDirectiveSetMips32R2() {
   OS << "\t.set\tmips32r2\n";
+}
+
+void MipsTargetAsmStreamer::emitDirectiveSetMips64() {
+  OS << "\t.set\tmips64\n";
+}
+
+void MipsTargetAsmStreamer::emitDirectiveSetMips64R2() {
+  OS << "\t.set\tmips64r2\n";
 }
 
 void MipsTargetAsmStreamer::emitDirectiveSetDsp() {
@@ -132,6 +144,9 @@ MipsTargetELFStreamer::MipsTargetELFStreamer(MCStreamer &S,
   MCAssembler &MCA = getStreamer().getAssembler();
   uint64_t Features = STI.getFeatureBits();
   Triple T(STI.getTargetTriple());
+  Pic = (MCA.getContext().getObjectFileInfo()->getRelocM() ==  Reloc::PIC_)
+            ? true
+            : false;
 
   // Update e_header flags
   unsigned EFlags = 0;
@@ -219,6 +234,26 @@ void MipsTargetELFStreamer::finish() {
   }
 }
 
+void MipsTargetELFStreamer::emitAssignment(MCSymbol *Symbol,
+                                           const MCExpr *Value) {
+  // If on rhs is micromips symbol then mark Symbol as microMips.
+  if (Value->getKind() != MCExpr::SymbolRef)
+    return;
+  const MCSymbol &RhsSym =
+    static_cast<const MCSymbolRefExpr *>(Value)->getSymbol();
+  MCSymbolData &Data = getStreamer().getOrCreateSymbolData(&RhsSym);
+  uint8_t Type = MCELF::GetType(Data);
+  if ((Type != ELF::STT_FUNC)
+      || !(MCELF::getOther(Data) & (ELF::STO_MIPS_MICROMIPS >> 2)))
+    return;
+
+  MCSymbolData &SymbolData = getStreamer().getOrCreateSymbolData(Symbol);
+  // The "other" values are stored in the last 6 bits of the second byte.
+  // The traditional defines for STO values assume the full byte and thus
+  // the shift to pack it.
+  MCELF::setOther(SymbolData, ELF::STO_MIPS_MICROMIPS >> 2);
+}
+
 MCELFStreamer &MipsTargetELFStreamer::getStreamer() {
   return static_cast<MCELFStreamer &>(Streamer);
 }
@@ -291,7 +326,21 @@ void MipsTargetELFStreamer::emitDirectiveAbiCalls() {
 void MipsTargetELFStreamer::emitDirectiveOptionPic0() {
   MCAssembler &MCA = getStreamer().getAssembler();
   unsigned Flags = MCA.getELFHeaderEFlags();
+  // This option overrides other PIC options like -KPIC.
+  Pic = false;
   Flags &= ~ELF::EF_MIPS_PIC;
+  MCA.setELFHeaderEFlags(Flags);
+}
+
+void MipsTargetELFStreamer::emitDirectiveOptionPic2() {
+  MCAssembler &MCA = getStreamer().getAssembler();
+  unsigned Flags = MCA.getELFHeaderEFlags();
+  Pic = true;
+  // NOTE: We are following the GAS behaviour here which means the directive
+  // 'pic2' also sets the CPIC bit in the ELF header. This is different from
+  // what is stated in the SYSV ABI which consider the bits EF_MIPS_PIC and
+  // EF_MIPS_CPIC to be mutually exclusive.
+  Flags |= ELF::EF_MIPS_PIC | ELF::EF_MIPS_CPIC;
   MCA.setELFHeaderEFlags(Flags);
 }
 
@@ -311,6 +360,14 @@ void MipsTargetELFStreamer::emitFMask(unsigned FPUBitmask,
 }
 
 void MipsTargetELFStreamer::emitDirectiveSetMips32R2() {
+  // No action required for ELF output.
+}
+
+void MipsTargetELFStreamer::emitDirectiveSetMips64() {
+  // No action required for ELF output.
+}
+
+void MipsTargetELFStreamer::emitDirectiveSetMips64R2() {
   // No action required for ELF output.
 }
 
