@@ -23,6 +23,9 @@ class Triple;
   class PPCMCAsmInfoDarwin : public MCAsmInfoDarwin {
     virtual void anchor();
   public:
+    /// This version of the constructor is here to maintain ABI compatibility
+    /// with LLVM 3.4.0.
+    explicit PPCMCAsmInfoDarwin(bool is64Bit);
     explicit PPCMCAsmInfoDarwin(bool is64Bit, const Triple&);
   };
 

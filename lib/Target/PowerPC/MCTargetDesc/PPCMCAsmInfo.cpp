@@ -18,6 +18,26 @@ using namespace llvm;
 
 void PPCMCAsmInfoDarwin::anchor() { }
 
+/// This version of the constructor is here to maintain ABI compatibility with
+/// LLVM 3.4.0
+PPCMCAsmInfoDarwin::PPCMCAsmInfoDarwin(bool is64Bit) {
+  if (is64Bit) {
+    PointerSize = CalleeSaveStackSlotSize = 8;
+  }
+  IsLittleEndian = false;
+
+  CommentString = ";";
+  ExceptionsType = ExceptionHandling::DwarfCFI;
+
+  if (!is64Bit)
+    Data64bitsDirective = 0;      // We can't emit a 64-bit unit in PPC32 mode.
+
+  AssemblerDialect = 1;           // New-Style mnemonics.
+  SupportsDebugInformation= true; // Debug information.
+
+  // for darwin, call the other constructor with Triple argument, below
+}
+
 PPCMCAsmInfoDarwin::PPCMCAsmInfoDarwin(bool is64Bit, const Triple& T) {
   if (is64Bit) {
     PointerSize = CalleeSaveStackSlotSize = 8;
