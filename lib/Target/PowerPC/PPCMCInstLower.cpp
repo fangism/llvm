@@ -24,7 +24,6 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/Target/Mangler.h"
-
 using namespace llvm;
 
 static MachineModuleInfoMachO &getMachOMMI(AsmPrinter &AP) {

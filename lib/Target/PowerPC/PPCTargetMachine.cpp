@@ -49,7 +49,6 @@ static std::string getDataLayoutString(const PPCSubtarget &ST) {
   // Note, the alignment values for f64 and i64 on ppc64 in Darwin
   // documentation are wrong; these are correct (i.e. "what gcc does").
   if (ST.isPPC64() || ST.isSVR4ABI())
-//    Ret += "-i64:64";
     Ret += "-f64:64:64-i64:64:64";
   else
     Ret += "-f64:32:64";

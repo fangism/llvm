@@ -34,7 +34,6 @@ PPCMCAsmInfoDarwin::PPCMCAsmInfoDarwin(bool is64Bit) {
 
   AssemblerDialect = 1;           // New-Style mnemonics.
   SupportsDebugInformation= true; // Debug information.
-
   // for darwin, call the other constructor with Triple argument, below
 }
 
