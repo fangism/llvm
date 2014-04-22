@@ -7,7 +7,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "t2-reduce-size"
 #include "ARM.h"
 #include "ARMBaseInstrInfo.h"
 #include "ARMSubtarget.h"
@@ -24,6 +23,8 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Target/TargetMachine.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "t2-reduce-size"
 
 STATISTIC(NumNarrows,  "Number of 32-bit instrs reduced to 16-bit ones");
 STATISTIC(Num2Addrs,   "Number of 32-bit instrs reduced to 2addr 16-bit ones");
@@ -921,9 +922,8 @@ bool Thumb2SizeReduce::ReduceMBB(MachineBasicBlock &MBB) {
   HighLatencyCPSR = false;
 
   // Check predecessors for the latest CPSRDef.
-  for (MachineBasicBlock::pred_iterator
-       I = MBB.pred_begin(), E = MBB.pred_end(); I != E; ++I) {
-    const MBBInfo &PInfo = BlockInfo[(*I)->getNumber()];
+  for (auto *Pred : MBB.predecessors()) {
+    const MBBInfo &PInfo = BlockInfo[Pred->getNumber()];
     if (!PInfo.Visited) {
       // Since blocks are visited in RPO, this must be a back-edge.
       continue;

@@ -8,8 +8,6 @@
 /// \file
 //==-----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "structcfg"
-
 #include "AMDGPU.h"
 #include "AMDGPUInstrInfo.h"
 #include "R600InstrInfo.h"
@@ -33,6 +31,8 @@
 #include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "structcfg"
 
 #define DEFAULT_VEC_SLOTS 8
 
@@ -1075,13 +1075,11 @@ int AMDGPUCFGStructurizer::ifPatternMatch(MachineBasicBlock *MBB) {
 
 int AMDGPUCFGStructurizer::loopendPatternMatch() {
   std::vector<MachineLoop *> NestedLoops;
-  for (MachineLoopInfo::iterator It = MLI->begin(), E = MLI->end();
-      It != E; ++It) {
-    df_iterator<MachineLoop *> LpIt = df_begin(*It),
-        LpE = df_end(*It);
-    for (; LpIt != LpE; ++LpIt)
-      NestedLoops.push_back(*LpIt);
-  }
+  for (MachineLoopInfo::iterator It = MLI->begin(), E = MLI->end(); It != E;
+       ++It)
+    for (MachineLoop *ML : depth_first(*It))
+      NestedLoops.push_back(ML);
+
   if (NestedLoops.size() == 0)
     return 0;
 

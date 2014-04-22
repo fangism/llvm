@@ -11,7 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "frame-info"
 #include "ARM64FrameLowering.h"
 #include "ARM64InstrInfo.h"
 #include "ARM64MachineFunctionInfo.h"
@@ -31,6 +30,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "frame-info"
 
 static cl::opt<bool> EnableRedZone("arm64-redzone",
                                    cl::desc("enable use of redzone on ARM64"),
@@ -388,14 +389,14 @@ void ARM64FrameLowering::emitPrologue(MachineFunction &MF) const {
   }
 }
 
-static bool isCalleeSavedRegister(unsigned Reg, const uint16_t *CSRegs) {
+static bool isCalleeSavedRegister(unsigned Reg, const MCPhysReg *CSRegs) {
   for (unsigned i = 0; CSRegs[i]; ++i)
     if (Reg == CSRegs[i])
       return true;
   return false;
 }
 
-static bool isCSRestore(MachineInstr *MI, const uint16_t *CSRegs) {
+static bool isCSRestore(MachineInstr *MI, const MCPhysReg *CSRegs) {
   if (MI->getOpcode() == ARM64::LDPXpost ||
       MI->getOpcode() == ARM64::LDPDpost || MI->getOpcode() == ARM64::LDPXi ||
       MI->getOpcode() == ARM64::LDPDi) {
@@ -424,7 +425,7 @@ void ARM64FrameLowering::emitEpilogue(MachineFunction &MF,
   unsigned NumRestores = 0;
   // Move past the restores of the callee-saved registers.
   MachineBasicBlock::iterator LastPopI = MBBI;
-  const uint16_t *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
+  const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
   if (LastPopI != MBB.begin()) {
     do {
       ++NumRestores;
@@ -708,7 +709,7 @@ void ARM64FrameLowering::processFunctionBeforeCalleeSavedScan(
   bool ExtraCSSpill = false;
   bool CanEliminateFrame = true;
   DEBUG(dbgs() << "*** processFunctionBeforeCalleeSavedScan\nUsed CSRs:");
-  const uint16_t *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
+  const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
 
   // Check pairs of consecutive callee-saved registers.
   for (unsigned i = 0; CSRegs[i]; i += 2) {

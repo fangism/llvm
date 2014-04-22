@@ -199,7 +199,7 @@ option(LLVM_ENABLE_PIC "Build Position-Independent Code" ON)
 # MSVC has a gazillion warnings with this.
 if( MSVC )
   option(LLVM_ENABLE_WARNINGS "Enable compiler warnings." OFF)
-else( MSVC )
+else()
   option(LLVM_ENABLE_WARNINGS "Enable compiler warnings." ON)
 endif()
 
@@ -273,6 +273,8 @@ option(LLVM_INCLUDE_TOOLS "Generate build targets for the LLVM tools." ON)
 option(LLVM_BUILD_TOOLS
   "Build the LLVM tools. If OFF, just generate build targets." ON)
 
+option(LLVM_INCLUDE_UTILS "Generate build targets for the LLVM utils." ON)
+
 option(LLVM_BUILD_RUNTIME
   "Build the LLVM runtime libraries." ON)
 option(LLVM_BUILD_EXAMPLES
@@ -285,7 +287,8 @@ option(LLVM_INCLUDE_TESTS "Generate build targets for the LLVM unit tests." ON)
 
 option (LLVM_BUILD_DOCS "Build the llvm documentation." OFF)
 option (LLVM_INCLUDE_DOCS "Generate build targets for llvm documentation." ON)
-option (LLVM_ENABLE_DOXYGEN "Use doxygen to generate llvm documentation." OFF)
+option (LLVM_ENABLE_DOXYGEN "Use doxygen to generate llvm API documentation." OFF)
+option (LLVM_ENABLE_SPHINX "Use Sphinx to generate llvm documentation." OFF)
 
 option (LLVM_BUILD_EXTERNAL_COMPILER_RT
   "Build compiler-rt as an external project." OFF)
@@ -496,12 +499,19 @@ add_subdirectory(include/llvm)
 
 add_subdirectory(lib)
 
-add_subdirectory(utils/FileCheck)
-add_subdirectory(utils/FileUpdate)
-add_subdirectory(utils/count)
-add_subdirectory(utils/not)
-add_subdirectory(utils/llvm-lit)
-add_subdirectory(utils/yaml-bench)
+if( LLVM_INCLUDE_UTILS )
+  add_subdirectory(utils/FileCheck)
+  add_subdirectory(utils/FileUpdate)
+  add_subdirectory(utils/count)
+  add_subdirectory(utils/not)
+  add_subdirectory(utils/llvm-lit)
+  add_subdirectory(utils/yaml-bench)
+else()
+  if ( LLVM_INCLUDE_TESTS )
+    message(FATAL_ERROR "Including tests when not building utils will not work.
+    Either set LLVM_INCLUDE_UTILS to On, or set LLVM_INCLDE_TESTS to Off.")
+  endif()
+endif()
 
 if(LLVM_INCLUDE_TESTS)
   add_subdirectory(utils/unittest)

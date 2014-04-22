@@ -545,6 +545,20 @@ class SEQ_FM<bits<6> funct> : StdArch {
   let Inst{5-0}   = funct;
 }
 
+class SEQI_FM<bits<6> funct> : StdArch {
+  bits<5> rs;
+  bits<5> rt;
+  bits<10> imm10;
+
+  bits<32> Inst;
+
+  let Inst{31-26} = 0x1c;
+  let Inst{25-21} = rs;
+  let Inst{20-16} = rt;
+  let Inst{15-6}  = imm10;
+  let Inst{5-0}   = funct;
+}
+
 //===----------------------------------------------------------------------===//
 //  System calls format <op|code_|funct>
 //===----------------------------------------------------------------------===//
@@ -817,4 +831,15 @@ class CMov_F_F_FM<bits<5> fmt, bit tf> : StdArch {
   let Inst{15-11} = fs;
   let Inst{10-6} = fd;
   let Inst{5-0} = 0x11;
+}
+
+class BARRIER_FM<bits<5> op> : StdArch {
+  bits<32> Inst;
+
+  let Inst{31-26} = 0; // SPECIAL
+  let Inst{25-21} = 0;
+  let Inst{20-16} = 0; // rt = 0
+  let Inst{15-11} = 0; // rd = 0
+  let Inst{10-6} = op; // Operation
+  let Inst{5-0} = 0;   // SLL
 }

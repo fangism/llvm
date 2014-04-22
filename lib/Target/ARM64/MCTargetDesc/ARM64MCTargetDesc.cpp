@@ -23,6 +23,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetRegistry.h"
 
+using namespace llvm;
+
 #define GET_INSTRINFO_MC_DESC
 #include "ARM64GenInstrInfo.inc"
 
@@ -31,8 +33,6 @@
 
 #define GET_REGINFO_MC_DESC
 #include "ARM64GenRegisterInfo.inc"
-
-using namespace llvm;
 
 static MCInstrInfo *createARM64MCInstrInfo() {
   MCInstrInfo *X = new MCInstrInfo();
@@ -43,6 +43,10 @@ static MCInstrInfo *createARM64MCInstrInfo() {
 static MCSubtargetInfo *createARM64MCSubtargetInfo(StringRef TT, StringRef CPU,
                                                    StringRef FS) {
   MCSubtargetInfo *X = new MCSubtargetInfo();
+
+  if (CPU.empty())
+    CPU = "generic";
+
   InitARM64MCSubtargetInfo(X, TT, CPU, FS);
   return X;
 }

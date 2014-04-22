@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "ppc-codegen"
 #include "PPC.h"
 #include "MCTargetDesc/PPCPredicates.h"
 #include "PPCTargetMachine.h"
@@ -34,6 +33,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetOptions.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "ppc-codegen"
 
 // FIXME: Remove this once the bug has been fixed!
 cl::opt<bool> ANDIGlueBug("expose-ppc-andi-glue-bug",
@@ -458,8 +459,15 @@ SDNode *PPCDAGToDAGISel::SelectBitfieldInsert(SDNode *N) {
         SH  = (Op1Opc == ISD::SHL) ? Value : 32 - Value;
       }
       if (Op1Opc == ISD::AND) {
+       // The AND mask might not be a constant, and we need to make sure that
+       // if we're going to fold the masking with the insert, all bits not
+       // know to be zero in the mask are known to be one.
+        APInt MKZ, MKO;
+        CurDAG->ComputeMaskedBits(Op1.getOperand(1), MKZ, MKO);
+        bool CanFoldMask = InsertMask == MKO.getZExtValue();
+
         unsigned SHOpc = Op1.getOperand(0).getOpcode();
-        if ((SHOpc == ISD::SHL || SHOpc == ISD::SRL) &&
+        if ((SHOpc == ISD::SHL || SHOpc == ISD::SRL) && CanFoldMask &&
             isInt32Immediate(Op1.getOperand(0).getOperand(1), Value)) {
 	  // Note that Value must be in range here (less than 32) because
 	  // otherwise there would not be any bits set in InsertMask.

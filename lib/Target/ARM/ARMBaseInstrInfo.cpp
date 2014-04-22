@@ -37,10 +37,12 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 
+using namespace llvm;
+
+#define DEBUG_TYPE "arm-instrinfo"
+
 #define GET_INSTRINFO_CTOR_DTOR
 #include "ARMGenInstrInfo.inc"
-
-using namespace llvm;
 
 static cl::opt<bool>
 EnableARM3Addr("enable-arm-3-addr-conv", cl::Hidden,
@@ -535,7 +537,8 @@ bool ARMBaseInstrInfo::isPredicable(MachineInstr *MI) const {
   return true;
 }
 
-template<> bool IsCPSRDead<MachineInstr>(MachineInstr* MI) {
+namespace llvm {
+template <> bool IsCPSRDead<MachineInstr>(MachineInstr *MI) {
   for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
     const MachineOperand &MO = MI->getOperand(i);
     if (!MO.isReg() || MO.isUndef() || MO.isUse())
@@ -547,6 +550,7 @@ template<> bool IsCPSRDead<MachineInstr>(MachineInstr* MI) {
   }
   // all definitions of CPSR are dead
   return true;
+}
 }
 
 /// FIXME: Works around a gcc miscompilation with -fstrict-aliasing.

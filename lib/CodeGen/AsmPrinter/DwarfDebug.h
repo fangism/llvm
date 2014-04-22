@@ -90,7 +90,7 @@ public:
   int getFrameIndex() const { return FrameIndex; }
   void setFrameIndex(int FI) { FrameIndex = FI; }
   // Translate tag to proper Dwarf tag.
-  uint16_t getTag() const {
+  dwarf::Tag getTag() const {
     if (Var.getTag() == dwarf::DW_TAG_arg_variable)
       return dwarf::DW_TAG_formal_parameter;
 
@@ -166,19 +166,17 @@ class DwarfFile {
   // references.
   typedef DenseMap<const MCSymbol *, AddressPoolEntry> AddrPool;
   AddrPool AddressPool;
-  unsigned NextAddrPoolNumber;
 
 public:
   DwarfFile(AsmPrinter *AP, const char *Pref, BumpPtrAllocator &DA)
-      : Asm(AP), StringPool(DA), NextStringPoolNumber(0), StringPref(Pref),
-        AddressPool(), NextAddrPoolNumber(0) {}
+      : Asm(AP), StringPool(DA), NextStringPoolNumber(0), StringPref(Pref) {}
 
   ~DwarfFile();
 
   const SmallVectorImpl<DwarfUnit *> &getUnits() { return CUs; }
 
   /// \brief Compute the size and offset of a DIE given an incoming Offset.
-  unsigned computeSizeAndOffset(DIE *Die, unsigned Offset);
+  unsigned computeSizeAndOffset(DIE &Die, unsigned Offset);
 
   /// \brief Compute the size and offset of all the DIEs.
   void computeSizeAndOffsets();
@@ -666,7 +664,7 @@ public:
   }
 
   /// \brief Recursively Emits a debug information entry.
-  void emitDIE(DIE *Die);
+  void emitDIE(DIE &Die);
 
   // Experimental DWARF5 features.
 

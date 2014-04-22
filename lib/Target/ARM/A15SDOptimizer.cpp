@@ -24,7 +24,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "a15-sd-optimizer"
 #include "ARM.h"
 #include "ARMBaseInstrInfo.h"
 #include "ARMBaseRegisterInfo.h"
@@ -38,6 +37,8 @@
 #include <set>
 
 using namespace llvm;
+
+#define DEBUG_TYPE "a15-sd-optimizer"
 
 namespace {
   struct A15SDOptimizer : public MachineFunctionPass {
@@ -90,7 +91,7 @@ namespace {
     unsigned createImplicitDef(MachineBasicBlock &MBB,
                                MachineBasicBlock::iterator InsertBefore,
                                DebugLoc DL);
-    
+
     //
     // Various property checkers
     //
@@ -435,7 +436,7 @@ A15SDOptimizer::createDupLane(MachineBasicBlock &MBB,
                          Out)
                    .addReg(Reg)
                    .addImm(Lane));
- 
+
   return Out;
 }
 
@@ -601,7 +602,7 @@ bool A15SDOptimizer::runOnInstruction(MachineInstr *MI) {
   //   * INSERT_SUBREG: * If the SPR value was originally in another DPR/QPR
   //                      lane, and the other lane(s) of the DPR/QPR register
   //                      that we are inserting in are undefined, use the
-  //                      original DPR/QPR value. 
+  //                      original DPR/QPR value.
   //                    * Otherwise, fall back on the same stategy as COPY.
   //
   //   * REG_SEQUENCE:  * If all except one of the input operands are
@@ -693,7 +694,7 @@ bool A15SDOptimizer::runOnMachineFunction(MachineFunction &Fn) {
       MI != ME;) {
       Modified |= runOnInstruction(MI++);
     }
- 
+
   }
 
   for (std::set<MachineInstr *>::iterator I = DeadInstr.begin(),

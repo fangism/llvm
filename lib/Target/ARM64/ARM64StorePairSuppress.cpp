@@ -11,7 +11,6 @@
 // store pairs. Later we may do the same for floating point loads.
 // ===---------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "arm64-stp-suppress"
 #include "ARM64InstrInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -23,6 +22,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "arm64-stp-suppress"
 
 namespace {
 class ARM64StorePairSuppress : public MachineFunctionPass {
@@ -138,10 +139,10 @@ bool ARM64StorePairSuppress::runOnMachineFunction(MachineFunction &mf) {
   // precisely determine whether a store pair can be formed. But we do want to
   // filter out most situations where we can't form store pairs to avoid
   // computing trace metrics in those cases.
-  for (auto &MBB: *MF) {
+  for (auto &MBB : *MF) {
     bool SuppressSTP = false;
     unsigned PrevBaseReg = 0;
-    for (auto &MI: MBB) {
+    for (auto &MI : MBB) {
       if (!isNarrowFPStore(MI))
         continue;
       unsigned BaseReg;

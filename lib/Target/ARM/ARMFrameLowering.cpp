@@ -87,7 +87,7 @@ ARMFrameLowering::canSimplifyCallFramePseudos(const MachineFunction &MF) const {
 
 static bool isCSRestore(MachineInstr *MI,
                         const ARMBaseInstrInfo &TII,
-                        const uint16_t *CSRegs) {
+                        const MCPhysReg *CSRegs) {
   // Integer spill area is handled with "pop".
   if (isPopOpcode(MI->getOpcode())) {
     // The first two operands are predicates. The last two are
@@ -316,10 +316,9 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF) const {
     MachineBasicBlock::iterator Pos = ++GPRCS1Push;
     BuildMI(MBB, Pos, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
         .addCFIIndex(CFIIndex);
-    for (std::vector<CalleeSavedInfo>::const_iterator I = CSI.begin(),
-           E = CSI.end(); I != E; ++I) {
-      unsigned Reg = I->getReg();
-      int FI = I->getFrameIdx();
+    for (const auto &Entry : CSI) {
+      unsigned Reg = Entry.getReg();
+      int FI = Entry.getFrameIdx();
       switch (Reg) {
       case ARM::R8:
       case ARM::R9:
@@ -382,10 +381,9 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF) const {
       BuildMI(MBB, Pos, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
           .addCFIIndex(CFIIndex);
     }
-    for (std::vector<CalleeSavedInfo>::const_iterator I = CSI.begin(),
-           E = CSI.end(); I != E; ++I) {
-      unsigned Reg = I->getReg();
-      int FI = I->getFrameIdx();
+    for (const auto &Entry : CSI) {
+      unsigned Reg = Entry.getReg();
+      int FI = Entry.getFrameIdx();
       switch (Reg) {
       case ARM::R8:
       case ARM::R9:
@@ -411,7 +409,7 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF) const {
     do {
       MachineBasicBlock::iterator Push = DPRCSPush++;
       if (!HasFP) {
-        CFAOffset -= sizeOfSPAdjustment(Push);;
+        CFAOffset -= sizeOfSPAdjustment(Push);
         unsigned CFIIndex = MMI.addFrameInst(
             MCCFIInstruction::createDefCfaOffset(nullptr, CFAOffset));
         BuildMI(MBB, DPRCSPush, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
@@ -419,10 +417,9 @@ void ARMFrameLowering::emitPrologue(MachineFunction &MF) const {
       }
     } while (DPRCSPush->getOpcode() == ARM::VSTMDDB_UPD);
 
-    for (std::vector<CalleeSavedInfo>::const_iterator I = CSI.begin(),
-           E = CSI.end(); I != E; ++I) {
-      unsigned Reg = I->getReg();
-      int FI = I->getFrameIdx();
+    for (const auto &Entry : CSI) {
+      unsigned Reg = Entry.getReg();
+      int FI = Entry.getFrameIdx();
       if ((Reg >= ARM::D0 && Reg <= ARM::D31) &&
           (Reg < ARM::D8 || Reg >= ARM::D8 + AFI->getNumAlignedDPRCS2Regs())) {
         unsigned DwarfReg = MRI->getDwarfRegNum(Reg, true);
@@ -540,7 +537,7 @@ void ARMFrameLowering::emitEpilogue(MachineFunction &MF,
       emitSPUpdate(isARM, MBB, MBBI, dl, TII, NumBytes - ArgRegsSaveSize);
   } else {
     // Unwind MBBI to point to first LDR / VLDRD.
-    const uint16_t *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
+    const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
     if (MBBI != MBB.begin()) {
       do {
         --MBBI;
@@ -1205,12 +1202,9 @@ bool ARMFrameLowering::restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
 static unsigned GetFunctionSizeInBytes(const MachineFunction &MF,
                                        const ARMBaseInstrInfo &TII) {
   unsigned FnSize = 0;
-  for (MachineFunction::const_iterator MBBI = MF.begin(), E = MF.end();
-       MBBI != E; ++MBBI) {
-    const MachineBasicBlock &MBB = *MBBI;
-    for (MachineBasicBlock::const_iterator I = MBB.begin(),E = MBB.end();
-         I != E; ++I)
-      FnSize += TII.GetInstSizeInBytes(I);
+  for (auto &MBB : MF) {
+    for (auto &MI : MBB)
+      FnSize += TII.GetInstSizeInBytes(&MI);
   }
   return FnSize;
 }
@@ -1223,21 +1217,21 @@ static unsigned estimateRSStackSizeLimit(MachineFunction &MF,
                                          const TargetFrameLowering *TFI) {
   const ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
   unsigned Limit = (1 << 12) - 1;
-  for (MachineFunction::iterator BB = MF.begin(),E = MF.end(); BB != E; ++BB) {
-    for (MachineBasicBlock::iterator I = BB->begin(), E = BB->end();
-         I != E; ++I) {
-      for (unsigned i = 0, e = I->getNumOperands(); i != e; ++i) {
-        if (!I->getOperand(i).isFI()) continue;
+  for (auto &MBB : MF) {
+    for (auto &MI : MBB) {
+      for (unsigned i = 0, e = MI.getNumOperands(); i != e; ++i) {
+        if (!MI.getOperand(i).isFI())
+          continue;
 
         // When using ADDri to get the address of a stack object, 255 is the
         // largest offset guaranteed to fit in the immediate offset.
-        if (I->getOpcode() == ARM::ADDri) {
+        if (MI.getOpcode() == ARM::ADDri) {
           Limit = std::min(Limit, (1U << 8) - 1);
           break;
         }
 
         // Otherwise check the addressing mode.
-        switch (I->getDesc().TSFlags & ARMII::AddrModeMask) {
+        switch (MI.getDesc().TSFlags & ARMII::AddrModeMask) {
         case ARMII::AddrMode3:
         case ARMII::AddrModeT2_i8:
           Limit = std::min(Limit, (1U << 8) - 1);
@@ -1374,7 +1368,7 @@ ARMFrameLowering::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
 
   // Don't spill FP if the frame can be eliminated. This is determined
   // by scanning the callee-save registers to see if any is used.
-  const uint16_t *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
+  const MCPhysReg *CSRegs = RegInfo->getCalleeSavedRegs(&MF);
   for (unsigned i = 0; CSRegs[i]; ++i) {
     unsigned Reg = CSRegs[i];
     bool Spilled = false;
@@ -1681,7 +1675,7 @@ void ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   if (MF.getFunction()->isVarArg())
     report_fatal_error("Segmented stacks do not support vararg functions.");
   if (!ST->isTargetAndroid() && !ST->isTargetLinux())
-    report_fatal_error("Segmented stacks not supported on this platfrom.");
+    report_fatal_error("Segmented stacks not supported on this platform.");
 
   MachineBasicBlock &prologueMBB = MF.front();
   MachineFrameInfo *MFI = MF.getFrameInfo();
@@ -1783,7 +1777,7 @@ void ARMFrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   if (Thumb && ST->isThumb1Only()) {
     unsigned PCLabelId = ARMFI->createPICLabelUId();
     ARMConstantPoolValue *NewCPV = ARMConstantPoolSymbol::Create(
-        MF.getFunction()->getContext(), "STACK_LIMIT", PCLabelId, 0);
+        MF.getFunction()->getContext(), "__STACK_LIMIT", PCLabelId, 0);
     MachineConstantPool *MCP = MF.getConstantPool();
     unsigned CPI = MCP->getConstantPoolIndex(NewCPV, MF.getAlignment());
 

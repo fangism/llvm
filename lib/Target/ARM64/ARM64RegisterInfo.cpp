@@ -27,16 +27,16 @@
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetOptions.h"
 
+using namespace llvm;
+
 #define GET_REGINFO_TARGET_DESC
 #include "ARM64GenRegisterInfo.inc"
-
-using namespace llvm;
 
 ARM64RegisterInfo::ARM64RegisterInfo(const ARM64InstrInfo *tii,
                                      const ARM64Subtarget *sti)
     : ARM64GenRegisterInfo(ARM64::LR), TII(tii), STI(sti) {}
 
-const uint16_t *
+const MCPhysReg *
 ARM64RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   assert(MF && "Invalid MachineFunction pointer.");
   if (MF->getFunction()->getCallingConv() == CallingConv::AnyReg)
@@ -76,7 +76,7 @@ ARM64RegisterInfo::getThisReturnPreservedMask(CallingConv::ID) const {
 BitVector ARM64RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   const TargetFrameLowering *TFI = MF.getTarget().getFrameLowering();
 
-  // FIXME: avoid re-calculating this everytime.
+  // FIXME: avoid re-calculating this every time.
   BitVector Reserved(getNumRegs());
   Reserved.set(ARM64::SP);
   Reserved.set(ARM64::XZR);

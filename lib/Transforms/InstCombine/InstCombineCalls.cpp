@@ -22,6 +22,8 @@
 using namespace llvm;
 using namespace PatternMatch;
 
+#define DEBUG_TYPE "instcombine"
+
 STATISTIC(NumSimplified, "Number of library calls simplified");
 
 /// getPromotedType - Return the specified type promoted as it would be to pass
@@ -572,6 +574,21 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
                                                  UndefElts)) {
       II->setArgOperand(0, TmpV);
       return II;
+    }
+    break;
+  }
+
+  case Intrinsic::x86_avx_vpermilvar_ps:
+  case Intrinsic::x86_avx_vpermilvar_ps_256:
+  case Intrinsic::x86_avx_vpermilvar_pd:
+  case Intrinsic::x86_avx_vpermilvar_pd_256: {
+    // Convert vpermil* to shufflevector if the mask is constant.
+    Value *V = II->getArgOperand(1);
+    if (auto C = dyn_cast<ConstantDataVector>(V)) {
+      auto V1 = II->getArgOperand(0);
+      auto V2 = UndefValue::get(V1->getType());
+      auto Shuffle = Builder->CreateShuffleVector(V1, V2, C);
+      return ReplaceInstUsesWith(CI, Shuffle);
     }
     break;
   }

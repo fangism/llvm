@@ -11,8 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "dwarfdebug"
-
 #include "DwarfUnit.h"
 #include "DwarfAccelTable.h"
 #include "DwarfDebug.h"
@@ -34,6 +32,8 @@
 #include "llvm/Target/TargetRegisterInfo.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "dwarfdebug"
 
 static cl::opt<bool>
 GenerateDwarfTypeUnits("generate-type-units", cl::Hidden,
@@ -384,7 +384,9 @@ void DwarfUnit::addDIEEntry(DIE *Die, dwarf::Attribute Attribute,
 /// Create a DIE with the given Tag, add the DIE to its parent, and
 /// call insertDIE if MD is not null.
 DIE *DwarfUnit::createAndAddDIE(unsigned Tag, DIE &Parent, DIDescriptor N) {
-  DIE *Die = new DIE(Tag);
+  assert(Tag != dwarf::DW_TAG_auto_variable &&
+         Tag != dwarf::DW_TAG_arg_variable);
+  DIE *Die = new DIE((dwarf::Tag)Tag);
   Parent.addChild(Die);
   if (N)
     insertDIE(N, Die);
@@ -983,6 +985,10 @@ DIE *DwarfUnit::getOrCreateTypeDIE(const MDNode *TyNode) {
   assert(Ty == resolve(Ty.getRef()) &&
          "type was not uniqued, possible ODR violation.");
 
+  // DW_TAG_restrict_type is not supported in DWARF2
+  if (Ty.getTag() == dwarf::DW_TAG_restrict_type && DD->getDwarfVersion() <= 2)
+    return getOrCreateTypeDIE(resolve(DIDerivedType(Ty).getTypeDerivedFrom()));
+
   // Construct the context before querying for the existence of the DIE in case
   // such construction creates the DIE.
   DIScope Context = resolve(Ty.getContext());
@@ -1467,20 +1473,25 @@ DIE *DwarfUnit::getOrCreateSubprogramDIE(DISubprogram SP) {
   // Add function template parameters.
   addTemplateParams(*SPDie, SP.getTemplateParams());
 
-  // If this DIE is going to refer declaration info using AT_specification
-  // then there is no need to add other attributes.
-  if (DeclDie) {
+  if (DeclDie)
     // Refer function declaration directly.
     addDIEEntry(SPDie, dwarf::DW_AT_specification, DeclDie);
 
-    return SPDie;
+  // Add the linkage name if we have one and it isn't in the Decl.
+  StringRef LinkageName = SP.getLinkageName();
+  if (!LinkageName.empty()) {
+    if (SPDecl.isSubprogram() && !SPDecl.getLinkageName().empty())
+      assert(SPDecl.getLinkageName() == SP.getLinkageName() &&
+             "decl has a linkage name and it is different");
+    else
+      addString(SPDie, dwarf::DW_AT_MIPS_linkage_name,
+                GlobalValue::getRealLinkageName(LinkageName));
   }
 
-  // Add the linkage name if we have one.
-  StringRef LinkageName = SP.getLinkageName();
-  if (!LinkageName.empty())
-    addString(SPDie, dwarf::DW_AT_MIPS_linkage_name,
-              GlobalValue::getRealLinkageName(LinkageName));
+  // If this DIE is going to refer declaration info using AT_specification
+  // then there is no need to add other attributes.
+  if (DeclDie)
+    return SPDie;
 
   // Constructors and operators for anonymous aggregates do not have names.
   if (!SP.getName().empty())
@@ -1766,12 +1777,12 @@ void DwarfUnit::constructArrayTypeDIE(DIE &Buffer, DICompositeType CTy) {
   // as different languages may have different sizes for indexes.
   DIE *IdxTy = getIndexTyDie();
   if (!IdxTy) {
-    // Construct an anonymous type for index type.
+    // Construct an integer type to use for indexes.
     IdxTy = createAndAddDIE(dwarf::DW_TAG_base_type, *UnitDie);
-    addString(IdxTy, dwarf::DW_AT_name, "int");
-    addUInt(IdxTy, dwarf::DW_AT_byte_size, None, sizeof(int32_t));
+    addString(IdxTy, dwarf::DW_AT_name, "sizetype");
+    addUInt(IdxTy, dwarf::DW_AT_byte_size, None, sizeof(int64_t));
     addUInt(IdxTy, dwarf::DW_AT_encoding, dwarf::DW_FORM_data1,
-            dwarf::DW_ATE_signed);
+            dwarf::DW_ATE_unsigned);
     setIndexTyDie(IdxTy);
   }
 

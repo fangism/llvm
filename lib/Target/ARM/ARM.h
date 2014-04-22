@@ -27,6 +27,7 @@ class JITCodeEmitter;
 class MachineInstr;
 class MCInst;
 class TargetLowering;
+class TargetMachine;
 
 FunctionPass *createARMISelDag(ARMBaseTargetMachine &TM,
                                CodeGenOpt::Level OptLevel);

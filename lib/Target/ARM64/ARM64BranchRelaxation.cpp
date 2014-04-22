@@ -9,7 +9,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "arm64-branch-relax"
 #include "ARM64.h"
 #include "ARM64InstrInfo.h"
 #include "ARM64MachineFunctionInfo.h"
@@ -23,6 +22,8 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Support/CommandLine.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "arm64-branch-relax"
 
 static cl::opt<bool>
 BranchRelaxation("arm64-branch-relax", cl::Hidden, cl::init(true),
@@ -81,10 +82,10 @@ class ARM64BranchRelaxation : public MachineFunctionPass {
   bool relaxBranchInstructions();
   void scanFunction();
   MachineBasicBlock *splitBlockBeforeInstr(MachineInstr *MI);
-  void adjustBlockOffsets(MachineBasicBlock *BB);
+  void adjustBlockOffsets(MachineBasicBlock &MBB);
   bool isBlockInRange(MachineInstr *MI, MachineBasicBlock *BB, unsigned Disp);
   bool fixupConditionalBranch(MachineInstr *MI);
-  void computeBlockSize(MachineBasicBlock *MBB);
+  void computeBlockSize(const MachineBasicBlock &MBB);
   unsigned getInstrOffset(MachineInstr *MI) const;
   void dumpBBs();
   void verify();
@@ -106,11 +107,9 @@ char ARM64BranchRelaxation::ID = 0;
 void ARM64BranchRelaxation::verify() {
 #ifndef NDEBUG
   unsigned PrevNum = MF->begin()->getNumber();
-  for (MachineFunction::iterator MBBI = MF->begin(), E = MF->end(); MBBI != E;
-       ++MBBI) {
-    MachineBasicBlock *MBB = MBBI;
-    unsigned Align = MBB->getAlignment();
-    unsigned Num = MBB->getNumber();
+  for (MachineBasicBlock &MBB : *MF) {
+    unsigned Align = MBB.getAlignment();
+    unsigned Num = MBB.getNumber();
     assert(BlockInfo[Num].Offset % (1u << Align) == 0);
     assert(!Num || BlockInfo[PrevNum].postOffset() <= BlockInfo[Num].Offset);
     PrevNum = Num;
@@ -120,7 +119,7 @@ void ARM64BranchRelaxation::verify() {
 
 /// print block size and offset information - debugging
 void ARM64BranchRelaxation::dumpBBs() {
-  for (auto &MBB: *MF) {
+  for (auto &MBB : *MF) {
     const BasicBlockInfo &BBI = BlockInfo[MBB.getNumber()];
     dbgs() << format("BB#%u\toffset=%08x\t", MBB.getNumber(), BBI.Offset)
            << format("size=%#x\n", BBI.Size);
@@ -133,14 +132,12 @@ static bool BBHasFallthrough(MachineBasicBlock *MBB) {
   // Get the next machine basic block in the function.
   MachineFunction::iterator MBBI = MBB;
   // Can't fall off end of function.
-  if (std::next(MBBI) == MBB->getParent()->end())
+  MachineBasicBlock *NextBB = std::next(MBBI);
+  if (NextBB == MBB->getParent()->end())
     return false;
 
-  MachineBasicBlock *NextBB = std::next(MBBI);
-  for (MachineBasicBlock::succ_iterator I = MBB->succ_begin(),
-                                        E = MBB->succ_end();
-       I != E; ++I)
-    if (*I == NextBB)
+  for (MachineBasicBlock *S : MBB->successors()) 
+    if (S == NextBB)
       return true;
 
   return false;
@@ -156,21 +153,20 @@ void ARM64BranchRelaxation::scanFunction() {
   // has any inline assembly in it. If so, we have to be conservative about
   // alignment assumptions, as we don't know for sure the size of any
   // instructions in the inline assembly.
-  for (MachineFunction::iterator I = MF->begin(), E = MF->end(); I != E; ++I)
-    computeBlockSize(I);
+  for (MachineBasicBlock &MBB : *MF)
+    computeBlockSize(MBB);
 
   // Compute block offsets and known bits.
-  adjustBlockOffsets(MF->begin());
+  adjustBlockOffsets(*MF->begin());
 }
 
 /// computeBlockSize - Compute the size for MBB.
 /// This function updates BlockInfo directly.
-void ARM64BranchRelaxation::computeBlockSize(MachineBasicBlock *MBB) {
+void ARM64BranchRelaxation::computeBlockSize(const MachineBasicBlock &MBB) {
   unsigned Size = 0;
-  for (MachineBasicBlock::iterator I = MBB->begin(), E = MBB->end(); I != E;
-       ++I)
-    Size += TII->GetInstSizeInBytes(I);
-  BlockInfo[MBB->getNumber()].Size = Size;
+  for (const MachineInstr &MI : MBB)
+    Size += TII->GetInstSizeInBytes(&MI);
+  BlockInfo[MBB.getNumber()].Size = Size;
 }
 
 /// getInstrOffset - Return the current offset of the specified machine
@@ -192,17 +188,15 @@ unsigned ARM64BranchRelaxation::getInstrOffset(MachineInstr *MI) const {
   return Offset;
 }
 
-void ARM64BranchRelaxation::adjustBlockOffsets(MachineBasicBlock *Start) {
-  unsigned PrevNum = Start->getNumber();
-  MachineFunction::iterator MBBI = Start, E = MF->end();
-  for (++MBBI; MBBI != E; ++MBBI) {
-    MachineBasicBlock *MBB = MBBI;
-    unsigned Num = MBB->getNumber();
+void ARM64BranchRelaxation::adjustBlockOffsets(MachineBasicBlock &Start) {
+  unsigned PrevNum = Start.getNumber();
+  for (auto &MBB : make_range(MachineFunction::iterator(Start), MF->end())) {
+    unsigned Num = MBB.getNumber();
     if (!Num) // block zero is never changed from offset zero.
       continue;
     // Get the offset and known bits at the end of the layout predecessor.
     // Include the alignment of the current block.
-    unsigned LogAlign = MBBI->getAlignment();
+    unsigned LogAlign = MBB.getAlignment();
     BlockInfo[Num].Offset = BlockInfo[PrevNum].postOffset(LogAlign);
     PrevNum = Num;
   }
@@ -242,14 +236,14 @@ ARM64BranchRelaxation::splitBlockBeforeInstr(MachineInstr *MI) {
   // the new jump we added.  (It should be possible to do this without
   // recounting everything, but it's very confusing, and this is rarely
   // executed.)
-  computeBlockSize(OrigBB);
+  computeBlockSize(*OrigBB);
 
   // Figure out how large the NewMBB is.  As the second half of the original
   // block, it may contain a tablejump.
-  computeBlockSize(NewBB);
+  computeBlockSize(*NewBB);
 
   // All BBOffsets following these blocks must be modified.
-  adjustBlockOffsets(OrigBB);
+  adjustBlockOffsets(*OrigBB);
 
   ++NumSplit;
 
@@ -440,7 +434,7 @@ bool ARM64BranchRelaxation::fixupConditionalBranch(MachineInstr *MI) {
   MI->eraseFromParent();
 
   // Finally, keep the block offsets up to date.
-  adjustBlockOffsets(MBB);
+  adjustBlockOffsets(*MBB);
   return true;
 }
 

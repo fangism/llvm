@@ -85,6 +85,13 @@ void MipsTargetAsmStreamer::emitDirectiveEnt(const MCSymbol &Symbol) {
 }
 
 void MipsTargetAsmStreamer::emitDirectiveAbiCalls() { OS << "\t.abicalls\n"; }
+
+void MipsTargetAsmStreamer::emitDirectiveNaN2008() { OS << "\t.nan\t2008\n"; }
+
+void MipsTargetAsmStreamer::emitDirectiveNaNLegacy() {
+  OS << "\t.nan\tlegacy\n";
+}
+
 void MipsTargetAsmStreamer::emitDirectiveOptionPic0() {
   OS << "\t.option\tpic0\n";
 }
@@ -156,6 +163,8 @@ MipsTargetELFStreamer::MipsTargetELFStreamer(MCStreamer &S,
     EFlags |= ELF::EF_MIPS_ARCH_64R2;
   else if (Features & Mips::FeatureMips64)
     EFlags |= ELF::EF_MIPS_ARCH_64;
+  else if (Features & Mips::FeatureMips4)
+    EFlags |= ELF::EF_MIPS_ARCH_4;
   else if (Features & Mips::FeatureMips32r2)
     EFlags |= ELF::EF_MIPS_ARCH_32R2;
   else if (Features & Mips::FeatureMips32)
@@ -177,6 +186,10 @@ MipsTargetELFStreamer::MipsTargetELFStreamer(MCStreamer &S,
     // ABI
     EFlags |= ELF::EF_MIPS_ABI_O32;
   }
+
+  // Other options.
+  if (Features & Mips::FeatureNaN2008)
+    EFlags |= ELF::EF_MIPS_NAN2008;
 
   MCA.setELFHeaderEFlags(EFlags);
 }
@@ -323,6 +336,21 @@ void MipsTargetELFStreamer::emitDirectiveAbiCalls() {
   Flags |= ELF::EF_MIPS_CPIC | ELF::EF_MIPS_PIC;
   MCA.setELFHeaderEFlags(Flags);
 }
+
+void MipsTargetELFStreamer::emitDirectiveNaN2008() {
+  MCAssembler &MCA = getStreamer().getAssembler();
+  unsigned Flags = MCA.getELFHeaderEFlags();
+  Flags |= ELF::EF_MIPS_NAN2008;
+  MCA.setELFHeaderEFlags(Flags);
+}
+
+void MipsTargetELFStreamer::emitDirectiveNaNLegacy() {
+  MCAssembler &MCA = getStreamer().getAssembler();
+  unsigned Flags = MCA.getELFHeaderEFlags();
+  Flags &= ~ELF::EF_MIPS_NAN2008;
+  MCA.setELFHeaderEFlags(Flags);
+}
+
 void MipsTargetELFStreamer::emitDirectiveOptionPic0() {
   MCAssembler &MCA = getStreamer().getAssembler();
   unsigned Flags = MCA.getELFHeaderEFlags();

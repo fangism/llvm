@@ -10,7 +10,6 @@
 // Subclass of MipsTargetLowering specialized for mips32/64.
 //
 //===----------------------------------------------------------------------===//
-#define DEBUG_TYPE "mips-isel"
 #include "MipsSEISelLowering.h"
 #include "MipsRegisterInfo.h"
 #include "MipsTargetMachine.h"
@@ -23,6 +22,8 @@
 #include "llvm/Target/TargetInstrInfo.h"
 
 using namespace llvm;
+
+#define DEBUG_TYPE "mips-isel"
 
 static cl::opt<bool>
 EnableMipsTailCalls("enable-mips-tail-calls", cl::Hidden,
@@ -119,10 +120,10 @@ MipsSETargetLowering::MipsSETargetLowering(MipsTargetMachine &TM)
 
   if (Subtarget->hasCnMips())
     setOperationAction(ISD::MUL,              MVT::i64, Legal);
-  else if (hasMips64())
+  else if (isGP64bit())
     setOperationAction(ISD::MUL,              MVT::i64, Custom);
 
-  if (hasMips64()) {
+  if (isGP64bit()) {
     setOperationAction(ISD::MULHS,            MVT::i64, Custom);
     setOperationAction(ISD::MULHU,            MVT::i64, Custom);
   }

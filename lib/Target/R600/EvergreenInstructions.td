@@ -273,7 +273,7 @@ def BFE_UINT_eg : R600_3OP <0x4, "BFE_UINT",
   VecALU
 >;
 
-def BFE_INT_eg : R600_3OP <0x4, "BFE_INT",
+def BFE_INT_eg : R600_3OP <0x5, "BFE_INT",
   [(set i32:$dst, (AMDGPUbfe_i32 i32:$src0, i32:$src1, i32:$src2))],
   VecALU
 >;
@@ -286,6 +286,13 @@ def BFI_INT_eg : R600_3OP <0x06, "BFI_INT",
   VecALU
 >;
 
+def : Pat<(i32 (sext_inreg i32:$src, i1)),
+  (BFE_INT_eg i32:$src, (i32 ZERO), (i32 ONE_INT))>;
+def : Pat<(i32 (sext_inreg i32:$src, i8)),
+  (BFE_INT_eg i32:$src, (i32 ZERO), (MOV_IMM_I32 8))>;
+def : Pat<(i32 (sext_inreg i32:$src, i16)),
+  (BFE_INT_eg i32:$src, (i32 ZERO), (MOV_IMM_I32 16))>;
+
 defm : BFIPatterns <BFI_INT_eg>;
 
 def BFM_INT_eg : R600_2OP <0xA0, "BFM_INT",
@@ -294,7 +301,7 @@ def BFM_INT_eg : R600_2OP <0xA0, "BFM_INT",
 >;
 
 def MULADD_UINT24_eg : R600_3OP <0x10, "MULADD_UINT24",
-  [(set i32:$dst, (add (mul U24:$src0, U24:$src1), i32:$src2))], VecALU
+  [(set i32:$dst, (add (AMDGPUmul_u24 i32:$src0, i32:$src1), i32:$src2))], VecALU
 >;
 def BIT_ALIGN_INT_eg : R600_3OP <0xC, "BIT_ALIGN_INT", [], VecALU>;
 def : ROTRPattern <BIT_ALIGN_INT_eg>;
@@ -309,7 +316,7 @@ def CNDGE_eg : CNDGE_Common<0x1B>;
 def MUL_LIT_eg : MUL_LIT_Common<0x1F>;
 def LOG_CLAMPED_eg : LOG_CLAMPED_Common<0x82>;
 def MUL_UINT24_eg : R600_2OP <0xB5, "MUL_UINT24",
-  [(set i32:$dst, (mul U24:$src0, U24:$src1))], VecALU
+  [(set i32:$dst, (AMDGPUmul_u24 i32:$src0, i32:$src1))], VecALU
 >;
 def DOT4_eg : DOT4_Common<0xBE>;
 defm CUBE_eg : CUBE_Common<0xC0>;

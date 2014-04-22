@@ -1,4 +1,4 @@
-; RUN: llc -mtriple=arm64-linux-gnu -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=arm64-linux-gnu -verify-machineinstrs -mcpu=cyclone < %s | FileCheck %s
 
 @lhs = global fp128 zeroinitializer, align 16
 @rhs = global fp128 zeroinitializer, align 16
@@ -202,8 +202,7 @@ define void @test_select(i1 %cond, fp128 %lhs, fp128 %rhs) {
 
   %val = select i1 %cond, fp128 %lhs, fp128 %rhs
   store fp128 %val, fp128* @lhs, align 16
-; CHECK: and [[BIT:w[0-9]+]], w0, #0x1
-; CHECK: cmp [[BIT]], #0
+; CHECK: tst w0, #0x1
 ; CHECK-NEXT: b.eq [[IFFALSE:.LBB[0-9]+_[0-9]+]]
 ; CHECK-NEXT: BB#
 ; CHECK-NEXT: orr v[[VAL:[0-9]+]].16b, v0.16b, v0.16b

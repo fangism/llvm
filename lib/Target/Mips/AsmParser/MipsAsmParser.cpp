@@ -29,6 +29,8 @@
 
 using namespace llvm;
 
+#define DEBUG_TYPE "mips-asm-parser"
+
 namespace llvm {
 class MCInstrInfo;
 }
@@ -144,6 +146,7 @@ class MipsAsmParser : public MCTargetAsmParser {
   bool isEvaluated(const MCExpr *Expr);
   bool parseSetFeature(uint64_t Feature);
   bool parseDirectiveCPSetup();
+  bool parseDirectiveNaN();
   bool parseDirectiveSet();
   bool parseDirectiveOption();
 
@@ -212,15 +215,15 @@ class MipsAsmParser : public MCTargetAsmParser {
 
   void setFeatureBits(unsigned Feature, StringRef FeatureString) {
     if (!(STI.getFeatureBits() & Feature)) {
-      setAvailableFeatures(ComputeAvailableFeatures(
-                           STI.ToggleFeature(FeatureString)));
+      setAvailableFeatures(
+          ComputeAvailableFeatures(STI.ToggleFeature(FeatureString)));
     }
   }
 
   void clearFeatureBits(unsigned Feature, StringRef FeatureString) {
     if (STI.getFeatureBits() & Feature) {
-     setAvailableFeatures(ComputeAvailableFeatures(
-                           STI.ToggleFeature(FeatureString)));
+      setAvailableFeatures(
+          ComputeAvailableFeatures(STI.ToggleFeature(FeatureString)));
     }
   }
 
@@ -756,6 +759,20 @@ public:
   /// getEndLoc - Get the location of the last token of this operand.
   SMLoc getEndLoc() const { return EndLoc; }
 
+  virtual ~MipsOperand() {
+    switch (Kind) {
+    case k_Immediate:
+      break;
+    case k_Memory:
+      delete Mem.Base;
+      break;
+    case k_PhysRegister:
+    case k_RegisterIndex:
+    case k_Token:
+      break;
+    }
+  }
+
   virtual void print(raw_ostream &OS) const {
     switch (Kind) {
     case k_Immediate:
@@ -906,10 +923,6 @@ bool MipsAsmParser::needsExpansion(MCInst &Inst) {
   case Mips::LoadImm32Reg:
   case Mips::LoadAddr32Imm:
   case Mips::LoadAddr32Reg:
-  case Mips::SUBi:
-  case Mips::SUBiu:
-  case Mips::DSUBi:
-  case Mips::DSUBiu:
     return true;
   default:
     return false;
@@ -925,30 +938,6 @@ void MipsAsmParser::expandInstruction(MCInst &Inst, SMLoc IDLoc,
     return expandLoadAddressImm(Inst, IDLoc, Instructions);
   case Mips::LoadAddr32Reg:
     return expandLoadAddressReg(Inst, IDLoc, Instructions);
-  case Mips::SUBi:
-    Instructions.push_back(MCInstBuilder(Mips::ADDi)
-                               .addReg(Inst.getOperand(0).getReg())
-                               .addReg(Inst.getOperand(1).getReg())
-                               .addImm(-Inst.getOperand(2).getImm()));
-    return;
-  case Mips::SUBiu:
-    Instructions.push_back(MCInstBuilder(Mips::ADDiu)
-                               .addReg(Inst.getOperand(0).getReg())
-                               .addReg(Inst.getOperand(1).getReg())
-                               .addImm(-Inst.getOperand(2).getImm()));
-    return;
-  case Mips::DSUBi:
-    Instructions.push_back(MCInstBuilder(Mips::DADDi)
-                               .addReg(Inst.getOperand(0).getReg())
-                               .addReg(Inst.getOperand(1).getReg())
-                               .addImm(-Inst.getOperand(2).getImm()));
-    return;
-  case Mips::DSUBiu:
-    Instructions.push_back(MCInstBuilder(Mips::DADDiu)
-                               .addReg(Inst.getOperand(0).getReg())
-                               .addReg(Inst.getOperand(1).getReg())
-                               .addImm(-Inst.getOperand(2).getImm()));
-    return;
   }
 }
 
@@ -1448,23 +1437,30 @@ const MCExpr *MipsAsmParser::evaluateRelocExpr(const MCExpr *Expr,
   const MCExpr *Res;
   // Check the type of the expression.
   if (const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(Expr)) {
-    // It's a constant, evaluate lo or hi value.
-    if (RelocStr == "lo") {
-      short Val = MCE->getValue();
-      Res = MCConstantExpr::Create(Val, getContext());
-    } else if (RelocStr == "hi") {
-      int Val = MCE->getValue();
-      int LoSign = Val & 0x8000;
-      Val = (Val & 0xffff0000) >> 16;
-      // Lower part is treated as a signed int, so if it is negative
-      // we must add 1 to the hi part to compensate.
-      if (LoSign)
-        Val++;
-      Res = MCConstantExpr::Create(Val, getContext());
-    } else {
-      llvm_unreachable("Invalid RelocStr value");
+    // It's a constant, evaluate reloc value.
+    int16_t Val;
+    switch (getVariantKind(RelocStr)) {
+    case MCSymbolRefExpr::VK_Mips_ABS_LO:
+      // Get the 1st 16-bits.
+      Val = MCE->getValue() & 0xffff;
+      break;
+    case MCSymbolRefExpr::VK_Mips_ABS_HI:
+      // Get the 2nd 16-bits. Also add 1 if bit 15 is 1, to compensate for low
+      // 16 bits being negative.
+      Val = ((MCE->getValue() + 0x8000) >> 16) & 0xffff;
+      break;
+    case MCSymbolRefExpr::VK_Mips_HIGHER:
+      // Get the 3rd 16-bits.
+      Val = ((MCE->getValue() + 0x80008000LL) >> 32) & 0xffff;
+      break;
+    case MCSymbolRefExpr::VK_Mips_HIGHEST:
+      // Get the 4th 16-bits.
+      Val = ((MCE->getValue() + 0x800080008000LL) >> 48) & 0xffff;
+      break;
+    default:
+      report_fatal_error("Unsupported reloc value!");
     }
-    return Res;
+    return MCConstantExpr::Create(Val, getContext());
   }
 
   if (const MCSymbolRefExpr *MSRE = dyn_cast<MCSymbolRefExpr>(Expr)) {
@@ -1478,15 +1474,9 @@ const MCExpr *MipsAsmParser::evaluateRelocExpr(const MCExpr *Expr,
   if (const MCBinaryExpr *BE = dyn_cast<MCBinaryExpr>(Expr)) {
     MCSymbolRefExpr::VariantKind VK = getVariantKind(RelocStr);
 
-    // Check for %hi(sym1-sym2) and %lo(sym1-sym2) expressions.
-    if (isa<MCSymbolRefExpr>(BE->getLHS()) && isa<MCSymbolRefExpr>(BE->getRHS())
-        && (VK == MCSymbolRefExpr::VK_Mips_ABS_HI
-            || VK == MCSymbolRefExpr::VK_Mips_ABS_LO)) {
-      // Create target expression for %hi(sym1-sym2) and %lo(sym1-sym2).
-      if (VK == MCSymbolRefExpr::VK_Mips_ABS_HI)
-        return MipsMCExpr::CreateHi(Expr, getContext());
-      return MipsMCExpr::CreateLo(Expr, getContext());
-    }
+    // Try to create target expression.
+    if (MipsMCExpr::isSupportedBinaryExpr(VK, BE))
+      return MipsMCExpr::Create(VK, Expr, getContext());
 
     const MCExpr *LExp = evaluateRelocExpr(BE->getLHS(), RelocStr);
     const MCExpr *RExp = evaluateRelocExpr(BE->getRHS(), RelocStr);
@@ -1585,6 +1575,8 @@ bool MipsAsmParser::ParseRegister(unsigned &RegNo, SMLoc &StartLoc,
       RegNo = isGP64() ? Operand.getGPR64Reg() : Operand.getGPR32Reg();
     }
 
+    delete &Operand;
+
     return (RegNo == (unsigned)-1);
   }
 
@@ -1653,6 +1645,7 @@ MipsAsmParser::OperandMatchResultTy MipsAsmParser::parseMemOperand(
             SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
 
         // Zero register assumed, add a memory operand with ZERO as its base.
+        // "Base" will be managed by k_Memory.
         MipsOperand *Base = MipsOperand::CreateGPRReg(
             0, getContext().getRegisterInfo(), S, E, *this);
         Operands.push_back(MipsOperand::CreateMem(Base, IdVal, S, E, *this));
@@ -1684,6 +1677,7 @@ MipsAsmParser::OperandMatchResultTy MipsAsmParser::parseMemOperand(
   // Replace the register operand with the memory operand.
   MipsOperand *op = static_cast<MipsOperand *>(Operands.back());
   // Remove the register from the operands.
+  // "op" will be managed by k_Memory.
   Operands.pop_back();
   // Add the memory operand.
   if (const MCBinaryExpr *BE = dyn_cast<MCBinaryExpr>(IdVal)) {
@@ -1970,7 +1964,7 @@ MCSymbolRefExpr::VariantKind MipsAsmParser::getVariantKind(StringRef Symbol) {
           .Case("highest", MCSymbolRefExpr::VK_Mips_HIGHEST)
           .Default(MCSymbolRefExpr::VK_None);
 
-  assert (VK != MCSymbolRefExpr::VK_None);
+  assert(VK != MCSymbolRefExpr::VK_None);
 
   return VK;
 }
@@ -2247,29 +2241,30 @@ bool MipsAsmParser::parseSetFeature(uint64_t Feature) {
   if (getLexer().isNot(AsmToken::EndOfStatement))
     return reportParseError("unexpected token in .set directive");
 
-  switch(Feature) {
-    default: llvm_unreachable("Unimplemented feature");
-    case Mips::FeatureDSP:
-      setFeatureBits(Mips::FeatureDSP, "dsp");
-      getTargetStreamer().emitDirectiveSetDsp();
+  switch (Feature) {
+  default:
+    llvm_unreachable("Unimplemented feature");
+  case Mips::FeatureDSP:
+    setFeatureBits(Mips::FeatureDSP, "dsp");
+    getTargetStreamer().emitDirectiveSetDsp();
     break;
-    case Mips::FeatureMicroMips:
-      getTargetStreamer().emitDirectiveSetMicroMips();
+  case Mips::FeatureMicroMips:
+    getTargetStreamer().emitDirectiveSetMicroMips();
     break;
-    case Mips::FeatureMips16:
-      getTargetStreamer().emitDirectiveSetMips16();
+  case Mips::FeatureMips16:
+    getTargetStreamer().emitDirectiveSetMips16();
     break;
-    case Mips::FeatureMips32r2:
-      setFeatureBits(Mips::FeatureMips32r2, "mips32r2");
-      getTargetStreamer().emitDirectiveSetMips32R2();
+  case Mips::FeatureMips32r2:
+    setFeatureBits(Mips::FeatureMips32r2, "mips32r2");
+    getTargetStreamer().emitDirectiveSetMips32R2();
     break;
-    case Mips::FeatureMips64:
-      setFeatureBits(Mips::FeatureMips64, "mips64");
-      getTargetStreamer().emitDirectiveSetMips64();
+  case Mips::FeatureMips64:
+    setFeatureBits(Mips::FeatureMips64, "mips64");
+    getTargetStreamer().emitDirectiveSetMips64();
     break;
-    case Mips::FeatureMips64r2:
-      setFeatureBits(Mips::FeatureMips64r2, "mips64r2");
-      getTargetStreamer().emitDirectiveSetMips64R2();
+  case Mips::FeatureMips64r2:
+    setFeatureBits(Mips::FeatureMips64r2, "mips64r2");
+    getTargetStreamer().emitDirectiveSetMips64R2();
     break;
   }
   return false;
@@ -2301,7 +2296,7 @@ bool MipsAsmParser::eatComma(StringRef ErrorStr) {
     return Error(Loc, ErrorStr);
   }
 
-  Parser.Lex();  // Eat the comma.
+  Parser.Lex(); // Eat the comma.
   return true;
 }
 
@@ -2363,11 +2358,9 @@ bool MipsAsmParser::parseDirectiveCPSetup() {
   Inst.clear();
 
   const MCSymbolRefExpr *HiExpr = MCSymbolRefExpr::Create(
-      Sym->getName(), MCSymbolRefExpr::VK_Mips_GPOFF_HI,
-      getContext());
+      Sym->getName(), MCSymbolRefExpr::VK_Mips_GPOFF_HI, getContext());
   const MCSymbolRefExpr *LoExpr = MCSymbolRefExpr::Create(
-      Sym->getName(), MCSymbolRefExpr::VK_Mips_GPOFF_LO,
-      getContext());
+      Sym->getName(), MCSymbolRefExpr::VK_Mips_GPOFF_LO, getContext());
   // lui $gp, %hi(%neg(%gp_rel(funcSym)))
   Inst.setOpcode(Mips::LUi);
   Inst.addOperand(MCOperand::CreateReg(GPReg));
@@ -2389,6 +2382,26 @@ bool MipsAsmParser::parseDirectiveCPSetup() {
   Inst.addOperand(MCOperand::CreateReg(GPReg));
   Inst.addOperand(MCOperand::CreateReg(FuncReg));
   TS.EmitInstruction(Inst, STI);
+  return false;
+}
+
+bool MipsAsmParser::parseDirectiveNaN() {
+  if (getLexer().isNot(AsmToken::EndOfStatement)) {
+    const AsmToken &Tok = Parser.getTok();
+
+    if (Tok.getString() == "2008") {
+      Parser.Lex();
+      getTargetStreamer().emitDirectiveNaN2008();
+      return false;
+    } else if (Tok.getString() == "legacy") {
+      Parser.Lex();
+      getTargetStreamer().emitDirectiveNaNLegacy();
+      return false;
+    }
+  }
+  // If we don't recognize the option passed to the .nan
+  // directive (e.g. no option or unknown option), emit an error.
+  reportParseError("invalid option in .nan directive");
   return false;
 }
 
@@ -2418,15 +2431,15 @@ bool MipsAsmParser::parseDirectiveSet() {
     Parser.eatToEndOfStatement();
     return false;
   } else if (Tok.getString() == "micromips") {
-      return parseSetFeature(Mips::FeatureMicroMips);
+    return parseSetFeature(Mips::FeatureMicroMips);
   } else if (Tok.getString() == "mips32r2") {
-      return parseSetFeature(Mips::FeatureMips32r2);
+    return parseSetFeature(Mips::FeatureMips32r2);
   } else if (Tok.getString() == "mips64") {
-      return parseSetFeature(Mips::FeatureMips64);
+    return parseSetFeature(Mips::FeatureMips64);
   } else if (Tok.getString() == "mips64r2") {
-      return parseSetFeature(Mips::FeatureMips64r2);
+    return parseSetFeature(Mips::FeatureMips64r2);
   } else if (Tok.getString() == "dsp") {
-      return parseSetFeature(Mips::FeatureDSP);
+    return parseSetFeature(Mips::FeatureDSP);
   } else {
     // It is just an identifier, look for an assignment.
     parseSetAssignment();
@@ -2574,6 +2587,9 @@ bool MipsAsmParser::ParseDirective(AsmToken DirectiveID) {
     Parser.eatToEndOfStatement();
     return false;
   }
+
+  if (IDVal == ".nan")
+    return parseDirectiveNaN();
 
   if (IDVal == ".gpword") {
     parseDirectiveGpWord();

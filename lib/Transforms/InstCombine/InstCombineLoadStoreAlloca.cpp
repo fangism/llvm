@@ -20,6 +20,8 @@
 #include "llvm/Transforms/Utils/Local.h"
 using namespace llvm;
 
+#define DEBUG_TYPE "instcombine"
+
 STATISTIC(NumDeadStore,    "Number of dead stores eliminated");
 STATISTIC(NumGlobalCopies, "Number of allocas copied from constant global");
 

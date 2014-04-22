@@ -125,7 +125,8 @@ def ARM64sbc       : SDNode<"ARM64ISD::SBC",  SDTBinaryArithWithFlagsIn>;
 def ARM64add_flag  : SDNode<"ARM64ISD::ADDS",  SDTBinaryArithWithFlagsOut,
                             [SDNPCommutative]>;
 def ARM64sub_flag  : SDNode<"ARM64ISD::SUBS",  SDTBinaryArithWithFlagsOut>;
-def ARM64and_flag  : SDNode<"ARM64ISD::ANDS",  SDTBinaryArithWithFlagsOut>;
+def ARM64and_flag  : SDNode<"ARM64ISD::ANDS",  SDTBinaryArithWithFlagsOut,
+                            [SDNPCommutative]>;
 def ARM64adc_flag  : SDNode<"ARM64ISD::ADCS",  SDTBinaryArithWithFlagsInOut>;
 def ARM64sbc_flag  : SDNode<"ARM64ISD::SBCS",  SDTBinaryArithWithFlagsInOut>;
 
@@ -173,6 +174,7 @@ def ARM64urshri : SDNode<"ARM64ISD::URSHR_I", SDT_ARM64vshift>;
 
 def ARM64not: SDNode<"ARM64ISD::NOT", SDT_ARM64unvec>;
 def ARM64bit: SDNode<"ARM64ISD::BIT", SDT_ARM64trivec>;
+def ARM64bsl: SDNode<"ARM64ISD::BSL", SDT_ARM64trivec>;
 
 def ARM64cmeq: SDNode<"ARM64ISD::CMEQ", SDT_ARM64binvec>;
 def ARM64cmge: SDNode<"ARM64ISD::CMGE", SDT_ARM64binvec>;
@@ -332,9 +334,12 @@ def MSRcpsr: MSRcpsrI;
 def : Pat<(ARM64threadpointer), (MRS 0xde82)>;
 
 // Generic system instructions
-def SYS    : SystemI<0, "sys">;
 def SYSxt  : SystemXtI<0, "sys">;
 def SYSLxt : SystemLXtI<1, "sysl">;
+
+def : InstAlias<"sys $op1, $Cn, $Cm, $op2",
+                (SYSxt imm0_7:$op1, sys_cr_op:$Cn,
+                 sys_cr_op:$Cm, imm0_7:$op2, XZR)>;
 
 //===----------------------------------------------------------------------===//
 // Move immediate instructions.
@@ -392,6 +397,22 @@ def MOVi64imm
       Sched<[WriteImm]>;
 } // isReMaterializable, isCodeGenOnly
 
+// If possible, we want to use MOVi32imm even for 64-bit moves. This gives the
+// eventual expansion code fewer bits to worry about getting right. Marshalling
+// the types is a little tricky though:
+def i64imm_32bit : ImmLeaf<i64, [{
+  return (Imm & 0xffffffffULL) == static_cast<uint64_t>(Imm);
+}]>;
+
+def trunc_imm : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(N->getZExtValue(), MVT::i32);
+}]>;
+
+def : Pat<(i64 i64imm_32bit:$src),
+          (SUBREG_TO_REG (i64 0), (MOVi32imm (trunc_imm imm:$src)), sub_32)>;
+
+// Deal with the various forms of (ELF) large addressing with MOVZ/MOVK
+// sequences.
 def : Pat<(ARM64WrapperLarge tglobaladdr:$g3, tglobaladdr:$g2,
                              tglobaladdr:$g1, tglobaladdr:$g0),
           (MOVKXi (MOVKXi (MOVKXi (MOVZXi tglobaladdr:$g3, 48),
@@ -412,6 +433,13 @@ def : Pat<(ARM64WrapperLarge tconstpool:$g3, tconstpool:$g2,
                                   tconstpool:$g2, 32),
                           tconstpool:$g1, 16),
                   tconstpool:$g0, 0)>;
+
+def : Pat<(ARM64WrapperLarge tjumptable:$g3, tjumptable:$g2,
+                             tjumptable:$g1, tjumptable:$g0),
+          (MOVKXi (MOVKXi (MOVKXi (MOVZXi tjumptable:$g3, 48),
+                                  tjumptable:$g2, 32),
+                          tjumptable:$g1, 16),
+                  tjumptable:$g0, 0)>;
 
 
 //===----------------------------------------------------------------------===//
@@ -592,8 +620,9 @@ def : InstAlias<"mov $dst, $imm", (ORRXri GPR64sp:$dst, XZR,
 
 
 // (register)
-defm ANDS : LogicalRegS<0b11, 0, "ands">;
-defm BICS : LogicalRegS<0b11, 1, "bics">;
+defm ANDS : LogicalRegS<0b11, 0, "ands", ARM64and_flag>;
+defm BICS : LogicalRegS<0b11, 1, "bics",
+                        BinOpFrag<(ARM64and_flag node:$LHS, (not node:$RHS))>>;
 defm AND  : LogicalReg<0b00, 0, "and", and>;
 defm BIC  : LogicalReg<0b00, 1, "bic",
                        BinOpFrag<(and node:$LHS, (not node:$RHS))>>;
@@ -603,13 +632,6 @@ defm EOR  : LogicalReg<0b10, 0, "eor", xor>;
 defm ORN  : LogicalReg<0b01, 1, "orn",
                        BinOpFrag<(or node:$LHS, (not node:$RHS))>>;
 defm ORR  : LogicalReg<0b01, 0, "orr", or>;
-
-def : InstAlias<"mov $dst, $src", (ORRWrs GPR32:$dst, WZR, GPR32:$src, 0)>;
-def : InstAlias<"mov $dst, $src",
-                (ADDWri GPR32sp:$dst, GPR32sp:$src, 0, 0)>;
-def : InstAlias<"mov $dst, $src", (ORRXrs GPR64:$dst, XZR, GPR64:$src, 0)>;
-def : InstAlias<"mov $dst, $src",
-                (ADDXri GPR64sp:$dst, GPR64sp:$src, 0, 0)>;
 
 def : InstAlias<"tst $src1, $src2",
                 (ANDSWri WZR, GPR32:$src1, logical_imm32:$src2)>;
@@ -631,6 +653,11 @@ def : InstAlias<"mvn $Wd, $Wm",
 def : InstAlias<"mvn $Xd, $Xm",
                 (ORNXrs GPR64:$Xd, XZR, GPR64:$Xm, 0)>;
 
+def : InstAlias<"mvn $Wd, $Wm, $sh",
+                (ORNWrs GPR32:$Wd, WZR, GPR32:$Wm, logical_shift:$sh)>;
+def : InstAlias<"mvn $Xd, $Xm, $sh",
+                (ORNXrs GPR64:$Xd, XZR, GPR64:$Xm, logical_shift:$sh)>;
+
 def : Pat<(not GPR32:$Wm), (ORNWrr WZR, GPR32:$Wm)>;
 def : Pat<(not GPR64:$Xm), (ORNXrr XZR, GPR64:$Xm)>;
 
@@ -643,14 +670,19 @@ defm CLS    : OneOperandData<0b101, "cls">;
 defm CLZ    : OneOperandData<0b100, "clz", ctlz>;
 defm RBIT   : OneOperandData<0b000, "rbit">;
 def  REV16Wr : OneWRegData<0b001, "rev16",
-                                  UnOpFrag<(rotr (bswap node:$LHS), (i32 16))>>;
-def  REV16Xr : OneXRegData<0b001, "rev16",
                                   UnOpFrag<(rotr (bswap node:$LHS), (i64 16))>>;
+def  REV16Xr : OneXRegData<0b001, "rev16", null_frag>;
 
 def : Pat<(cttz GPR32:$Rn),
           (CLZWr (RBITWr GPR32:$Rn))>;
 def : Pat<(cttz GPR64:$Rn),
           (CLZXr (RBITXr GPR64:$Rn))>;
+def : Pat<(ctlz (or (shl (xor (sra GPR32:$Rn, (i64 31)), GPR32:$Rn), (i64 1)),
+                (i32 1))),
+          (CLSWr GPR32:$Rn)>;
+def : Pat<(ctlz (or (shl (xor (sra GPR64:$Rn, (i64 63)), GPR64:$Rn), (i64 1)),
+                (i64 1))),
+          (CLSXr GPR64:$Rn)>;
 
 // Unlike the other one operand instructions, the instructions with the "rev"
 // mnemonic do *not* just different in the size bit, but actually use different
@@ -659,6 +691,11 @@ def REVWr   : OneWRegData<0b010, "rev", bswap>;
 def REVXr   : OneXRegData<0b011, "rev", bswap>;
 def REV32Xr : OneXRegData<0b010, "rev32",
                                  UnOpFrag<(rotr (bswap node:$LHS), (i64 32))>>;
+
+// The bswap commutes with the rotr so we want a pattern for both possible
+// orders.
+def : Pat<(bswap (rotr GPR32:$Rn, (i64 16))), (REV16Wr GPR32:$Rn)>;
+def : Pat<(bswap (rotr GPR64:$Rn, (i64 32))), (REV32Xr GPR64:$Rn)>;
 
 //===----------------------------------------------------------------------===//
 // Bitfield immediate extraction instruction.
@@ -670,7 +707,7 @@ def : InstAlias<"ror $dst, $src, $shift",
 def : InstAlias<"ror $dst, $src, $shift",
             (EXTRXrri GPR64:$dst, GPR64:$src, GPR64:$src, imm0_63:$shift)>;
 
-def : Pat<(rotr GPR32:$Rn, (i32 imm0_31:$imm)),
+def : Pat<(rotr GPR32:$Rn, (i64 imm0_31:$imm)),
           (EXTRWrri GPR32:$Rn, GPR32:$Rn, imm0_31:$imm)>;
 def : Pat<(rotr GPR64:$Rn, (i64 imm0_63:$imm)),
           (EXTRXrri GPR64:$Rn, GPR64:$Rn, imm0_63:$imm)>;
@@ -684,28 +721,28 @@ defm SBFM : BitfieldImm<0b00, "sbfm">;
 defm UBFM : BitfieldImm<0b10, "ubfm">;
 }
 
-def i32shift_a : Operand<i32>, SDNodeXForm<imm, [{
+def i32shift_a : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = (32 - N->getZExtValue()) & 0x1f;
-  return CurDAG->getTargetConstant(enc, MVT::i32);
+  return CurDAG->getTargetConstant(enc, MVT::i64);
 }]>;
 
-def i32shift_b : Operand<i32>, SDNodeXForm<imm, [{
+def i32shift_b : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 31 - N->getZExtValue();
-  return CurDAG->getTargetConstant(enc, MVT::i32);
+  return CurDAG->getTargetConstant(enc, MVT::i64);
 }]>;
 
 // min(7, 31 - shift_amt)
-def i32shift_sext_i8 : Operand<i32>, SDNodeXForm<imm, [{
+def i32shift_sext_i8 : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 31 - N->getZExtValue();
   enc = enc > 7 ? 7 : enc;
-  return CurDAG->getTargetConstant(enc, MVT::i32);
+  return CurDAG->getTargetConstant(enc, MVT::i64);
 }]>;
 
 // min(15, 31 - shift_amt)
-def i32shift_sext_i16 : Operand<i32>, SDNodeXForm<imm, [{
+def i32shift_sext_i16 : Operand<i64>, SDNodeXForm<imm, [{
   uint64_t enc = 31 - N->getZExtValue();
   enc = enc > 15 ? 15 : enc;
-  return CurDAG->getTargetConstant(enc, MVT::i32);
+  return CurDAG->getTargetConstant(enc, MVT::i64);
 }]>;
 
 def i64shift_a : Operand<i64>, SDNodeXForm<imm, [{
@@ -739,15 +776,15 @@ def i64shift_sext_i32 : Operand<i64>, SDNodeXForm<imm, [{
   return CurDAG->getTargetConstant(enc, MVT::i64);
 }]>;
 
-def : Pat<(shl GPR32:$Rn, (i32 imm0_31:$imm)),
-          (UBFMWri GPR32:$Rn, (i32 (i32shift_a imm0_31:$imm)),
-                              (i32 (i32shift_b imm0_31:$imm)))>;
+def : Pat<(shl GPR32:$Rn, (i64 imm0_31:$imm)),
+          (UBFMWri GPR32:$Rn, (i64 (i32shift_a imm0_31:$imm)),
+                              (i64 (i32shift_b imm0_31:$imm)))>;
 def : Pat<(shl GPR64:$Rn, (i64 imm0_63:$imm)),
           (UBFMXri GPR64:$Rn, (i64 (i64shift_a imm0_63:$imm)),
                               (i64 (i64shift_b imm0_63:$imm)))>;
 
 let AddedComplexity = 10 in {
-def : Pat<(sra GPR32:$Rn, (i32 imm0_31:$imm)),
+def : Pat<(sra GPR32:$Rn, (i64 imm0_31:$imm)),
           (SBFMWri GPR32:$Rn, imm0_31:$imm, 31)>;
 def : Pat<(sra GPR64:$Rn, (i64 imm0_63:$imm)),
           (SBFMXri GPR64:$Rn, imm0_63:$imm, 63)>;
@@ -763,7 +800,7 @@ def : InstAlias<"sxth $dst, $src", (SBFMWri GPR32:$dst, GPR32:$src, 0, 15)>;
 def : InstAlias<"sxth $dst, $src", (SBFMXri GPR64:$dst, GPR64:$src, 0, 15)>;
 def : InstAlias<"sxtw $dst, $src", (SBFMXri GPR64:$dst, GPR64:$src, 0, 31)>;
 
-def : Pat<(srl GPR32:$Rn, (i32 imm0_31:$imm)),
+def : Pat<(srl GPR32:$Rn, (i64 imm0_31:$imm)),
           (UBFMWri GPR32:$Rn, imm0_31:$imm, 31)>;
 def : Pat<(srl GPR64:$Rn, (i64 imm0_63:$imm)),
           (UBFMXri GPR64:$Rn, imm0_63:$imm, 63)>;
@@ -967,13 +1004,13 @@ def LDPQi : LoadPairOffset<0b10, 1, FPR128, am_indexed128simm7, "ldp">;
 def LDPSWi : LoadPairOffset<0b01, 0, GPR64, am_indexed32simm7, "ldpsw">;
 
 // Pair (pre-indexed)
-def LDPWpre : LoadPairPreIdx<0b00, 0, GPR32, am_indexed32simm7, "ldp">;
-def LDPXpre : LoadPairPreIdx<0b10, 0, GPR64, am_indexed64simm7, "ldp">;
-def LDPSpre : LoadPairPreIdx<0b00, 1, FPR32, am_indexed32simm7, "ldp">;
-def LDPDpre : LoadPairPreIdx<0b01, 1, FPR64, am_indexed64simm7, "ldp">;
-def LDPQpre : LoadPairPreIdx<0b10, 1, FPR128, am_indexed128simm7, "ldp">;
+def LDPWpre : LoadPairPreIdx<0b00, 0, GPR32, am_indexed32simm7_wb, "ldp">;
+def LDPXpre : LoadPairPreIdx<0b10, 0, GPR64, am_indexed64simm7_wb, "ldp">;
+def LDPSpre : LoadPairPreIdx<0b00, 1, FPR32, am_indexed32simm7_wb, "ldp">;
+def LDPDpre : LoadPairPreIdx<0b01, 1, FPR64, am_indexed64simm7_wb, "ldp">;
+def LDPQpre : LoadPairPreIdx<0b10, 1, FPR128, am_indexed128simm7_wb, "ldp">;
 
-def LDPSWpre : LoadPairPreIdx<0b01, 0, GPR64, am_indexed32simm7, "ldpsw">;
+def LDPSWpre : LoadPairPreIdx<0b01, 0, GPR64, am_indexed32simm7_wb, "ldpsw">;
 
 // Pair (post-indexed)
 def LDPWpost : LoadPairPostIdx<0b00, 0, GPR32, simm7s4, "ldp">;
@@ -1011,7 +1048,7 @@ def LDRXro  : Load64RO<0b11,   0, 0b01, GPR64, "ldr",
 def LDRBro : Load8RO<0b00,   1, 0b01, FPR8,   "ldr",
                       [(set FPR8:$Rt, (load ro_indexed8:$addr))]>;
 def LDRHro : Load16RO<0b01,  1, 0b01, FPR16,  "ldr",
-                      [(set FPR16:$Rt, (load ro_indexed16:$addr))]>;
+                      [(set (f16 FPR16:$Rt), (load ro_indexed16:$addr))]>;
 def LDRSro : Load32RO<0b10,    1, 0b01, FPR32,  "ldr",
                       [(set (f32 FPR32:$Rt), (load ro_indexed32:$addr))]>;
 def LDRDro : Load64RO<0b11,    1, 0b01, FPR64,  "ldr",
@@ -1090,6 +1127,8 @@ def : Pat<(i64 (zextloadi8 ro_indexed8:$addr)),
     (SUBREG_TO_REG (i64 0), (LDRBBro ro_indexed8:$addr), sub_32)>;
 def : Pat<(i64 (zextloadi16 ro_indexed16:$addr)),
     (SUBREG_TO_REG (i64 0), (LDRHHro ro_indexed16:$addr), sub_32)>;
+def : Pat<(i64 (zextloadi32 ro_indexed32:$addr)),
+    (SUBREG_TO_REG (i64 0), (LDRWro ro_indexed32:$addr), sub_32)>;
 
 // zextloadi1 -> zextloadi8
 def : Pat<(i32 (zextloadi1 ro_indexed8:$addr)), (LDRBBro ro_indexed8:$addr)>;
@@ -1121,7 +1160,7 @@ def LDRWui : LoadUI<0b10, 0, 0b01, GPR32, am_indexed32, "ldr",
 def LDRBui : LoadUI<0b00, 1, 0b01, FPR8, am_indexed8, "ldr",
                     [(set FPR8:$Rt, (load am_indexed8:$addr))]>;
 def LDRHui : LoadUI<0b01, 1, 0b01, FPR16, am_indexed16, "ldr",
-                    [(set FPR16:$Rt, (load am_indexed16:$addr))]>;
+                    [(set (f16 FPR16:$Rt), (load am_indexed16:$addr))]>;
 def LDRSui : LoadUI<0b10, 1, 0b01, FPR32, am_indexed32, "ldr",
                     [(set (f32 FPR32:$Rt), (load am_indexed32:$addr))]>;
 def LDRDui : LoadUI<0b11, 1, 0b01, FPR64, am_indexed64, "ldr",
@@ -1250,7 +1289,7 @@ def LDURWi : LoadUnscaled<0b10, 0, 0b01, GPR32, am_unscaled32, "ldur",
 def LDURBi : LoadUnscaled<0b00, 1, 0b01, FPR8,  am_unscaled8, "ldur",
                           [(set FPR8:$Rt, (load am_unscaled8:$addr))]>;
 def LDURHi : LoadUnscaled<0b01, 1, 0b01, FPR16, am_unscaled16, "ldur",
-                          [(set FPR16:$Rt, (load am_unscaled16:$addr))]>;
+                          [(set (f16 FPR16:$Rt), (load am_unscaled16:$addr))]>;
 def LDURSi : LoadUnscaled<0b10, 1, 0b01, FPR32, am_unscaled32, "ldur",
                           [(set (f32 FPR32:$Rt), (load am_unscaled32:$addr))]>;
 def LDURDi : LoadUnscaled<0b11, 1, 0b01, FPR64, am_unscaled64, "ldur",
@@ -1516,11 +1555,11 @@ def STPDi : StorePairOffset<0b01, 1, FPR64, am_indexed64simm7, "stp">;
 def STPQi : StorePairOffset<0b10, 1, FPR128, am_indexed128simm7, "stp">;
 
 // Pair (pre-indexed)
-def STPWpre : StorePairPreIdx<0b00, 0, GPR32, am_indexed32simm7, "stp">;
-def STPXpre : StorePairPreIdx<0b10, 0, GPR64, am_indexed64simm7, "stp">;
-def STPSpre : StorePairPreIdx<0b00, 1, FPR32, am_indexed32simm7, "stp">;
-def STPDpre : StorePairPreIdx<0b01, 1, FPR64, am_indexed64simm7, "stp">;
-def STPQpre : StorePairPreIdx<0b10, 1, FPR128, am_indexed128simm7, "stp">;
+def STPWpre : StorePairPreIdx<0b00, 0, GPR32, am_indexed32simm7_wb, "stp">;
+def STPXpre : StorePairPreIdx<0b10, 0, GPR64, am_indexed64simm7_wb, "stp">;
+def STPSpre : StorePairPreIdx<0b00, 1, FPR32, am_indexed32simm7_wb, "stp">;
+def STPDpre : StorePairPreIdx<0b01, 1, FPR64, am_indexed64simm7_wb, "stp">;
+def STPQpre : StorePairPreIdx<0b10, 1, FPR128, am_indexed128simm7_wb, "stp">;
 
 // Pair (pre-indexed)
 def STPWpost : StorePairPostIdx<0b00, 0, GPR32, simm7s4, "stp">;
@@ -1564,7 +1603,7 @@ def : Pat<(truncstorei32 GPR64:$Rt, ro_indexed32:$addr),
 def STRBro : Store8RO<0b00,  1, 0b00, FPR8,  "str",
                             [(store FPR8:$Rt, ro_indexed8:$addr)]>;
 def STRHro : Store16RO<0b01, 1, 0b00, FPR16, "str",
-                            [(store FPR16:$Rt, ro_indexed16:$addr)]>;
+                            [(store (f16 FPR16:$Rt), ro_indexed16:$addr)]>;
 def STRSro : Store32RO<0b10,   1, 0b00, FPR32, "str",
                             [(store (f32 FPR32:$Rt), ro_indexed32:$addr)]>;
 def STRDro : Store64RO<0b11,   1, 0b00, FPR64, "str",
@@ -1612,7 +1651,7 @@ def STRWui : StoreUI<0b10, 0, 0b00, GPR32, am_indexed32, "str",
 def STRBui : StoreUI<0b00, 1, 0b00, FPR8, am_indexed8, "str",
                      [(store FPR8:$Rt, am_indexed8:$addr)]>;
 def STRHui : StoreUI<0b01, 1, 0b00, FPR16, am_indexed16, "str",
-                     [(store FPR16:$Rt, am_indexed16:$addr)]>;
+                     [(store (f16 FPR16:$Rt), am_indexed16:$addr)]>;
 def STRSui : StoreUI<0b10, 1, 0b00, FPR32, am_indexed32, "str",
                      [(store (f32 FPR32:$Rt), am_indexed32:$addr)]>;
 def STRDui : StoreUI<0b11, 1, 0b00, FPR64, am_indexed64, "str",
@@ -1675,7 +1714,7 @@ def STURWi : StoreUnscaled<0b10, 0, 0b00, GPR32, am_unscaled32, "stur",
 def STURBi : StoreUnscaled<0b00, 1, 0b00, FPR8,  am_unscaled8, "stur",
                            [(store FPR8:$Rt, am_unscaled8:$addr)]>;
 def STURHi : StoreUnscaled<0b01, 1, 0b00, FPR16, am_unscaled16, "stur",
-                           [(store FPR16:$Rt, am_unscaled16:$addr)]>;
+                           [(store (f16 FPR16:$Rt), am_unscaled16:$addr)]>;
 def STURSi : StoreUnscaled<0b10, 1, 0b00, FPR32, am_unscaled32, "stur",
                            [(store (f32 FPR32:$Rt), am_unscaled32:$addr)]>;
 def STURDi : StoreUnscaled<0b11, 1, 0b00, FPR64, am_unscaled64, "stur",
@@ -1859,19 +1898,23 @@ def STXPX  : StoreExclusivePair<0b11, 0, 0, 1, 0, GPR64, "stxp">;
 // Scaled floating point to integer conversion instructions.
 //===----------------------------------------------------------------------===//
 
-defm FCVTAS : FPToInteger<0b00, 0b100, "fcvtas", int_arm64_neon_fcvtas>;
-defm FCVTAU : FPToInteger<0b00, 0b101, "fcvtau", int_arm64_neon_fcvtau>;
-defm FCVTMS : FPToInteger<0b10, 0b000, "fcvtms", int_arm64_neon_fcvtms>;
-defm FCVTMU : FPToInteger<0b10, 0b001, "fcvtmu", int_arm64_neon_fcvtmu>;
-defm FCVTNS : FPToInteger<0b00, 0b000, "fcvtns", int_arm64_neon_fcvtns>;
-defm FCVTNU : FPToInteger<0b00, 0b001, "fcvtnu", int_arm64_neon_fcvtnu>;
-defm FCVTPS : FPToInteger<0b01, 0b000, "fcvtps", int_arm64_neon_fcvtps>;
-defm FCVTPU : FPToInteger<0b01, 0b001, "fcvtpu", int_arm64_neon_fcvtpu>;
-defm FCVTZS : FPToInteger<0b11, 0b000, "fcvtzs", fp_to_sint>;
-defm FCVTZU : FPToInteger<0b11, 0b001, "fcvtzu", fp_to_uint>;
+defm FCVTAS : FPToIntegerUnscaled<0b00, 0b100, "fcvtas", int_arm64_neon_fcvtas>;
+defm FCVTAU : FPToIntegerUnscaled<0b00, 0b101, "fcvtau", int_arm64_neon_fcvtau>;
+defm FCVTMS : FPToIntegerUnscaled<0b10, 0b000, "fcvtms", int_arm64_neon_fcvtms>;
+defm FCVTMU : FPToIntegerUnscaled<0b10, 0b001, "fcvtmu", int_arm64_neon_fcvtmu>;
+defm FCVTNS : FPToIntegerUnscaled<0b00, 0b000, "fcvtns", int_arm64_neon_fcvtns>;
+defm FCVTNU : FPToIntegerUnscaled<0b00, 0b001, "fcvtnu", int_arm64_neon_fcvtnu>;
+defm FCVTPS : FPToIntegerUnscaled<0b01, 0b000, "fcvtps", int_arm64_neon_fcvtps>;
+defm FCVTPU : FPToIntegerUnscaled<0b01, 0b001, "fcvtpu", int_arm64_neon_fcvtpu>;
+defm FCVTZS : FPToIntegerUnscaled<0b11, 0b000, "fcvtzs", fp_to_sint>;
+defm FCVTZU : FPToIntegerUnscaled<0b11, 0b001, "fcvtzu", fp_to_uint>;
+defm FCVTZS : FPToIntegerScaled<0b11, 0b000, "fcvtzs", fp_to_sint>;
+defm FCVTZU : FPToIntegerScaled<0b11, 0b001, "fcvtzu", fp_to_uint>;
 let isCodeGenOnly = 1 in {
-defm FCVTZS_Int : FPToInteger<0b11, 0b000, "fcvtzs", int_arm64_neon_fcvtzs>;
-defm FCVTZU_Int : FPToInteger<0b11, 0b001, "fcvtzu", int_arm64_neon_fcvtzu>;
+defm FCVTZS_Int : FPToIntegerUnscaled<0b11, 0b000, "fcvtzs", int_arm64_neon_fcvtzs>;
+defm FCVTZU_Int : FPToIntegerUnscaled<0b11, 0b001, "fcvtzu", int_arm64_neon_fcvtzu>;
+defm FCVTZS_Int : FPToIntegerScaled<0b11, 0b000, "fcvtzs", int_arm64_neon_fcvtzs>;
+defm FCVTZU_Int : FPToIntegerScaled<0b11, 0b001, "fcvtzu", int_arm64_neon_fcvtzu>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1890,31 +1933,39 @@ defm FMOV : UnscaledConversion<"fmov">;
 def : Pat<(f32 (fpimm0)), (FMOVWSr WZR)>, Requires<[NoZCZ]>;
 def : Pat<(f64 (fpimm0)), (FMOVXDr XZR)>, Requires<[NoZCZ]>;
 
-def : Pat<(v8i8  (bitconvert GPR64:$Xn)), (FMOVXDr GPR64:$Xn)>;
-def : Pat<(v4i16 (bitconvert GPR64:$Xn)), (FMOVXDr GPR64:$Xn)>;
-def : Pat<(v2i32 (bitconvert GPR64:$Xn)), (FMOVXDr GPR64:$Xn)>;
-def : Pat<(v1i64 (bitconvert GPR64:$Xn)), (FMOVXDr GPR64:$Xn)>;
-def : Pat<(v2f32 (bitconvert GPR64:$Xn)), (FMOVXDr GPR64:$Xn)>;
-def : Pat<(v1f64 (bitconvert GPR64:$Xn)), (FMOVXDr GPR64:$Xn)>;
-def : Pat<(v1i64 (scalar_to_vector GPR64:$Xn)), (FMOVXDr GPR64:$Xn)>;
-def : Pat<(v1f64 (scalar_to_vector GPR64:$Xn)), (FMOVXDr GPR64:$Xn)>;
+def : Pat<(v8i8  (bitconvert GPR64:$Xn)), (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;
+def : Pat<(v4i16 (bitconvert GPR64:$Xn)), (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;
+def : Pat<(v2i32 (bitconvert GPR64:$Xn)), (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;
+def : Pat<(v1i64 (bitconvert GPR64:$Xn)), (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;
+def : Pat<(v2f32 (bitconvert GPR64:$Xn)), (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;
+def : Pat<(v1f64 (bitconvert GPR64:$Xn)), (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;
+def : Pat<(v1i64 (scalar_to_vector GPR64:$Xn)),
+          (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;
+def : Pat<(v1f64 (scalar_to_vector GPR64:$Xn)),
+          (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;
 def : Pat<(v1f64 (scalar_to_vector (f64 FPR64:$Xn))), (v1f64 FPR64:$Xn)>;
 
-def : Pat<(i64 (bitconvert (v8i8  V64:$Vn))), (FMOVDXr V64:$Vn)>;
-def : Pat<(i64 (bitconvert (v4i16 V64:$Vn))), (FMOVDXr V64:$Vn)>;
-def : Pat<(i64 (bitconvert (v2i32 V64:$Vn))), (FMOVDXr V64:$Vn)>;
-def : Pat<(i64 (bitconvert (v1i64 V64:$Vn))), (FMOVDXr V64:$Vn)>;
-def : Pat<(i64 (bitconvert (v2f32 V64:$Vn))), (FMOVDXr V64:$Vn)>;
-def : Pat<(i64 (bitconvert (v1f64 V64:$Vn))), (FMOVDXr V64:$Vn)>;
+def : Pat<(i64 (bitconvert (v8i8  V64:$Vn))),
+          (COPY_TO_REGCLASS V64:$Vn, GPR64)>;
+def : Pat<(i64 (bitconvert (v4i16 V64:$Vn))),
+          (COPY_TO_REGCLASS V64:$Vn, GPR64)>;
+def : Pat<(i64 (bitconvert (v2i32 V64:$Vn))),
+          (COPY_TO_REGCLASS V64:$Vn, GPR64)>;
+def : Pat<(i64 (bitconvert (v1i64 V64:$Vn))),
+          (COPY_TO_REGCLASS V64:$Vn, GPR64)>;
+def : Pat<(i64 (bitconvert (v2f32 V64:$Vn))),
+          (COPY_TO_REGCLASS V64:$Vn, GPR64)>;
+def : Pat<(i64 (bitconvert (v1f64 V64:$Vn))),
+          (COPY_TO_REGCLASS V64:$Vn, GPR64)>;
 
-def : Pat<(f32 (bitconvert (i32 GPR32:$Xn))), (COPY_TO_REGCLASS GPR32:$Xn,
-                                                                FPR32)>;
-def : Pat<(i32 (bitconvert (f32 FPR32:$Xn))), (COPY_TO_REGCLASS FPR32:$Xn,
-                                                                GPR32)>;
-def : Pat<(f64 (bitconvert (i64 GPR64:$Xn))), (COPY_TO_REGCLASS GPR64:$Xn,
-                                                                FPR64)>;
-def : Pat<(i64 (bitconvert (f64 FPR64:$Xn))), (COPY_TO_REGCLASS FPR64:$Xn,
-                                                                GPR64)>;
+def : Pat<(f32 (bitconvert (i32 GPR32:$Xn))),
+          (COPY_TO_REGCLASS GPR32:$Xn, FPR32)>;
+def : Pat<(i32 (bitconvert (f32 FPR32:$Xn))),
+          (COPY_TO_REGCLASS FPR32:$Xn, GPR32)>;
+def : Pat<(f64 (bitconvert (i64 GPR64:$Xn))),
+          (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;
+def : Pat<(i64 (bitconvert (f64 FPR64:$Xn))),
+          (COPY_TO_REGCLASS FPR64:$Xn, GPR64)>;
 
 //===----------------------------------------------------------------------===//
 // Floating point conversion instruction.
@@ -2001,11 +2052,28 @@ defm FNMSUB : ThreeOperandFPData<1, 1, "fnmsub",
 
 // The following def pats catch the case where the LHS of an FMA is negated.
 // The TriOpFrag above catches the case where the middle operand is negated.
-def : Pat<(f32 (fma (fneg FPR32:$Rn), FPR32:$Rm, FPR32:$Rd)),
-          (FMSUBSrrr FPR32:$Rd, FPR32:$Rn, FPR32:$Rm)>;
 
-def : Pat<(f64 (fma (fneg FPR64:$Rn), FPR64:$Rm, FPR64:$Rd)),
-          (FMSUBDrrr FPR64:$Rd, FPR64:$Rn, FPR64:$Rm)>;
+// N.b. FMSUB etc have the accumulator at the *end* of (outs), unlike
+// the NEON variant.
+def : Pat<(f32 (fma (fneg FPR32:$Rn), FPR32:$Rm, FPR32:$Ra)),
+          (FMSUBSrrr FPR32:$Rn, FPR32:$Rm, FPR32:$Ra)>;
+
+def : Pat<(f64 (fma (fneg FPR64:$Rn), FPR64:$Rm, FPR64:$Ra)),
+          (FMSUBDrrr FPR64:$Rn, FPR64:$Rm, FPR64:$Ra)>;
+
+// We handled -(a + b*c) for FNMADD above, now it's time for "(-a) + (-b)*c" and
+// "(-a) + b*(-c)".
+def : Pat<(f32 (fma (fneg FPR32:$Rn), FPR32:$Rm, (fneg FPR32:$Ra))),
+          (FNMADDSrrr FPR32:$Rn, FPR32:$Rm, FPR32:$Ra)>;
+
+def : Pat<(f64 (fma (fneg FPR64:$Rn), FPR64:$Rm, (fneg FPR64:$Ra))),
+          (FNMADDDrrr FPR64:$Rn, FPR64:$Rm, FPR64:$Ra)>;
+
+def : Pat<(f32 (fma FPR32:$Rn, (fneg FPR32:$Rm), (fneg FPR32:$Ra))),
+          (FNMADDSrrr FPR32:$Rn, FPR32:$Rm, FPR32:$Ra)>;
+
+def : Pat<(f64 (fma FPR64:$Rn, (fneg FPR64:$Rm), (fneg FPR64:$Ra))),
+          (FNMADDDrrr FPR64:$Rn, FPR64:$Rm, FPR64:$Ra)>;
 
 //===----------------------------------------------------------------------===//
 // Floating point comparison instructions.
@@ -2139,6 +2207,7 @@ def : Pat<(ARM64not (v16i8 V128:$Rn)), (NOTv16i8 V128:$Rn)>;
 def : Pat<(ARM64not (v4i16 V64:$Rn)),  (NOTv8i8  V64:$Rn)>;
 def : Pat<(ARM64not (v8i16 V128:$Rn)), (NOTv16i8 V128:$Rn)>;
 def : Pat<(ARM64not (v2i32 V64:$Rn)),  (NOTv8i8  V64:$Rn)>;
+def : Pat<(ARM64not (v1i64 V64:$Rn)),  (NOTv8i8  V64:$Rn)>;
 def : Pat<(ARM64not (v4i32 V128:$Rn)), (NOTv16i8 V128:$Rn)>;
 def : Pat<(ARM64not (v2i64 V128:$Rn)), (NOTv16i8 V128:$Rn)>;
 
@@ -2304,6 +2373,24 @@ defm EOR : SIMDLogicalThreeVector<1, 0b00, "eor", xor>;
 defm ORN : SIMDLogicalThreeVector<0, 0b11, "orn",
                                   BinOpFrag<(or node:$LHS, (vnot node:$RHS))> >;
 defm ORR : SIMDLogicalThreeVector<0, 0b10, "orr", or>;
+
+def : Pat<(ARM64bsl (v8i8 V64:$Rd), V64:$Rn, V64:$Rm),
+          (BSLv8i8 V64:$Rd, V64:$Rn, V64:$Rm)>;
+def : Pat<(ARM64bsl (v4i16 V64:$Rd), V64:$Rn, V64:$Rm),
+          (BSLv8i8 V64:$Rd, V64:$Rn, V64:$Rm)>;
+def : Pat<(ARM64bsl (v2i32 V64:$Rd), V64:$Rn, V64:$Rm),
+          (BSLv8i8 V64:$Rd, V64:$Rn, V64:$Rm)>;
+def : Pat<(ARM64bsl (v1i64 V64:$Rd), V64:$Rn, V64:$Rm),
+          (BSLv8i8 V64:$Rd, V64:$Rn, V64:$Rm)>;
+
+def : Pat<(ARM64bsl (v16i8 V128:$Rd), V128:$Rn, V128:$Rm),
+          (BSLv16i8 V128:$Rd, V128:$Rn, V128:$Rm)>;
+def : Pat<(ARM64bsl (v8i16 V128:$Rd), V128:$Rn, V128:$Rm),
+          (BSLv16i8 V128:$Rd, V128:$Rn, V128:$Rm)>;
+def : Pat<(ARM64bsl (v4i32 V128:$Rd), V128:$Rn, V128:$Rm),
+          (BSLv16i8 V128:$Rd, V128:$Rn, V128:$Rm)>;
+def : Pat<(ARM64bsl (v2i64 V128:$Rd), V128:$Rn, V128:$Rm),
+          (BSLv16i8 V128:$Rd, V128:$Rn, V128:$Rm)>;
 
 // FIXME: the .16b and .8b variantes should be emitted by the
 // AsmWriter. TableGen's AsmWriter-generator doesn't deal with variant syntaxes
@@ -2578,6 +2665,8 @@ defm UCVTF  : SIMDTwoScalarCVTSD<   1, 0, 0b11101, "ucvtf", ARM64uitof>;
 defm UQXTN  : SIMDTwoScalarMixedBHS<1, 0b10100, "uqxtn", int_arm64_neon_scalar_uqxtn>;
 defm USQADD : SIMDTwoScalarBHSDTied< 1, 0b00011, "usqadd",
                                     int_arm64_neon_usqadd>;
+
+def : Pat<(ARM64neg (v1i64 V64:$Rn)), (NEGv1i64 V64:$Rn)>;
 
 def : Pat<(v1i64 (int_arm64_neon_fcvtas (v1f64 FPR64:$Rn))),
           (FCVTASv1i64 FPR64:$Rn)>;
@@ -2941,6 +3030,59 @@ def : Pat<(v4f32 (ARM64duplane32 (v4f32 V128:$Rn), VectorIndexS:$imm)),
 def : Pat<(v2f64 (ARM64duplane64 (v2f64 V128:$Rn), VectorIndexD:$imm)),
           (DUPv2i64lane V128:$Rn, VectorIndexD:$imm)>;
 
+// If there's an (ARM64dup (vector_extract ...) ...), we can use a duplane
+// instruction even if the types don't match: we just have to remap the lane
+// carefully. N.b. this trick only applies to truncations.
+def VecIndex_x2 : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(2 * N->getZExtValue(), MVT::i64);
+}]>;
+def VecIndex_x4 : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(4 * N->getZExtValue(), MVT::i64);
+}]>;
+def VecIndex_x8 : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(8 * N->getZExtValue(), MVT::i64);
+}]>;
+
+multiclass DUPWithTruncPats<ValueType ResVT, ValueType Src64VT,
+                            ValueType Src128VT, ValueType ScalVT,
+                            Instruction DUP, SDNodeXForm IdxXFORM> {
+  def : Pat<(ResVT (ARM64dup (ScalVT (vector_extract (Src128VT V128:$Rn),
+                                                     imm:$idx)))),
+            (DUP V128:$Rn, (IdxXFORM imm:$idx))>;
+
+  def : Pat<(ResVT (ARM64dup (ScalVT (vector_extract (Src64VT V64:$Rn),
+                                                     imm:$idx)))),
+            (DUP (SUBREG_TO_REG (i64 0), V64:$Rn, dsub), (IdxXFORM imm:$idx))>;
+}
+
+defm : DUPWithTruncPats<v8i8,   v4i16, v8i16, i32, DUPv8i8lane,  VecIndex_x2>;
+defm : DUPWithTruncPats<v8i8,   v2i32, v4i32, i32, DUPv8i8lane,  VecIndex_x4>;
+defm : DUPWithTruncPats<v4i16,  v2i32, v4i32, i32, DUPv4i16lane, VecIndex_x2>;
+
+defm : DUPWithTruncPats<v16i8,  v4i16, v8i16, i32, DUPv16i8lane, VecIndex_x2>;
+defm : DUPWithTruncPats<v16i8,  v2i32, v4i32, i32, DUPv16i8lane, VecIndex_x4>;
+defm : DUPWithTruncPats<v8i16,  v2i32, v4i32, i32, DUPv8i16lane, VecIndex_x2>;
+
+multiclass DUPWithTrunci64Pats<ValueType ResVT, Instruction DUP,
+                               SDNodeXForm IdxXFORM> {
+  def : Pat<(ResVT (ARM64dup (i32 (trunc (vector_extract (v2i64 V128:$Rn),
+                                                         imm:$idx))))),
+            (DUP V128:$Rn, (IdxXFORM imm:$idx))>;
+
+  def : Pat<(ResVT (ARM64dup (i32 (trunc (vector_extract (v1i64 V64:$Rn),
+                                                         imm:$idx))))),
+            (DUP (SUBREG_TO_REG (i64 0), V64:$Rn, dsub), (IdxXFORM imm:$idx))>;
+}
+
+defm : DUPWithTrunci64Pats<v8i8,  DUPv8i8lane,   VecIndex_x8>;
+defm : DUPWithTrunci64Pats<v4i16, DUPv4i16lane,  VecIndex_x4>;
+defm : DUPWithTrunci64Pats<v2i32, DUPv2i32lane,  VecIndex_x2>;
+
+defm : DUPWithTrunci64Pats<v16i8, DUPv16i8lane, VecIndex_x8>;
+defm : DUPWithTrunci64Pats<v8i16, DUPv8i16lane, VecIndex_x4>;
+defm : DUPWithTrunci64Pats<v4i32, DUPv4i32lane, VecIndex_x2>;
+
+// SMOV and UMOV definitions, with some extra patterns for convenience
 defm SMOV : SMov;
 defm UMOV : UMov;
 
@@ -2971,16 +3113,18 @@ def : Pat<(and (vector_extract (v8i16 V128:$Rn), VectorIndexH:$idx),
 defm INS : SIMDIns;
 
 def : Pat<(v16i8 (scalar_to_vector GPR32:$Rn)),
-          (INSvi8gpr (v16i8 (IMPLICIT_DEF)), (i64 0), GPR32:$Rn)>;
+          (SUBREG_TO_REG (i32 0),
+                         (f32 (COPY_TO_REGCLASS GPR32:$Rn, FPR32)), ssub)>;
 def : Pat<(v8i8 (scalar_to_vector GPR32:$Rn)),
-          (EXTRACT_SUBREG
-            (INSvi8gpr (v16i8 (IMPLICIT_DEF)), (i64 0), GPR32:$Rn), dsub)>;
+          (SUBREG_TO_REG (i32 0),
+                         (f32 (COPY_TO_REGCLASS GPR32:$Rn, FPR32)), ssub)>;
 
 def : Pat<(v8i16 (scalar_to_vector GPR32:$Rn)),
-          (INSvi16gpr (v8i16 (IMPLICIT_DEF)), (i64 0), GPR32:$Rn)>;
+          (SUBREG_TO_REG (i32 0),
+                         (f32 (COPY_TO_REGCLASS GPR32:$Rn, FPR32)), ssub)>;
 def : Pat<(v4i16 (scalar_to_vector GPR32:$Rn)),
-          (EXTRACT_SUBREG
-            (INSvi16gpr (v8i16 (IMPLICIT_DEF)), (i64 0), GPR32:$Rn), dsub)>;
+          (SUBREG_TO_REG (i32 0),
+                         (f32 (COPY_TO_REGCLASS GPR32:$Rn, FPR32)), ssub)>;
 
 def : Pat<(v2i32 (scalar_to_vector (i32 FPR32:$Rn))),
             (v2i32 (INSERT_SUBREG (v2i32 (IMPLICIT_DEF)),
@@ -3049,6 +3193,43 @@ def : Pat<(v2i64 (int_arm64_neon_vcopy_lane
           (v2i64 (INSvi64lane
                    V128:$Vd, VectorIndexD:$idx, V128:$Vs, VectorIndexD:$idx2)
           )>;
+
+multiclass Neon_INS_elt_pattern<ValueType VT128, ValueType VT64,
+                                ValueType VTScal, Instruction INS> {
+  def : Pat<(VT128 (vector_insert V128:$src,
+                        (VTScal (vector_extract (VT128 V128:$Rn), imm:$Immn)),
+                        imm:$Immd)),
+            (INS V128:$src, imm:$Immd, V128:$Rn, imm:$Immn)>;
+
+  def : Pat<(VT128 (vector_insert V128:$src,
+                        (VTScal (vector_extract (VT64 V64:$Rn), imm:$Immn)),
+                        imm:$Immd)),
+            (INS V128:$src, imm:$Immd,
+                 (SUBREG_TO_REG (i64 0), V64:$Rn, dsub), imm:$Immn)>;
+
+  def : Pat<(VT64 (vector_insert V64:$src,
+                        (VTScal (vector_extract (VT128 V128:$Rn), imm:$Immn)),
+                        imm:$Immd)),
+            (EXTRACT_SUBREG (INS (SUBREG_TO_REG (i64 0), V64:$src, dsub),
+                                 imm:$Immd, V128:$Rn, imm:$Immn),
+                            dsub)>;
+
+  def : Pat<(VT64 (vector_insert V64:$src,
+                        (VTScal (vector_extract (VT64 V64:$Rn), imm:$Immn)),
+                        imm:$Immd)),
+            (EXTRACT_SUBREG
+                (INS (SUBREG_TO_REG (i64 0), V64:$src, dsub), imm:$Immd,
+                     (SUBREG_TO_REG (i64 0), V64:$Rn, dsub), imm:$Immn),
+                dsub)>;
+}
+
+defm : Neon_INS_elt_pattern<v4f32, v2f32, f32, INSvi32lane>;
+defm : Neon_INS_elt_pattern<v2f64, v1f64, f64, INSvi64lane>;
+defm : Neon_INS_elt_pattern<v16i8, v8i8,  i32, INSvi8lane>;
+defm : Neon_INS_elt_pattern<v8i16, v4i16, i32, INSvi16lane>;
+defm : Neon_INS_elt_pattern<v4i32, v2i32, i32, INSvi32lane>;
+defm : Neon_INS_elt_pattern<v2i64, v1i64, i64, INSvi32lane>;
+
 
 // Floating point vector extractions are codegen'd as either a sequence of
 // subregister extractions, possibly fed by an INS if the lane number is
@@ -3403,6 +3584,9 @@ def : Pat<(v2i64 immAllOnesV), (MOVIv2d_ns (i32 255))>;
 def : Pat<(v4i32 immAllOnesV), (MOVIv2d_ns (i32 255))>;
 def : Pat<(v8i16 immAllOnesV), (MOVIv2d_ns (i32 255))>;
 def : Pat<(v16i8 immAllOnesV), (MOVIv2d_ns (i32 255))>;
+
+def : Pat<(v2f64 (ARM64dup (f64 fpimm0))), (MOVIv2d_ns (i32 0))>;
+def : Pat<(v4f32 (ARM64dup (f32 fpimm0))), (MOVIv2d_ns (i32 0))>;
 
 // EDIT per word & halfword: 2s, 4h, 4s, & 8h
 defm MOVI      : SIMDModifiedImmVectorShift<0, 0b10, 0b00, "movi">;
@@ -4247,16 +4431,16 @@ def : Pat<(i32 (sext_inreg GPR32:$src, i16)), (SBFMWri GPR32:$src, 0, 15)>;
 def : Pat<(i32 (sext_inreg GPR32:$src, i8)),  (SBFMWri GPR32:$src, 0, 7)>;
 def : Pat<(i32 (sext_inreg GPR32:$src, i1)),  (SBFMWri GPR32:$src, 0, 0)>;
 
-def : Pat<(shl (sext_inreg GPR32:$Rn, i8), (i32 imm0_31:$imm)),
-          (SBFMWri GPR32:$Rn, (i32 (i32shift_a       imm0_31:$imm)),
-                              (i32 (i32shift_sext_i8 imm0_31:$imm)))>;
+def : Pat<(shl (sext_inreg GPR32:$Rn, i8), (i64 imm0_31:$imm)),
+          (SBFMWri GPR32:$Rn, (i64 (i32shift_a       imm0_31:$imm)),
+                              (i64 (i32shift_sext_i8 imm0_31:$imm)))>;
 def : Pat<(shl (sext_inreg GPR64:$Rn, i8), (i64 imm0_63:$imm)),
           (SBFMXri GPR64:$Rn, (i64 (i64shift_a imm0_63:$imm)),
                               (i64 (i64shift_sext_i8 imm0_63:$imm)))>;
 
-def : Pat<(shl (sext_inreg GPR32:$Rn, i16), (i32 imm0_31:$imm)),
-          (SBFMWri GPR32:$Rn, (i32 (i32shift_a        imm0_31:$imm)),
-                              (i32 (i32shift_sext_i16 imm0_31:$imm)))>;
+def : Pat<(shl (sext_inreg GPR32:$Rn, i16), (i64 imm0_31:$imm)),
+          (SBFMWri GPR32:$Rn, (i64 (i32shift_a        imm0_31:$imm)),
+                              (i64 (i32shift_sext_i16 imm0_31:$imm)))>;
 def : Pat<(shl (sext_inreg GPR64:$Rn, i16), (i64 imm0_63:$imm)),
           (SBFMXri GPR64:$Rn, (i64 (i64shift_a        imm0_63:$imm)),
                               (i64 (i64shift_sext_i16 imm0_63:$imm)))>;
@@ -4273,19 +4457,19 @@ let AddedComplexity = 20 in {
 // We support all sext + sra combinations which preserve at least one bit of the
 // original value which is to be sign extended. E.g. we support shifts up to
 // bitwidth-1 bits.
-def : Pat<(sra (sext_inreg GPR32:$Rn, i8), (i32 imm0_7:$imm)),
-          (SBFMWri GPR32:$Rn, (i32 imm0_7:$imm), 7)>;
-def : Pat<(sra (sext_inreg GPR64:$Rn, i8), (i64 imm0_7x:$imm)),
-          (SBFMXri GPR64:$Rn, (i64 imm0_7x:$imm), 7)>;
+def : Pat<(sra (sext_inreg GPR32:$Rn, i8), (i64 imm0_7:$imm)),
+          (SBFMWri GPR32:$Rn, (i64 imm0_7:$imm), 7)>;
+def : Pat<(sra (sext_inreg GPR64:$Rn, i8), (i64 imm0_7:$imm)),
+          (SBFMXri GPR64:$Rn, (i64 imm0_7:$imm), 7)>;
 
-def : Pat<(sra (sext_inreg GPR32:$Rn, i16), (i32 imm0_15:$imm)),
-          (SBFMWri GPR32:$Rn, (i32 imm0_15:$imm), 15)>;
-def : Pat<(sra (sext_inreg GPR64:$Rn, i16), (i64 imm0_15x:$imm)),
-          (SBFMXri GPR64:$Rn, (i64 imm0_15x:$imm), 15)>;
+def : Pat<(sra (sext_inreg GPR32:$Rn, i16), (i64 imm0_15:$imm)),
+          (SBFMWri GPR32:$Rn, (i64 imm0_15:$imm), 15)>;
+def : Pat<(sra (sext_inreg GPR64:$Rn, i16), (i64 imm0_15:$imm)),
+          (SBFMXri GPR64:$Rn, (i64 imm0_15:$imm), 15)>;
 
-def : Pat<(sra (i64 (sext GPR32:$Rn)), (i64 imm0_31x:$imm)),
+def : Pat<(sra (i64 (sext GPR32:$Rn)), (i64 imm0_31:$imm)),
           (SBFMXri (INSERT_SUBREG (i64 (IMPLICIT_DEF)), GPR32:$Rn, sub_32),
-                   (i64 imm0_31x:$imm), 31)>;
+                   (i64 imm0_31:$imm), 31)>;
 } // AddedComplexity = 20
 
 // To truncate, we can simply extract from a subregister.

@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "arm64-ldst-opt"
 #include "ARM64InstrInfo.h"
 #include "MCTargetDesc/ARM64AddressingModes.h"
 #include "llvm/ADT/BitVector.h"
@@ -29,6 +28,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/Statistic.h"
 using namespace llvm;
+
+#define DEBUG_TYPE "arm64-ldst-opt"
 
 /// ARM64AllocLoadStoreOpt - Post-register allocation pass to combine
 /// load / store instructions to form ldp / stp instructions.
@@ -70,7 +71,7 @@ struct ARM64LoadStoreOpt : public MachineFunctionPass {
   // Merge the two instructions indicated into a single pair-wise instruction.
   // If mergeForward is true, erase the first instruction and fold its
   // operation into the second. If false, the reverse. Return the instruction
-  // following the first instruction (which may change during proecessing).
+  // following the first instruction (which may change during processing).
   MachineBasicBlock::iterator
   mergePairedInsns(MachineBasicBlock::iterator I,
                    MachineBasicBlock::iterator Paired, bool mergeForward);
