@@ -220,17 +220,17 @@ protected:
   /// Guarantees space for at least one more element, or MinSize more
   /// elements if specified.
   void grow(size_t MinSize = 0);
-  
+
 public:
   void push_back(const T &Elt) {
-    while (this->EndX >= this->CapacityX)
+    if (LLVM_UNLIKELY(this->EndX >= this->CapacityX))
       this->grow();
     ::new ((void*) this->end()) T(Elt);
     this->setEnd(this->end()+1);
   }
 
   void push_back(T &&Elt) {
-    while (this->EndX >= this->CapacityX)
+    if (LLVM_UNLIKELY(this->EndX >= this->CapacityX))
       this->grow();
     ::new ((void*) this->end()) T(::std::move(Elt));
     this->setEnd(this->end()+1);
@@ -247,7 +247,7 @@ template <typename T, bool isPodLike>
 void SmallVectorTemplateBase<T, isPodLike>::grow(size_t MinSize) {
   size_t CurCapacity = this->capacity();
   size_t CurSize = this->size();
-  // Always grow, even from zero.  
+  // Always grow, even from zero.
   size_t NewCapacity = size_t(NextPowerOf2(CurCapacity+2));
   if (NewCapacity < MinSize)
     NewCapacity = MinSize;
@@ -327,12 +327,12 @@ protected:
   }
 public:
   void push_back(const T &Elt) {
-    while (this->EndX >= this->CapacityX)
+    if (LLVM_UNLIKELY(this->EndX >= this->CapacityX))
       this->grow();
     memcpy(this->end(), &Elt, sizeof(T));
     this->setEnd(this->end()+1);
   }
-  
+
   void pop_back() {
     this->setEnd(this->end()-1);
   }
@@ -481,7 +481,7 @@ public:
     assert(I >= this->begin() && "Insertion iterator is out of bounds.");
     assert(I <= this->end() && "Inserting past the end of the vector.");
 
-    while (this->EndX >= this->CapacityX) {
+    if (this->EndX >= this->CapacityX) {
       size_t EltNo = I-this->begin();
       this->grow();
       I = this->begin()+EltNo;
@@ -511,7 +511,7 @@ public:
     assert(I >= this->begin() && "Insertion iterator is out of bounds.");
     assert(I <= this->end() && "Inserting past the end of the vector.");
 
-    while (this->EndX >= this->CapacityX) {
+    if (this->EndX >= this->CapacityX) {
       size_t EltNo = I-this->begin();
       this->grow();
       I = this->begin()+EltNo;
@@ -805,7 +805,7 @@ SmallVectorImpl<T> &SmallVectorImpl<T>::operator=(SmallVectorImpl<T> &&RHS) {
     this->grow(RHSSize);
   } else if (CurSize) {
     // Otherwise, use assignment for the already-constructed elements.
-    this->move(RHS.begin(), RHS.end(), this->begin());
+    this->move(RHS.begin(), RHS.begin()+CurSize, this->begin());
   }
 
   // Move-construct the new elements in place.

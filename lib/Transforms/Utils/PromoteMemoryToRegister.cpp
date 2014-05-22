@@ -60,6 +60,7 @@ STATISTIC(NumPHIInsert,     "Number of PHI nodes inserted");
 bool llvm::isAllocaPromotable(const AllocaInst *AI) {
   // FIXME: If the memory unit is of pointer or integer type, we can permit
   // assignments to subsections of the memory unit.
+  unsigned AS = AI->getType()->getAddressSpace();
 
   // Only allow direct and non-volatile loads and stores...
   for (const User *U : AI->users()) {
@@ -80,12 +81,12 @@ bool llvm::isAllocaPromotable(const AllocaInst *AI) {
           II->getIntrinsicID() != Intrinsic::lifetime_end)
         return false;
     } else if (const BitCastInst *BCI = dyn_cast<BitCastInst>(U)) {
-      if (BCI->getType() != Type::getInt8PtrTy(U->getContext()))
+      if (BCI->getType() != Type::getInt8PtrTy(U->getContext(), AS))
         return false;
       if (!onlyUsedByLifetimeMarkers(BCI))
         return false;
     } else if (const GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(U)) {
-      if (GEPI->getType() != Type::getInt8PtrTy(U->getContext()))
+      if (GEPI->getType() != Type::getInt8PtrTy(U->getContext(), AS))
         return false;
       if (!GEPI->hasAllZeroIndices())
         return false;
@@ -115,11 +116,11 @@ struct AllocaInfo {
   void clear() {
     DefiningBlocks.clear();
     UsingBlocks.clear();
-    OnlyStore = 0;
-    OnlyBlock = 0;
+    OnlyStore = nullptr;
+    OnlyBlock = nullptr;
     OnlyUsedInOneBlock = true;
-    AllocaPointerVal = 0;
-    DbgDeclare = 0;
+    AllocaPointerVal = nullptr;
+    DbgDeclare = nullptr;
   }
 
   /// Scan the uses of the specified alloca, filling in the AllocaInfo used
@@ -147,7 +148,7 @@ struct AllocaInfo {
       }
 
       if (OnlyUsedInOneBlock) {
-        if (OnlyBlock == 0)
+        if (!OnlyBlock)
           OnlyBlock = User->getParent();
         else if (OnlyBlock != User->getParent())
           OnlyUsedInOneBlock = false;
@@ -163,7 +164,7 @@ class RenamePassData {
 public:
   typedef std::vector<Value *> ValVector;
 
-  RenamePassData() : BB(NULL), Pred(NULL), Values() {}
+  RenamePassData() : BB(nullptr), Pred(nullptr), Values() {}
   RenamePassData(BasicBlock *B, BasicBlock *P, const ValVector &V)
       : BB(B), Pred(P), Values(V) {}
   BasicBlock *BB;
@@ -472,7 +473,8 @@ static void promoteSingleBlockAlloca(AllocaInst *AI, const AllocaInfo &Info,
     // Find the nearest store that has a lower index than this load.
     StoresByIndexTy::iterator I =
         std::lower_bound(StoresByIndex.begin(), StoresByIndex.end(),
-                         std::make_pair(LoadIdx, static_cast<StoreInst *>(0)),
+                         std::make_pair(LoadIdx,
+                                        static_cast<StoreInst *>(nullptr)),
                          less_first());
 
     if (I == StoresByIndex.begin())
@@ -633,7 +635,7 @@ void PromoteMem2Reg::run() {
   // and inserting the phi nodes we marked as necessary
   //
   std::vector<RenamePassData> RenamePassWorkList;
-  RenamePassWorkList.push_back(RenamePassData(F.begin(), 0, Values));
+  RenamePassWorkList.push_back(RenamePassData(F.begin(), nullptr, Values));
   do {
     RenamePassData RPD;
     RPD.swap(RenamePassWorkList.back());
@@ -683,7 +685,7 @@ void PromoteMem2Reg::run() {
       PHINode *PN = I->second;
 
       // If this PHI node merges one value and/or undefs, get the value.
-      if (Value *V = SimplifyInstruction(PN, 0, 0, &DT)) {
+      if (Value *V = SimplifyInstruction(PN, nullptr, nullptr, &DT)) {
         if (AST && PN->getType()->isPointerTy())
           AST->deleteValue(PN);
         PN->replaceAllUsesWith(V);
@@ -991,7 +993,7 @@ NextIteration:
         // Get the next phi node.
         ++PNI;
         APN = dyn_cast<PHINode>(PNI);
-        if (APN == 0)
+        if (!APN)
           break;
 
         // Verify that it is missing entries.  If not, it is not being inserted

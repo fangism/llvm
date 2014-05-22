@@ -40,8 +40,6 @@ STATISTIC(NumPreFolded, "Number of pre-index updates folded");
 STATISTIC(NumUnscaledPairCreated,
           "Number of load/store from unscaled generated");
 
-static cl::opt<bool> DoLoadStoreOpt("arm64-load-store-opt", cl::init(true),
-                                    cl::Hidden);
 static cl::opt<unsigned> ScanLimit("arm64-load-store-scan-limit", cl::init(20),
                                    cl::Hidden);
 
@@ -101,9 +99,9 @@ struct ARM64LoadStoreOpt : public MachineFunctionPass {
 
   bool optimizeBlock(MachineBasicBlock &MBB);
 
-  virtual bool runOnMachineFunction(MachineFunction &Fn);
+  bool runOnMachineFunction(MachineFunction &Fn) override;
 
-  virtual const char *getPassName() const {
+  const char *getPassName() const override {
     return "ARM64 load / store optimization pass";
   }
 
@@ -530,6 +528,7 @@ ARM64LoadStoreOpt::mergePreIdxUpdateInsn(MachineBasicBlock::iterator I,
   unsigned NewOpc = getPreIndexedOpcode(I->getOpcode());
   MachineInstrBuilder MIB =
       BuildMI(*I->getParent(), I, I->getDebugLoc(), TII->get(NewOpc))
+          .addOperand(Update->getOperand(0))
           .addOperand(I->getOperand(0))
           .addOperand(I->getOperand(1))
           .addImm(Value);
@@ -573,6 +572,7 @@ ARM64LoadStoreOpt::mergePostIdxUpdateInsn(MachineBasicBlock::iterator I,
   unsigned NewOpc = getPostIndexedOpcode(I->getOpcode());
   MachineInstrBuilder MIB =
       BuildMI(*I->getParent(), I, I->getDebugLoc(), TII->get(NewOpc))
+          .addOperand(Update->getOperand(0))
           .addOperand(I->getOperand(0))
           .addOperand(I->getOperand(1))
           .addImm(Value);
@@ -894,7 +894,7 @@ bool ARM64LoadStoreOpt::optimizeBlock(MachineBasicBlock &MBB) {
       // ldr x1, [x0, #64]
       // add x0, x0, #64
       //   merged into:
-      // ldr x1, [x0], #64
+      // ldr x1, [x0, #64]!
 
       // The immediate in the load/store is scaled by the size of the register
       // being loaded. The immediate in the add we're looking for,
@@ -923,10 +923,6 @@ bool ARM64LoadStoreOpt::optimizeBlock(MachineBasicBlock &MBB) {
 }
 
 bool ARM64LoadStoreOpt::runOnMachineFunction(MachineFunction &Fn) {
-  // Early exit if pass disabled.
-  if (!DoLoadStoreOpt)
-    return false;
-
   const TargetMachine &TM = Fn.getTarget();
   TII = static_cast<const ARM64InstrInfo *>(TM.getInstrInfo());
   TRI = TM.getRegisterInfo();
