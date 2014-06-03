@@ -224,7 +224,13 @@ class ISA_MIPS1_NOT_32R6_64R6 {
   list<Predicate> InsnPredicates = [NotMips32r6, NotMips64r6];
 }
 class ISA_MIPS2    { list<Predicate> InsnPredicates = [HasMips2]; }
+class ISA_MIPS2_NOT_32R6_64R6 {
+  list<Predicate> InsnPredicates = [HasMips2, NotMips32r6, NotMips64r6];
+}
 class ISA_MIPS3    { list<Predicate> InsnPredicates = [HasMips3]; }
+class ISA_MIPS3_NOT_32R6_64R6 {
+  list<Predicate> InsnPredicates = [HasMips3, NotMips32r6, NotMips64r6];
+}
 class ISA_MIPS32   { list<Predicate> InsnPredicates = [HasMips32]; }
 class ISA_MIPS32R2 { list<Predicate> InsnPredicates = [HasMips32r2]; }
 class ISA_MIPS64   { list<Predicate> InsnPredicates = [HasMips64]; }
@@ -1087,10 +1093,14 @@ def SW  : Store<"sw", GPR32Opnd, store, II_SW>, MMRel, LW_FM<0x2b>;
 /// load/store left/right
 let EncodingPredicates = []<Predicate>, // FIXME: Lack of HasStdEnc is probably a bug
     AdditionalPredicates = [NotInMicroMips] in {
-def LWL : LoadLeftRight<"lwl", MipsLWL, GPR32Opnd, II_LWL>, LW_FM<0x22>;
-def LWR : LoadLeftRight<"lwr", MipsLWR, GPR32Opnd, II_LWR>, LW_FM<0x26>;
-def SWL : StoreLeftRight<"swl", MipsSWL, GPR32Opnd, II_SWL>, LW_FM<0x2a>;
-def SWR : StoreLeftRight<"swr", MipsSWR, GPR32Opnd, II_SWR>, LW_FM<0x2e>;
+def LWL : LoadLeftRight<"lwl", MipsLWL, GPR32Opnd, II_LWL>, LW_FM<0x22>,
+          ISA_MIPS1_NOT_32R6_64R6;
+def LWR : LoadLeftRight<"lwr", MipsLWR, GPR32Opnd, II_LWR>, LW_FM<0x26>,
+          ISA_MIPS1_NOT_32R6_64R6;
+def SWL : StoreLeftRight<"swl", MipsSWL, GPR32Opnd, II_SWL>, LW_FM<0x2a>,
+          ISA_MIPS1_NOT_32R6_64R6;
+def SWR : StoreLeftRight<"swr", MipsSWR, GPR32Opnd, II_SWR>, LW_FM<0x2e>,
+          ISA_MIPS1_NOT_32R6_64R6;
 }
 
 def SYNC : MMRel, SYNC_FT<"sync">, SYNC_FM;
@@ -1101,12 +1111,18 @@ def TLT : MMRel, TEQ_FT<"tlt", GPR32Opnd>, TEQ_FM<0x32>;
 def TLTU : MMRel, TEQ_FT<"tltu", GPR32Opnd>, TEQ_FM<0x33>;
 def TNE : MMRel, TEQ_FT<"tne", GPR32Opnd>, TEQ_FM<0x36>;
 
-def TEQI : MMRel, TEQI_FT<"teqi", GPR32Opnd>, TEQI_FM<0xc>, ISA_MIPS2;
-def TGEI : MMRel, TEQI_FT<"tgei", GPR32Opnd>, TEQI_FM<0x8>, ISA_MIPS2;
-def TGEIU : MMRel, TEQI_FT<"tgeiu", GPR32Opnd>, TEQI_FM<0x9>, ISA_MIPS2;
-def TLTI : MMRel, TEQI_FT<"tlti", GPR32Opnd>, TEQI_FM<0xa>, ISA_MIPS2;
-def TTLTIU : MMRel, TEQI_FT<"tltiu", GPR32Opnd>, TEQI_FM<0xb>, ISA_MIPS2;
-def TNEI : MMRel, TEQI_FT<"tnei", GPR32Opnd>, TEQI_FM<0xe>, ISA_MIPS2;
+def TEQI : MMRel, TEQI_FT<"teqi", GPR32Opnd>, TEQI_FM<0xc>,
+           ISA_MIPS2_NOT_32R6_64R6;
+def TGEI : MMRel, TEQI_FT<"tgei", GPR32Opnd>, TEQI_FM<0x8>,
+           ISA_MIPS2_NOT_32R6_64R6;
+def TGEIU : MMRel, TEQI_FT<"tgeiu", GPR32Opnd>, TEQI_FM<0x9>,
+           ISA_MIPS2_NOT_32R6_64R6;
+def TLTI : MMRel, TEQI_FT<"tlti", GPR32Opnd>, TEQI_FM<0xa>,
+           ISA_MIPS2_NOT_32R6_64R6;
+def TTLTIU : MMRel, TEQI_FT<"tltiu", GPR32Opnd>, TEQI_FM<0xb>,
+           ISA_MIPS2_NOT_32R6_64R6;
+def TNEI : MMRel, TEQI_FT<"tnei", GPR32Opnd>, TEQI_FM<0xe>,
+           ISA_MIPS2_NOT_32R6_64R6;
 
 def BREAK : MMRel, BRK_FT<"break">, BRK_FM<0xd>;
 def SYSCALL : MMRel, SYS_FT<"syscall">, SYS_FM<0xc>;

@@ -873,6 +873,8 @@ void AsmPrinter::EmitFunctionBody() {
   OutStreamer.AddBlankLine();
 }
 
+static const MCExpr *lowerConstant(const Constant *CV, AsmPrinter &AP);
+
 bool AsmPrinter::doFinalization(Module &M) {
   // Emit global variables.
   for (const auto &G : M.globals())
@@ -935,10 +937,6 @@ bool AsmPrinter::doFinalization(Module &M) {
     for (const auto &Alias : M.aliases()) {
       MCSymbol *Name = getSymbol(&Alias);
 
-      const GlobalValue *GV = Alias.getAliasee();
-      assert(!GV->isDeclaration());
-      MCSymbol *Target = getSymbol(GV);
-
       if (Alias.hasExternalLinkage() || !MAI->getWeakRefDirective())
         OutStreamer.EmitSymbolAttribute(Name, MCSA_Global);
       else if (Alias.hasWeakLinkage() || Alias.hasLinkOnceLinkage())
@@ -950,7 +948,7 @@ bool AsmPrinter::doFinalization(Module &M) {
 
       // Emit the directives as assignments aka .set:
       OutStreamer.EmitAssignment(Name,
-                                 MCSymbolRefExpr::Create(Target, OutContext));
+                                 lowerConstant(Alias.getAliasee(), *this));
     }
   }
 
@@ -1251,7 +1249,7 @@ bool AsmPrinter::EmitSpecialLLVMGlobal(const GlobalVariable *GV) {
   }
 
   // Ignore debug and non-emitted data.  This handles llvm.compiler.used.
-  if (GV->getSection() == "llvm.metadata" ||
+  if (StringRef(GV->getSection()) == "llvm.metadata" ||
       GV->hasAvailableExternallyLinkage())
     return true;
 

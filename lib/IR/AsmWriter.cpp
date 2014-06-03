@@ -1488,21 +1488,16 @@ void AssemblyWriter::printAlias(const GlobalAlias *GA) {
   }
   PrintVisibility(GA->getVisibility(), Out);
   PrintDLLStorageClass(GA->getDLLStorageClass(), Out);
+  PrintThreadLocalModel(GA->getThreadLocalMode(), Out);
 
   Out << "alias ";
 
   PrintLinkage(GA->getLinkage(), Out);
 
-  PointerType *Ty = GA->getType();
   const Constant *Aliasee = GA->getAliasee();
-  if (!Aliasee || Ty != Aliasee->getType()) {
-    if (unsigned AddressSpace = Ty->getAddressSpace())
-      Out << "addrspace(" << AddressSpace << ") ";
-    TypePrinter.print(Ty->getElementType(), Out);
-    Out << ", ";
-  }
 
   if (!Aliasee) {
+    TypePrinter.print(GA->getType(), Out);
     Out << " <<NULL ALIASEE>>";
   } else {
     writeOperand(Aliasee, !isa<ConstantExpr>(Aliasee));

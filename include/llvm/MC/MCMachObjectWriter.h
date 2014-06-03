@@ -121,6 +121,8 @@ class MachObjectWriter : public MCObjectWriter {
 
   /// @}
 
+  MachSymbolData *findSymbolData(const MCSymbol &Sym);
+
 #if ORDER_INDIRECT_SYMBOLS_BY_SECTION
   /// @name Indirect Symbol Table Data
   /// @{

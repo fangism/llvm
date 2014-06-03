@@ -35,7 +35,6 @@ include "Mips32r6InstrFormats.td"
 // Removed: jalx
 // Removed: ldxc1
 // Removed: luxc1
-// Removed: lwl, lwr, lwle, lwre, swl, swr, swle, swre
 // Removed: lwxc1
 // Removed: madd.[ds], nmadd.[ds], nmsub.[ds], sub.[ds]
 // Removed: mfhi, mflo, mthi, mtlo, madd, maddu, msub, msubu, mul
@@ -47,7 +46,6 @@ include "Mips32r6InstrFormats.td"
 // Removed: sdxc1
 // Removed: suxc1
 // Removed: swxc1
-// Removed: teqi, tgei, tgeiu, tlti, tltiu, tnei
 // Rencoded: [ls][wd]c2
 
 def brtarget21 : Operand<OtherVT> {
