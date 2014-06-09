@@ -698,7 +698,8 @@ The linkage must be one of ``private``, ``internal``, ``linkonce``, ``weak``,
 might not correctly handle dropping a weak symbol that is aliased.
 
 Alias that are not ``unnamed_addr`` are guaranteed to have the same address as
-the aliasee.
+the aliasee expression. ``unnamed_addr`` ones are only guaranteed to point
+to the same content.
 
 Since aliases are only a second name, some restrictions apply, of which
 some can only be checked when producing an object file:
@@ -1020,6 +1021,14 @@ example:
     inlining this function is desirable (such as the "inline" keyword in
     C/C++). It is just a hint; it imposes no requirements on the
     inliner.
+``jumptable``
+    This attribute indicates that the function should be added to a
+    jump-instruction table at code-generation time, and that all address-taken
+    references to this function should be replaced with a reference to the
+    appropriate jump-instruction-table function pointer. Note that this creates
+    a new pointer for the original function, which means that code that depends
+    on function-pointer identity can break. So, any function annotated with
+    ``jumptable`` must also be ``unnamed_addr``.
 ``minsize``
     This attribute suggests that optimization passes and code generator
     passes make choices that keep the code size of this function as small
@@ -2819,7 +2828,7 @@ with the same loop identifier.
 Precisely, given two instructions ``m1`` and ``m2`` that both have the 
 ``llvm.mem.parallel_loop_access`` metadata, with ``L1`` and ``L2`` being the 
 set of loops associated with that metadata, respectively, then there is no loop 
-carried dependence between ``m1`` and ``m2`` for loops ``L1`` or 
+carried dependence between ``m1`` and ``m2`` for loops in both ``L1`` and 
 ``L2``.
 
 As a special case, if all memory accessing instructions in a loop have 

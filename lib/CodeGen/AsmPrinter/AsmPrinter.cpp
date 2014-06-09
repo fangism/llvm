@@ -19,6 +19,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Analysis/JumpInstrTableInfo.h"
 #include "llvm/CodeGen/GCMetadataPrinter.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -892,6 +893,54 @@ bool AsmPrinter::doFinalization(Module &M) {
     EmitVisibility(Name, V, false);
   }
 
+  // Get information about jump-instruction tables to print.
+  JumpInstrTableInfo *JITI = getAnalysisIfAvailable<JumpInstrTableInfo>();
+
+  if (JITI && !JITI->getTables().empty()) {
+    unsigned Arch = Triple(getTargetTriple()).getArch();
+    bool IsThumb = (Arch == Triple::thumb || Arch == Triple::thumbeb);
+    MCInst TrapInst;
+    TM.getInstrInfo()->getTrap(TrapInst);
+    for (const auto &KV : JITI->getTables()) {
+      uint64_t Count = 0;
+      for (const auto &FunPair : KV.second) {
+        // Emit the function labels to make this be a function entry point.
+        MCSymbol *FunSym =
+          OutContext.GetOrCreateSymbol(FunPair.second->getName());
+        OutStreamer.EmitSymbolAttribute(FunSym, MCSA_Global);
+        // FIXME: JumpTableInstrInfo should store information about the required
+        // alignment of table entries and the size of the padding instruction.
+        EmitAlignment(3);
+        if (IsThumb)
+          OutStreamer.EmitThumbFunc(FunSym);
+        if (MAI->hasDotTypeDotSizeDirective())
+          OutStreamer.EmitSymbolAttribute(FunSym, MCSA_ELF_TypeFunction);
+        OutStreamer.EmitLabel(FunSym);
+
+        // Emit the jump instruction to transfer control to the original
+        // function.
+        MCInst JumpToFun;
+        MCSymbol *TargetSymbol =
+          OutContext.GetOrCreateSymbol(FunPair.first->getName());
+        const MCSymbolRefExpr *TargetSymRef =
+          MCSymbolRefExpr::Create(TargetSymbol, MCSymbolRefExpr::VK_PLT,
+                                  OutContext);
+        TM.getInstrInfo()->getUnconditionalBranch(JumpToFun, TargetSymRef);
+        OutStreamer.EmitInstruction(JumpToFun, getSubtargetInfo());
+        ++Count;
+      }
+
+      // Emit enough padding instructions to fill up to the next power of two.
+      // This assumes that the trap instruction takes 8 bytes or fewer.
+      uint64_t Remaining = NextPowerOf2(Count) - Count;
+      for (uint64_t C = 0; C < Remaining; ++C) {
+        EmitAlignment(3);
+        OutStreamer.EmitInstruction(TrapInst, getSubtargetInfo());
+      }
+
+    }
+  }
+
   // Emit module flags.
   SmallVector<Module::ModuleFlagEntry, 8> ModuleFlags;
   M.getModuleFlagsMetadata(ModuleFlags);
@@ -1351,14 +1400,17 @@ void AsmPrinter::EmitXXStructorList(const Constant *List, bool isCtor) {
   for (Structor &S : Structors) {
     const TargetLoweringObjectFile &Obj = getObjFileLowering();
     const MCSymbol *KeySym = nullptr;
-    const MCSection *KeySec = nullptr;
-    if (S.ComdatKey) {
-      KeySym = getSymbol(S.ComdatKey);
-      KeySec = getObjFileLowering().SectionForGlobal(S.ComdatKey, *Mang, TM);
+    if (GlobalValue *GV = S.ComdatKey) {
+      if (GV->hasAvailableExternallyLinkage())
+        // If the associated variable is available_externally, some other TU
+        // will provide its dynamic initializer.
+        continue;
+
+      KeySym = getSymbol(GV);
     }
     const MCSection *OutputSection =
-        (isCtor ? Obj.getStaticCtorSection(S.Priority, KeySym, KeySec)
-                : Obj.getStaticDtorSection(S.Priority, KeySym, KeySec));
+        (isCtor ? Obj.getStaticCtorSection(S.Priority, KeySym)
+                : Obj.getStaticDtorSection(S.Priority, KeySym));
     OutStreamer.SwitchSection(OutputSection);
     if (OutStreamer.getCurrentSection() != OutStreamer.getPreviousSection())
       EmitAlignment(Align);

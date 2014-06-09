@@ -549,6 +549,8 @@ static Attribute::AttrKind GetAttrFromCode(uint64_t Code) {
     return Attribute::InlineHint;
   case bitc::ATTR_KIND_IN_REG:
     return Attribute::InReg;
+  case bitc::ATTR_KIND_JUMP_TABLE:
+    return Attribute::JumpTable;
   case bitc::ATTR_KIND_MIN_SIZE:
     return Attribute::MinSize;
   case bitc::ATTR_KIND_NAKED:
@@ -1986,6 +1988,8 @@ error_code BitcodeReader::ParseModule(bool Resume) {
         UpgradeDLLImportExportLinkage(NewGA, Record[2]);
       if (Record.size() > 5)
 	NewGA->setThreadLocalMode(GetDecodedThreadLocalMode(Record[5]));
+      if (Record.size() > 6)
+	NewGA->setUnnamedAddr(Record[6]);
       ValueList.push_back(NewGA);
       AliasInits.push_back(std::make_pair(NewGA, Record[1]));
       break;
@@ -2826,7 +2830,7 @@ error_code BitcodeReader::ParseFunctionBody(Function *F) {
         assert((CT != LandingPadInst::Filter ||
                 isa<ArrayType>(Val->getType())) &&
                "Filter clause has invalid type!");
-        LP->addClause(Val);
+        LP->addClause(cast<Constant>(Val));
       }
 
       I = LP;

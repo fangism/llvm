@@ -5559,6 +5559,22 @@ SDValue PPCTargetLowering::LowerBUILD_VECTOR(SDValue Op,
     return DAG.getNode(ISD::BITCAST, dl, Op.getValueType(), Res);
   }
 
+  // The remaining cases assume either big endian element order or
+  // a splat-size that equates to the element size of the vector
+  // to be built.  An example that doesn't work for little endian is
+  // {0, -1, 0, -1, 0, -1, 0, -1} which has a splat size of 32 bits
+  // and a vector element size of 16 bits.  The code below will
+  // produce the vector in big endian element order, which for little
+  // endian is {-1, 0, -1, 0, -1, 0, -1, 0}.
+
+  // For now, just avoid these optimizations in that case.
+  // FIXME: Develop correct optimizations for LE with mismatched
+  // splat and element sizes.
+
+  if (PPCSubTarget.isLittleEndian() &&
+      SplatSize != Op.getValueType().getVectorElementType().getSizeInBits())
+    return SDValue();
+
   // Check to see if this is a wide variety of vsplti*, binop self cases.
   static const signed char SplatCsts[] = {
     -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6, -7, 7,
@@ -5822,21 +5838,36 @@ SDValue PPCTargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
 
   // The SHUFFLE_VECTOR mask is almost exactly what we want for vperm, except
   // that it is in input element units, not in bytes.  Convert now.
+
+  // For little endian, the order of the input vectors is reversed, and
+  // the permutation mask is complemented with respect to 31.  This is
+  // necessary to produce proper semantics with the big-endian-biased vperm
+  // instruction.
   EVT EltVT = V1.getValueType().getVectorElementType();
   unsigned BytesPerElement = EltVT.getSizeInBits()/8;
+  bool isLittleEndian = PPCSubTarget.isLittleEndian();
 
   SmallVector<SDValue, 16> ResultMask;
   for (unsigned i = 0, e = VT.getVectorNumElements(); i != e; ++i) {
     unsigned SrcElt = PermMask[i] < 0 ? 0 : PermMask[i];
 
     for (unsigned j = 0; j != BytesPerElement; ++j)
-      ResultMask.push_back(DAG.getConstant(SrcElt*BytesPerElement+j,
-                                           MVT::i32));
+      if (isLittleEndian)
+        ResultMask.push_back(DAG.getConstant(31 - (SrcElt*BytesPerElement+j),
+                                             MVT::i32));
+      else
+        ResultMask.push_back(DAG.getConstant(SrcElt*BytesPerElement+j,
+                                             MVT::i32));
   }
 
   SDValue VPermMask = DAG.getNode(ISD::BUILD_VECTOR, dl, MVT::v16i8,
                                   ResultMask);
-  return DAG.getNode(PPCISD::VPERM, dl, V1.getValueType(), V1, V2, VPermMask);
+  if (isLittleEndian)
+    return DAG.getNode(PPCISD::VPERM, dl, V1.getValueType(),
+                       V2, V1, VPermMask);
+  else
+    return DAG.getNode(PPCISD::VPERM, dl, V1.getValueType(),
+                       V1, V2, VPermMask);
 }
 
 /// getAltivecCompareInfo - Given an intrinsic, return false if it is not an
@@ -6029,6 +6060,7 @@ SDValue PPCTargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
                             LHS, RHS, Zero, DAG, dl);
   } else if (Op.getValueType() == MVT::v16i8) {
     SDValue LHS = Op.getOperand(0), RHS = Op.getOperand(1);
+    bool isLittleEndian = PPCSubTarget.isLittleEndian();
 
     // Multiply the even 8-bit parts, producing 16-bit sums.
     SDValue EvenParts = BuildIntrinsicOp(Intrinsic::ppc_altivec_vmuleub,
@@ -6040,13 +6072,24 @@ SDValue PPCTargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
                                           LHS, RHS, DAG, dl, MVT::v8i16);
     OddParts = DAG.getNode(ISD::BITCAST, dl, MVT::v16i8, OddParts);
 
-    // Merge the results together.
+    // Merge the results together.  Because vmuleub and vmuloub are
+    // instructions with a big-endian bias, we must reverse the
+    // element numbering and reverse the meaning of "odd" and "even"
+    // when generating little endian code.
     int Ops[16];
     for (unsigned i = 0; i != 8; ++i) {
-      Ops[i*2  ] = 2*i+1;
-      Ops[i*2+1] = 2*i+1+16;
+      if (isLittleEndian) {
+        Ops[i*2  ] = 2*i;
+        Ops[i*2+1] = 2*i+16;
+      } else {
+        Ops[i*2  ] = 2*i+1;
+        Ops[i*2+1] = 2*i+1+16;
+      }
     }
-    return DAG.getVectorShuffle(MVT::v16i8, dl, EvenParts, OddParts, Ops);
+    if (isLittleEndian)
+      return DAG.getVectorShuffle(MVT::v16i8, dl, OddParts, EvenParts, Ops);
+    else
+      return DAG.getVectorShuffle(MVT::v16i8, dl, EvenParts, OddParts, Ops);
   } else {
     llvm_unreachable("Unknown mul to lower!");
   }

@@ -343,7 +343,11 @@ class DwarfDebug : public AsmPrinterHandler {
   }
 
   /// \brief Find abstract variable associated with Var.
-  DbgVariable *findAbstractVariable(DIVariable &Var, DebugLoc Loc);
+  DbgVariable *getExistingAbstractVariable(DIVariable &DV,
+                                           DIVariable &Cleansed);
+  DbgVariable *createAbstractVariable(DIVariable &DV, LexicalScope *Scope);
+  DbgVariable *getOrCreateAbstractVariable(DIVariable &Var,
+                                           const MDNode *Scope);
   DbgVariable *findAbstractVariable(DIVariable &Var, const MDNode *Scope);
 
   /// \brief Find DIE for the given subprogram and attach appropriate

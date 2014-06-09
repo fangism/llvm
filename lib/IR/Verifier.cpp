@@ -517,7 +517,6 @@ void Verifier::visitGlobalAlias(const GlobalAlias &GA) {
   Assert1(Aliasee, "Aliasee cannot be NULL!", &GA);
   Assert1(GA.getType() == Aliasee->getType(),
           "Alias and aliasee types should match!", &GA);
-  Assert1(!GA.hasUnnamedAddr(), "Alias cannot have unnamed_addr!", &GA);
 
   Assert1(isa<GlobalValue>(Aliasee) || isa<ConstantExpr>(Aliasee),
           "Aliasee should be either GlobalValue or ConstantExpr", &GA);
@@ -735,7 +734,8 @@ void Verifier::VerifyAttributeTypes(AttributeSet Attrs, unsigned Idx,
         I->getKindAsEnum() == Attribute::Builtin ||
         I->getKindAsEnum() == Attribute::NoBuiltin ||
         I->getKindAsEnum() == Attribute::Cold ||
-        I->getKindAsEnum() == Attribute::OptimizeNone) {
+        I->getKindAsEnum() == Attribute::OptimizeNone ||
+        I->getKindAsEnum() == Attribute::JumpTable) {
       if (!isFunction) {
         CheckFailed("Attribute '" + I->getAsString() +
                     "' only applies to functions!", V);
@@ -908,6 +908,14 @@ void Verifier::VerifyFunctionAttrs(FunctionType *FT, AttributeSet Attrs,
     Assert1(!Attrs.hasAttribute(AttributeSet::FunctionIndex,
                                 Attribute::MinSize),
             "Attributes 'minsize and optnone' are incompatible!", V);
+  }
+
+  if (Attrs.hasAttribute(AttributeSet::FunctionIndex,
+                         Attribute::JumpTable)) {
+    const GlobalValue *GV = cast<GlobalValue>(V);
+    Assert1(GV->hasUnnamedAddr(),
+            "Attribute 'jumptable' requires 'unnamed_addr'", V);
+
   }
 }
 
@@ -2077,8 +2085,7 @@ void Verifier::visitLandingPadInst(LandingPadInst &LPI) {
   Assert1(isa<Constant>(PersonalityFn), "Personality function is not constant!",
           &LPI);
   for (unsigned i = 0, e = LPI.getNumClauses(); i < e; ++i) {
-    Value *Clause = LPI.getClause(i);
-    Assert1(isa<Constant>(Clause), "Clause is not constant!", &LPI);
+    Constant *Clause = LPI.getClause(i);
     if (LPI.isCatch(i)) {
       Assert1(isa<PointerType>(Clause->getType()),
               "Catch operand does not have pointer type!", &LPI);

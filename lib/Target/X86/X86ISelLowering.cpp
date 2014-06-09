@@ -1560,6 +1560,7 @@ void X86TargetLowering::resetOperationActions() {
   setTargetDAGCombine(ISD::SINT_TO_FP);
   setTargetDAGCombine(ISD::SETCC);
   setTargetDAGCombine(ISD::INTRINSIC_WO_CHAIN);
+  setTargetDAGCombine(ISD::BUILD_VECTOR);
   if (Subtarget->is64Bit())
     setTargetDAGCombine(ISD::MUL);
   setTargetDAGCombine(ISD::XOR);
@@ -3964,14 +3965,22 @@ static bool isINSERTPSMask(ArrayRef<int> Mask, MVT VT) {
 
   unsigned CorrectPosV1 = 0;
   unsigned CorrectPosV2 = 0;
-  for (int i = 0, e = (int)VT.getVectorNumElements(); i != e; ++i)
+  for (int i = 0, e = (int)VT.getVectorNumElements(); i != e; ++i) {
+    if (Mask[i] == -1) {
+      ++CorrectPosV1;
+      ++CorrectPosV2;
+      continue;
+    }
+
     if (Mask[i] == i)
       ++CorrectPosV1;
     else if (Mask[i] == i + 4)
       ++CorrectPosV2;
+  }
 
   if (CorrectPosV1 == 3 || CorrectPosV2 == 3)
-    // We have 3 elements from one vector, and one from another.
+    // We have 3 elements (undefs count as elements from any vector) from one
+    // vector, and one from another.
     return true;
 
   return false;
@@ -6039,6 +6048,89 @@ X86TargetLowering::LowerBUILD_VECTORvXi1(SDValue Op, SelectionDAG &DAG) const {
   return DAG.getNode(ISD::BITCAST, dl, VT, Select);
 }
 
+static SDValue PerformBUILD_VECTORCombine(SDNode *N, SelectionDAG &DAG,
+                                          const X86Subtarget *Subtarget) {
+  EVT VT = N->getValueType(0);
+
+  // Try to match a horizontal ADD or SUB.
+  if (((VT == MVT::v4f32 || VT == MVT::v2f64) && Subtarget->hasSSE3()) ||
+      ((VT == MVT::v8f32 || VT == MVT::v4f64) && Subtarget->hasAVX()) ||
+      ((VT == MVT::v4i32 || VT == MVT::v8i16) && Subtarget->hasSSSE3()) ||
+      ((VT == MVT::v8i32 || VT == MVT::v16i16) && Subtarget->hasAVX2())) {
+    unsigned NumOperands = N->getNumOperands();
+    unsigned Opcode = N->getOperand(0)->getOpcode();
+    bool isCommutable = false;
+    bool CanFold = false;
+    switch (Opcode) {
+    default : break;
+    case ISD::ADD :
+    case ISD::FADD :
+      isCommutable = true;
+      // FALL-THROUGH
+    case ISD::SUB :
+    case ISD::FSUB :
+      CanFold = true;
+    }
+
+    // Verify that operands have the same opcode; also, the opcode can only
+    // be either of: ADD, FADD, SUB, FSUB.
+    SDValue InVec0, InVec1;
+    for (unsigned i = 0, e = NumOperands; i != e && CanFold; ++i) {
+      SDValue Op = N->getOperand(i);
+      CanFold = Op->getOpcode() == Opcode && Op->hasOneUse();
+
+      if (!CanFold)
+        break;
+
+      SDValue Op0 = Op.getOperand(0);
+      SDValue Op1 = Op.getOperand(1);
+
+      // Try to match the following pattern:
+      // (BINOP (extract_vector_elt A, I), (extract_vector_elt A, I+1))
+      CanFold = (Op0.getOpcode() == ISD::EXTRACT_VECTOR_ELT &&
+          Op1.getOpcode() == ISD::EXTRACT_VECTOR_ELT &&
+          Op0.getOperand(0) == Op1.getOperand(0) &&
+          isa<ConstantSDNode>(Op0.getOperand(1)) &&
+          isa<ConstantSDNode>(Op1.getOperand(1)));
+      if (!CanFold)
+        break;
+
+      unsigned I0 = cast<ConstantSDNode>(Op0.getOperand(1))->getZExtValue();
+      unsigned I1 = cast<ConstantSDNode>(Op1.getOperand(1))->getZExtValue();
+      unsigned ExpectedIndex = (i * 2) % NumOperands;
+ 
+      if (i == 0)
+        InVec0 = Op0.getOperand(0);
+      else if (i * 2 == NumOperands)
+        InVec1 = Op0.getOperand(0);
+
+      SDValue Expected = (i * 2 < NumOperands) ? InVec0 : InVec1;
+      if (I0 == ExpectedIndex)
+        CanFold = I1 == I0 + 1 && Op0.getOperand(0) == Expected;
+      else if (isCommutable && I1 == ExpectedIndex) {
+        // Try to see if we can match the following dag sequence:
+        // (BINOP (extract_vector_elt A, I+1), (extract_vector_elt A, I))
+        CanFold = I0 == I1 + 1 && Op1.getOperand(0) == Expected;
+      }
+    }
+
+    if (CanFold) {
+      unsigned NewOpcode;
+      switch (Opcode) {
+      default : llvm_unreachable("Unexpected opcode found!");
+      case ISD::ADD : NewOpcode = X86ISD::HADD; break;
+      case ISD::FADD : NewOpcode = X86ISD::FHADD; break;
+      case ISD::SUB : NewOpcode = X86ISD::HSUB; break;
+      case ISD::FSUB : NewOpcode = X86ISD::FHSUB; break;
+      }
+ 
+      return DAG.getNode(NewOpcode, SDLoc(N), VT, InVec0, InVec1);
+    }
+  }
+
+  return SDValue();
+}
+
 SDValue
 X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
   SDLoc dl(Op);
@@ -7462,8 +7554,9 @@ static SDValue getINSERTPS(ShuffleVectorSDNode *SVOp, SDLoc &dl,
   assert((VT == MVT::v4f32 || VT == MVT::v4i32) &&
          "unsupported vector type for insertps/pinsrd");
 
-  int FromV1 = std::count_if(Mask.begin(), Mask.end(),
-                             [](const int &i) { return i < 4; });
+  auto FromV1Predicate = [](const int &i) { return i < 4 && i > -1; };
+  auto FromV2Predicate = [](const int &i) { return i >= 4; };
+  int FromV1 = std::count_if(Mask.begin(), Mask.end(), FromV1Predicate);
 
   SDValue From;
   SDValue To;
@@ -7471,15 +7564,17 @@ static SDValue getINSERTPS(ShuffleVectorSDNode *SVOp, SDLoc &dl,
   if (FromV1 == 1) {
     From = V1;
     To = V2;
-    DestIndex = std::find_if(Mask.begin(), Mask.end(),
-                             [](const int &i) { return i < 4; }) -
+    DestIndex = std::find_if(Mask.begin(), Mask.end(), FromV1Predicate) -
                 Mask.begin();
   } else {
+    assert(std::count_if(Mask.begin(), Mask.end(), FromV2Predicate) == 1 &&
+           "More than one element from V1 and from V2, or no elements from one "
+           "of the vectors. This case should not have returned true from "
+           "isINSERTPSMask");
     From = V2;
     To = V1;
-    DestIndex = std::find_if(Mask.begin(), Mask.end(),
-                             [](const int &i) { return i >= 4; }) -
-                Mask.begin();
+    DestIndex =
+        std::find_if(Mask.begin(), Mask.end(), FromV2Predicate) - Mask.begin();
   }
 
   if (MayFoldLoad(From)) {
@@ -10063,9 +10158,26 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC, SDLoc dl,
     break;
   case X86::COND_G: case X86::COND_GE:
   case X86::COND_L: case X86::COND_LE:
-  case X86::COND_O: case X86::COND_NO:
-    NeedOF = true;
+  case X86::COND_O: case X86::COND_NO: {
+    // Check if we really need to set the
+    // Overflow flag. If NoSignedWrap is present
+    // that is not actually needed.
+    switch (Op->getOpcode()) {
+    case ISD::ADD:
+    case ISD::SUB:
+    case ISD::MUL:
+    case ISD::SHL: {
+      const BinaryWithFlagsSDNode *BinNode =
+          cast<BinaryWithFlagsSDNode>(Op.getNode());
+      if (BinNode->hasNoSignedWrap())
+        break;
+    }
+    default:
+      NeedOF = true;
+      break;
+    }
     break;
+  }
   }
   // See if we can use the EFLAGS value from the operand instead of
   // doing a separate TEST. TEST always sets OF and CF to 0, so unless
@@ -10128,14 +10240,14 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC, SDLoc dl,
     if (ConstantSDNode *C =
         dyn_cast<ConstantSDNode>(ArithOp.getNode()->getOperand(1))) {
       // An add of one will be selected as an INC.
-      if (C->getAPIntValue() == 1) {
+      if (C->getAPIntValue() == 1 && !Subtarget->slowIncDec()) {
         Opcode = X86ISD::INC;
         NumOperands = 1;
         break;
       }
 
       // An add of negative one (subtract of one) will be selected as a DEC.
-      if (C->getAPIntValue().isAllOnesValue()) {
+      if (C->getAPIntValue().isAllOnesValue() && !Subtarget->slowIncDec()) {
         Opcode = X86ISD::DEC;
         NumOperands = 1;
         break;
@@ -10151,7 +10263,7 @@ SDValue X86TargetLowering::EmitTest(SDValue Op, unsigned X86CC, SDLoc dl,
     // If we have a constant logical shift that's only used in a comparison
     // against zero turn it into an equivalent AND. This allows turning it into
     // a TEST instruction later.
-    if ((X86CC == X86::COND_E || X86CC == X86::COND_NE) &&
+    if ((X86CC == X86::COND_E || X86CC == X86::COND_NE) && Op->hasOneUse() &&
         isa<ConstantSDNode>(Op->getOperand(1)) && !hasNonFlagsUse(Op)) {
       EVT VT = Op.getValueType();
       unsigned BitWidth = VT.getSizeInBits();
@@ -12840,7 +12952,7 @@ static SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, const X86Subtarget *Subtarget,
   case PREFETCH: {
     SDValue Hint = Op.getOperand(6);
     unsigned HintVal;
-    if (dyn_cast<ConstantSDNode> (Hint) == 0 ||
+    if (dyn_cast<ConstantSDNode> (Hint) == nullptr ||
         (HintVal = dyn_cast<ConstantSDNode> (Hint)->getZExtValue()) > 1)
       llvm_unreachable("Wrong prefetch hint in intrinsic: should be 0 or 1");
     unsigned Opcode = (HintVal ? Intr.Opc1 : Intr.Opc0);
@@ -20710,6 +20822,7 @@ SDValue X86TargetLowering::PerformDAGCombine(SDNode *N,
     return PerformINTRINSIC_WO_CHAINCombine(N, DAG, Subtarget);
   case X86ISD::INSERTPS:
     return PerformINSERTPSCombine(N, DAG, Subtarget);
+  case ISD::BUILD_VECTOR: return PerformBUILD_VECTORCombine(N, DAG, Subtarget);
   }
 
   return SDValue();
@@ -21492,4 +21605,8 @@ int X86TargetLowering::getScalingFactorCost(const AddrMode &AM,
     // as soon as we use a second register.
     return AM.Scale != 0;
   return -1;
+}
+
+bool X86TargetLowering::isTargetFTOL() const {
+  return Subtarget->isTargetKnownWindowsMSVC() && !Subtarget->is64Bit();
 }

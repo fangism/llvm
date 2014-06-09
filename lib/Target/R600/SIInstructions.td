@@ -96,7 +96,9 @@ def S_NOT_B32 : SOP1_32 <0x00000007, "S_NOT_B32",
   [(set i32:$dst, (not i32:$src0))]
 >;
 
-def S_NOT_B64 : SOP1_64 <0x00000008, "S_NOT_B64", []>;
+def S_NOT_B64 : SOP1_64 <0x00000008, "S_NOT_B64",
+  [(set i64:$dst, (not i64:$src0))]
+>;
 def S_WQM_B32 : SOP1_32 <0x00000009, "S_WQM_B32", []>;
 def S_WQM_B64 : SOP1_64 <0x0000000a, "S_WQM_B64", []>;
 def S_BREV_B32 : SOP1_32 <0x0000000b, "S_BREV_B32", []>;
@@ -1017,12 +1019,16 @@ defm V_RSQ_LEGACY_F32 : VOP1_32 <
   0x0000002d, "V_RSQ_LEGACY_F32",
   [(set f32:$dst, (int_AMDGPU_rsq f32:$src0))]
 >;
-defm V_RSQ_F32 : VOP1_32 <0x0000002e, "V_RSQ_F32", []>;
+defm V_RSQ_F32 : VOP1_32 <0x0000002e, "V_RSQ_F32",
+  [(set f32:$dst, (fdiv FP_ONE, (fsqrt f32:$src0)))]
+>;
 defm V_RCP_F64 : VOP1_64 <0x0000002f, "V_RCP_F64",
   [(set f64:$dst, (fdiv FP_ONE, f64:$src0))]
 >;
 defm V_RCP_CLAMP_F64 : VOP1_64 <0x00000030, "V_RCP_CLAMP_F64", []>;
-defm V_RSQ_F64 : VOP1_64 <0x00000031, "V_RSQ_F64", []>;
+defm V_RSQ_F64 : VOP1_64 <0x00000031, "V_RSQ_F64",
+  [(set f64:$dst, (fdiv FP_ONE, (fsqrt f64:$src0)))]
+>;
 defm V_RSQ_CLAMP_F64 : VOP1_64 <0x00000032, "V_RSQ_CLAMP_F64", []>;
 defm V_SQRT_F32 : VOP1_32 <0x00000033, "V_SQRT_F32",
   [(set f32:$dst, (fsqrt f32:$src0))]
@@ -1306,13 +1312,13 @@ defm V_SAD_U32 : VOP3_32 <0x0000015d, "V_SAD_U32", []>;
 defm V_DIV_FIXUP_F32 : VOP3_32 <0x0000015f, "V_DIV_FIXUP_F32", []>;
 def V_DIV_FIXUP_F64 : VOP3_64 <0x00000160, "V_DIV_FIXUP_F64", []>;
 
-def V_LSHL_B64 : VOP3_64_Shift <0x00000161, "V_LSHL_B64",
+def V_LSHL_B64 : VOP3_64_32 <0x00000161, "V_LSHL_B64",
   [(set i64:$dst, (shl i64:$src0, i32:$src1))]
 >;
-def V_LSHR_B64 : VOP3_64_Shift <0x00000162, "V_LSHR_B64",
+def V_LSHR_B64 : VOP3_64_32 <0x00000162, "V_LSHR_B64",
   [(set i64:$dst, (srl i64:$src0, i32:$src1))]
 >;
-def V_ASHR_I64 : VOP3_64_Shift <0x00000163, "V_ASHR_I64",
+def V_ASHR_I64 : VOP3_64_32 <0x00000163, "V_ASHR_I64",
   [(set i64:$dst, (sra i64:$src0, i32:$src1))]
 >;
 
