@@ -32,10 +32,6 @@ namespace llvm {
 class ARMBaseTargetMachine : public LLVMTargetMachine {
 protected:
   ARMSubtarget        Subtarget;
-private:
-  ARMJITInfo          JITInfo;
-  InstrItineraryData  InstrItins;
-
 public:
   ARMBaseTargetMachine(const Target &T, StringRef TT,
                        StringRef CPU, StringRef FS,
@@ -44,15 +40,18 @@ public:
                        CodeGenOpt::Level OL,
                        bool isLittle);
 
-  ARMJITInfo *getJITInfo() override { return &JITInfo; }
   const ARMSubtarget *getSubtargetImpl() const override { return &Subtarget; }
   const ARMTargetLowering *getTargetLowering() const override {
     // Implemented by derived classes
     llvm_unreachable("getTargetLowering not implemented");
   }
   const InstrItineraryData *getInstrItineraryData() const override {
-    return &InstrItins;
+    return &getSubtargetImpl()->getInstrItineraryData();
   }
+  const DataLayout *getDataLayout() const override {
+    return getSubtargetImpl()->getDataLayout();
+  }
+  ARMJITInfo *getJITInfo() override { return Subtarget.getJITInfo(); }
 
   /// \brief Register ARM analysis passes with a pass manager.
   void addAnalysisPasses(PassManagerBase &PM) override;
@@ -68,9 +67,7 @@ public:
 class ARMTargetMachine : public ARMBaseTargetMachine {
   virtual void anchor();
   ARMInstrInfo        InstrInfo;
-  const DataLayout    DL;       // Calculates type size & alignment
   ARMTargetLowering   TLInfo;
-  ARMSelectionDAGInfo TSInfo;
   ARMFrameLowering    FrameLowering;
  public:
   ARMTargetMachine(const Target &T, StringRef TT,
@@ -89,13 +86,12 @@ class ARMTargetMachine : public ARMBaseTargetMachine {
   }
 
   const ARMSelectionDAGInfo *getSelectionDAGInfo() const override {
-    return &TSInfo;
+    return getSubtargetImpl()->getSelectionDAGInfo();
   }
   const ARMFrameLowering *getFrameLowering() const override {
     return &FrameLowering;
   }
   const ARMInstrInfo *getInstrInfo() const override { return &InstrInfo; }
-  const DataLayout *getDataLayout() const override { return &DL; }
 };
 
 /// ARMLETargetMachine - ARM little endian target machine.
@@ -128,9 +124,7 @@ class ThumbTargetMachine : public ARMBaseTargetMachine {
   virtual void anchor();
   // Either Thumb1InstrInfo or Thumb2InstrInfo.
   std::unique_ptr<ARMBaseInstrInfo> InstrInfo;
-  const DataLayout    DL;   // Calculates type size & alignment
   ARMTargetLowering   TLInfo;
-  ARMSelectionDAGInfo TSInfo;
   // Either Thumb1FrameLowering or ARMFrameLowering.
   std::unique_ptr<ARMFrameLowering> FrameLowering;
 public:
@@ -151,7 +145,7 @@ public:
   }
 
   const ARMSelectionDAGInfo *getSelectionDAGInfo() const override {
-    return &TSInfo;
+    return getSubtargetImpl()->getSelectionDAGInfo();
   }
 
   /// returns either Thumb1InstrInfo or Thumb2InstrInfo
@@ -162,7 +156,6 @@ public:
   const ARMFrameLowering *getFrameLowering() const override {
     return FrameLowering.get();
   }
-  const DataLayout *getDataLayout() const override { return &DL; }
 };
 
 /// ThumbLETargetMachine - Thumb little endian target machine.

@@ -32,7 +32,7 @@ using namespace llvm::object;
 
 namespace {
 
-static inline error_code check(error_code Err) {
+static inline std::error_code check(std::error_code Err) {
   if (Err) {
     report_fatal_error(Err.message());
   }
@@ -55,9 +55,9 @@ template <class ELFT> class DyldELFObject : public ELFObjectFile<ELFT> {
 
 public:
   DyldELFObject(std::unique_ptr<ObjectFile> UnderlyingFile,
-                MemoryBuffer *Wrapper, error_code &ec);
+                std::unique_ptr<MemoryBuffer> Wrapper, std::error_code &ec);
 
-  DyldELFObject(MemoryBuffer *Wrapper, error_code &ec);
+  DyldELFObject(std::unique_ptr<MemoryBuffer> Wrapper, std::error_code &ec);
 
   void updateSectionAddress(const SectionRef &Sec, uint64_t Addr);
   void updateSymbolAddress(const SymbolRef &Sym, uint64_t Addr);
@@ -109,15 +109,17 @@ public:
 // actual memory.  Ultimately, the Binary parent class will take ownership of
 // this MemoryBuffer object but not the underlying memory.
 template <class ELFT>
-DyldELFObject<ELFT>::DyldELFObject(MemoryBuffer *Wrapper, error_code &ec)
-    : ELFObjectFile<ELFT>(Wrapper, ec) {
+DyldELFObject<ELFT>::DyldELFObject(std::unique_ptr<MemoryBuffer> Wrapper,
+                                   std::error_code &EC)
+    : ELFObjectFile<ELFT>(std::move(Wrapper), EC) {
   this->isDyldELFObject = true;
 }
 
 template <class ELFT>
 DyldELFObject<ELFT>::DyldELFObject(std::unique_ptr<ObjectFile> UnderlyingFile,
-                                   MemoryBuffer *Wrapper, error_code &ec)
-    : ELFObjectFile<ELFT>(Wrapper, ec),
+                                   std::unique_ptr<MemoryBuffer> Wrapper,
+                                   std::error_code &EC)
+    : ELFObjectFile<ELFT>(std::move(Wrapper), EC),
       UnderlyingFile(std::move(UnderlyingFile)) {
   this->isDyldELFObject = true;
 }
@@ -182,30 +184,30 @@ RuntimeDyldELF::createObjectImageFromFile(std::unique_ptr<object::ObjectFile> Ob
   if (!ObjFile)
     return nullptr;
 
-  error_code ec;
-  MemoryBuffer *Buffer =
-      MemoryBuffer::getMemBuffer(ObjFile->getData(), "", false);
+  std::error_code ec;
+  std::unique_ptr<MemoryBuffer> Buffer(
+      MemoryBuffer::getMemBuffer(ObjFile->getData(), "", false));
 
   if (ObjFile->getBytesInAddress() == 4 && ObjFile->isLittleEndian()) {
     auto Obj =
         llvm::make_unique<DyldELFObject<ELFType<support::little, 2, false>>>(
-            std::move(ObjFile), Buffer, ec);
+            std::move(ObjFile), std::move(Buffer), ec);
     return new ELFObjectImage<ELFType<support::little, 2, false>>(
         nullptr, std::move(Obj));
   } else if (ObjFile->getBytesInAddress() == 4 && !ObjFile->isLittleEndian()) {
     auto Obj =
         llvm::make_unique<DyldELFObject<ELFType<support::big, 2, false>>>(
-            std::move(ObjFile), Buffer, ec);
+            std::move(ObjFile), std::move(Buffer), ec);
     return new ELFObjectImage<ELFType<support::big, 2, false>>(nullptr, std::move(Obj));
   } else if (ObjFile->getBytesInAddress() == 8 && !ObjFile->isLittleEndian()) {
     auto Obj = llvm::make_unique<DyldELFObject<ELFType<support::big, 2, true>>>(
-        std::move(ObjFile), Buffer, ec);
+        std::move(ObjFile), std::move(Buffer), ec);
     return new ELFObjectImage<ELFType<support::big, 2, true>>(nullptr,
                                                               std::move(Obj));
   } else if (ObjFile->getBytesInAddress() == 8 && ObjFile->isLittleEndian()) {
     auto Obj =
         llvm::make_unique<DyldELFObject<ELFType<support::little, 2, true>>>(
-            std::move(ObjFile), Buffer, ec);
+            std::move(ObjFile), std::move(Buffer), ec);
     return new ELFObjectImage<ELFType<support::little, 2, true>>(
         nullptr, std::move(Obj));
   } else
@@ -218,31 +220,33 @@ ObjectImage *RuntimeDyldELF::createObjectImage(ObjectBuffer *Buffer) {
   std::pair<unsigned char, unsigned char> Ident =
       std::make_pair((uint8_t)Buffer->getBufferStart()[ELF::EI_CLASS],
                      (uint8_t)Buffer->getBufferStart()[ELF::EI_DATA]);
-  error_code ec;
+  std::error_code ec;
+
+  std::unique_ptr<MemoryBuffer> Buf(Buffer->getMemBuffer());
 
   if (Ident.first == ELF::ELFCLASS32 && Ident.second == ELF::ELFDATA2LSB) {
     auto Obj =
         llvm::make_unique<DyldELFObject<ELFType<support::little, 4, false>>>(
-            Buffer->getMemBuffer(), ec);
+            std::move(Buf), ec);
     return new ELFObjectImage<ELFType<support::little, 4, false>>(
         Buffer, std::move(Obj));
   } else if (Ident.first == ELF::ELFCLASS32 &&
              Ident.second == ELF::ELFDATA2MSB) {
     auto Obj =
         llvm::make_unique<DyldELFObject<ELFType<support::big, 4, false>>>(
-            Buffer->getMemBuffer(), ec);
+            std::move(Buf), ec);
     return new ELFObjectImage<ELFType<support::big, 4, false>>(Buffer,
                                                                std::move(Obj));
   } else if (Ident.first == ELF::ELFCLASS64 &&
              Ident.second == ELF::ELFDATA2MSB) {
     auto Obj = llvm::make_unique<DyldELFObject<ELFType<support::big, 8, true>>>(
-        Buffer->getMemBuffer(), ec);
+        std::move(Buf), ec);
     return new ELFObjectImage<ELFType<support::big, 8, true>>(Buffer, std::move(Obj));
   } else if (Ident.first == ELF::ELFCLASS64 &&
              Ident.second == ELF::ELFDATA2LSB) {
     auto Obj =
         llvm::make_unique<DyldELFObject<ELFType<support::little, 8, true>>>(
-            Buffer->getMemBuffer(), ec);
+            std::move(Buf), ec);
     return new ELFObjectImage<ELFType<support::little, 8, true>>(Buffer, std::move(Obj));
   } else
     llvm_unreachable("Unexpected ELF format");
@@ -702,22 +706,35 @@ void RuntimeDyldELF::findOPDEntrySection(ObjectImage &Obj,
   llvm_unreachable("Attempting to get address of ODP entry!");
 }
 
-// Relocation masks following the #lo(value), #hi(value), #higher(value),
-// and #highest(value) macros defined in section 4.5.1. Relocation Types
-// in PPC-elf64abi document.
-//
+// Relocation masks following the #lo(value), #hi(value), #ha(value),
+// #higher(value), #highera(value), #highest(value), and #highesta(value)
+// macros defined in section 4.5.1. Relocation Types of the PPC-elf64abi
+// document.
+
 static inline uint16_t applyPPClo(uint64_t value) { return value & 0xffff; }
 
 static inline uint16_t applyPPChi(uint64_t value) {
   return (value >> 16) & 0xffff;
 }
 
+static inline uint16_t applyPPCha (uint64_t value) {
+  return ((value + 0x8000) >> 16) & 0xffff;
+}
+
 static inline uint16_t applyPPChigher(uint64_t value) {
   return (value >> 32) & 0xffff;
 }
 
+static inline uint16_t applyPPChighera (uint64_t value) {
+  return ((value + 0x8000) >> 32) & 0xffff;
+}
+
 static inline uint16_t applyPPChighest(uint64_t value) {
   return (value >> 48) & 0xffff;
+}
+
+static inline uint16_t applyPPChighesta (uint64_t value) {
+  return ((value + 0x8000) >> 48) & 0xffff;
 }
 
 void RuntimeDyldELF::resolvePPC64Relocation(const SectionEntry &Section,
@@ -728,23 +745,56 @@ void RuntimeDyldELF::resolvePPC64Relocation(const SectionEntry &Section,
   default:
     llvm_unreachable("Relocation type not implemented yet!");
     break;
+  case ELF::R_PPC64_ADDR16:
+    writeInt16BE(LocalAddress, applyPPClo(Value + Addend));
+    break;
+  case ELF::R_PPC64_ADDR16_DS:
+    writeInt16BE(LocalAddress, applyPPClo(Value + Addend) & ~3);
+    break;
   case ELF::R_PPC64_ADDR16_LO:
     writeInt16BE(LocalAddress, applyPPClo(Value + Addend));
+    break;
+  case ELF::R_PPC64_ADDR16_LO_DS:
+    writeInt16BE(LocalAddress, applyPPClo(Value + Addend) & ~3);
     break;
   case ELF::R_PPC64_ADDR16_HI:
     writeInt16BE(LocalAddress, applyPPChi(Value + Addend));
     break;
+  case ELF::R_PPC64_ADDR16_HA:
+    writeInt16BE(LocalAddress, applyPPCha(Value + Addend));
+    break;
   case ELF::R_PPC64_ADDR16_HIGHER:
     writeInt16BE(LocalAddress, applyPPChigher(Value + Addend));
     break;
+  case ELF::R_PPC64_ADDR16_HIGHERA:
+    writeInt16BE(LocalAddress, applyPPChighera(Value + Addend));
+    break;
   case ELF::R_PPC64_ADDR16_HIGHEST:
     writeInt16BE(LocalAddress, applyPPChighest(Value + Addend));
+    break;
+  case ELF::R_PPC64_ADDR16_HIGHESTA:
+    writeInt16BE(LocalAddress, applyPPChighesta(Value + Addend));
     break;
   case ELF::R_PPC64_ADDR14: {
     assert(((Value + Addend) & 3) == 0);
     // Preserve the AA/LK bits in the branch instruction
     uint8_t aalk = *(LocalAddress + 3);
     writeInt16BE(LocalAddress + 2, (aalk & 3) | ((Value + Addend) & 0xfffc));
+  } break;
+  case ELF::R_PPC64_REL16_LO: {
+    uint64_t FinalAddress = (Section.LoadAddress + Offset);
+    uint64_t Delta = Value - FinalAddress + Addend;
+    writeInt16BE(LocalAddress, applyPPClo(Delta));
+  } break;
+  case ELF::R_PPC64_REL16_HI: {
+    uint64_t FinalAddress = (Section.LoadAddress + Offset);
+    uint64_t Delta = Value - FinalAddress + Addend;
+    writeInt16BE(LocalAddress, applyPPChi(Delta));
+  } break;
+  case ELF::R_PPC64_REL16_HA: {
+    uint64_t FinalAddress = (Section.LoadAddress + Offset);
+    uint64_t Delta = Value - FinalAddress + Addend;
+    writeInt16BE(LocalAddress, applyPPCha(Delta));
   } break;
   case ELF::R_PPC64_ADDR32: {
     int32_t Result = static_cast<int32_t>(Value + Addend);
@@ -786,7 +836,27 @@ void RuntimeDyldELF::resolvePPC64Relocation(const SectionEntry &Section,
   case ELF::R_PPC64_TOC16_DS: {
     uint64_t TOCStart = findPPC64TOC();
     Value = ((Value + Addend) - TOCStart);
+    writeInt16BE(LocalAddress, applyPPClo(Value) & ~3);
+  } break;
+  case ELF::R_PPC64_TOC16_LO: {
+    uint64_t TOCStart = findPPC64TOC();
+    Value = ((Value + Addend) - TOCStart);
     writeInt16BE(LocalAddress, applyPPClo(Value));
+  } break;
+  case ELF::R_PPC64_TOC16_LO_DS: {
+    uint64_t TOCStart = findPPC64TOC();
+    Value = ((Value + Addend) - TOCStart);
+    writeInt16BE(LocalAddress, applyPPClo(Value) & ~3);
+  } break;
+  case ELF::R_PPC64_TOC16_HI: {
+    uint64_t TOCStart = findPPC64TOC();
+    Value = ((Value + Addend) - TOCStart);
+    writeInt16BE(LocalAddress, applyPPChi(Value));
+  } break;
+  case ELF::R_PPC64_TOC16_HA: {
+    uint64_t TOCStart = findPPC64TOC();
+    Value = ((Value + Addend) - TOCStart);
+    writeInt16BE(LocalAddress, applyPPCha(Value));
   } break;
   }
 }
@@ -1139,14 +1209,20 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
                              ELF::R_PPC64_ADDR64, Value.Addend);
 
           // Generates the 64-bits address loads as exemplified in section
-          // 4.5.1 in PPC64 ELF ABI.
-          RelocationEntry REhst(SectionID, StubTargetAddr - Section.Address + 2,
+          // 4.5.1 in PPC64 ELF ABI.  Note that the relocations need to
+          // apply to the low part of the instructions, so we have to update
+          // the offset according to the target endianness.
+          uint64_t StubRelocOffset = StubTargetAddr - Section.Address;
+          if (!IsTargetLittleEndian)
+            StubRelocOffset += 2;
+
+          RelocationEntry REhst(SectionID, StubRelocOffset + 0,
                                 ELF::R_PPC64_ADDR16_HIGHEST, Value.Addend);
-          RelocationEntry REhr(SectionID, StubTargetAddr - Section.Address + 6,
+          RelocationEntry REhr(SectionID, StubRelocOffset + 4,
                                ELF::R_PPC64_ADDR16_HIGHER, Value.Addend);
-          RelocationEntry REh(SectionID, StubTargetAddr - Section.Address + 14,
+          RelocationEntry REh(SectionID, StubRelocOffset + 12,
                               ELF::R_PPC64_ADDR16_HI, Value.Addend);
-          RelocationEntry REl(SectionID, StubTargetAddr - Section.Address + 18,
+          RelocationEntry REl(SectionID, StubRelocOffset + 16,
                               ELF::R_PPC64_ADDR16_LO, Value.Addend);
 
           if (Value.SymbolName) {

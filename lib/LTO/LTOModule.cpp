@@ -37,11 +37,11 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/system_error.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Transforms/Utils/GlobalStatus.h"
+#include <system_error>
 using namespace llvm;
 
 LTOModule::LTOModule(llvm::Module *m, llvm::TargetMachine *t)
@@ -98,7 +98,7 @@ bool LTOModule::isTargetMatch(MemoryBuffer *buffer, const char *triplePrefix) {
 LTOModule *LTOModule::makeLTOModule(const char *path, TargetOptions options,
                                     std::string &errMsg) {
   std::unique_ptr<MemoryBuffer> buffer;
-  if (error_code ec = MemoryBuffer::getFile(path, buffer)) {
+  if (std::error_code ec = MemoryBuffer::getFile(path, buffer)) {
     errMsg = ec.message();
     return nullptr;
   }
@@ -117,7 +117,7 @@ LTOModule *LTOModule::makeLTOModule(int fd, const char *path,
                                     TargetOptions options,
                                     std::string &errMsg) {
   std::unique_ptr<MemoryBuffer> buffer;
-  if (error_code ec =
+  if (std::error_code ec =
           MemoryBuffer::getOpenFileSlice(fd, path, buffer, map_size, offset)) {
     errMsg = ec.message();
     return nullptr;
@@ -140,7 +140,7 @@ LTOModule *LTOModule::makeLTOModule(MemoryBuffer *buffer,
   // parse bitcode buffer
   ErrorOr<Module *> ModuleOrErr =
       getLazyBitcodeModule(buffer, getGlobalContext());
-  if (error_code EC = ModuleOrErr.getError()) {
+  if (std::error_code EC = ModuleOrErr.getError()) {
     errMsg = EC.message();
     delete buffer;
     return nullptr;

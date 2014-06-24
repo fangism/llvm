@@ -39,8 +39,6 @@ void BitcodeReader::materializeForwardReferencedFunctions() {
 }
 
 void BitcodeReader::FreeState() {
-  if (BufferOwned)
-    delete Buffer;
   Buffer = nullptr;
   std::vector<Type*>().swap(TypeList);
   ValueList.clear();
@@ -470,7 +468,7 @@ static void decodeLLVMAttributesForBitcode(AttrBuilder &B,
                 (EncodedAttrs & 0xffff));
 }
 
-error_code BitcodeReader::ParseAttributeBlock() {
+std::error_code BitcodeReader::ParseAttributeBlock() {
   if (Stream.EnterSubBlock(bitc::PARAMATTR_BLOCK_ID))
     return Error(InvalidRecord);
 
@@ -490,7 +488,7 @@ error_code BitcodeReader::ParseAttributeBlock() {
     case BitstreamEntry::Error:
       return Error(MalformedBlock);
     case BitstreamEntry::EndBlock:
-      return error_code();
+      return std::error_code();
     case BitstreamEntry::Record:
       // The interesting case.
       break;
@@ -616,15 +614,15 @@ static Attribute::AttrKind GetAttrFromCode(uint64_t Code) {
   }
 }
 
-error_code BitcodeReader::ParseAttrKind(uint64_t Code,
-                                        Attribute::AttrKind *Kind) {
+std::error_code BitcodeReader::ParseAttrKind(uint64_t Code,
+                                             Attribute::AttrKind *Kind) {
   *Kind = GetAttrFromCode(Code);
   if (*Kind == Attribute::None)
     return Error(InvalidValue);
-  return error_code();
+  return std::error_code();
 }
 
-error_code BitcodeReader::ParseAttributeGroupBlock() {
+std::error_code BitcodeReader::ParseAttributeGroupBlock() {
   if (Stream.EnterSubBlock(bitc::PARAMATTR_GROUP_BLOCK_ID))
     return Error(InvalidRecord);
 
@@ -642,7 +640,7 @@ error_code BitcodeReader::ParseAttributeGroupBlock() {
     case BitstreamEntry::Error:
       return Error(MalformedBlock);
     case BitstreamEntry::EndBlock:
-      return error_code();
+      return std::error_code();
     case BitstreamEntry::Record:
       // The interesting case.
       break;
@@ -664,13 +662,13 @@ error_code BitcodeReader::ParseAttributeGroupBlock() {
       for (unsigned i = 2, e = Record.size(); i != e; ++i) {
         if (Record[i] == 0) {        // Enum attribute
           Attribute::AttrKind Kind;
-          if (error_code EC = ParseAttrKind(Record[++i], &Kind))
+          if (std::error_code EC = ParseAttrKind(Record[++i], &Kind))
             return EC;
 
           B.addAttribute(Kind);
         } else if (Record[i] == 1) { // Align attribute
           Attribute::AttrKind Kind;
-          if (error_code EC = ParseAttrKind(Record[++i], &Kind))
+          if (std::error_code EC = ParseAttrKind(Record[++i], &Kind))
             return EC;
           if (Kind == Attribute::Alignment)
             B.addAlignmentAttr(Record[++i]);
@@ -706,14 +704,14 @@ error_code BitcodeReader::ParseAttributeGroupBlock() {
   }
 }
 
-error_code BitcodeReader::ParseTypeTable() {
+std::error_code BitcodeReader::ParseTypeTable() {
   if (Stream.EnterSubBlock(bitc::TYPE_BLOCK_ID_NEW))
     return Error(InvalidRecord);
 
   return ParseTypeTableBody();
 }
 
-error_code BitcodeReader::ParseTypeTableBody() {
+std::error_code BitcodeReader::ParseTypeTableBody() {
   if (!TypeList.empty())
     return Error(InvalidMultipleBlocks);
 
@@ -733,7 +731,7 @@ error_code BitcodeReader::ParseTypeTableBody() {
     case BitstreamEntry::EndBlock:
       if (NumRecords != TypeList.size())
         return Error(MalformedBlock);
-      return error_code();
+      return std::error_code();
     case BitstreamEntry::Record:
       // The interesting case.
       break;
@@ -933,7 +931,7 @@ error_code BitcodeReader::ParseTypeTableBody() {
   }
 }
 
-error_code BitcodeReader::ParseValueSymbolTable() {
+std::error_code BitcodeReader::ParseValueSymbolTable() {
   if (Stream.EnterSubBlock(bitc::VALUE_SYMTAB_BLOCK_ID))
     return Error(InvalidRecord);
 
@@ -949,7 +947,7 @@ error_code BitcodeReader::ParseValueSymbolTable() {
     case BitstreamEntry::Error:
       return Error(MalformedBlock);
     case BitstreamEntry::EndBlock:
-      return error_code();
+      return std::error_code();
     case BitstreamEntry::Record:
       // The interesting case.
       break;
@@ -987,7 +985,7 @@ error_code BitcodeReader::ParseValueSymbolTable() {
   }
 }
 
-error_code BitcodeReader::ParseMetadata() {
+std::error_code BitcodeReader::ParseMetadata() {
   unsigned NextMDValueNo = MDValueList.size();
 
   if (Stream.EnterSubBlock(bitc::METADATA_BLOCK_ID))
@@ -1004,7 +1002,7 @@ error_code BitcodeReader::ParseMetadata() {
     case BitstreamEntry::Error:
       return Error(MalformedBlock);
     case BitstreamEntry::EndBlock:
-      return error_code();
+      return std::error_code();
     case BitstreamEntry::Record:
       // The interesting case.
       break;
@@ -1098,7 +1096,7 @@ uint64_t BitcodeReader::decodeSignRotatedValue(uint64_t V) {
 
 /// ResolveGlobalAndAliasInits - Resolve all of the initializers for global
 /// values and aliases that we can.
-error_code BitcodeReader::ResolveGlobalAndAliasInits() {
+std::error_code BitcodeReader::ResolveGlobalAndAliasInits() {
   std::vector<std::pair<GlobalVariable*, unsigned> > GlobalInitWorklist;
   std::vector<std::pair<GlobalAlias*, unsigned> > AliasInitWorklist;
   std::vector<std::pair<Function*, unsigned> > FunctionPrefixWorklist;
@@ -1147,7 +1145,7 @@ error_code BitcodeReader::ResolveGlobalAndAliasInits() {
     FunctionPrefixWorklist.pop_back();
   }
 
-  return error_code();
+  return std::error_code();
 }
 
 static APInt ReadWideAPInt(ArrayRef<uint64_t> Vals, unsigned TypeBits) {
@@ -1158,7 +1156,7 @@ static APInt ReadWideAPInt(ArrayRef<uint64_t> Vals, unsigned TypeBits) {
   return APInt(TypeBits, Words);
 }
 
-error_code BitcodeReader::ParseConstants() {
+std::error_code BitcodeReader::ParseConstants() {
   if (Stream.EnterSubBlock(bitc::CONSTANTS_BLOCK_ID))
     return Error(InvalidRecord);
 
@@ -1181,7 +1179,7 @@ error_code BitcodeReader::ParseConstants() {
       // Once all the constants have been read, go through and resolve forward
       // references.
       ValueList.ResolveConstantForwardRefs();
-      return error_code();
+      return std::error_code();
     case BitstreamEntry::Record:
       // The interesting case.
       break;
@@ -1596,7 +1594,7 @@ error_code BitcodeReader::ParseConstants() {
   }
 }
 
-error_code BitcodeReader::ParseUseLists() {
+std::error_code BitcodeReader::ParseUseLists() {
   if (Stream.EnterSubBlock(bitc::USELIST_BLOCK_ID))
     return Error(InvalidRecord);
 
@@ -1611,7 +1609,7 @@ error_code BitcodeReader::ParseUseLists() {
     case BitstreamEntry::Error:
       return Error(MalformedBlock);
     case BitstreamEntry::EndBlock:
-      return error_code();
+      return std::error_code();
     case BitstreamEntry::Record:
       // The interesting case.
       break;
@@ -1636,7 +1634,7 @@ error_code BitcodeReader::ParseUseLists() {
 /// RememberAndSkipFunctionBody - When we see the block for a function body,
 /// remember where it is and then skip it.  This lets us lazily deserialize the
 /// functions.
-error_code BitcodeReader::RememberAndSkipFunctionBody() {
+std::error_code BitcodeReader::RememberAndSkipFunctionBody() {
   // Get the function we are talking about.
   if (FunctionsWithBodies.empty())
     return Error(InsufficientFunctionProtos);
@@ -1651,10 +1649,10 @@ error_code BitcodeReader::RememberAndSkipFunctionBody() {
   // Skip over the function block for now.
   if (Stream.SkipBlock())
     return Error(InvalidRecord);
-  return error_code();
+  return std::error_code();
 }
 
-error_code BitcodeReader::GlobalCleanup() {
+std::error_code BitcodeReader::GlobalCleanup() {
   // Patch the initializers for globals and aliases up.
   ResolveGlobalAndAliasInits();
   if (!GlobalInits.empty() || !AliasInits.empty())
@@ -1680,10 +1678,10 @@ error_code BitcodeReader::GlobalCleanup() {
   // want lazy deserialization.
   std::vector<std::pair<GlobalVariable*, unsigned> >().swap(GlobalInits);
   std::vector<std::pair<GlobalAlias*, unsigned> >().swap(AliasInits);
-  return error_code();
+  return std::error_code();
 }
 
-error_code BitcodeReader::ParseModule(bool Resume) {
+std::error_code BitcodeReader::ParseModule(bool Resume) {
   if (Resume)
     Stream.JumpToBit(NextUnreadBit);
   else if (Stream.EnterSubBlock(bitc::MODULE_BLOCK_ID))
@@ -1714,30 +1712,30 @@ error_code BitcodeReader::ParseModule(bool Resume) {
           return Error(MalformedBlock);
         break;
       case bitc::PARAMATTR_BLOCK_ID:
-        if (error_code EC = ParseAttributeBlock())
+        if (std::error_code EC = ParseAttributeBlock())
           return EC;
         break;
       case bitc::PARAMATTR_GROUP_BLOCK_ID:
-        if (error_code EC = ParseAttributeGroupBlock())
+        if (std::error_code EC = ParseAttributeGroupBlock())
           return EC;
         break;
       case bitc::TYPE_BLOCK_ID_NEW:
-        if (error_code EC = ParseTypeTable())
+        if (std::error_code EC = ParseTypeTable())
           return EC;
         break;
       case bitc::VALUE_SYMTAB_BLOCK_ID:
-        if (error_code EC = ParseValueSymbolTable())
+        if (std::error_code EC = ParseValueSymbolTable())
           return EC;
         SeenValueSymbolTable = true;
         break;
       case bitc::CONSTANTS_BLOCK_ID:
-        if (error_code EC = ParseConstants())
+        if (std::error_code EC = ParseConstants())
           return EC;
-        if (error_code EC = ResolveGlobalAndAliasInits())
+        if (std::error_code EC = ResolveGlobalAndAliasInits())
           return EC;
         break;
       case bitc::METADATA_BLOCK_ID:
-        if (error_code EC = ParseMetadata())
+        if (std::error_code EC = ParseMetadata())
           return EC;
         break;
       case bitc::FUNCTION_BLOCK_ID:
@@ -1745,12 +1743,12 @@ error_code BitcodeReader::ParseModule(bool Resume) {
         // FunctionsWithBodies list.
         if (!SeenFirstFunctionBody) {
           std::reverse(FunctionsWithBodies.begin(), FunctionsWithBodies.end());
-          if (error_code EC = GlobalCleanup())
+          if (std::error_code EC = GlobalCleanup())
             return EC;
           SeenFirstFunctionBody = true;
         }
 
-        if (error_code EC = RememberAndSkipFunctionBody())
+        if (std::error_code EC = RememberAndSkipFunctionBody())
           return EC;
         // For streaming bitcode, suspend parsing when we reach the function
         // bodies. Subsequent materialization calls will resume it when
@@ -1760,11 +1758,11 @@ error_code BitcodeReader::ParseModule(bool Resume) {
         // just finish the parse now.
         if (LazyStreamer && SeenValueSymbolTable) {
           NextUnreadBit = Stream.GetCurrentBitNo();
-          return error_code();
+          return std::error_code();
         }
         break;
       case bitc::USELIST_BLOCK_ID:
-        if (error_code EC = ParseUseLists())
+        if (std::error_code EC = ParseUseLists())
           return EC;
         break;
       }
@@ -2006,10 +2004,10 @@ error_code BitcodeReader::ParseModule(bool Resume) {
   }
 }
 
-error_code BitcodeReader::ParseBitcodeInto(Module *M) {
+std::error_code BitcodeReader::ParseBitcodeInto(Module *M) {
   TheModule = nullptr;
 
-  if (error_code EC = InitStream())
+  if (std::error_code EC = InitStream())
     return EC;
 
   // Sniff for the signature.
@@ -2025,7 +2023,7 @@ error_code BitcodeReader::ParseBitcodeInto(Module *M) {
   // need to understand them all.
   while (1) {
     if (Stream.AtEndOfStream())
-      return error_code();
+      return std::error_code();
 
     BitstreamEntry Entry =
       Stream.advance(BitstreamCursor::AF_DontAutoprocessAbbrevs);
@@ -2034,7 +2032,7 @@ error_code BitcodeReader::ParseBitcodeInto(Module *M) {
     case BitstreamEntry::Error:
       return Error(MalformedBlock);
     case BitstreamEntry::EndBlock:
-      return error_code();
+      return std::error_code();
 
     case BitstreamEntry::SubBlock:
       switch (Entry.ID) {
@@ -2047,10 +2045,10 @@ error_code BitcodeReader::ParseBitcodeInto(Module *M) {
         if (TheModule)
           return Error(InvalidMultipleBlocks);
         TheModule = M;
-        if (error_code EC = ParseModule(false))
+        if (std::error_code EC = ParseModule(false))
           return EC;
         if (LazyStreamer)
-          return error_code();
+          return std::error_code();
         break;
       default:
         if (Stream.SkipBlock())
@@ -2067,14 +2065,14 @@ error_code BitcodeReader::ParseBitcodeInto(Module *M) {
       if (Stream.getAbbrevIDWidth() == 2 && Entry.ID == 2 &&
           Stream.Read(6) == 2 && Stream.Read(24) == 0xa0a0a &&
           Stream.AtEndOfStream())
-        return error_code();
+        return std::error_code();
 
       return Error(InvalidRecord);
     }
   }
 }
 
-error_code BitcodeReader::ParseModuleTriple(std::string &Triple) {
+std::error_code BitcodeReader::ParseModuleTriple(std::string &Triple) {
   if (Stream.EnterSubBlock(bitc::MODULE_BLOCK_ID))
     return Error(InvalidRecord);
 
@@ -2089,7 +2087,7 @@ error_code BitcodeReader::ParseModuleTriple(std::string &Triple) {
     case BitstreamEntry::Error:
       return Error(MalformedBlock);
     case BitstreamEntry::EndBlock:
-      return error_code();
+      return std::error_code();
     case BitstreamEntry::Record:
       // The interesting case.
       break;
@@ -2110,8 +2108,8 @@ error_code BitcodeReader::ParseModuleTriple(std::string &Triple) {
   }
 }
 
-error_code BitcodeReader::ParseTriple(std::string &Triple) {
-  if (error_code EC = InitStream())
+std::error_code BitcodeReader::ParseTriple(std::string &Triple) {
+  if (std::error_code EC = InitStream())
     return EC;
 
   // Sniff for the signature.
@@ -2132,7 +2130,7 @@ error_code BitcodeReader::ParseTriple(std::string &Triple) {
     case BitstreamEntry::Error:
       return Error(MalformedBlock);
     case BitstreamEntry::EndBlock:
-      return error_code();
+      return std::error_code();
 
     case BitstreamEntry::SubBlock:
       if (Entry.ID == bitc::MODULE_BLOCK_ID)
@@ -2151,7 +2149,7 @@ error_code BitcodeReader::ParseTriple(std::string &Triple) {
 }
 
 /// ParseMetadataAttachment - Parse metadata attachments.
-error_code BitcodeReader::ParseMetadataAttachment() {
+std::error_code BitcodeReader::ParseMetadataAttachment() {
   if (Stream.EnterSubBlock(bitc::METADATA_ATTACHMENT_ID))
     return Error(InvalidRecord);
 
@@ -2164,7 +2162,7 @@ error_code BitcodeReader::ParseMetadataAttachment() {
     case BitstreamEntry::Error:
       return Error(MalformedBlock);
     case BitstreamEntry::EndBlock:
-      return error_code();
+      return std::error_code();
     case BitstreamEntry::Record:
       // The interesting case.
       break;
@@ -2198,7 +2196,7 @@ error_code BitcodeReader::ParseMetadataAttachment() {
 }
 
 /// ParseFunctionBody - Lazily parse the specified function body block.
-error_code BitcodeReader::ParseFunctionBody(Function *F) {
+std::error_code BitcodeReader::ParseFunctionBody(Function *F) {
   if (Stream.EnterSubBlock(bitc::FUNCTION_BLOCK_ID))
     return Error(InvalidRecord);
 
@@ -2234,20 +2232,20 @@ error_code BitcodeReader::ParseFunctionBody(Function *F) {
           return Error(InvalidRecord);
         break;
       case bitc::CONSTANTS_BLOCK_ID:
-        if (error_code EC = ParseConstants())
+        if (std::error_code EC = ParseConstants())
           return EC;
         NextValueNo = ValueList.size();
         break;
       case bitc::VALUE_SYMTAB_BLOCK_ID:
-        if (error_code EC = ParseValueSymbolTable())
+        if (std::error_code EC = ParseValueSymbolTable())
           return EC;
         break;
       case bitc::METADATA_ATTACHMENT_ID:
-        if (error_code EC = ParseMetadataAttachment())
+        if (std::error_code EC = ParseMetadataAttachment())
           return EC;
         break;
       case bitc::METADATA_BLOCK_ID:
-        if (error_code EC = ParseMetadata())
+        if (std::error_code EC = ParseMetadata())
           return EC;
         break;
       }
@@ -2923,7 +2921,7 @@ error_code BitcodeReader::ParseFunctionBody(Function *F) {
     }
     case bitc::FUNC_CODE_INST_CMPXCHG: {
       // CMPXCHG:[ptrty, ptr, cmp, new, vol, successordering, synchscope,
-      //          failureordering]
+      //          failureordering?, isweak?]
       unsigned OpNum = 0;
       Value *Ptr, *Cmp, *New;
       if (getValueTypePair(Record, OpNum, NextValueNo, Ptr) ||
@@ -2931,7 +2929,7 @@ error_code BitcodeReader::ParseFunctionBody(Function *F) {
                     cast<PointerType>(Ptr->getType())->getElementType(), Cmp) ||
           popValue(Record, OpNum, NextValueNo,
                     cast<PointerType>(Ptr->getType())->getElementType(), New) ||
-          (OpNum + 3 != Record.size() && OpNum + 4 != Record.size()))
+          (Record.size() < OpNum + 3 || Record.size() > OpNum + 5))
         return Error(InvalidRecord);
       AtomicOrdering SuccessOrdering = GetDecodedOrdering(Record[OpNum+1]);
       if (SuccessOrdering == NotAtomic || SuccessOrdering == Unordered)
@@ -2948,6 +2946,17 @@ error_code BitcodeReader::ParseFunctionBody(Function *F) {
       I = new AtomicCmpXchgInst(Ptr, Cmp, New, SuccessOrdering, FailureOrdering,
                                 SynchScope);
       cast<AtomicCmpXchgInst>(I)->setVolatile(Record[OpNum]);
+
+      if (Record.size() < 8) {
+        // Before weak cmpxchgs existed, the instruction simply returned the
+        // value loaded from memory, so bitcode files from that era will be
+        // expecting the first component of a modern cmpxchg.
+        CurBB->getInstList().push_back(I);
+        I = ExtractValueInst::Create(I, 0);
+      } else {
+        cast<AtomicCmpXchgInst>(I)->setWeak(Record[OpNum+4]);
+      }
+
       InstructionList.push_back(I);
       break;
     }
@@ -3117,27 +3126,29 @@ OutOfRecordLoop:
   ValueList.shrinkTo(ModuleValueListSize);
   MDValueList.shrinkTo(ModuleMDValueListSize);
   std::vector<BasicBlock*>().swap(FunctionBBs);
-  return error_code();
+  return std::error_code();
 }
 
 /// Find the function body in the bitcode stream
-error_code BitcodeReader::FindFunctionInStream(Function *F,
-       DenseMap<Function*, uint64_t>::iterator DeferredFunctionInfoIterator) {
+std::error_code BitcodeReader::FindFunctionInStream(
+    Function *F,
+    DenseMap<Function *, uint64_t>::iterator DeferredFunctionInfoIterator) {
   while (DeferredFunctionInfoIterator->second == 0) {
     if (Stream.AtEndOfStream())
       return Error(CouldNotFindFunctionInStream);
     // ParseModule will parse the next body in the stream and set its
     // position in the DeferredFunctionInfo map.
-    if (error_code EC = ParseModule(true))
+    if (std::error_code EC = ParseModule(true))
       return EC;
   }
-  return error_code();
+  return std::error_code();
 }
 
 //===----------------------------------------------------------------------===//
 // GVMaterializer implementation
 //===----------------------------------------------------------------------===//
 
+void BitcodeReader::releaseBuffer() { Buffer.release(); }
 
 bool BitcodeReader::isMaterializable(const GlobalValue *GV) const {
   if (const Function *F = dyn_cast<Function>(GV)) {
@@ -3147,24 +3158,24 @@ bool BitcodeReader::isMaterializable(const GlobalValue *GV) const {
   return false;
 }
 
-error_code BitcodeReader::Materialize(GlobalValue *GV) {
+std::error_code BitcodeReader::Materialize(GlobalValue *GV) {
   Function *F = dyn_cast<Function>(GV);
   // If it's not a function or is already material, ignore the request.
   if (!F || !F->isMaterializable())
-    return error_code();
+    return std::error_code();
 
   DenseMap<Function*, uint64_t>::iterator DFII = DeferredFunctionInfo.find(F);
   assert(DFII != DeferredFunctionInfo.end() && "Deferred function not found!");
   // If its position is recorded as 0, its body is somewhere in the stream
   // but we haven't seen it yet.
   if (DFII->second == 0 && LazyStreamer)
-    if (error_code EC = FindFunctionInStream(F, DFII))
+    if (std::error_code EC = FindFunctionInStream(F, DFII))
       return EC;
 
   // Move the bit stream to the saved position of the deferred function body.
   Stream.JumpToBit(DFII->second);
 
-  if (error_code EC = ParseFunctionBody(F))
+  if (std::error_code EC = ParseFunctionBody(F))
     return EC;
 
   // Upgrade any old intrinsic calls in the function.
@@ -3179,7 +3190,7 @@ error_code BitcodeReader::Materialize(GlobalValue *GV) {
     }
   }
 
-  return error_code();
+  return std::error_code();
 }
 
 bool BitcodeReader::isDematerializable(const GlobalValue *GV) const {
@@ -3201,8 +3212,7 @@ void BitcodeReader::Dematerialize(GlobalValue *GV) {
   F->deleteBody();
 }
 
-
-error_code BitcodeReader::MaterializeModule(Module *M) {
+std::error_code BitcodeReader::MaterializeModule(Module *M) {
   assert(M == TheModule &&
          "Can only Materialize the Module this BitcodeReader is attached to.");
   // Iterate over the module, deserializing any functions that are still on
@@ -3210,7 +3220,7 @@ error_code BitcodeReader::MaterializeModule(Module *M) {
   for (Module::iterator F = TheModule->begin(), E = TheModule->end();
        F != E; ++F) {
     if (F->isMaterializable()) {
-      if (error_code EC = Materialize(F))
+      if (std::error_code EC = Materialize(F))
         return EC;
     }
   }
@@ -3243,16 +3253,16 @@ error_code BitcodeReader::MaterializeModule(Module *M) {
     UpgradeInstWithTBAATag(InstsWithTBAATag[I]);
 
   UpgradeDebugInfo(*M);
-  return error_code();
+  return std::error_code();
 }
 
-error_code BitcodeReader::InitStream() {
+std::error_code BitcodeReader::InitStream() {
   if (LazyStreamer)
     return InitLazyStream();
   return InitStreamFromBuffer();
 }
 
-error_code BitcodeReader::InitStreamFromBuffer() {
+std::error_code BitcodeReader::InitStreamFromBuffer() {
   const unsigned char *BufPtr = (const unsigned char*)Buffer->getBufferStart();
   const unsigned char *BufEnd = BufPtr+Buffer->getBufferSize();
 
@@ -3272,10 +3282,10 @@ error_code BitcodeReader::InitStreamFromBuffer() {
   StreamFile.reset(new BitstreamReader(BufPtr, BufEnd));
   Stream.init(*StreamFile);
 
-  return error_code();
+  return std::error_code();
 }
 
-error_code BitcodeReader::InitLazyStream() {
+std::error_code BitcodeReader::InitLazyStream() {
   // Check and strip off the bitcode wrapper; BitstreamReader expects never to
   // see it.
   StreamingMemoryObject *Bytes = new StreamingMemoryObject(LazyStreamer);
@@ -3296,12 +3306,12 @@ error_code BitcodeReader::InitLazyStream() {
     Bytes->dropLeadingBytes(bitcodeStart - buf);
     Bytes->setKnownObjectSize(bitcodeEnd - bitcodeStart);
   }
-  return error_code();
+  return std::error_code();
 }
 
 namespace {
-class BitcodeErrorCategoryType : public error_category {
-  const char *name() const override {
+class BitcodeErrorCategoryType : public std::error_category {
+  const char *name() const LLVM_NOEXCEPT override {
     return "llvm.bitcode";
   }
   std::string message(int IE) const override {
@@ -3351,7 +3361,7 @@ class BitcodeErrorCategoryType : public error_category {
 };
 }
 
-const error_category &BitcodeReader::BitcodeErrorCategory() {
+const std::error_category &BitcodeReader::BitcodeErrorCategory() {
   static BitcodeErrorCategoryType O;
   return O;
 }
@@ -3367,12 +3377,11 @@ ErrorOr<Module *> llvm::getLazyBitcodeModule(MemoryBuffer *Buffer,
   Module *M = new Module(Buffer->getBufferIdentifier(), Context);
   BitcodeReader *R = new BitcodeReader(Buffer, Context);
   M->setMaterializer(R);
-  if (error_code EC = R->ParseBitcodeInto(M)) {
+  if (std::error_code EC = R->ParseBitcodeInto(M)) {
+    R->releaseBuffer(); // Never take ownership on error.
     delete M;  // Also deletes R.
     return EC;
   }
-  // Have the BitcodeReader dtor delete 'Buffer'.
-  R->setBufferOwned(true);
 
   R->materializeForwardReferencedFunctions();
 
@@ -3387,13 +3396,12 @@ Module *llvm::getStreamedBitcodeModule(const std::string &name,
   Module *M = new Module(name, Context);
   BitcodeReader *R = new BitcodeReader(streamer, Context);
   M->setMaterializer(R);
-  if (error_code EC = R->ParseBitcodeInto(M)) {
+  if (std::error_code EC = R->ParseBitcodeInto(M)) {
     if (ErrMsg)
       *ErrMsg = EC.message();
     delete M;  // Also deletes R.
     return nullptr;
   }
-  R->setBufferOwned(false); // no buffer to delete
   return M;
 }
 
@@ -3403,13 +3411,8 @@ ErrorOr<Module *> llvm::parseBitcodeFile(MemoryBuffer *Buffer,
   if (!ModuleOrErr)
     return ModuleOrErr;
   Module *M = ModuleOrErr.get();
-
-  // Don't let the BitcodeReader dtor delete 'Buffer', regardless of whether
-  // there was an error.
-  static_cast<BitcodeReader*>(M->getMaterializer())->setBufferOwned(false);
-
   // Read in the entire module, and destroy the BitcodeReader.
-  if (error_code EC = M->materializeAllPermanently()) {
+  if (std::error_code EC = M->materializeAllPermanently(true)) {
     delete M;
     return EC;
   }
@@ -3424,14 +3427,13 @@ std::string llvm::getBitcodeTargetTriple(MemoryBuffer *Buffer,
                                          LLVMContext& Context,
                                          std::string *ErrMsg) {
   BitcodeReader *R = new BitcodeReader(Buffer, Context);
-  // Don't let the BitcodeReader dtor delete 'Buffer'.
-  R->setBufferOwned(false);
 
   std::string Triple("");
-  if (error_code EC = R->ParseTriple(Triple))
+  if (std::error_code EC = R->ParseTriple(Triple))
     if (ErrMsg)
       *ErrMsg = EC.message();
 
+  R->releaseBuffer();
   delete R;
   return Triple;
 }

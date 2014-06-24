@@ -1786,6 +1786,9 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
       (isa<StoreInst>(I) && cast<StoreInst>(I).isAtomic()))
     Out << " atomic";
 
+  if (isa<AtomicCmpXchgInst>(I) && cast<AtomicCmpXchgInst>(I).isWeak())
+    Out << " weak";
+
   // If this is a volatile operation, print out the volatile marker.
   if ((isa<LoadInst>(I)  && cast<LoadInst>(I).isVolatile()) ||
       (isa<StoreInst>(I) && cast<StoreInst>(I).isVolatile()) ||
@@ -2156,10 +2159,6 @@ void NamedMDNode::print(raw_ostream &ROS) const {
 }
 
 void Type::print(raw_ostream &OS) const {
-  if (!this) {
-    OS << "<null Type>";
-    return;
-  }
   TypePrinting TP;
   TP.print(const_cast<Type*>(this), OS);
 
@@ -2172,10 +2171,6 @@ void Type::print(raw_ostream &OS) const {
 }
 
 void Value::print(raw_ostream &ROS) const {
-  if (!this) {
-    ROS << "printing a <null> value\n";
-    return;
-  }
   formatted_raw_ostream OS(ROS);
   if (const Instruction *I = dyn_cast<Instruction>(this)) {
     const Function *F = I->getParent() ? I->getParent()->getParent() : nullptr;

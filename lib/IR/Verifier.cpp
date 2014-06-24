@@ -493,6 +493,10 @@ void Verifier::visitAliaseeSubExpr(SmallPtrSet<const GlobalAlias *, 4> &Visited,
 
       Assert1(!GA2->mayBeOverridden(), "Alias cannot point to a weak alias",
               &GA);
+    } else {
+      // Only continue verifying subexpressions of GlobalAliases.
+      // Do not recurse into global initializers.
+      return;
     }
   }
 
@@ -2229,7 +2233,8 @@ void Verifier::visitInstruction(Instruction &I) {
   }
 
   MDNode *MD = I.getMetadata(LLVMContext::MD_range);
-  Assert1(!MD || isa<LoadInst>(I), "Ranges are only for loads!", &I);
+  Assert1(!MD || isa<LoadInst>(I) || isa<CallInst>(I) || isa<InvokeInst>(I),
+          "Ranges are only for loads, calls and invokes!", &I);
 
   InstsInThisBlock.insert(&I);
 }

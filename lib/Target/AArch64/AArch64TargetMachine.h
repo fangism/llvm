@@ -29,13 +29,6 @@ class AArch64TargetMachine : public LLVMTargetMachine {
 protected:
   AArch64Subtarget Subtarget;
 
-private:
-  const DataLayout DL;
-  AArch64InstrInfo InstrInfo;
-  AArch64TargetLowering TLInfo;
-  AArch64FrameLowering FrameLowering;
-  AArch64SelectionDAGInfo TSInfo;
-
 public:
   AArch64TargetMachine(const Target &T, StringRef TT, StringRef CPU,
                        StringRef FS, const TargetOptions &Options,
@@ -46,18 +39,22 @@ public:
     return &Subtarget;
   }
   const AArch64TargetLowering *getTargetLowering() const override {
-    return &TLInfo;
+    return getSubtargetImpl()->getTargetLowering();
   }
-  const DataLayout *getDataLayout() const override { return &DL; }
+  const DataLayout *getDataLayout() const override {
+    return getSubtargetImpl()->getDataLayout();
+  }
   const AArch64FrameLowering *getFrameLowering() const override {
-    return &FrameLowering;
+    return getSubtargetImpl()->getFrameLowering();
   }
-  const AArch64InstrInfo *getInstrInfo() const override { return &InstrInfo; }
+  const AArch64InstrInfo *getInstrInfo() const override {
+    return getSubtargetImpl()->getInstrInfo();
+  }
   const AArch64RegisterInfo *getRegisterInfo() const override {
-    return &InstrInfo.getRegisterInfo();
+    return &getInstrInfo()->getRegisterInfo();
   }
   const AArch64SelectionDAGInfo *getSelectionDAGInfo() const override {
-    return &TSInfo;
+    return getSubtargetImpl()->getSelectionDAGInfo();
   }
 
   // Pass Pipeline Configuration

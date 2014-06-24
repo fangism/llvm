@@ -40,9 +40,8 @@
 using namespace llvm;
 
 DwarfCFIException::DwarfCFIException(AsmPrinter *A)
-  : DwarfException(A),
-    shouldEmitPersonality(false), shouldEmitLSDA(false), shouldEmitMoves(false),
-    moveTypeModule(AsmPrinter::CFI_M_None) {}
+  : EHStreamer(A), shouldEmitPersonality(false), shouldEmitLSDA(false),
+    shouldEmitMoves(false), moveTypeModule(AsmPrinter::CFI_M_None) {}
 
 DwarfCFIException::~DwarfCFIException() {}
 
@@ -63,22 +62,12 @@ void DwarfCFIException::endModule() {
     return;
 
   // Emit references to all used personality functions
-  bool AtLeastOne = false;
   const std::vector<const Function*> &Personalities = MMI->getPersonalities();
   for (size_t i = 0, e = Personalities.size(); i != e; ++i) {
     if (!Personalities[i])
       continue;
     MCSymbol *Sym = Asm->getSymbol(Personalities[i]);
     TLOF.emitPersonalityValue(Asm->OutStreamer, Asm->TM, Sym);
-    AtLeastOne = true;
-  }
-
-  if (AtLeastOne && !TLOF.isFunctionEHFrameSymbolPrivate()) {
-    // This is a temporary hack to keep sections in the same order they
-    // were before. This lets us produce bit identical outputs while
-    // transitioning to CFI.
-    Asm->OutStreamer.SwitchSection(
-               const_cast<TargetLoweringObjectFile&>(TLOF).getEHFrameSection());
   }
 }
 
@@ -153,5 +142,5 @@ void DwarfCFIException::endFunction(const MachineFunction *) {
   // Map all labels and get rid of any dead landing pads.
   MMI->TidyLandingPads();
 
-  EmitExceptionTable();
+  emitExceptionTable();
 }

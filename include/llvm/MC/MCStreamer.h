@@ -86,6 +86,27 @@ public:
   virtual void finish();
 };
 
+class AArch64TargetStreamer : public MCTargetStreamer {
+public:
+  AArch64TargetStreamer(MCStreamer &S);
+  ~AArch64TargetStreamer();
+
+
+  void finish() override;
+
+  /// Callback used to implement the ldr= pseudo.
+  /// Add a new entry to the constant pool for the current section and return an
+  /// MCExpr that can be used to refer to the constant pool location.
+  const MCExpr *addConstantPoolEntry(const MCExpr *);
+
+  /// Callback used to implemnt the .ltorg directive.
+  /// Emit contents of constant pool for the current section.
+  void emitCurrentConstantPool();
+
+private:
+  std::unique_ptr<AssemblerConstantPools> ConstantPools;
+};
+
 // FIXME: declared here because it is used from
 // lib/CodeGen/AsmPrinter/ARMException.cpp.
 class ARMTargetStreamer : public MCTargetStreamer {
@@ -163,8 +184,6 @@ class MCStreamer {
   MCWin64EHUnwindInfo *CurrentW64UnwindInfo;
   void setCurrentW64UnwindInfo(MCWin64EHUnwindInfo *Frame);
   void EnsureValidW64UnwindInfo();
-
-  MCSymbol *LastSymbol;
 
   // SymbolOrdering - Tracks an index to represent the order
   // a symbol was emitted in. Zero means we did not emit that symbol.
@@ -722,6 +741,8 @@ public:
   virtual void FinishImpl() = 0;
   /// Finish - Finish emission of machine code.
   void Finish();
+
+  virtual bool mayHaveInstructions() const { return true; }
 };
 
 /// createNullStreamer - Create a dummy machine code streamer, which does

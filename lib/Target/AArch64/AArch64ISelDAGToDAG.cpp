@@ -153,9 +153,6 @@ public:
   SDNode *SelectStoreLane(SDNode *N, unsigned NumVecs, unsigned Opc);
   SDNode *SelectPostStoreLane(SDNode *N, unsigned NumVecs, unsigned Opc);
 
-  SDNode *SelectSIMDAddSubNarrowing(unsigned IntNo, SDNode *Node);
-  SDNode *SelectSIMDXtnNarrowing(unsigned IntNo, SDNode *Node);
-
   SDNode *SelectBitfieldExtractOp(SDNode *N);
   SDNode *SelectBitfieldInsertOp(SDNode *N);
 
@@ -2111,7 +2108,7 @@ SDNode *AArch64DAGToDAGISel::Select(SDNode *Node) {
                 .getVectorElementType()
                 .getSizeInBits()) {
     default:
-      assert(0 && "Unexpected vector element type!");
+      llvm_unreachable("Unexpected vector element type!");
     case 64:
       SubReg = AArch64::dsub;
       break;

@@ -48,7 +48,6 @@
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
-#include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include "llvm/Transforms/Utils/GlobalStatus.h"
@@ -236,23 +235,23 @@ bool AsmPrinter::doInitialization(Module &M) {
     }
   }
 
-  DwarfException *DE = nullptr;
+  EHStreamer *ES = nullptr;
   switch (MAI->getExceptionHandlingType()) {
   case ExceptionHandling::None:
     break;
   case ExceptionHandling::SjLj:
   case ExceptionHandling::DwarfCFI:
-    DE = new DwarfCFIException(this);
+    ES = new DwarfCFIException(this);
     break;
   case ExceptionHandling::ARM:
-    DE = new ARMException(this);
+    ES = new ARMException(this);
     break;
   case ExceptionHandling::Win64:
-    DE = new Win64Exception(this);
+    ES = new Win64Exception(this);
     break;
   }
-  if (DE)
-    Handlers.push_back(HandlerInfo(DE, EHTimerName, DWARFGroupName));
+  if (ES)
+    Handlers.push_back(HandlerInfo(ES, EHTimerName, DWARFGroupName));
   return false;
 }
 
@@ -1870,7 +1869,10 @@ static void emitGlobalConstantFP(const ConstantFP *CFP, AsmPrinter &AP) {
     SmallString<8> StrVal;
     CFP->getValueAPF().toString(StrVal);
 
-    CFP->getType()->print(AP.OutStreamer.GetCommentOS());
+    if (CFP->getType())
+      CFP->getType()->print(AP.OutStreamer.GetCommentOS());
+    else
+      AP.OutStreamer.GetCommentOS() << "Printing <null> Type";
     AP.OutStreamer.GetCommentOS() << ' ' << StrVal << '\n';
   }
 

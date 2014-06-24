@@ -43,6 +43,7 @@ add_llvm_library(LLVMSupport
   PluginLoader.cpp
   PrettyStackTrace.cpp
   Regex.cpp
+  ScaledNumber.cpp
   SmallPtrSet.cpp
   SmallVector.cpp
   SourceMgr.cpp
@@ -84,7 +85,6 @@ add_llvm_library(LLVMSupport
   RWMutex.cpp
   SearchForAddressOfSpecialSymbol.cpp
   Signals.cpp
-  system_error.cpp
   TargetRegistry.cpp
   ThreadLocal.cpp
   Threading.cpp
@@ -101,7 +101,6 @@ add_llvm_library(LLVMSupport
   Unix/Program.inc
   Unix/RWMutex.inc
   Unix/Signals.inc
-  Unix/system_error.inc
   Unix/ThreadLocal.inc
   Unix/TimeValue.inc
   Unix/Watchdog.inc
@@ -114,7 +113,6 @@ add_llvm_library(LLVMSupport
   Windows/Program.inc
   Windows/RWMutex.inc
   Windows/Signals.inc
-  Windows/system_error.inc
   Windows/ThreadLocal.inc
   Windows/TimeValue.inc
   Windows/Watchdog.inc

@@ -14,8 +14,11 @@
 #ifndef ARMSUBTARGET_H
 #define ARMSUBTARGET_H
 
+#include "ARMJITInfo.h"
+#include "ARMSelectionDAGInfo.h"
 #include "MCTargetDesc/ARMMCTargetDesc.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/MC/MCInstrItineraries.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include <string>
@@ -247,7 +250,20 @@ protected:
 
   /// \brief Reset the features for the ARM target.
   void resetSubtargetFeatures(const MachineFunction *MF) override;
+
+  /// initializeSubtargetDependencies - Initializes using a CPU and feature string
+  /// so that we can use initializer lists for subtarget initialization.
+  ARMSubtarget &initializeSubtargetDependencies(StringRef CPU, StringRef FS);
+
+  const DataLayout *getDataLayout() const { return &DL; }
+  const ARMSelectionDAGInfo *getSelectionDAGInfo() const { return &TSInfo; }
+  ARMJITInfo *getJITInfo() { return &JITInfo; }
+
 private:
+  const DataLayout DL;
+  ARMSelectionDAGInfo TSInfo;
+  ARMJITInfo JITInfo;
+
   void initializeEnvironment();
   void resetSubtargetFeatures(StringRef CPU, StringRef FS);
 public:
@@ -379,7 +395,12 @@ public:
 
   bool isR9Reserved() const { return IsR9Reserved; }
 
-  bool useMovt() const { return UseMovt && !isMinSize(); }
+  bool useMovt() const {
+    // NOTE Windows on ARM needs to use mov.w/mov.t pairs to materialise 32-bit
+    // immediates as it is inherently position independent, and may be out of
+    // range otherwise.
+    return UseMovt && (isTargetWindows() || !isMinSize());
+  }
   bool supportsTailCall() const { return SupportsTailCall; }
 
   bool allowsUnalignedMem() const { return AllowsUnalignedMem; }
@@ -403,6 +424,9 @@ public:
   bool enablePostRAScheduler(CodeGenOpt::Level OptLevel,
                              TargetSubtargetInfo::AntiDepBreakMode& Mode,
                              RegClassVector& CriticalPathRCs) const override;
+
+  // enableAtomicExpandLoadLinked - True if we need to expand our atomics.
+  bool enableAtomicExpandLoadLinked() const override;
 
   /// getInstrItins - Return the instruction itineraies based on subtarget
   /// selection.

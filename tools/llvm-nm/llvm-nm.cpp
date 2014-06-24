@@ -37,11 +37,11 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/system_error.h"
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <cstring>
+#include <system_error>
 #include <vector>
 using namespace llvm;
 using namespace object;
@@ -81,6 +81,7 @@ cl::alias ExternalOnly2("g", cl::desc("Alias for --extern-only"),
 
 cl::opt<bool> BSDFormat("B", cl::desc("Alias for --format=bsd"));
 cl::opt<bool> POSIXFormat("P", cl::desc("Alias for --format=posix"));
+cl::opt<bool> DarwinFormat("m", cl::desc("Alias for --format=darwin"));
 
 cl::opt<bool> PrintFileName(
     "print-file-name",
@@ -132,7 +133,7 @@ static void error(Twine Message, Twine Path = Twine()) {
   errs() << ToolName << ": " << Path << ": " << Message << ".\n";
 }
 
-static bool error(error_code EC, Twine Path = Twine()) {
+static bool error(std::error_code EC, Twine Path = Twine()) {
   if (EC) {
     error(EC.message(), Path);
     return true;
@@ -369,7 +370,7 @@ static void darwinPrintSymbol(MachOObjectFile *MachO, SymbolListT::iterator I,
   outs() << "\n";
 }
 
-static void sortAndPrintSymbolList(SymbolicFile *Obj) {
+static void sortAndPrintSymbolList(SymbolicFile *Obj, bool printName) {
   if (!NoSort) {
     if (NumericSort)
       std::sort(SymbolList.begin(), SymbolList.end(), compareSymbolAddress);
@@ -379,9 +380,9 @@ static void sortAndPrintSymbolList(SymbolicFile *Obj) {
       std::sort(SymbolList.begin(), SymbolList.end(), compareSymbolName);
   }
 
-  if (OutputFormat == posix && MultipleFiles) {
+  if (OutputFormat == posix && MultipleFiles && printName) {
     outs() << '\n' << CurrentFilename << ":\n";
-  } else if (OutputFormat == bsd && MultipleFiles) {
+  } else if (OutputFormat == bsd && MultipleFiles && printName) {
     outs() << "\n" << CurrentFilename << ":\n";
   } else if (OutputFormat == sysv) {
     outs() << "\n\nSymbols from " << CurrentFilename << ":\n\n"
@@ -577,6 +578,10 @@ static char getSymbolNMTypeChar(MachOObjectFile &Obj, basic_symbol_iterator I) {
     StringRef SegmentName = Obj.getSectionFinalSegmentName(Ref);
     if (SegmentName == "__TEXT" && SectionName == "__text")
       return 't';
+    else if (SegmentName == "__DATA" && SectionName == "__data")
+      return 'd';
+    else if (SegmentName == "__DATA" && SectionName == "__bss")
+      return 'b';
     else
       return 's';
   }
@@ -659,7 +664,7 @@ static char getNMTypeChar(SymbolicFile *Obj, basic_symbol_iterator I) {
   return Ret;
 }
 
-static void dumpSymbolNamesFromObject(SymbolicFile *Obj) {
+static void dumpSymbolNamesFromObject(SymbolicFile *Obj, bool printName) {
   basic_symbol_iterator IBegin = Obj->symbol_begin();
   basic_symbol_iterator IEnd = Obj->symbol_end();
   if (DynamicSyms) {
@@ -712,7 +717,7 @@ static void dumpSymbolNamesFromObject(SymbolicFile *Obj) {
   }
 
   CurrentFilename = Obj->getFileName();
-  sortAndPrintSymbolList(Obj);
+  sortAndPrintSymbolList(Obj, printName);
 }
 
 static void dumpSymbolNamesFromFile(std::string &Filename) {
@@ -721,9 +726,10 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
     return;
 
   LLVMContext &Context = getGlobalContext();
-  ErrorOr<Binary *> BinaryOrErr = createBinary(Buffer.release(), &Context);
+  ErrorOr<Binary *> BinaryOrErr = createBinary(Buffer, &Context);
   if (error(BinaryOrErr.getError(), Filename))
     return;
+  Buffer.release();
   std::unique_ptr<Binary> Bin(BinaryOrErr.get());
 
   if (Archive *A = dyn_cast<Archive>(Bin.get())) {
@@ -733,16 +739,14 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
       if (I != E) {
         outs() << "Archive map\n";
         for (; I != E; ++I) {
-          Archive::child_iterator C;
-          StringRef SymName;
-          StringRef FileName;
-          if (error(I->getMember(C)))
+          ErrorOr<Archive::child_iterator> C = I->getMember();
+          if (error(C.getError()))
             return;
-          if (error(I->getName(SymName)))
+          ErrorOr<StringRef> FileNameOrErr = C.get()->getName();
+          if (error(FileNameOrErr.getError()))
             return;
-          if (error(C->getName(FileName)))
-            return;
-          outs() << SymName << " in " << FileName << "\n";
+          StringRef SymName = I->getName();
+          outs() << SymName << " in " << FileNameOrErr.get() << "\n";
         }
         outs() << "\n";
       }
@@ -750,36 +754,55 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
 
     for (Archive::child_iterator I = A->child_begin(), E = A->child_end();
          I != E; ++I) {
-      std::unique_ptr<Binary> Child;
-      if (I->getAsBinary(Child, &Context))
+      ErrorOr<std::unique_ptr<Binary>> ChildOrErr = I->getAsBinary(&Context);
+      if (ChildOrErr.getError())
         continue;
-      if (SymbolicFile *O = dyn_cast<SymbolicFile>(Child.get())) {
-        outs() << O->getFileName() << ":\n";
-        dumpSymbolNamesFromObject(O);
+      if (SymbolicFile *O = dyn_cast<SymbolicFile>(&*ChildOrErr.get())) {
+        outs() << "\n";
+        if (isa<MachOObjectFile>(O)) {
+          outs() << Filename << "(" << O->getFileName() << ")";
+        } else
+          outs() << O->getFileName();
+        outs() << ":\n";
+        dumpSymbolNamesFromObject(O, false);
       }
     }
     return;
   }
   if (MachOUniversalBinary *UB = dyn_cast<MachOUniversalBinary>(Bin.get())) {
+    bool moreThanOneArch = UB->getNumberOfObjects() > 1;
     for (MachOUniversalBinary::object_iterator I = UB->begin_objects(),
                                                E = UB->end_objects();
          I != E; ++I) {
-      std::unique_ptr<ObjectFile> Obj;
+      ErrorOr<std::unique_ptr<ObjectFile>> ObjOrErr = I->getAsObjectFile();
       std::unique_ptr<Archive> A;
-      if (!I->getAsObjectFile(Obj)) {
-        outs() << Obj->getFileName() << ":\n";
-        dumpSymbolNamesFromObject(Obj.get());
+      if (ObjOrErr) {
+        std::unique_ptr<ObjectFile> Obj = std::move(ObjOrErr.get());
+        if (moreThanOneArch)
+          outs() << "\n";
+        outs() << Obj->getFileName();
+        if (isa<MachOObjectFile>(Obj.get()) && moreThanOneArch)
+          outs() << " (for architecture " << I->getArchTypeName() << ")";
+        outs() << ":\n";
+        dumpSymbolNamesFromObject(Obj.get(), false);
       }
       else if (!I->getAsArchive(A)) {
         for (Archive::child_iterator AI = A->child_begin(), AE = A->child_end();
              AI != AE; ++AI) {
-          std::unique_ptr<Binary> Child;
-          if (AI->getAsBinary(Child, &Context))
+          ErrorOr<std::unique_ptr<Binary>> ChildOrErr =
+              AI->getAsBinary(&Context);
+          if (ChildOrErr.getError())
             continue;
-          if (SymbolicFile *O = dyn_cast<SymbolicFile>(Child.get())) {
-            outs() << A->getFileName() << ":";
-            outs() << O->getFileName() << ":\n";
-            dumpSymbolNamesFromObject(O);
+          if (SymbolicFile *O = dyn_cast<SymbolicFile>(&*ChildOrErr.get())) {
+            outs() << "\n" << A->getFileName();
+            if (isa<MachOObjectFile>(O)) {
+              outs() << "(" << O->getFileName() << ")";
+              if (moreThanOneArch)
+                outs() << " (for architecture " << I->getArchTypeName() << ")";
+            } else
+              outs() << ":" << O->getFileName();
+            outs() << ":\n";
+            dumpSymbolNamesFromObject(O, false);
           }
         }
       }
@@ -787,7 +810,7 @@ static void dumpSymbolNamesFromFile(std::string &Filename) {
     return;
   }
   if (SymbolicFile *O = dyn_cast<SymbolicFile>(Bin.get())) {
-    dumpSymbolNamesFromObject(O);
+    dumpSymbolNamesFromObject(O, true);
     return;
   }
   error("unrecognizable file type", Filename);
@@ -811,6 +834,8 @@ int main(int argc, char **argv) {
     OutputFormat = bsd;
   if (POSIXFormat)
     OutputFormat = posix;
+  if (DarwinFormat)
+    OutputFormat = darwin;
 
   // The relative order of these is important. If you pass --size-sort it should
   // only print out the size. However, if you pass -S --size-sort, it should
@@ -822,7 +847,7 @@ int main(int argc, char **argv) {
 
   switch (InputFilenames.size()) {
   case 0:
-    InputFilenames.push_back("-");
+    InputFilenames.push_back("a.out");
   case 1:
     break;
   default:
