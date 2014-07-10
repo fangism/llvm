@@ -578,7 +578,14 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
   case ISD::FSIN: return LowerTrig(Op, DAG);
   case ISD::SELECT_CC: return LowerSELECT_CC(Op, DAG);
   case ISD::STORE: return LowerSTORE(Op, DAG);
-  case ISD::LOAD: return LowerLOAD(Op, DAG);
+  case ISD::LOAD: {
+    SDValue Result = LowerLOAD(Op, DAG);
+    assert((!Result.getNode() ||
+            Result.getNode()->getNumValues() == 2) &&
+           "Load should return a value and a chain");
+    return Result;
+  }
+
   case ISD::BRCOND: return LowerBRCOND(Op, DAG);
   case ISD::GlobalAddress: return LowerGlobalAddress(MFI, Op, DAG);
   case ISD::INTRINSIC_VOID: {
@@ -814,6 +821,9 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
     case Intrinsic::r600_read_tidig_z:
       return CreateLiveInRegister(DAG, &AMDGPU::R600_TReg32RegClass,
                                   AMDGPU::T0_Z, VT);
+    case Intrinsic::AMDGPU_rsq:
+      // XXX - I'm assuming SI's RSQ_LEGACY matches R600's behavior.
+      return DAG.getNode(AMDGPUISD::RSQ_LEGACY, DL, VT, Op.getOperand(1));
     }
     // break out of case ISD::INTRINSIC_WO_CHAIN in switch(Op.getOpcode())
     break;
@@ -831,20 +841,6 @@ void R600TargetLowering::ReplaceNodeResults(SDNode *N,
     return;
   case ISD::FP_TO_UINT: Results.push_back(LowerFPTOUINT(N->getOperand(0), DAG));
     return;
-  case ISD::LOAD: {
-    SDNode *Node = LowerLOAD(SDValue(N, 0), DAG).getNode();
-    Results.push_back(SDValue(Node, 0));
-    Results.push_back(SDValue(Node, 1));
-    // XXX: LLVM seems not to replace Chain Value inside CustomWidenLowerNode
-    // function
-    DAG.ReplaceAllUsesOfValueWith(SDValue(N,1), SDValue(Node, 1));
-    return;
-  }
-  case ISD::STORE: {
-    SDNode *Node = LowerSTORE(SDValue(N, 0), DAG).getNode();
-    Results.push_back(SDValue(Node, 0));
-    return;
-  }
   case ISD::UDIV: {
     SDValue Op = SDValue(N, 0);
     SDLoc DL(Op);
@@ -2189,9 +2185,8 @@ SDNode *R600TargetLowering::PostISelFolding(MachineSDNode *Node,
   SDValue FakeOp;
 
   std::vector<SDValue> Ops;
-  for(SDNode::op_iterator I = Node->op_begin(), E = Node->op_end();
-              I != E; ++I)
-          Ops.push_back(*I);
+  for (const SDUse &I : Node->ops())
+    Ops.push_back(I);
 
   if (Opcode == AMDGPU::DOT_4) {
     int OperandIdx[] = {

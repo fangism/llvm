@@ -26,6 +26,7 @@
 #include <vector>
 
 namespace llvm {
+  class Comdat;
   class MemoryBuffer;
   class LLVMContext;
 
@@ -135,6 +136,7 @@ class BitcodeReader : public GVMaterializer {
   std::vector<Type*> TypeList;
   BitcodeReaderValueList ValueList;
   BitcodeReaderMDValueList MDValueList;
+  std::vector<Comdat *> ComdatList;
   SmallVector<Instruction *, 64> InstructionList;
   SmallVector<SmallVector<uint64_t, 64>, 64> UseListRecords;
 
@@ -250,7 +252,7 @@ public:
 
   /// @brief Cheap mechanism to just extract module triple
   /// @returns true if an error occurred.
-  std::error_code ParseTriple(std::string &Triple);
+  ErrorOr<std::string> parseTriple();
 
   static uint64_t decodeSignRotatedValue(uint64_t V);
 
@@ -352,7 +354,7 @@ private:
   std::error_code ResolveGlobalAndAliasInits();
   std::error_code ParseMetadata();
   std::error_code ParseMetadataAttachment();
-  std::error_code ParseModuleTriple(std::string &Triple);
+  ErrorOr<std::string> parseModuleTriple();
   std::error_code ParseUseLists();
   std::error_code InitStream();
   std::error_code InitStreamFromBuffer();

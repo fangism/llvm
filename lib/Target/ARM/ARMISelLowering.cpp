@@ -1654,6 +1654,19 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       assert(Subtarget->isTargetMachO() && "WrapperPIC use on non-MachO?");
       Callee = DAG.getNode(ARMISD::WrapperPIC, dl, getPointerTy(),
                            DAG.getTargetGlobalAddress(GV, dl, getPointerTy()));
+    } else if (Subtarget->isTargetCOFF()) {
+      assert(Subtarget->isTargetWindows() &&
+             "Windows is the only supported COFF target");
+      unsigned TargetFlags = GV->hasDLLImportStorageClass()
+                                 ? ARMII::MO_DLLIMPORT
+                                 : ARMII::MO_NO_FLAG;
+      Callee = DAG.getTargetGlobalAddress(GV, dl, getPointerTy(), /*Offset=*/0,
+                                          TargetFlags);
+      if (GV->hasDLLImportStorageClass())
+        Callee = DAG.getLoad(getPointerTy(), dl, DAG.getEntryNode(),
+                             DAG.getNode(ARMISD::Wrapper, dl, getPointerTy(),
+                                         Callee), MachinePointerInfo::getGOT(),
+                             false, false, false, 0);
     } else {
       // On ELF targets for PIC code, direct calls should go through the PLT
       unsigned OpFlags = 0;
@@ -1695,7 +1708,8 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   // FIXME: handle tail calls differently.
   unsigned CallOpc;
-  bool HasMinSizeAttr = Subtarget->isMinSize();
+  bool HasMinSizeAttr = MF.getFunction()->getAttributes().hasAttribute(
+      AttributeSet::FunctionIndex, Attribute::MinSize);
   if (Subtarget->isThumb()) {
     if ((!isDirect || isARMFunc) && !Subtarget->hasV5TOps())
       CallOpc = ARMISD::CALL_NOLINK;
@@ -2333,7 +2347,8 @@ ARMTargetLowering::LowerToTLSGeneralDynamicModel(GlobalAddressSDNode *GA,
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(Chain)
     .setCallee(CallingConv::C, Type::getInt32Ty(*DAG.getContext()),
-               DAG.getExternalSymbol("__tls_get_addr", PtrVT), &Args, 0);
+               DAG.getExternalSymbol("__tls_get_addr", PtrVT), std::move(Args),
+               0);
 
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
   return CallResult.first;
@@ -2441,7 +2456,7 @@ SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,
 
   // If we have T2 ops, we can materialize the address directly via movt/movw
   // pair. This is always cheaper.
-  if (Subtarget->useMovt()) {
+  if (Subtarget->useMovt(DAG.getMachineFunction())) {
     ++NumMovwMovt;
     // FIXME: Once remat is capable of dealing with instructions with register
     // operands, expand this into two nodes.
@@ -2463,7 +2478,7 @@ SDValue ARMTargetLowering::LowerGlobalAddressDarwin(SDValue Op,
   const GlobalValue *GV = cast<GlobalAddressSDNode>(Op)->getGlobal();
   Reloc::Model RelocM = getTargetMachine().getRelocationModel();
 
-  if (Subtarget->useMovt())
+  if (Subtarget->useMovt(DAG.getMachineFunction()))
     ++NumMovwMovt;
 
   // FIXME: Once remat is capable of dealing with instructions with register
@@ -2483,18 +2498,27 @@ SDValue ARMTargetLowering::LowerGlobalAddressDarwin(SDValue Op,
 SDValue ARMTargetLowering::LowerGlobalAddressWindows(SDValue Op,
                                                      SelectionDAG &DAG) const {
   assert(Subtarget->isTargetWindows() && "non-Windows COFF is not supported");
-  assert(Subtarget->useMovt() && "Windows on ARM expects to use movw/movt");
+  assert(Subtarget->useMovt(DAG.getMachineFunction()) &&
+         "Windows on ARM expects to use movw/movt");
 
   const GlobalValue *GV = cast<GlobalAddressSDNode>(Op)->getGlobal();
+  const ARMII::TOF TargetFlags =
+    (GV->hasDLLImportStorageClass() ? ARMII::MO_DLLIMPORT : ARMII::MO_NO_FLAG);
   EVT PtrVT = getPointerTy();
+  SDValue Result;
   SDLoc DL(Op);
 
   ++NumMovwMovt;
 
   // FIXME: Once remat is capable of dealing with instructions with register
   // operands, expand this into two nodes.
-  return DAG.getNode(ARMISD::Wrapper, DL, PtrVT,
-                     DAG.getTargetGlobalAddress(GV, DL, PtrVT));
+  Result = DAG.getNode(ARMISD::Wrapper, DL, PtrVT,
+                       DAG.getTargetGlobalAddress(GV, DL, PtrVT, /*Offset=*/0,
+                                                  TargetFlags));
+  if (GV->hasDLLImportStorageClass())
+    Result = DAG.getLoad(PtrVT, DL, DAG.getEntryNode(), Result,
+                         MachinePointerInfo::getGOT(), false, false, false, 0);
+  return Result;
 }
 
 SDValue ARMTargetLowering::LowerGLOBAL_OFFSET_TABLE(SDValue Op,
@@ -6095,7 +6119,7 @@ SDValue ARMTargetLowering::LowerFSINCOS(SDValue Op, SelectionDAG &DAG) const {
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(DAG.getEntryNode())
     .setCallee(CallingConv::C, Type::getVoidTy(*DAG.getContext()), Callee,
-               &Args, 0)
+               std::move(Args), 0)
     .setDiscardResult();
 
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
@@ -10564,7 +10588,7 @@ SDValue ARMTargetLowering::LowerDivRem(SDValue Op, SelectionDAG &DAG) const {
   SDLoc dl(Op);
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(InChain)
-    .setCallee(getLibcallCallingConv(LC), RetTy, Callee, &Args, 0)
+    .setCallee(getLibcallCallingConv(LC), RetTy, Callee, std::move(Args), 0)
     .setInRegister().setSExtResult(isSigned).setZExtResult(!isSigned);
 
   std::pair<SDValue, SDValue> CallInfo = LowerCallTo(CLI);

@@ -562,10 +562,28 @@ public:
   /// value assuming it was the smaller SrcTy value.
   SDValue getZeroExtendInReg(SDValue Op, SDLoc DL, EVT SrcTy);
 
+  /// getAnyExtendVectorInReg - Return an operation which will any-extend the
+  /// low lanes of the operand into the specified vector type. For example,
+  /// this can convert a v16i8 into a v4i32 by any-extending the low four
+  /// lanes of the operand from i8 to i32.
+  SDValue getAnyExtendVectorInReg(SDValue Op, SDLoc DL, EVT VT);
+
+  /// getSignExtendVectorInReg - Return an operation which will sign extend the
+  /// low lanes of the operand into the specified vector type. For example,
+  /// this can convert a v16i8 into a v4i32 by sign extending the low four
+  /// lanes of the operand from i8 to i32.
+  SDValue getSignExtendVectorInReg(SDValue Op, SDLoc DL, EVT VT);
+
+  /// getZeroExtendVectorInReg - Return an operation which will zero extend the
+  /// low lanes of the operand into the specified vector type. For example,
+  /// this can convert a v16i8 into a v4i32 by zero extending the low four
+  /// lanes of the operand from i8 to i32.
+  SDValue getZeroExtendVectorInReg(SDValue Op, SDLoc DL, EVT VT);
+
   /// getBoolExtOrTrunc - Convert Op, which must be of integer type, to the
   /// integer type VT, by using an extension appropriate for the target's
-  /// BooleanContent or truncating it.
-  SDValue getBoolExtOrTrunc(SDValue Op, SDLoc SL, EVT VT);
+  /// BooleanContent for type OpVT or truncating it.
+  SDValue getBoolExtOrTrunc(SDValue Op, SDLoc SL, EVT VT, EVT OpVT);
 
   /// getNOT - Create a bitwise NOT operation as (XOR Val, -1).
   SDValue getNOT(SDLoc DL, SDValue Val, EVT VT);

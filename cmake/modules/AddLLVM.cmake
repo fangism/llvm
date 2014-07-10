@@ -150,6 +150,11 @@ endfunction(add_dead_strip)
 # Note: Don't set variables CMAKE_*_OUTPUT_DIRECTORY any more,
 # or a certain builder, for eaxample, msbuild.exe, would be confused.
 function(set_output_directory target bindir libdir)
+  # Do nothing if *_OUTPUT_INTDIR is empty.
+  if("${bindir}" STREQUAL "")
+    return()
+  endif()
+
   if(NOT "${CMAKE_CFG_INTDIR}" STREQUAL ".")
     foreach(build_mode ${CMAKE_CONFIGURATION_TYPES})
       string(TOUPPER "${build_mode}" CONFIG_SUFFIX)
@@ -205,7 +210,7 @@ function(llvm_add_library name)
     if(ARG_SHARED OR ARG_STATIC)
       message(WARNING "MODULE with SHARED|STATIC doesn't make sense.")
     endif()
-    if(NOT LLVM_ON_UNIX OR CYGWIN)
+    if(NOT LLVM_ENABLE_PLUGINS)
       message(STATUS "${name} ignored -- Loadable modules not supported on this platform.")
       return()
     endif()
@@ -570,12 +575,6 @@ function(configure_lit_site_cfg input output)
 
   set(SHLIBEXT "${LTDL_SHLIB_EXT}")
 
-  if(BUILD_SHARED_LIBS)
-    set(LLVM_SHARED_LIBS_ENABLED "1")
-  else()
-    set(LLVM_SHARED_LIBS_ENABLED "0")
-  endif(BUILD_SHARED_LIBS)
-
   # Configuration-time: See Unit/lit.site.cfg.in
   if (CMAKE_CFG_INTDIR STREQUAL ".")
     set(LLVM_BUILD_MODE ".")
@@ -590,10 +589,16 @@ function(configure_lit_site_cfg input output)
   string(REPLACE ${CMAKE_CFG_INTDIR} ${LLVM_BUILD_MODE} LLVM_LIBS_DIR  ${LLVM_LIBRARY_DIR})
 
   # SHLIBDIR points the build tree.
-  string(REPLACE ${CMAKE_CFG_INTDIR} ${LLVM_BUILD_MODE} SHLIBDIR ${LLVM_LIBRARY_OUTPUT_INTDIR})
+  string(REPLACE ${CMAKE_CFG_INTDIR} ${LLVM_BUILD_MODE} SHLIBDIR "${LLVM_SHLIB_OUTPUT_INTDIR}")
 
   set(PYTHON_EXECUTABLE ${PYTHON_EXECUTABLE})
-  set(ENABLE_SHARED ${LLVM_SHARED_LIBS_ENABLED})
+  # FIXME: "ENABLE_SHARED" doesn't make sense, since it is used just for
+  # plugins. We may rename it.
+  if(LLVM_ENABLE_PLUGINS)
+    set(ENABLE_SHARED "1")
+  else()
+    set(ENABLE_SHARED "0")
+  endif()
 
   if(LLVM_ENABLE_ASSERTIONS AND NOT MSVC_IDE)
     set(ENABLE_ASSERTIONS "1")

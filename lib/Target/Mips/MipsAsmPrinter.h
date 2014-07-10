@@ -40,6 +40,12 @@ private:
   bool emitPseudoExpansionLowering(MCStreamer &OutStreamer,
                                    const MachineInstr *MI);
 
+  // Emit PseudoReturn, PseudoReturn64, PseudoIndirectBranch,
+  // and PseudoIndirectBranch64 as a JR, JR_MM, JALR, or JALR64 as appropriate
+  // for the target.
+  void emitPseudoIndirectBranch(MCStreamer &OutStreamer,
+                                const MachineInstr *MI);
+
   // lowerOperand - Convert a MachineOperand into the equivalent MCOperand.
   bool lowerOperand(const MachineOperand &MO, MCOperand &MCOp);
 

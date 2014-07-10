@@ -111,11 +111,11 @@ private:
 
   bool X86SelectDivRem(const Instruction *I);
 
-  bool X86FastEmitCMoveSelect(const Instruction *I);
+  bool X86FastEmitCMoveSelect(MVT RetVT, const Instruction *I);
 
-  bool X86FastEmitSSESelect(const Instruction *I);
+  bool X86FastEmitSSESelect(MVT RetVT, const Instruction *I);
 
-  bool X86FastEmitPseudoSelect(const Instruction *I);
+  bool X86FastEmitPseudoSelect(MVT RetVT, const Instruction *I);
 
   bool X86SelectSelect(const Instruction *I);
 
@@ -157,6 +157,9 @@ private:
 
   bool TryEmitSmallMemcpy(X86AddressMode DestAM,
                           X86AddressMode SrcAM, uint64_t Len);
+
+  bool foldX86XALUIntrinsic(X86::CondCode &CC, const Instruction *I,
+                            const Value *Cond);
 };
 
 } // end anonymous namespace.
@@ -202,7 +205,7 @@ static CmpInst::Predicate optimizeCmpPredicate(const CmpInst *CI) {
 }
 
 static std::pair<X86::CondCode, bool>
-getX86ConditonCode(CmpInst::Predicate Predicate) {
+getX86ConditionCode(CmpInst::Predicate Predicate) {
   X86::CondCode CC = X86::COND_INVALID;
   bool NeedSwap = false;
   switch (Predicate) {
@@ -240,7 +243,7 @@ getX86ConditonCode(CmpInst::Predicate Predicate) {
 }
 
 static std::pair<unsigned, bool>
-getX86SSECondtionCode(CmpInst::Predicate Predicate) {
+getX86SSEConditionCode(CmpInst::Predicate Predicate) {
   unsigned CC;
   bool NeedSwap = false;
 
@@ -272,6 +275,62 @@ getX86SSECondtionCode(CmpInst::Predicate Predicate) {
   }
 
   return std::make_pair(CC, NeedSwap);
+}
+
+/// \brief Check if it is possible to fold the condition from the XALU intrinsic
+/// into the user. The condition code will only be updated on success.
+bool X86FastISel::foldX86XALUIntrinsic(X86::CondCode &CC, const Instruction *I,
+                                       const Value *Cond) {
+  if (!isa<ExtractValueInst>(Cond))
+    return false;
+
+  const auto *EV = cast<ExtractValueInst>(Cond);
+  if (!isa<IntrinsicInst>(EV->getAggregateOperand()))
+    return false;
+
+  const auto *II = cast<IntrinsicInst>(EV->getAggregateOperand());
+  MVT RetVT;
+  const Function *Callee = II->getCalledFunction();
+  Type *RetTy =
+    cast<StructType>(Callee->getReturnType())->getTypeAtIndex(0U);
+  if (!isTypeLegal(RetTy, RetVT))
+    return false;
+
+  if (RetVT != MVT::i32 && RetVT != MVT::i64)
+    return false;
+
+  X86::CondCode TmpCC;
+  switch (II->getIntrinsicID()) {
+  default: return false;
+  case Intrinsic::sadd_with_overflow:
+  case Intrinsic::ssub_with_overflow:
+  case Intrinsic::smul_with_overflow:
+  case Intrinsic::umul_with_overflow: TmpCC = X86::COND_O; break;
+  case Intrinsic::uadd_with_overflow:
+  case Intrinsic::usub_with_overflow: TmpCC = X86::COND_B; break;
+  }
+
+  // Check if both instructions are in the same basic block.
+  if (II->getParent() != I->getParent())
+    return false;
+
+  // Make sure nothing is in the way
+  BasicBlock::const_iterator Start = I;
+  BasicBlock::const_iterator End = II;
+  for (auto Itr = std::prev(Start); Itr != End; --Itr) {
+    // We only expect extractvalue instructions between the intrinsic and the
+    // instruction to be selected.
+    if (!isa<ExtractValueInst>(Itr))
+      return false;
+
+    // Check that the extractvalue operand comes from the intrinsic.
+    const auto *EVI = cast<ExtractValueInst>(Itr);
+    if (EVI->getAggregateOperand() != II)
+      return false;
+  }
+
+  CC = TmpCC;
+  return true;
 }
 
 bool X86FastISel::isTypeLegal(Type *Ty, MVT &VT, bool AllowI1) {
@@ -822,7 +881,7 @@ bool X86FastISel::X86SelectCallAddress(const Value *V, X86AddressMode &AM) {
         (AM.Base.Reg != 0 || AM.IndexReg != 0))
       return false;
 
-    // Can't handle DbgLocLImport.
+    // Can't handle DLL Import.
     if (GV->hasDLLImportStorageClass())
       return false;
 
@@ -1200,8 +1259,8 @@ bool X86FastISel::X86SelectCmp(const Instruction *I) {
 
   X86::CondCode CC;
   bool SwapArgs;
-  std::tie(CC, SwapArgs) = getX86ConditonCode(Predicate);
-  assert(CC <= X86::LAST_VALID_COND && "Unexpected conditon code.");
+  std::tie(CC, SwapArgs) = getX86ConditionCode(Predicate);
+  assert(CC <= X86::LAST_VALID_COND && "Unexpected condition code.");
   unsigned Opc = X86::getSETFromCond(CC);
 
   if (SwapArgs)
@@ -1277,6 +1336,7 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
   // Fold the common case of a conditional branch with a comparison
   // in the same block (values defined on other blocks may not have
   // initialized registers).
+  X86::CondCode CC;
   if (const CmpInst *CI = dyn_cast<CmpInst>(BI->getCondition())) {
     if (CI->hasOneUse() && CI->getParent() == I->getParent()) {
       EVT VT = TLI.getValueType(CI->getOperand(0)->getType());
@@ -1308,9 +1368,9 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
         Predicate = CmpInst::getInversePredicate(Predicate);
       }
 
-      // FCMP_OEQ and FCMP_UNE cannot be expressed with a single flag/conditon
+      // FCMP_OEQ and FCMP_UNE cannot be expressed with a single flag/condition
       // code check. Instead two branch instructions are required to check all
-      // the flags. First we change the predicate to a supported conditon code,
+      // the flags. First we change the predicate to a supported condition code,
       // which will be the first branch. Later one we will emit the second
       // branch.
       bool NeedExtraBranch = false;
@@ -1324,11 +1384,10 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
         break;
       }
 
-      X86::CondCode CC;
       bool SwapArgs;
       unsigned BranchOpc;
-      std::tie(CC, SwapArgs) = getX86ConditonCode(Predicate);
-      assert(CC <= X86::LAST_VALID_COND && "Unexpected conditon code.");
+      std::tie(CC, SwapArgs) = getX86ConditionCode(Predicate);
+      assert(CC <= X86::LAST_VALID_COND && "Unexpected condition code.");
 
       BranchOpc = X86::GetCondBranchFromCond(CC);
       if (SwapArgs)
@@ -1398,6 +1457,24 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
         return true;
       }
     }
+  } else if (foldX86XALUIntrinsic(CC, BI, BI->getCondition())) {
+    // Fake request the condition, otherwise the intrinsic might be completely
+    // optimized away.
+    unsigned TmpReg = getRegForValue(BI->getCondition());
+    if (TmpReg == 0)
+      return false;
+
+    unsigned BranchOpc = X86::GetCondBranchFromCond(CC);
+
+    BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(BranchOpc))
+      .addMBB(TrueMBB);
+    FastEmitBranch(FalseMBB, DbgLoc);
+    uint32_t BranchWeight = 0;
+    if (FuncInfo.BPI)
+      BranchWeight = FuncInfo.BPI->getEdgeWeight(BI->getParent(),
+                                                 TrueMBB->getBasicBlock());
+    FuncInfo.MBB->addSuccessor(TrueMBB, BranchWeight);
+    return true;
   }
 
   // Otherwise do a clumsy setcc and re-test it.
@@ -1654,30 +1731,25 @@ bool X86FastISel::X86SelectDivRem(const Instruction *I) {
 
 /// \brief Emit a conditional move instruction (if the are supported) to lower
 /// the select.
-bool X86FastISel::X86FastEmitCMoveSelect(const Instruction *I) {
-  MVT RetVT;
-  if (!isTypeLegal(I->getType(), RetVT))
-    return false;
-
+bool X86FastISel::X86FastEmitCMoveSelect(MVT RetVT, const Instruction *I) {
   // Check if the subtarget supports these instructions.
   if (!Subtarget->hasCMov())
     return false;
 
   // FIXME: Add support for i8.
-  unsigned Opc;
-  switch (RetVT.SimpleTy) {
-  default: return false;
-  case MVT::i16: Opc = X86::CMOVNE16rr; break;
-  case MVT::i32: Opc = X86::CMOVNE32rr; break;
-  case MVT::i64: Opc = X86::CMOVNE64rr; break;
-  }
+  if (RetVT < MVT::i16 || RetVT > MVT::i64)
+    return false;
 
   const Value *Cond = I->getOperand(0);
   const TargetRegisterClass *RC = TLI.getRegClassFor(RetVT);
   bool NeedTest = true;
+  X86::CondCode CC = X86::COND_NE;
 
-  // Optimize conditons coming from a compare.
-  if (const auto *CI = dyn_cast<CmpInst>(Cond)) {
+  // Optimize conditions coming from a compare if both instructions are in the
+  // same basic block (values defined in other basic blocks may not have
+  // initialized registers).
+  const auto *CI = dyn_cast<CmpInst>(Cond);
+  if (CI && (CI->getParent() == I->getParent())) {
     CmpInst::Predicate Predicate = optimizeCmpPredicate(CI);
 
     // FCMP_OEQ and FCMP_UNE cannot be checked with a single instruction.
@@ -1698,11 +1770,9 @@ bool X86FastISel::X86FastEmitCMoveSelect(const Instruction *I) {
       break;
     }
 
-    X86::CondCode CC;
     bool NeedSwap;
-    std::tie(CC, NeedSwap) = getX86ConditonCode(Predicate);
+    std::tie(CC, NeedSwap) = getX86ConditionCode(Predicate);
     assert(CC <= X86::LAST_VALID_COND && "Unexpected condition code.");
-    Opc = X86::getCMovFromCond(CC, RC->getSize());
 
     const Value *CmpLHS = CI->getOperand(0);
     const Value *CmpRHS = CI->getOperand(1);
@@ -1731,6 +1801,14 @@ bool X86FastISel::X86FastEmitCMoveSelect(const Instruction *I) {
           .addReg(FlagReg2).addReg(FlagReg1);
       }
     }
+    NeedTest = false;
+  } else if (foldX86XALUIntrinsic(CC, I, Cond)) {
+    // Fake request the condition, otherwise the intrinsic might be completely
+    // optimized away.
+    unsigned TmpReg = getRegForValue(Cond);
+    if (TmpReg == 0)
+      return false;
+
     NeedTest = false;
   }
 
@@ -1761,6 +1839,7 @@ bool X86FastISel::X86FastEmitCMoveSelect(const Instruction *I) {
   if (!LHSReg || !RHSReg)
     return false;
 
+  unsigned Opc = X86::getCMovFromCond(CC, RC->getSize());
   unsigned ResultReg = FastEmitInst_rr(Opc, RC, RHSReg, RHSIsKill,
                                        LHSReg, LHSIsKill);
   UpdateValueMap(I, ResultReg);
@@ -1772,13 +1851,12 @@ bool X86FastISel::X86FastEmitCMoveSelect(const Instruction *I) {
 /// Try to use SSE1/SSE2 instructions to simulate a select without branches.
 /// This lowers fp selects into a CMP/AND/ANDN/OR sequence when the necessary
 /// SSE instructions are available.
-bool X86FastISel::X86FastEmitSSESelect(const Instruction *I) {
-  MVT RetVT;
-  if (!isTypeLegal(I->getType(), RetVT))
-    return false;
-
+bool X86FastISel::X86FastEmitSSESelect(MVT RetVT, const Instruction *I) {
+  // Optimize conditions coming from a compare if both instructions are in the
+  // same basic block (values defined in other basic blocks may not have
+  // initialized registers).
   const auto *CI = dyn_cast<FCmpInst>(I->getOperand(0));
-  if (!CI)
+  if (!CI || (CI->getParent() != I->getParent()))
     return false;
 
   if (I->getType() != CI->getOperand(0)->getType() ||
@@ -1801,7 +1879,7 @@ bool X86FastISel::X86FastEmitSSESelect(const Instruction *I) {
 
   unsigned CC;
   bool NeedSwap;
-  std::tie(CC, NeedSwap) = getX86SSECondtionCode(Predicate);
+  std::tie(CC, NeedSwap) = getX86SSEConditionCode(Predicate);
   if (CC > 7)
     return false;
 
@@ -1854,11 +1932,7 @@ bool X86FastISel::X86FastEmitSSESelect(const Instruction *I) {
   return true;
 }
 
-bool X86FastISel::X86FastEmitPseudoSelect(const Instruction *I) {
-  MVT RetVT;
-  if (!isTypeLegal(I->getType(), RetVT))
-    return false;
-
+bool X86FastISel::X86FastEmitPseudoSelect(MVT RetVT, const Instruction *I) {
   // These are pseudo CMOV instructions and will be later expanded into control-
   // flow.
   unsigned Opc;
@@ -1873,10 +1947,14 @@ bool X86FastISel::X86FastEmitPseudoSelect(const Instruction *I) {
 
   const Value *Cond = I->getOperand(0);
   X86::CondCode CC = X86::COND_NE;
-  // Don't emit a test if the condition comes from a compare.
-  if (const auto *CI = dyn_cast<CmpInst>(Cond)) {
+
+  // Optimize conditions coming from a compare if both instructions are in the
+  // same basic block (values defined in other basic blocks may not have
+  // initialized registers).
+  const auto *CI = dyn_cast<CmpInst>(Cond);
+  if (CI && (CI->getParent() == I->getParent())) {
     bool NeedSwap;
-    std::tie(CC, NeedSwap) = getX86ConditonCode(CI->getPredicate());
+    std::tie(CC, NeedSwap) = getX86ConditionCode(CI->getPredicate());
     if (CC > X86::LAST_VALID_COND)
       return false;
 
@@ -1949,16 +2027,16 @@ bool X86FastISel::X86SelectSelect(const Instruction *I) {
   }
 
   // First try to use real conditional move instructions.
-  if (X86FastEmitCMoveSelect(I))
+  if (X86FastEmitCMoveSelect(RetVT, I))
     return true;
 
-  // Try to use a sequence of SSE instructions to simulate a conditonal move.
-  if (X86FastEmitSSESelect(I))
+  // Try to use a sequence of SSE instructions to simulate a conditional move.
+  if (X86FastEmitSSESelect(RetVT, I))
     return true;
 
   // Fall-back to pseudo conditional move instructions, which will be later
   // converted to control-flow.
-  if (X86FastEmitPseudoSelect(I))
+  if (X86FastEmitPseudoSelect(RetVT, I))
     return true;
 
   return false;
@@ -2242,7 +2320,7 @@ bool X86FastISel::X86VisitIntrinsicCall(const IntrinsicInst &I) {
     if (!isTypeLegal(RetTy, VT))
       return false;
 
-    // Unfortunatelly we can't use FastEmit_r, because the AVX version of FSQRT
+    // Unfortunately we can't use FastEmit_r, because the AVX version of FSQRT
     // is not generated by FastISel yet.
     // FIXME: Update this code once tablegen can handle it.
     static const unsigned SqrtOpc[2][2] = {
@@ -2291,7 +2369,7 @@ bool X86FastISel::X86VisitIntrinsicCall(const IntrinsicInst &I) {
   case Intrinsic::smul_with_overflow:
   case Intrinsic::umul_with_overflow: {
     // This implements the basic lowering of the xalu with overflow intrinsics
-    // into add/sub/mul folowed by either seto or setb.
+    // into add/sub/mul followed by either seto or setb.
     const Function *Callee = I.getCalledFunction();
     auto *Ty = cast<StructType>(Callee->getReturnType());
     Type *RetTy = Ty->getTypeAtIndex(0U);
@@ -2307,7 +2385,7 @@ bool X86FastISel::X86VisitIntrinsicCall(const IntrinsicInst &I) {
     const Value *LHS = I.getArgOperand(0);
     const Value *RHS = I.getArgOperand(1);
 
-    // Canonicalize immediates to the RHS.
+    // Canonicalize immediate to the RHS.
     if (isa<ConstantInt>(LHS) && !isa<ConstantInt>(RHS) &&
         isCommutativeIntrinsic(I))
       std::swap(LHS, RHS);
@@ -2324,7 +2402,7 @@ bool X86FastISel::X86VisitIntrinsicCall(const IntrinsicInst &I) {
     case Intrinsic::usub_with_overflow:
       BaseOpc = ISD::SUB; CondOpc = X86::SETBr; break;
     case Intrinsic::smul_with_overflow:
-      BaseOpc = ISD::MUL; CondOpc = X86::SETOr; break;
+      BaseOpc = X86ISD::SMUL; CondOpc = X86::SETOr; break;
     case Intrinsic::umul_with_overflow:
       BaseOpc = X86ISD::UMUL; CondOpc = X86::SETOr; break;
     }
@@ -2352,10 +2430,11 @@ bool X86FastISel::X86VisitIntrinsicCall(const IntrinsicInst &I) {
                               RHSIsKill);
     }
 
-    // FastISel doesn't have a pattern for X86::MUL*r. Emit it manually.
+    // FastISel doesn't have a pattern for all X86::MUL*r and X86::IMUL*r. Emit
+    // it manually.
     if (BaseOpc == X86ISD::UMUL && !ResultReg) {
       static const unsigned MULOpc[] =
-      { X86::MUL8r, X86::MUL16r, X86::MUL32r, X86::MUL64r };
+        { X86::MUL8r, X86::MUL16r, X86::MUL32r, X86::MUL64r };
       static const unsigned Reg[] = { X86::AL, X86::AX, X86::EAX, X86::RAX };
       // First copy the first operand into RAX, which is an implicit input to
       // the X86::MUL*r instruction.
@@ -2364,6 +2443,21 @@ bool X86FastISel::X86VisitIntrinsicCall(const IntrinsicInst &I) {
         .addReg(LHSReg, getKillRegState(LHSIsKill));
       ResultReg = FastEmitInst_r(MULOpc[VT.SimpleTy-MVT::i8],
                                  TLI.getRegClassFor(VT), RHSReg, RHSIsKill);
+    } else if (BaseOpc == X86ISD::SMUL && !ResultReg) {
+      static const unsigned MULOpc[] =
+        { X86::IMUL8r, X86::IMUL16rr, X86::IMUL32rr, X86::IMUL64rr };
+      if (VT == MVT::i8) {
+        // Copy the first operand into AL, which is an implicit input to the
+        // X86::IMUL8r instruction.
+        BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc,
+               TII.get(TargetOpcode::COPY), X86::AL)
+          .addReg(LHSReg, getKillRegState(LHSIsKill));
+        ResultReg = FastEmitInst_r(MULOpc[0], TLI.getRegClassFor(VT), RHSReg,
+                                   RHSIsKill);
+      } else
+        ResultReg = FastEmitInst_rr(MULOpc[VT.SimpleTy-MVT::i8],
+                                    TLI.getRegClassFor(VT), LHSReg, LHSIsKill,
+                                    RHSReg, RHSIsKill);
     }
 
     if (!ResultReg)

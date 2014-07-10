@@ -201,6 +201,8 @@ public:
   getLinkerOptionsLoadCommand(const LoadCommandInfo &L) const;
   MachO::version_min_command
   getVersionMinLoadCommand(const LoadCommandInfo &L) const;
+  MachO::dylib_command
+  getDylibIDLoadCommand(const LoadCommandInfo &L) const;
 
   MachO::any_relocation_info getRelocation(DataRefImpl Rel) const;
   MachO::data_in_code_entry getDice(DataRefImpl Rel) const;
@@ -223,15 +225,20 @@ public:
                                          StringRef &Suffix);
 
   static Triple::ArchType getArch(uint32_t CPUType);
+  static Triple getArch(uint32_t CPUType, uint32_t CPUSubType);
+  static Triple getArch(StringRef ArchFlag);
+  static Triple getHostArch();
 
   static bool classof(const Binary *v) {
     return v->isMachO();
   }
 
+  const char *getSectionPointer(DataRefImpl Rel) const;
+
 private:
-  typedef SmallVector<const char*, 1> SectionList;
+  typedef SmallVector<const char *, 1> SectionList;
   SectionList Sections;
-  typedef SmallVector<const char*, 1> LibraryList;
+  typedef SmallVector<const char *, 1> LibraryList;
   LibraryList Libraries;
   typedef SmallVector<StringRef, 1> LibraryShortName;
   LibraryShortName LibrariesShortNames;

@@ -147,6 +147,12 @@ def FRAMEri32 : Operand<iPTR> {
 }
 
 //===----------------------------------------------------------------------===//
+// Complex patterns
+//===----------------------------------------------------------------------===//
+
+def MUBUFAddr64 : ComplexPattern<i64, 3, "SelectMUBUFAddr64">;
+
+//===----------------------------------------------------------------------===//
 // SI assembler operands
 //===----------------------------------------------------------------------===//
 
@@ -570,7 +576,9 @@ class MTBUF_Store_Helper <bits<3> op, string asm, RegisterClass regClass> : MTBU
   let mayLoad = 0;
 }
 
-multiclass MUBUF_Load_Helper <bits<7> op, string asm, RegisterClass regClass> {
+multiclass MUBUF_Load_Helper <bits<7> op, string asm, RegisterClass regClass,
+                              ValueType load_vt = i32,
+                              SDPatternOperator ld = null_frag> {
 
   let lds = 0, mayLoad = 1 in {
 
@@ -612,16 +620,19 @@ multiclass MUBUF_Load_Helper <bits<7> op, string asm, RegisterClass regClass> {
     let offen = 0, idxen = 0, addr64 = 1, glc = 0, slc = 0, tfe = 0, soffset = 128 /* ZERO */ in {
       def _ADDR64 : MUBUF <op, (outs regClass:$vdata),
                            (ins SReg_128:$srsrc, VReg_64:$vaddr, u16imm:$offset),
-                           asm#" $vdata, $srsrc + $vaddr + $offset", []>;
+                           asm#" $vdata, $srsrc + $vaddr + $offset",
+                           [(set load_vt:$vdata, (ld (MUBUFAddr64 v4i32:$srsrc,
+                                                  i64:$vaddr, u16imm:$offset)))]>;
     }
   }
 }
 
-class MUBUF_Store_Helper <bits<7> op, string name, RegisterClass vdataClass> :
+class MUBUF_Store_Helper <bits<7> op, string name, RegisterClass vdataClass,
+                          ValueType store_vt, SDPatternOperator st> :
     MUBUF <op, (outs), (ins vdataClass:$vdata, SReg_128:$srsrc, VReg_64:$vaddr,
                             u16imm:$offset),
           name#" $vdata, $srsrc + $vaddr + $offset",
-         []> {
+          [(st store_vt:$vdata, (MUBUFAddr64 v4i32:$srsrc, i64:$vaddr, u16imm:$offset))]> {
 
   let mayLoad = 0;
   let mayStore = 1;

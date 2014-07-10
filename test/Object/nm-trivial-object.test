@@ -12,10 +12,16 @@ RUN: llvm-nm %p/Inputs/absolute.elf-x86-64 \
 RUN:         | FileCheck %s -check-prefix ABSOLUTE-ELF64
 RUN: llvm-nm %p/Inputs/trivial-object-test.macho-i386 \
 RUN:         | FileCheck %s -check-prefix macho
+RUN: llvm-nm -U %p/Inputs/trivial-object-test.macho-i386 \
+RUN:         | FileCheck %s -check-prefix macho-U
 RUN: llvm-nm %p/Inputs/trivial-object-test.macho-x86-64 \
 RUN:         | FileCheck %s -check-prefix macho64
 RUN: llvm-nm %p/Inputs/macho-text-data-bss.macho-x86_64 \
 RUN:         | FileCheck %s -check-prefix macho-tdb
+RUN: llvm-nm -j %p/Inputs/macho-text-data-bss.macho-x86_64 \
+RUN:         | FileCheck %s -check-prefix macho-j
+RUN: llvm-nm -r %p/Inputs/macho-text-data-bss.macho-x86_64 \
+RUN:         | FileCheck %s -check-prefix macho-r
 RUN: llvm-nm %p/Inputs/common.coff-i386 \
 RUN:         | FileCheck %s -check-prefix COFF-COMMON
 RUN: llvm-nm %p/Inputs/relocatable-with-section-address.elf-x86-64 \
@@ -66,6 +72,10 @@ macho:          U _SomeOtherFunction
 macho: 00000000 T _main
 macho:          U _puts
 
+macho-U-NOT:          U _SomeOtherFunction
+macho-U: 00000000 T _main
+macho-U-NOT:          U _puts
+
 macho64: 0000000000000028 s L_.str
 macho64:                  U _SomeOtherFunction
 macho64: 0000000000000000 T _main
@@ -76,6 +86,18 @@ macho-tdb: 0000000000000070 b _b
 macho-tdb: 000000000000000c D _d
 macho-tdb: 0000000000000000 T _t
 macho-tdb: 0000000000000048 S _t.eh
+
+macho-j: EH_frame0
+macho-j: _b
+macho-j: _d
+macho-j: _t
+macho-j: _t.eh
+
+macho-r: 0000000000000048 S _t.eh
+macho-r-NEXT: 0000000000000000 T _t
+macho-r-NEXT: 000000000000000c D _d
+macho-r-NEXT: 0000000000000070 b _b
+macho-r-NEXT: 0000000000000030 s EH_frame0
 
 Test that nm uses addresses even with ELF .o files.
 ELF-SEC-ADDR64:      0000000000000058 D a

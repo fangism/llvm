@@ -105,7 +105,7 @@ TargetLowering::makeLibCall(SelectionDAG &DAG,
   Type *RetTy = RetVT.getTypeForEVT(*DAG.getContext());
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(DAG.getEntryNode())
-    .setCallee(getLibcallCallingConv(LC), RetTy, Callee, &Args, 0)
+    .setCallee(getLibcallCallingConv(LC), RetTy, Callee, std::move(Args), 0)
     .setNoReturn(doesNotReturn).setDiscardResult(!isReturnValueUsed)
     .setSExtResult(isSigned).setZExtResult(!isSigned);
   return LowerCallTo(CLI);
@@ -1150,18 +1150,21 @@ bool TargetLowering::isConstTrueVal(const SDNode *N) const {
   if (!N)
     return false;
 
-  bool IsVec = false;
   const ConstantSDNode *CN = dyn_cast<ConstantSDNode>(N);
   if (!CN) {
     const BuildVectorSDNode *BV = dyn_cast<BuildVectorSDNode>(N);
     if (!BV)
       return false;
 
-    IsVec = true;
-    CN = BV->getConstantSplatValue();
+    BitVector UndefElements;
+    CN = BV->getConstantSplatNode(&UndefElements);
+    // Only interested in constant splats, and we don't try to handle undef
+    // elements in identifying boolean constants.
+    if (!CN || UndefElements.none())
+      return false;
   }
 
-  switch (getBooleanContents(IsVec)) {
+  switch (getBooleanContents(N->getValueType(0))) {
   case UndefinedBooleanContent:
     return CN->getAPIntValue()[0];
   case ZeroOrOneBooleanContent:
@@ -1177,18 +1180,21 @@ bool TargetLowering::isConstFalseVal(const SDNode *N) const {
   if (!N)
     return false;
 
-  bool IsVec = false;
   const ConstantSDNode *CN = dyn_cast<ConstantSDNode>(N);
   if (!CN) {
     const BuildVectorSDNode *BV = dyn_cast<BuildVectorSDNode>(N);
     if (!BV)
       return false;
 
-    IsVec = true;
-    CN = BV->getConstantSplatValue();
+    BitVector UndefElements;
+    CN = BV->getConstantSplatNode(&UndefElements);
+    // Only interested in constant splats, and we don't try to handle undef
+    // elements in identifying boolean constants.
+    if (!CN || UndefElements.none())
+      return false;
   }
 
-  if (getBooleanContents(IsVec) == UndefinedBooleanContent)
+  if (getBooleanContents(N->getValueType(0)) == UndefinedBooleanContent)
     return !CN->getAPIntValue()[0];
 
   return CN->isNullValue();
@@ -1209,7 +1215,8 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
   case ISD::SETFALSE2: return DAG.getConstant(0, VT);
   case ISD::SETTRUE:
   case ISD::SETTRUE2: {
-    TargetLowering::BooleanContent Cnt = getBooleanContents(VT.isVector());
+    TargetLowering::BooleanContent Cnt =
+        getBooleanContents(N0->getValueType(0));
     return DAG.getConstant(
         Cnt == TargetLowering::ZeroOrNegativeOneBooleanContent ? -1ULL : 1, VT);
   }
@@ -1416,7 +1423,7 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
 
           SDValue NewSetCC = DAG.getSetCC(dl, NewSetCCVT, N0.getOperand(0),
                                           NewConst, Cond);
-          return DAG.getBoolExtOrTrunc(NewSetCC, dl, VT);
+          return DAG.getBoolExtOrTrunc(NewSetCC, dl, VT, N0.getValueType());
         }
         break;
       }
@@ -1500,7 +1507,8 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
         }
       } else if (N1C->getAPIntValue() == 1 &&
                  (VT == MVT::i1 ||
-                  getBooleanContents(false) == ZeroOrOneBooleanContent)) {
+                  getBooleanContents(N0->getValueType(0)) ==
+                      ZeroOrOneBooleanContent)) {
         SDValue Op0 = N0;
         if (Op0.getOpcode() == ISD::TRUNCATE)
           Op0 = Op0.getOperand(0);
@@ -1771,7 +1779,7 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
     // The sext(setcc()) => setcc() optimization relies on the appropriate
     // constant being emitted.
     uint64_t EqVal = 0;
-    switch (getBooleanContents(N0.getValueType().isVector())) {
+    switch (getBooleanContents(N0.getValueType())) {
     case UndefinedBooleanContent:
     case ZeroOrOneBooleanContent:
       EqVal = ISD::isTrueWhenEqual(Cond);

@@ -64,6 +64,8 @@ private:
                                   SelectionDAG &DAG) const;
   SDValue LowerSIGN_EXTEND_INREG(SDValue Op, SelectionDAG &DAG) const;
 
+  SDValue performMulCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+
 protected:
   static EVT getEquivalentMemType(LLVMContext &Context, EVT VT);
   static EVT getEquivalentLoadRegType(LLVMContext &Context, EVT VT);
@@ -109,6 +111,7 @@ public:
 
   bool isZExtFree(Type *Src, Type *Dest) const override;
   bool isZExtFree(EVT Src, EVT Dest) const override;
+  bool isZExtFree(SDValue Val, EVT VT2) const override;
 
   bool isNarrowingProfitable(EVT VT1, EVT VT2) const override;
 
@@ -165,7 +168,6 @@ enum {
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
   CALL,        // Function call based on a single integer
   UMUL,        // 32bit unsigned multiplication
-  DIV_INF,      // Divide with infinity returned on zero divisor
   RET_FLAG,
   BRANCH_COND,
   // End AMDIL ISD Opcodes
@@ -193,6 +195,8 @@ enum {
   //            For f64, max error 2^29 ULP, handles denormals.
   RCP,
   RSQ,
+  RSQ_LEGACY,
+  RSQ_CLAMPED,
   DOT4,
   BFE_U32, // Extract range of bits with zero extension to 32-bits.
   BFE_I32, // Extract range of bits with sign extension to 32-bits.

@@ -242,7 +242,7 @@ static int AsLexInput(SourceMgr &SrcMgr, MCAsmInfo &MAI,
                       tool_output_file *Out) {
 
   AsmLexer Lexer(MAI);
-  Lexer.setBuffer(SrcMgr.getMemoryBuffer(0));
+  Lexer.setBuffer(SrcMgr.getMemoryBuffer(SrcMgr.getMainFileID())->getBuffer());
 
   bool Error = false;
   while (Lexer.Lex().isNot(AsmToken::Eof)) {
@@ -367,13 +367,13 @@ int main(int argc, char **argv) {
   if (!TheTarget)
     return 1;
 
-  std::unique_ptr<MemoryBuffer> BufferPtr;
-  if (std::error_code ec =
-          MemoryBuffer::getFileOrSTDIN(InputFilename, BufferPtr)) {
-    errs() << ProgName << ": " << ec.message() << '\n';
+  ErrorOr<std::unique_ptr<MemoryBuffer>> BufferPtr =
+      MemoryBuffer::getFileOrSTDIN(InputFilename);
+  if (std::error_code EC = BufferPtr.getError()) {
+    errs() << ProgName << ": " << EC.message() << '\n';
     return 1;
   }
-  MemoryBuffer *Buffer = BufferPtr.release();
+  MemoryBuffer *Buffer = BufferPtr->release();
 
   SourceMgr SrcMgr;
 
@@ -401,9 +401,9 @@ int main(int argc, char **argv) {
 
   // FIXME: This is not pretty. MCContext has a ptr to MCObjectFileInfo and
   // MCObjectFileInfo needs a MCContext reference in order to initialize itself.
-  std::unique_ptr<MCObjectFileInfo> MOFI(new MCObjectFileInfo());
-  MCContext Ctx(MAI.get(), MRI.get(), MOFI.get(), &SrcMgr);
-  MOFI->InitMCObjectFileInfo(TripleName, RelocModel, CMModel, Ctx);
+  MCObjectFileInfo MOFI;
+  MCContext Ctx(MAI.get(), MRI.get(), &MOFI, &SrcMgr);
+  MOFI.InitMCObjectFileInfo(TripleName, RelocModel, CMModel, Ctx);
 
   if (SaveTempLabels)
     Ctx.setAllowTemporaryLabels(false);

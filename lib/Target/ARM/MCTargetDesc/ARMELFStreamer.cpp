@@ -992,7 +992,8 @@ void ARMTargetELFStreamer::emitLabel(MCSymbol *Symbol) {
     return;
 
   const MCSymbolData &SD = Streamer.getOrCreateSymbolData(Symbol);
-  if (MCELF::GetType(SD) & (ELF::STT_FUNC << ELF_STT_Shift))
+  unsigned Type = MCELF::GetType(SD);
+  if (Type == ELF_STT_Func || Type == ELF_STT_GnuIFunc)
     Streamer.EmitThumbFunc(Symbol);
 }
 
@@ -1160,7 +1161,7 @@ void ARMELFStreamer::EmitPersonalityFixup(StringRef Name) {
   const MCSymbolRefExpr *PersonalityRef = MCSymbolRefExpr::Create(
       PersonalitySym, MCSymbolRefExpr::VK_ARM_NONE, getContext());
 
-  AddValueSymbols(PersonalityRef);
+  visitUsedExpr(*PersonalityRef);
   MCDataFragment *DF = getOrCreateDataFragment();
   DF->getFixups().push_back(MCFixup::Create(DF->getContents().size(),
                                             PersonalityRef,

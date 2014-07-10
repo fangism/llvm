@@ -1,4 +1,5 @@
-// RUN: llvm-mc -triple x86_64-unknown-unknown -mcpu=knl --show-encoding %s | FileCheck %s
+// RUN: not llvm-mc -triple x86_64-unknown-unknown -mcpu=knl --show-encoding %s 2> %t.err | FileCheck %s
+// RUN: FileCheck --check-prefix=ERR < %t.err %s
 
 // CHECK: vaddpd %zmm6, %zmm27, %zmm8
 // CHECK:  encoding: [0x62,0x71,0xa5,0x40,0x58,0xc6]
@@ -3128,6 +3129,14 @@ vpsrad 512(%rdi, %rsi, 4), %zmm12, %zmm25
 // CHECK: encoding: [0x62,0xf2,0x7d,0xc9,0x58,0xc8]
 vpbroadcastd  %xmm0, %zmm1 {%k1} {z}
 
+// CHECK: vbroadcasti32x4 {{.*}} {%k7} {z}
+// CHECK: encoding: [0x67,0x62,0xf2,0x7d,0xcf,0x5a,0x52,0x02]
+vbroadcasti32x4 0x20(%edx), %zmm2 {%k7} {z}
+
+// CHECK: vbroadcasti64x4 {{.*}} %zmm22
+// CHECK: encoding: [0x62,0xe2,0xfd,0x48,0x5b,0x72,0x02]
+vbroadcasti64x4 0x40(%rdx), %zmm22
+
 // CHECK: vmovdqu64 {{.*}} {%k3}
 // CHECK: encoding: [0x62,0xf1,0xfe,0x4b,0x7f,0x07]
 vmovdqu64 %zmm0, (%rdi) {%k3}
@@ -3175,3 +3184,38 @@ vmovntpd %zmm6, 4(%rdx)
 // CHECK: vmovntps
 // CHECK: encoding: [0x62,0x51,0x7c,0x48,0x2b,0x5c,0x8d,0x00]
 vmovntps %zmm11, (%r13,%rcx,4)
+
+// CHECK: vcmpps $14
+// CHECK: encoding: [0x62,0xb1,0x54,0x48,0xc2,0xd1,0x0e]
+vcmpgtps %zmm17, %zmm5, %k2
+
+// CHECK: vcmppd $13
+// CHECK: encoding: [0x62,0xd1,0xf5,0x40,0xc2,0x76,0x02,0x0d]
+vcmpgepd 0x80(%r14), %zmm17, %k6
+
+// CHECK: vpcmpd $1,
+// CHECK: encoding: [0x62,0x93,0x45,0x4c,0x1f,0xe8,0x01]
+vpcmpd $1, %zmm24, %zmm7, %k5{%k4}
+
+// CHECK: vpcmpuq $2,
+// CHECK: encoding: [0x62,0xf3,0xf5,0x47,0x1e,0x72,0x01,0x02]
+vpcmpuq $2, 0x40(%rdx), %zmm17, %k6{%k7}
+
+// ERR: invalid operand for instruction
+vpcmpd $1, %zmm24, %zmm7, %k5{%k0}
+
+// CHECK: vpermi2d
+// CHECK: encoding: [0x62,0x42,0x6d,0x4b,0x76,0xd6]
+vpermi2d %zmm14, %zmm2, %zmm26 {%k3}
+
+// CHECK: vpermt2pd
+// CHECK: encoding: [0x62,0xf2,0xcd,0xc6,0x7f,0xf3]
+vpermt2pd %zmm3, %zmm22, %zmm6 {%k6} {z}
+
+// CHECK: vpermi2q
+// CHECK: encoding: [0x62,0x62,0xed,0x4b,0x76,0x54,0x58,0x02]
+vpermi2q 0x80(%rax,%rbx,2), %zmm2, %zmm26 {%k3}
+
+// CHECK: vpermt2d
+// CHECK: encoding: [0x62,0x32,0x4d,0xc2,0x7e,0x24,0xad,0x05,0x00,0x00,0x00]	
+vpermt2d 5(,%r13,4), %zmm22, %zmm12 {%k2} {z}

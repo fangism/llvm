@@ -270,8 +270,8 @@ def UseNaClTrap      : Predicate<"Subtarget->useNaClTrap()">,
 def DontUseNaClTrap  : Predicate<"!Subtarget->useNaClTrap()">;
 
 // FIXME: Eventually this will be just "hasV6T2Ops".
-def UseMovt          : Predicate<"Subtarget->useMovt()">;
-def DontUseMovt      : Predicate<"!Subtarget->useMovt()">;
+def UseMovt          : Predicate<"Subtarget->useMovt(*MF)">;
+def DontUseMovt      : Predicate<"!Subtarget->useMovt(*MF)">;
 def UseFPVMLx        : Predicate<"Subtarget->useFPVMLx()">;
 def UseMulOps        : Predicate<"Subtarget->useMulOps()">;
 
@@ -594,7 +594,7 @@ def so_imm2part : PatLeaf<(imm), [{
 /// arm_i32imm - True for +V6T2, or true only if so_imm2part is true.
 ///
 def arm_i32imm : PatLeaf<(imm), [{
-  if (Subtarget->useMovt())
+  if (Subtarget->useMovt(*MF))
     return true;
   return ARM_AM::isSOImmTwoPartVal((unsigned)N->getZExtValue());
 }]>;
@@ -4443,7 +4443,7 @@ def instsyncb_opt : Operand<i32> {
   let DecoderMethod = "DecodeInstSyncBarrierOption";
 }
 
-// memory barriers protect the atomic sequences
+// Memory barriers protect the atomic sequences
 let hasSideEffects = 1 in {
 def DMB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
                 "dmb", "\t$opt", [(int_arm_dmb (i32 imm0_15:$opt))]>,
@@ -4451,7 +4451,6 @@ def DMB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
   bits<4> opt;
   let Inst{31-4} = 0xf57ff05;
   let Inst{3-0} = opt;
-}
 }
 
 def DSB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
@@ -4464,11 +4463,12 @@ def DSB : AInoP<(outs), (ins memb_opt:$opt), MiscFrm, NoItinerary,
 
 // ISB has only full system option
 def ISB : AInoP<(outs), (ins instsyncb_opt:$opt), MiscFrm, NoItinerary,
-                "isb", "\t$opt", []>,
+                "isb", "\t$opt", [(int_arm_isb (i32 imm0_15:$opt))]>,
                 Requires<[IsARM, HasDB]> {
   bits<4> opt;
   let Inst{31-4} = 0xf57ff06;
   let Inst{3-0} = opt;
+}
 }
 
 let usesCustomInserter = 1, Defs = [CPSR] in {

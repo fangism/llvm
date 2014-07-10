@@ -246,7 +246,7 @@ bool AsmPrinter::doInitialization(Module &M) {
   case ExceptionHandling::ARM:
     ES = new ARMException(this);
     break;
-  case ExceptionHandling::Win64:
+  case ExceptionHandling::WinEH:
     ES = new Win64Exception(this);
     break;
   }
@@ -712,13 +712,12 @@ AsmPrinter::CFIMoveType AsmPrinter::needsCFIMoves() {
 }
 
 bool AsmPrinter::needsSEHMoves() {
-  return MAI->getExceptionHandlingType() == ExceptionHandling::Win64 &&
+  return MAI->getExceptionHandlingType() == ExceptionHandling::WinEH &&
     MF->getFunction()->needsUnwindTableEntry();
 }
 
 void AsmPrinter::emitCFIInstruction(const MachineInstr &MI) {
-  ExceptionHandling::ExceptionsType ExceptionHandlingType =
-      MAI->getExceptionHandlingType();
+  ExceptionHandling ExceptionHandlingType = MAI->getExceptionHandlingType();
   if (ExceptionHandlingType != ExceptionHandling::DwarfCFI &&
       ExceptionHandlingType != ExceptionHandling::ARM)
     return;
@@ -1885,7 +1884,8 @@ static void emitGlobalConstantFP(const ConstantFP *CFP, AsmPrinter &AP) {
 
   // PPC's long double has odd notions of endianness compared to how LLVM
   // handles it: p[0] goes first for *big* endian on PPC.
-  if (AP.TM.getDataLayout()->isBigEndian() != CFP->getType()->isPPC_FP128Ty()) {
+  if (AP.TM.getDataLayout()->isBigEndian() &&
+      !CFP->getType()->isPPC_FP128Ty()) {
     int Chunk = API.getNumWords() - 1;
 
     if (TrailingBytes)

@@ -1984,7 +1984,7 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V,
     return true;
   case Instruction::UDiv:
   case Instruction::URem:
-    // x / y is undefined if y == 0, but calcuations like x / 3 are safe.
+    // x / y is undefined if y == 0, but calculations like x / 3 are safe.
     return isKnownNonZero(Inst->getOperand(1), TD);
   case Instruction::SDiv:
   case Instruction::SRem: {
@@ -2007,12 +2007,12 @@ bool llvm::isSafeToSpeculativelyExecute(const Value *V,
         // Speculative load may create a race that did not exist in the source.
         LI->getParent()->getParent()->hasFnAttribute(Attribute::SanitizeThread))
       return false;
-    return LI->getPointerOperand()->isDereferenceablePointer();
+    return LI->getPointerOperand()->isDereferenceablePointer(TD);
   }
   case Instruction::Call: {
    if (const IntrinsicInst *II = dyn_cast<IntrinsicInst>(Inst)) {
      switch (II->getIntrinsicID()) {
-       // These synthetic intrinsics have no side-effects, and just mark
+       // These synthetic intrinsics have no side-effects and just mark
        // information about their operands.
        // FIXME: There are other no-op synthetic instructions that potentially
        // should be considered at least *safe* to speculate...

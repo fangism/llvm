@@ -655,10 +655,14 @@ static ConstantSDNode *isConstOrConstSplat(SDValue N) {
     return CN;
 
   if (BuildVectorSDNode *BV = dyn_cast<BuildVectorSDNode>(N)) {
-    ConstantSDNode *CN = BV->getConstantSplatValue();
+    BitVector UndefElements;
+    ConstantSDNode *CN = BV->getConstantSplatNode(&UndefElements);
 
     // BuildVectors can truncate their operands. Ignore that case here.
-    if (CN && CN->getValueType(0) == N.getValueType().getScalarType())
+    // FIXME: We blindly ignore splats which include undef which is overly
+    // pessimistic.
+    if (CN && UndefElements.none() &&
+        CN->getValueType(0) == N.getValueType().getScalarType())
       return CN;
   }
 
@@ -3954,14 +3958,14 @@ SDValue DAGCombiner::visitSHL(SDNode *N) {
     // If setcc produces all-one true value then:
     // (shl (and (setcc) N01CV) N1CV) -> (and (setcc) N01CV<<N1CV)
     if (N1CV && N1CV->isConstant()) {
-      if (N0.getOpcode() == ISD::AND &&
-          TLI.getBooleanContents(true) ==
-          TargetLowering::ZeroOrNegativeOneBooleanContent) {
+      if (N0.getOpcode() == ISD::AND) {
         SDValue N00 = N0->getOperand(0);
         SDValue N01 = N0->getOperand(1);
         BuildVectorSDNode *N01CV = dyn_cast<BuildVectorSDNode>(N01);
 
-        if (N01CV && N01CV->isConstant() && N00.getOpcode() == ISD::SETCC) {
+        if (N01CV && N01CV->isConstant() && N00.getOpcode() == ISD::SETCC &&
+            TLI.getBooleanContents(N00.getOperand(0).getValueType()) ==
+                TargetLowering::ZeroOrNegativeOneBooleanContent) {
           SDValue C = DAG.FoldConstantArithmetic(ISD::SHL, VT, N01CV, N1CV);
           if (C.getNode())
             return DAG.getNode(ISD::AND, SDLoc(N), VT, N00, C);
@@ -4520,11 +4524,20 @@ SDValue DAGCombiner::visitSELECT(SDNode *N) {
   if (VT == MVT::i1 && N1C && N1C->getAPIntValue() == 1)
     return DAG.getNode(ISD::OR, SDLoc(N), VT, N0, N2);
   // fold (select C, 0, 1) -> (xor C, 1)
+  // We can't do this reliably if integer based booleans have different contents
+  // to floating point based booleans. This is because we can't tell whether we
+  // have an integer-based boolean or a floating-point-based boolean unless we
+  // can find the SETCC that produced it and inspect its operands. This is
+  // fairly easy if C is the SETCC node, but it can potentially be
+  // undiscoverable (or not reasonably discoverable). For example, it could be
+  // in another basic block or it could require searching a complicated
+  // expression.
   if (VT.isInteger() &&
-      (VT0 == MVT::i1 ||
-       (VT0.isInteger() &&
-        TLI.getBooleanContents(false) ==
-        TargetLowering::ZeroOrOneBooleanContent)) &&
+      (VT0 == MVT::i1 || (VT0.isInteger() &&
+                          TLI.getBooleanContents(false, false) ==
+                              TLI.getBooleanContents(false, true) &&
+                          TLI.getBooleanContents(false, false) ==
+                              TargetLowering::ZeroOrOneBooleanContent)) &&
       N1C && N2C && N1C->isNullValue() && N2C->getAPIntValue() == 1) {
     SDValue XORNode;
     if (VT == VT0)
@@ -5073,12 +5086,12 @@ SDValue DAGCombiner::visitSIGN_EXTEND(SDNode *N) {
   }
 
   if (N0.getOpcode() == ISD::SETCC) {
+    EVT N0VT = N0.getOperand(0).getValueType();
     // sext(setcc) -> sext_in_reg(vsetcc) for vectors.
     // Only do this before legalize for now.
     if (VT.isVector() && !LegalOperations &&
-        TLI.getBooleanContents(true) ==
-          TargetLowering::ZeroOrNegativeOneBooleanContent) {
-      EVT N0VT = N0.getOperand(0).getValueType();
+        TLI.getBooleanContents(N0VT) ==
+            TargetLowering::ZeroOrNegativeOneBooleanContent) {
       // On some architectures (such as SSE/NEON/etc) the SETCC result type is
       // of the same size as the compared operands. Only optimize sext(setcc())
       // if this is the case.
@@ -6210,6 +6223,9 @@ SDValue DAGCombiner::visitBITCAST(SDNode *N) {
   if (ISD::isNormalLoad(N0.getNode()) && N0.hasOneUse() &&
       // Do not change the width of a volatile load.
       !cast<LoadSDNode>(N0)->isVolatile() &&
+      // Do not remove the cast if the types differ in endian layout.
+      TLI.hasBigEndianPartOrdering(N0.getValueType()) ==
+      TLI.hasBigEndianPartOrdering(VT) &&
       (!LegalOperations || TLI.isOperationLegal(ISD::LOAD, VT)) &&
       TLI.isLoadBitCastBeneficial(N0.getValueType(), VT)) {
     LoadSDNode *LN0 = cast<LoadSDNode>(N0);
@@ -10369,10 +10385,24 @@ SDValue DAGCombiner::visitCONCAT_VECTORS(SDNode *N) {
     SmallVector<SDValue, 8> Opnds;
     unsigned BuildVecNumElts =  N0.getNumOperands();
 
-    for (unsigned i = 0; i != BuildVecNumElts; ++i)
-      Opnds.push_back(N0.getOperand(i));
-    for (unsigned i = 0; i != BuildVecNumElts; ++i)
-      Opnds.push_back(N1.getOperand(i));
+    EVT SclTy0 = N0.getOperand(0)->getValueType(0);
+    EVT SclTy1 = N1.getOperand(0)->getValueType(0);
+    if (SclTy0.isFloatingPoint()) {
+      for (unsigned i = 0; i != BuildVecNumElts; ++i)
+        Opnds.push_back(N0.getOperand(i));
+      for (unsigned i = 0; i != BuildVecNumElts; ++i)
+        Opnds.push_back(N1.getOperand(i));
+    } else {
+      // If BUILD_VECTOR are from built from integer, they may have different
+      // operand types. Get the smaller type and truncate all operands to it.
+      EVT MinTy = SclTy0.bitsLE(SclTy1) ? SclTy0 : SclTy1;
+      for (unsigned i = 0; i != BuildVecNumElts; ++i)
+        Opnds.push_back(DAG.getNode(ISD::TRUNCATE, SDLoc(N), MinTy,
+                        N0.getOperand(i)));
+      for (unsigned i = 0; i != BuildVecNumElts; ++i)
+        Opnds.push_back(DAG.getNode(ISD::TRUNCATE, SDLoc(N), MinTy,
+                        N1.getOperand(i)));
+    }
 
     return DAG.getNode(ISD::BUILD_VECTOR, SDLoc(N), VT, Opnds);
   }
@@ -10647,22 +10677,19 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
   }
 
   // If this shuffle node is simply a swizzle of another shuffle node,
-  // and it reverses the swizzle of the previous shuffle then we can
-  // optimize shuffle(shuffle(x, undef), undef) -> x.
+  // then try to simplify it.
   if (N0.getOpcode() == ISD::VECTOR_SHUFFLE && Level < AfterLegalizeDAG &&
       N1.getOpcode() == ISD::UNDEF) {
 
     ShuffleVectorSDNode *OtherSV = cast<ShuffleVectorSDNode>(N0);
-
-    // Shuffle nodes can only reverse shuffles with a single non-undef value.
-    if (N0.getOperand(1).getOpcode() != ISD::UNDEF)
-      return SDValue();
 
     // The incoming shuffle must be of the same type as the result of the
     // current shuffle.
     assert(OtherSV->getOperand(0).getValueType() == VT &&
            "Shuffle types don't match");
 
+    SmallVector<int, 4> Mask;
+    // Compute the combined shuffle mask.
     for (unsigned i = 0; i != NumElts; ++i) {
       int Idx = SVN->getMaskElt(i);
       assert(Idx < (int)NumElts && "Index references undef operand");
@@ -10670,13 +10697,71 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
       // shuffle. Adopt the incoming index.
       if (Idx >= 0)
         Idx = OtherSV->getMaskElt(Idx);
+      Mask.push_back(Idx);
+    }
+    
+    bool CommuteOperands = false;
+    if (N0.getOperand(1).getOpcode() != ISD::UNDEF) {
+      // To be valid, the combine shuffle mask should only reference elements
+      // from one of the two vectors in input to the inner shufflevector.
+      bool IsValidMask = true;
+      for (unsigned i = 0; i != NumElts && IsValidMask; ++i)
+        // See if the combined mask only reference undefs or elements coming
+        // from the first shufflevector operand.
+        IsValidMask = Mask[i] < 0 || (unsigned)Mask[i] < NumElts;
 
-      // The combined shuffle must map each index to itself.
-      if (Idx >= 0 && (unsigned)Idx != i)
+      if (!IsValidMask) {
+        IsValidMask = true;
+        for (unsigned i = 0; i != NumElts && IsValidMask; ++i)
+          // Check that all the elements come from the second shuffle operand.
+          IsValidMask = Mask[i] < 0 || (unsigned)Mask[i] >= NumElts;
+        CommuteOperands = IsValidMask;
+      }
+
+      // Early exit if the combined shuffle mask is not valid.
+      if (!IsValidMask)
         return SDValue();
     }
 
-    return OtherSV->getOperand(0);
+    // See if this pair of shuffles can be safely folded according to either
+    // of the following rules:
+    //   shuffle(shuffle(x, y), undef) -> x
+    //   shuffle(shuffle(x, undef), undef) -> x
+    //   shuffle(shuffle(x, y), undef) -> y
+    bool IsIdentityMask = true;
+    unsigned BaseMaskIndex = CommuteOperands ? NumElts : 0;
+    for (unsigned i = 0; i != NumElts && IsIdentityMask; ++i) {
+      // Skip Undefs.
+      if (Mask[i] < 0)
+        continue;
+
+      // The combined shuffle must map each index to itself.
+      IsIdentityMask = (unsigned)Mask[i] == i + BaseMaskIndex;
+    }
+    
+    if (IsIdentityMask) {
+      if (CommuteOperands)
+        // optimize shuffle(shuffle(x, y), undef) -> y.
+        return OtherSV->getOperand(1);
+      
+      // optimize shuffle(shuffle(x, undef), undef) -> x
+      // optimize shuffle(shuffle(x, y), undef) -> x
+      return OtherSV->getOperand(0);
+    }
+
+    // It may still be beneficial to combine the two shuffles if the
+    // resulting shuffle is legal.
+    if (TLI.isShuffleMaskLegal(Mask, VT)) {
+      if (!CommuteOperands)
+        // shuffle(shuffle(x, undef, M1), undef, M2) -> shuffle(x, undef, M3).
+        // shuffle(shuffle(x, y, M1), undef, M2) -> shuffle(x, undef, M3)
+        return DAG.getVectorShuffle(VT, SDLoc(N), N0->getOperand(0), N1,
+                                    &Mask[0]);
+      
+      //   shuffle(shuffle(x, y, M1), undef, M2) -> shuffle(undef, y, M3)
+      return DAG.getVectorShuffle(VT, SDLoc(N), N1, N0->getOperand(1),
+                                  &Mask[0]);
+    }
   }
 
   return SDValue();
@@ -11190,8 +11275,8 @@ SDValue DAGCombiner::SimplifySelectCC(SDLoc DL, SDValue N0, SDValue N1,
 
   // fold select C, 16, 0 -> shl C, 4
   if (N2C && N3C && N3C->isNullValue() && N2C->getAPIntValue().isPowerOf2() &&
-    TLI.getBooleanContents(N0.getValueType().isVector()) ==
-      TargetLowering::ZeroOrOneBooleanContent) {
+      TLI.getBooleanContents(N0.getValueType()) ==
+          TargetLowering::ZeroOrOneBooleanContent) {
 
     // If the caller doesn't want us to simplify this into a zext of a compare,
     // don't do it.

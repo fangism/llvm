@@ -627,7 +627,7 @@ MVT AArch64TargetLowering::getScalarShiftAmountTy(EVT LHSTy) const {
 
 unsigned AArch64TargetLowering::getMaximalGlobalOffset() const {
   // FIXME: On AArch64, this depends on the type.
-  // Basically, the addressable offsets are o to 4095 * Ty.getSizeInBytes().
+  // Basically, the addressable offsets are up to 4095 * Ty.getSizeInBytes().
   // and the offset has to be a multiple of the related size in bytes.
   return 4095;
 }
@@ -1503,7 +1503,7 @@ SDValue AArch64TargetLowering::LowerFSINCOS(SDValue Op,
   StructType *RetTy = StructType::get(ArgTy, ArgTy, NULL);
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(DAG.getEntryNode())
-    .setCallee(CallingConv::Fast, RetTy, Callee, &Args, 0);
+    .setCallee(CallingConv::Fast, RetTy, Callee, std::move(Args), 0);
 
   std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
   return CallResult.first;
@@ -5181,11 +5181,37 @@ FailedModImm:
   return Op;
 }
 
-SDValue AArch64TargetLowering::LowerBUILD_VECTOR(SDValue Op,
-                                                 SelectionDAG &DAG) const {
-  BuildVectorSDNode *BVN = cast<BuildVectorSDNode>(Op.getNode());
+// Normalize the operands of BUILD_VECTOR. The value of constant operands will
+// be truncated to fit element width.
+static SDValue NormalizeBuildVector(SDValue Op,
+                                    SelectionDAG &DAG) {
+  assert(Op.getOpcode() == ISD::BUILD_VECTOR && "Unknown opcode!");
   SDLoc dl(Op);
   EVT VT = Op.getValueType();
+  EVT EltTy= VT.getVectorElementType();
+
+  if (EltTy.isFloatingPoint() || EltTy.getSizeInBits() > 16)
+    return Op;
+
+  SmallVector<SDValue, 16> Ops;
+  for (unsigned I = 0, E = VT.getVectorNumElements(); I != E; ++I) {
+    SDValue Lane = Op.getOperand(I);
+    if (Lane.getOpcode() == ISD::Constant) {
+      APInt LowBits(EltTy.getSizeInBits(),
+                    cast<ConstantSDNode>(Lane)->getZExtValue());
+      Lane = DAG.getConstant(LowBits.getZExtValue(), MVT::i32);
+    }
+    Ops.push_back(Lane);
+  }
+  return DAG.getNode(ISD::BUILD_VECTOR, dl, VT, Ops);
+}
+
+SDValue AArch64TargetLowering::LowerBUILD_VECTOR(SDValue Op,
+                                                 SelectionDAG &DAG) const {
+  SDLoc dl(Op);
+  EVT VT = Op.getValueType();
+  Op = NormalizeBuildVector(Op, DAG);
+  BuildVectorSDNode *BVN = cast<BuildVectorSDNode>(Op.getNode());
 
   APInt CnstBits(VT.getSizeInBits(), 0);
   APInt UndefBits(VT.getSizeInBits(), 0);
@@ -6343,23 +6369,45 @@ static SDValue performMulCombine(SDNode *N, SelectionDAG &DAG,
   if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(N->getOperand(1))) {
     APInt Value = C->getAPIntValue();
     EVT VT = N->getValueType(0);
-    APInt VM1 = Value - 1;
-    if (VM1.isPowerOf2()) {
-      // Multiplying by one more than a power of two, replace with a shift
-      // and an add.
-      SDValue ShiftedVal =
-          DAG.getNode(ISD::SHL, SDLoc(N), VT, N->getOperand(0),
-                      DAG.getConstant(VM1.logBase2(), MVT::i64));
-      return DAG.getNode(ISD::ADD, SDLoc(N), VT, ShiftedVal, N->getOperand(0));
-    }
-    APInt VP1 = Value + 1;
-    if (VP1.isPowerOf2()) {
-      // Multiplying by one less than a power of two, replace with a shift
-      // and a subtract.
-      SDValue ShiftedVal =
-          DAG.getNode(ISD::SHL, SDLoc(N), VT, N->getOperand(0),
-                      DAG.getConstant(VP1.logBase2(), MVT::i64));
-      return DAG.getNode(ISD::SUB, SDLoc(N), VT, ShiftedVal, N->getOperand(0));
+    if (Value.isNonNegative()) {
+      // (mul x, 2^N + 1) => (add (shl x, N), x)
+      APInt VM1 = Value - 1;
+      if (VM1.isPowerOf2()) {
+        SDValue ShiftedVal =
+            DAG.getNode(ISD::SHL, SDLoc(N), VT, N->getOperand(0),
+                        DAG.getConstant(VM1.logBase2(), MVT::i64));
+        return DAG.getNode(ISD::ADD, SDLoc(N), VT, ShiftedVal,
+                           N->getOperand(0));
+      }
+      // (mul x, 2^N - 1) => (sub (shl x, N), x)
+      APInt VP1 = Value + 1;
+      if (VP1.isPowerOf2()) {
+        SDValue ShiftedVal =
+            DAG.getNode(ISD::SHL, SDLoc(N), VT, N->getOperand(0),
+                        DAG.getConstant(VP1.logBase2(), MVT::i64));
+        return DAG.getNode(ISD::SUB, SDLoc(N), VT, ShiftedVal,
+                           N->getOperand(0));
+      }
+    } else {
+      // (mul x, -(2^N + 1)) => - (add (shl x, N), x)
+      APInt VNM1 = -Value - 1;
+      if (VNM1.isPowerOf2()) {
+        SDValue ShiftedVal =
+            DAG.getNode(ISD::SHL, SDLoc(N), VT, N->getOperand(0),
+                        DAG.getConstant(VNM1.logBase2(), MVT::i64));
+        SDValue Add =
+            DAG.getNode(ISD::ADD, SDLoc(N), VT, ShiftedVal, N->getOperand(0));
+        return DAG.getNode(ISD::SUB, SDLoc(N), VT, DAG.getConstant(0, VT), Add);
+      }
+      // (mul x, -(2^N - 1)) => (sub x, (shl x, N))
+      APInt VNP1 = -Value + 1;
+      if (VNP1.isPowerOf2()) {
+        SDValue ShiftedVal =
+            DAG.getNode(ISD::SHL, SDLoc(N), VT, N->getOperand(0),
+                        DAG.getConstant(VNP1.logBase2(), MVT::i64));
+        return DAG.getNode(ISD::SUB, SDLoc(N), VT, N->getOperand(0),
+                           ShiftedVal);
+      }
     }
   }
   return SDValue();
@@ -7862,6 +7910,18 @@ bool AArch64TargetLowering::shouldExpandAtomicInIR(Instruction *Inst) const {
 
   // For the real atomic operations, we have ldxr/stxr up to 128 bits.
   return Inst->getType()->getPrimitiveSizeInBits() <= 128;
+}
+
+TargetLoweringBase::LegalizeTypeAction
+AArch64TargetLowering::getPreferredVectorAction(EVT VT) const {
+  MVT SVT = VT.getSimpleVT();
+  // During type legalization, we prefer to widen v1i8, v1i16, v1i32  to v8i8,
+  // v4i16, v2i32 instead of to promote.
+  if (SVT == MVT::v1i8 || SVT == MVT::v1i16 || SVT == MVT::v1i32
+      || SVT == MVT::v1f32)
+    return TypeWidenVector;
+
+  return TargetLoweringBase::getPreferredVectorAction(VT);
 }
 
 Value *AArch64TargetLowering::emitLoadLinked(IRBuilder<> &Builder, Value *Addr,

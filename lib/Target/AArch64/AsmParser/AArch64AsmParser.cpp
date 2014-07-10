@@ -43,6 +43,9 @@ private:
   MCSubtargetInfo &STI;
   MCAsmParser &Parser;
 
+  // Map of register aliases registers via the .req directive.
+  StringMap<std::pair<bool, unsigned> > RegisterReqs;
+
   AArch64TargetStreamer &getTargetStreamer() {
     MCTargetStreamer &TS = *getParser().getStreamer().getTargetStreamer();
     return static_cast<AArch64TargetStreamer &>(TS);
@@ -56,6 +59,7 @@ private:
   bool parseSysAlias(StringRef Name, SMLoc NameLoc, OperandVector &Operands);
   AArch64CC::CondCode parseCondCodeString(StringRef Cond);
   bool parseCondCode(OperandVector &Operands, bool invertCondCode);
+  unsigned matchRegisterNameAlias(StringRef Name, bool isVector);
   int tryParseRegister();
   int tryMatchVectorRegister(StringRef &Kind, bool expected);
   bool parseRegister(OperandVector &Operands);
@@ -73,6 +77,9 @@ private:
 
   bool parseDirectiveLOH(StringRef LOH, SMLoc L);
   bool parseDirectiveLtorg(SMLoc L);
+
+  bool parseDirectiveReq(StringRef Name, SMLoc L);
+  bool parseDirectiveUnreq(SMLoc L);
 
   bool validateInstruction(MCInst &Inst, SmallVectorImpl<SMLoc> &Loc);
   bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
@@ -612,7 +619,11 @@ public:
     const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(getImm());
     if (!MCE)
       return false;
-    return AArch64_AM::isLogicalImmediate(MCE->getValue(), 32);
+    int64_t Val = MCE->getValue();
+    if (Val >> 32 != 0 && Val >> 32 != ~0LL)
+      return false;
+    Val &= 0xFFFFFFFF;
+    return AArch64_AM::isLogicalImmediate(Val, 32);
   }
   bool isLogicalImm64() const {
     if (!isImm())
@@ -621,6 +632,23 @@ public:
     if (!MCE)
       return false;
     return AArch64_AM::isLogicalImmediate(MCE->getValue(), 64);
+  }
+  bool isLogicalImm32Not() const {
+    if (!isImm())
+      return false;
+    const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(getImm());
+    if (!MCE)
+      return false;
+    int64_t Val = ~MCE->getValue() & 0xFFFFFFFF;
+    return AArch64_AM::isLogicalImmediate(Val, 32);
+  }
+  bool isLogicalImm64Not() const {
+    if (!isImm())
+      return false;
+    const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(getImm());
+    if (!MCE)
+      return false;
+    return AArch64_AM::isLogicalImmediate(~MCE->getValue(), 64);
   }
   bool isShiftedImm() const { return Kind == k_ShiftedImm; }
   bool isAddSubImm() const {
@@ -1353,7 +1381,8 @@ public:
     assert(N == 1 && "Invalid number of operands!");
     const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(getImm());
     assert(MCE && "Invalid logical immediate operand!");
-    uint64_t encoding = AArch64_AM::encodeLogicalImmediate(MCE->getValue(), 32);
+    uint64_t encoding =
+        AArch64_AM::encodeLogicalImmediate(MCE->getValue() & 0xFFFFFFFF, 32);
     Inst.addOperand(MCOperand::CreateImm(encoding));
   }
 
@@ -1362,6 +1391,22 @@ public:
     const MCConstantExpr *MCE = dyn_cast<MCConstantExpr>(getImm());
     assert(MCE && "Invalid logical immediate operand!");
     uint64_t encoding = AArch64_AM::encodeLogicalImmediate(MCE->getValue(), 64);
+    Inst.addOperand(MCOperand::CreateImm(encoding));
+  }
+
+  void addLogicalImm32NotOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    const MCConstantExpr *MCE = cast<MCConstantExpr>(getImm());
+    int64_t Val = ~MCE->getValue() & 0xFFFFFFFF;
+    uint64_t encoding = AArch64_AM::encodeLogicalImmediate(Val, 32);
+    Inst.addOperand(MCOperand::CreateImm(encoding));
+  }
+
+  void addLogicalImm64NotOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    const MCConstantExpr *MCE = cast<MCConstantExpr>(getImm());
+    uint64_t encoding =
+        AArch64_AM::encodeLogicalImmediate(~MCE->getValue(), 64);
     Inst.addOperand(MCOperand::CreateImm(encoding));
   }
 
@@ -1825,6 +1870,26 @@ bool AArch64AsmParser::ParseRegister(unsigned &RegNo, SMLoc &StartLoc,
   return (RegNo == (unsigned)-1);
 }
 
+// Matches a register name or register alias previously defined by '.req'
+unsigned AArch64AsmParser::matchRegisterNameAlias(StringRef Name,
+                                                  bool isVector) {
+  unsigned RegNum = isVector ? matchVectorRegName(Name)
+                             : MatchRegisterName(Name);
+
+  if (RegNum == 0) {
+    // Check for aliases registered via .req. Canonicalize to lower case.
+    // That's more consistent since register names are case insensitive, and
+    // it's how the original entry was passed in from MC/MCParser/AsmParser.
+    auto Entry = RegisterReqs.find(Name.lower());
+    if (Entry == RegisterReqs.end())
+      return 0;
+    // set RegNum if the match is the right kind of register
+    if (isVector == Entry->getValue().first)
+      RegNum = Entry->getValue().second;
+  }
+  return RegNum;
+}
+
 /// tryParseRegister - Try to parse a register name. The token must be an
 /// Identifier when called, and if it is a register name the token is eaten and
 /// the register is added to the operand list.
@@ -1833,7 +1898,7 @@ int AArch64AsmParser::tryParseRegister() {
   assert(Tok.is(AsmToken::Identifier) && "Token is not an Identifier");
 
   std::string lowerCase = Tok.getString().lower();
-  unsigned RegNum = MatchRegisterName(lowerCase);
+  unsigned RegNum = matchRegisterNameAlias(lowerCase, false);
   // Also handle a few aliases of registers.
   if (RegNum == 0)
     RegNum = StringSwitch<unsigned>(lowerCase)
@@ -1863,7 +1928,8 @@ int AArch64AsmParser::tryMatchVectorRegister(StringRef &Kind, bool expected) {
   // a '.'.
   size_t Start = 0, Next = Name.find('.');
   StringRef Head = Name.slice(Start, Next);
-  unsigned RegNum = matchVectorRegName(Head);
+  unsigned RegNum = matchRegisterNameAlias(Head, true);
+
   if (RegNum) {
     if (Next != StringRef::npos) {
       Kind = Name.slice(Next, StringRef::npos);
@@ -2861,7 +2927,7 @@ AArch64AsmParser::tryParseGPR64sp0Operand(OperandVector &Operands) {
   if (!Tok.is(AsmToken::Identifier))
     return MatchOperand_NoMatch;
 
-  unsigned RegNum = MatchRegisterName(Tok.getString().lower());
+  unsigned RegNum = matchRegisterNameAlias(Tok.getString().lower(), false);
 
   MCContext &Ctx = getContext();
   const MCRegisterInfo *RI = Ctx.getRegisterInfo();
@@ -3077,6 +3143,15 @@ bool AArch64AsmParser::ParseInstruction(ParseInstructionInfo &Info,
              .Case("bal", "b.al")
              .Case("bnv", "b.nv")
              .Default(Name);
+
+  // First check for the AArch64-specific .req directive.
+  if (Parser.getTok().is(AsmToken::Identifier) &&
+      Parser.getTok().getIdentifier() == ".req") {
+    parseDirectiveReq(Name, NameLoc);
+    // We always return 'error' for this, as we're done with this
+    // statement and don't need to match the 'instruction."
+    return true;
+  }
 
   // Create the leading tokens for the mnemonic, split by '.' characters.
   size_t Start = 0, Next = Name.find('.');
@@ -3857,6 +3932,9 @@ bool AArch64AsmParser::ParseDirective(AsmToken DirectiveID) {
     return parseDirectiveTLSDescCall(Loc);
   if (IDVal == ".ltorg" || IDVal == ".pool")
     return parseDirectiveLtorg(Loc);
+  if (IDVal == ".unreq")
+    return parseDirectiveUnreq(DirectiveID.getLoc());
+
   return parseDirectiveLOH(IDVal, Loc);
 }
 
@@ -3961,6 +4039,59 @@ bool AArch64AsmParser::parseDirectiveLOH(StringRef IDVal, SMLoc Loc) {
 ///  ::= .ltorg | .pool
 bool AArch64AsmParser::parseDirectiveLtorg(SMLoc L) {
   getTargetStreamer().emitCurrentConstantPool();
+  return false;
+}
+
+/// parseDirectiveReq
+///  ::= name .req registername
+bool AArch64AsmParser::parseDirectiveReq(StringRef Name, SMLoc L) {
+  Parser.Lex(); // Eat the '.req' token.
+  SMLoc SRegLoc = getLoc();
+  unsigned RegNum = tryParseRegister();
+  bool IsVector = false;
+
+  if (RegNum == static_cast<unsigned>(-1)) {
+    StringRef Kind;
+    RegNum = tryMatchVectorRegister(Kind, false);
+    if (!Kind.empty()) {
+      Error(SRegLoc, "vector register without type specifier expected");
+      return false;
+    }
+    IsVector = true;
+  }
+
+  if (RegNum == static_cast<unsigned>(-1)) {
+    Parser.eatToEndOfStatement();
+    Error(SRegLoc, "register name or alias expected");
+    return false;
+  }
+
+  // Shouldn't be anything else.
+  if (Parser.getTok().isNot(AsmToken::EndOfStatement)) {
+    Error(Parser.getTok().getLoc(), "unexpected input in .req directive");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+
+  Parser.Lex(); // Consume the EndOfStatement
+
+  auto pair = std::make_pair(IsVector, RegNum);
+  if (RegisterReqs.GetOrCreateValue(Name, pair).getValue() != pair)
+    Warning(L, "ignoring redefinition of register alias '" + Name + "'");
+
+  return true;
+}
+
+/// parseDirectiveUneq
+///  ::= .unreq registername
+bool AArch64AsmParser::parseDirectiveUnreq(SMLoc L) {
+  if (Parser.getTok().isNot(AsmToken::Identifier)) {
+    Error(Parser.getTok().getLoc(), "unexpected input in .unreq directive.");
+    Parser.eatToEndOfStatement();
+    return false;
+  }
+  RegisterReqs.erase(Parser.getTok().getIdentifier().lower());
+  Parser.Lex(); // Eat the identifier.
   return false;
 }
 

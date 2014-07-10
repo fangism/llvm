@@ -170,8 +170,8 @@ bool COFFAsmParser::ParseSectionFlags(StringRef FlagsString, unsigned* Flags) {
   bool ReadOnlyRemoved = false;
   unsigned SecFlags = None;
 
-  for (unsigned i = 0; i < FlagsString.size(); ++i) {
-    switch (FlagsString[i]) {
+  for (char FlagChar : FlagsString) {
+    switch (FlagChar) {
     case 'a':
       // Ignored.
       break;
@@ -292,8 +292,7 @@ bool COFFAsmParser::ParseDirectiveSymbolAttribute(StringRef Directive, SMLoc) {
 bool COFFAsmParser::ParseSectionSwitch(StringRef Section,
                                        unsigned Characteristics,
                                        SectionKind Kind) {
-  return ParseSectionSwitch(Section, Characteristics, Kind, "",
-                            COFF::IMAGE_COMDAT_SELECT_ANY);
+  return ParseSectionSwitch(Section, Characteristics, Kind, "", (COFF::COMDATType)0);
 }
 
 bool COFFAsmParser::ParseSectionSwitch(StringRef Section,
@@ -357,9 +356,10 @@ bool COFFAsmParser::ParseDirectiveSection(StringRef, SMLoc) {
       return true;
   }
 
-  COFF::COMDATType Type = COFF::IMAGE_COMDAT_SELECT_ANY;
+  COFF::COMDATType Type = (COFF::COMDATType)0;
   StringRef COMDATSymName;
   if (getLexer().is(AsmToken::Comma)) {
+    Type = COFF::IMAGE_COMDAT_SELECT_ANY;;
     Lex();
 
     Flags |= COFF::IMAGE_SCN_LNK_COMDAT;
@@ -523,25 +523,25 @@ bool COFFAsmParser::ParseSEHDirectiveStartProc(StringRef, SMLoc) {
   MCSymbol *Symbol = getContext().GetOrCreateSymbol(SymbolID);
 
   Lex();
-  getStreamer().EmitWin64EHStartProc(Symbol);
+  getStreamer().EmitWinCFIStartProc(Symbol);
   return false;
 }
 
 bool COFFAsmParser::ParseSEHDirectiveEndProc(StringRef, SMLoc) {
   Lex();
-  getStreamer().EmitWin64EHEndProc();
+  getStreamer().EmitWinCFIEndProc();
   return false;
 }
 
 bool COFFAsmParser::ParseSEHDirectiveStartChained(StringRef, SMLoc) {
   Lex();
-  getStreamer().EmitWin64EHStartChained();
+  getStreamer().EmitWinCFIStartChained();
   return false;
 }
 
 bool COFFAsmParser::ParseSEHDirectiveEndChained(StringRef, SMLoc) {
   Lex();
-  getStreamer().EmitWin64EHEndChained();
+  getStreamer().EmitWinCFIEndChained();
   return false;
 }
 
@@ -567,13 +567,13 @@ bool COFFAsmParser::ParseSEHDirectiveHandler(StringRef, SMLoc) {
   MCSymbol *handler = getContext().GetOrCreateSymbol(SymbolID);
 
   Lex();
-  getStreamer().EmitWin64EHHandler(handler, unwind, except);
+  getStreamer().EmitWinEHHandler(handler, unwind, except);
   return false;
 }
 
 bool COFFAsmParser::ParseSEHDirectiveHandlerData(StringRef, SMLoc) {
   Lex();
-  getStreamer().EmitWin64EHHandlerData();
+  getStreamer().EmitWinEHHandlerData();
   return false;
 }
 
@@ -586,7 +586,7 @@ bool COFFAsmParser::ParseSEHDirectivePushReg(StringRef, SMLoc L) {
     return TokError("unexpected token in directive");
 
   Lex();
-  getStreamer().EmitWin64EHPushReg(Reg);
+  getStreamer().EmitWinCFIPushReg(Reg);
   return false;
 }
 
@@ -610,7 +610,7 @@ bool COFFAsmParser::ParseSEHDirectiveSetFrame(StringRef, SMLoc L) {
     return TokError("unexpected token in directive");
 
   Lex();
-  getStreamer().EmitWin64EHSetFrame(Reg, Off);
+  getStreamer().EmitWinCFISetFrame(Reg, Off);
   return false;
 }
 
@@ -627,7 +627,7 @@ bool COFFAsmParser::ParseSEHDirectiveAllocStack(StringRef, SMLoc) {
     return TokError("unexpected token in directive");
 
   Lex();
-  getStreamer().EmitWin64EHAllocStack(Size);
+  getStreamer().EmitWinCFIAllocStack(Size);
   return false;
 }
 
@@ -652,7 +652,7 @@ bool COFFAsmParser::ParseSEHDirectiveSaveReg(StringRef, SMLoc L) {
 
   Lex();
   // FIXME: Err on %xmm* registers
-  getStreamer().EmitWin64EHSaveReg(Reg, Off);
+  getStreamer().EmitWinCFISaveReg(Reg, Off);
   return false;
 }
 
@@ -679,7 +679,7 @@ bool COFFAsmParser::ParseSEHDirectiveSaveXMM(StringRef, SMLoc L) {
 
   Lex();
   // FIXME: Err on non-%xmm* registers
-  getStreamer().EmitWin64EHSaveXMM(Reg, Off);
+  getStreamer().EmitWinCFISaveXMM(Reg, Off);
   return false;
 }
 
@@ -700,13 +700,13 @@ bool COFFAsmParser::ParseSEHDirectivePushFrame(StringRef, SMLoc) {
     return TokError("unexpected token in directive");
 
   Lex();
-  getStreamer().EmitWin64EHPushFrame(Code);
+  getStreamer().EmitWinCFIPushFrame(Code);
   return false;
 }
 
 bool COFFAsmParser::ParseSEHDirectiveEndProlog(StringRef, SMLoc) {
   Lex();
-  getStreamer().EmitWin64EHEndProlog();
+  getStreamer().EmitWinCFIEndProlog();
   return false;
 }
 

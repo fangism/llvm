@@ -78,16 +78,15 @@ protected:
   /// fragment is not a data fragment.
   MCDataFragment *getOrCreateDataFragment() const;
 
-  const MCExpr *AddValueSymbols(const MCExpr *Value);
-
 public:
+  void visitUsedSymbol(const MCSymbol &Sym) override;
+
   MCAssembler &getAssembler() { return *Assembler; }
 
   /// @name MCStreamer Interface
   /// @{
 
   void EmitLabel(MCSymbol *Symbol) override;
-  void EmitDebugLabel(MCSymbol *Symbol) override;
   void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) override;
   void EmitValueImpl(const MCExpr *Value, unsigned Size,
                      const SMLoc &Loc = SMLoc()) override;

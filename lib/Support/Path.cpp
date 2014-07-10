@@ -927,7 +927,7 @@ void directory_entry::replace_filename(const Twine &filename, file_status st) {
 }
 
 /// @brief Identify the magic in magic.
-  file_magic identify_magic(StringRef Magic) {
+file_magic identify_magic(StringRef Magic) {
   if (Magic.size() < 4)
     return file_magic::unknown;
   switch ((unsigned char)Magic[0]) {
@@ -1065,7 +1065,7 @@ std::error_code identify_magic(const Twine &Path, file_magic &Result) {
 
   char Buffer[32];
   int Length = read(FD, Buffer, sizeof(Buffer));
-  if (Length < 0)
+  if (close(FD) != 0 || Length < 0)
     return std::error_code(errno, std::generic_category());
 
   Result = identify_magic(StringRef(Buffer, Length));

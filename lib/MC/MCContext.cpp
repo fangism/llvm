@@ -47,8 +47,9 @@ MCContext::MCContext(const MCAsmInfo *mai, const MCRegisterInfo *mri,
   SecureLog = nullptr;
   SecureLogUsed = false;
 
-  if (SrcMgr && SrcMgr->getNumBuffers() > 0)
-    MainFileName = SrcMgr->getMemoryBuffer(0)->getBufferIdentifier();
+  if (SrcMgr && SrcMgr->getNumBuffers())
+    MainFileName =
+        SrcMgr->getMemoryBuffer(SrcMgr->getMainFileID())->getBufferIdentifier();
 }
 
 MCContext::~MCContext() {
@@ -284,8 +285,8 @@ const MCSectionCOFF *MCContext::getCOFFSection(StringRef Section,
                                                int Selection) {
   // Do the lookup, if we have a hit, return it.
 
-  SectionGroupPair P(Section, COMDATSymName);
-  auto IterBool = COFFUniquingMap.insert(std::make_pair(P, nullptr));
+  SectionGroupTriple T(Section, COMDATSymName, Selection);
+  auto IterBool = COFFUniquingMap.insert(std::make_pair(T, nullptr));
   auto Iter = IterBool.first;
   if (!IterBool.second)
     return Iter->second;
@@ -294,7 +295,7 @@ const MCSectionCOFF *MCContext::getCOFFSection(StringRef Section,
   if (!COMDATSymName.empty())
     COMDATSymbol = GetOrCreateSymbol(COMDATSymName);
 
-  StringRef CachedName = Iter->first.first;
+  StringRef CachedName = std::get<0>(Iter->first);
   MCSectionCOFF *Result = new (*this)
       MCSectionCOFF(CachedName, Characteristics, COMDATSymbol, Selection, Kind);
 
@@ -309,8 +310,8 @@ MCContext::getCOFFSection(StringRef Section, unsigned Characteristics,
 }
 
 const MCSectionCOFF *MCContext::getCOFFSection(StringRef Section) {
-  SectionGroupPair P(Section, "");
-  auto Iter = COFFUniquingMap.find(P);
+  SectionGroupTriple T(Section, "", 0);
+  auto Iter = COFFUniquingMap.find(T);
   if (Iter == COFFUniquingMap.end())
     return nullptr;
   return Iter->second;

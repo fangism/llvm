@@ -49,6 +49,7 @@ class FastISel {
 protected:
   DenseMap<const Value *, unsigned> LocalValueMap;
   FunctionLoweringInfo &FuncInfo;
+  MachineFunction *MF;
   MachineRegisterInfo &MRI;
   MachineFrameInfo &MFI;
   MachineConstantPool &MCP;
@@ -387,6 +388,7 @@ private:
 
   bool SelectGetElementPtr(const User *I);
 
+  bool SelectStackmap(const CallInst *I);
   bool SelectCall(const User *I);
 
   bool SelectBitCast(const User *I);
