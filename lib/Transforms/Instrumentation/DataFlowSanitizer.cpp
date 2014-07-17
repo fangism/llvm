@@ -50,6 +50,7 @@
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/InstVisitor.h"
@@ -62,7 +63,10 @@
 #include "llvm/Support/SpecialCaseList.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
+#include <algorithm>
 #include <iterator>
+#include <set>
+#include <utility>
 
 using namespace llvm;
 
@@ -240,7 +244,6 @@ class DataFlowSanitizer : public ModulePass {
   AttributeSet ReadOnlyNoneAttrs;
 
   Value *getShadowAddress(Value *Addr, Instruction *Pos);
-  Value *combineShadows(Value *V1, Value *V2, Instruction *Pos);
   bool isInstrumented(const Function *F);
   bool isInstrumented(const GlobalAlias *GA);
   FunctionType *getArgsFunctionType(FunctionType *T);
@@ -266,6 +269,7 @@ class DataFlowSanitizer : public ModulePass {
 struct DFSanFunction {
   DataFlowSanitizer &DFS;
   Function *F;
+  DominatorTree DT;
   DataFlowSanitizer::InstrumentedABI IA;
   bool IsNativeABI;
   Value *ArgTLSPtr;
@@ -277,15 +281,26 @@ struct DFSanFunction {
   DenseSet<Instruction *> SkipInsts;
   DenseSet<Value *> NonZeroChecks;
 
+  struct CachedCombinedShadow {
+    BasicBlock *Block;
+    Value *Shadow;
+  };
+  DenseMap<std::pair<Value *, Value *>, CachedCombinedShadow>
+      CachedCombinedShadows;
+  DenseMap<Value *, std::set<Value *>> ShadowElements;
+
   DFSanFunction(DataFlowSanitizer &DFS, Function *F, bool IsNativeABI)
       : DFS(DFS), F(F), IA(DFS.getInstrumentedABI()),
         IsNativeABI(IsNativeABI), ArgTLSPtr(nullptr), RetvalTLSPtr(nullptr),
-        LabelReturnAlloca(nullptr) {}
+        LabelReturnAlloca(nullptr) {
+    DT.recalculate(*F);
+  }
   Value *getArgTLSPtr();
   Value *getArgTLS(unsigned Index, Instruction *Pos);
   Value *getRetvalTLS();
   Value *getShadow(Value *V);
   void setShadow(Instruction *I, Value *Shadow);
+  Value *combineShadows(Value *V1, Value *V2, Instruction *Pos);
   Value *combineOperandShadows(Instruction *Inst);
   Value *loadShadow(Value *ShadowAddr, uint64_t Size, uint64_t Align,
                     Instruction *Pos);
@@ -873,29 +888,71 @@ Value *DataFlowSanitizer::getShadowAddress(Value *Addr, Instruction *Pos) {
 
 // Generates IR to compute the union of the two given shadows, inserting it
 // before Pos.  Returns the computed union Value.
-Value *DataFlowSanitizer::combineShadows(Value *V1, Value *V2,
-                                         Instruction *Pos) {
-  if (V1 == ZeroShadow)
+Value *DFSanFunction::combineShadows(Value *V1, Value *V2, Instruction *Pos) {
+  if (V1 == DFS.ZeroShadow)
     return V2;
-  if (V2 == ZeroShadow)
+  if (V2 == DFS.ZeroShadow)
     return V1;
   if (V1 == V2)
     return V1;
+
+  auto V1Elems = ShadowElements.find(V1);
+  auto V2Elems = ShadowElements.find(V2);
+  if (V1Elems != ShadowElements.end() && V2Elems != ShadowElements.end()) {
+    if (std::includes(V1Elems->second.begin(), V1Elems->second.end(),
+                      V2Elems->second.begin(), V2Elems->second.end())) {
+      return V1;
+    } else if (std::includes(V2Elems->second.begin(), V2Elems->second.end(),
+                             V1Elems->second.begin(), V1Elems->second.end())) {
+      return V2;
+    }
+  } else if (V1Elems != ShadowElements.end()) {
+    if (V1Elems->second.count(V2))
+      return V1;
+  } else if (V2Elems != ShadowElements.end()) {
+    if (V2Elems->second.count(V1))
+      return V2;
+  }
+
+  auto Key = std::make_pair(V1, V2);
+  if (V1 > V2)
+    std::swap(Key.first, Key.second);
+  CachedCombinedShadow &CCS = CachedCombinedShadows[Key];
+  if (CCS.Block && DT.dominates(CCS.Block, Pos->getParent()))
+    return CCS.Shadow;
+
   IRBuilder<> IRB(Pos);
   BasicBlock *Head = Pos->getParent();
   Value *Ne = IRB.CreateICmpNE(V1, V2);
   BranchInst *BI = cast<BranchInst>(SplitBlockAndInsertIfThen(
-      Ne, Pos, /*Unreachable=*/false, ColdCallWeights));
+      Ne, Pos, /*Unreachable=*/false, DFS.ColdCallWeights, &DT));
   IRBuilder<> ThenIRB(BI);
-  CallInst *Call = ThenIRB.CreateCall2(DFSanUnionFn, V1, V2);
+  CallInst *Call = ThenIRB.CreateCall2(DFS.DFSanUnionFn, V1, V2);
   Call->addAttribute(AttributeSet::ReturnIndex, Attribute::ZExt);
   Call->addAttribute(1, Attribute::ZExt);
   Call->addAttribute(2, Attribute::ZExt);
 
   BasicBlock *Tail = BI->getSuccessor(0);
-  PHINode *Phi = PHINode::Create(ShadowTy, 2, "", Tail->begin());
+  PHINode *Phi = PHINode::Create(DFS.ShadowTy, 2, "", Tail->begin());
   Phi->addIncoming(Call, Call->getParent());
   Phi->addIncoming(V1, Head);
+
+  CCS.Block = Tail;
+  CCS.Shadow = Phi;
+
+  std::set<Value *> UnionElems;
+  if (V1Elems != ShadowElements.end()) {
+    UnionElems = V1Elems->second;
+  } else {
+    UnionElems.insert(V1);
+  }
+  if (V2Elems != ShadowElements.end()) {
+    UnionElems.insert(V2Elems->second.begin(), V2Elems->second.end());
+  } else {
+    UnionElems.insert(V2);
+  }
+  ShadowElements[Phi] = std::move(UnionElems);
+
   return Phi;
 }
 
@@ -908,7 +965,7 @@ Value *DFSanFunction::combineOperandShadows(Instruction *Inst) {
 
   Value *Shadow = getShadow(Inst->getOperand(0));
   for (unsigned i = 1, n = Inst->getNumOperands(); i != n; ++i) {
-    Shadow = DFS.combineShadows(Shadow, getShadow(Inst->getOperand(i)), Inst);
+    Shadow = combineShadows(Shadow, getShadow(Inst->getOperand(i)), Inst);
   }
   return Shadow;
 }
@@ -961,9 +1018,8 @@ Value *DFSanFunction::loadShadow(Value *Addr, uint64_t Size, uint64_t Align,
     IRBuilder<> IRB(Pos);
     Value *ShadowAddr1 =
         IRB.CreateGEP(ShadowAddr, ConstantInt::get(DFS.IntptrTy, 1));
-    return DFS.combineShadows(IRB.CreateAlignedLoad(ShadowAddr, ShadowAlign),
-                              IRB.CreateAlignedLoad(ShadowAddr1, ShadowAlign),
-                              Pos);
+    return combineShadows(IRB.CreateAlignedLoad(ShadowAddr, ShadowAlign),
+                          IRB.CreateAlignedLoad(ShadowAddr1, ShadowAlign), Pos);
   }
   }
   if (Size % (64 / DFS.ShadowWidth) == 0) {
@@ -990,16 +1046,27 @@ Value *DFSanFunction::loadShadow(Value *Addr, uint64_t Size, uint64_t Align,
 
     BasicBlock *Head = Pos->getParent();
     BasicBlock *Tail = Head->splitBasicBlock(Pos);
+
+    if (DomTreeNode *OldNode = DT.getNode(Head)) {
+      std::vector<DomTreeNode *> Children(OldNode->begin(), OldNode->end());
+
+      DomTreeNode *NewNode = DT.addNewBlock(Tail, Head);
+      for (auto Child : Children)
+        DT.changeImmediateDominator(Child, NewNode);
+    }
+
     // In the following code LastBr will refer to the previous basic block's
     // conditional branch instruction, whose true successor is fixed up to point
     // to the next block during the loop below or to the tail after the final
     // iteration.
     BranchInst *LastBr = BranchInst::Create(FallbackBB, FallbackBB, ShadowsEq);
     ReplaceInstWithInst(Head->getTerminator(), LastBr);
+    DT.addNewBlock(FallbackBB, Head);
 
     for (uint64_t Ofs = 64 / DFS.ShadowWidth; Ofs != Size;
          Ofs += 64 / DFS.ShadowWidth) {
       BasicBlock *NextBB = BasicBlock::Create(*DFS.Ctx, "", F);
+      DT.addNewBlock(NextBB, LastBr->getParent());
       IRBuilder<> NextIRB(NextBB);
       WideAddr = NextIRB.CreateGEP(WideAddr, ConstantInt::get(DFS.IntptrTy, 1));
       Value *NextWideShadow = NextIRB.CreateAlignedLoad(WideAddr, ShadowAlign);
@@ -1037,7 +1104,7 @@ void DFSanVisitor::visitLoadInst(LoadInst &LI) {
   Value *Shadow = DFSF.loadShadow(LI.getPointerOperand(), Size, Align, &LI);
   if (ClCombinePointerLabelsOnLoad) {
     Value *PtrShadow = DFSF.getShadow(LI.getPointerOperand());
-    Shadow = DFSF.DFS.combineShadows(Shadow, PtrShadow, &LI);
+    Shadow = DFSF.combineShadows(Shadow, PtrShadow, &LI);
   }
   if (Shadow != DFSF.DFS.ZeroShadow)
     DFSF.NonZeroChecks.insert(Shadow);
@@ -1111,7 +1178,7 @@ void DFSanVisitor::visitStoreInst(StoreInst &SI) {
   Value* Shadow = DFSF.getShadow(SI.getValueOperand());
   if (ClCombinePointerLabelsOnStore) {
     Value *PtrShadow = DFSF.getShadow(SI.getPointerOperand());
-    Shadow = DFSF.DFS.combineShadows(Shadow, PtrShadow, &SI);
+    Shadow = DFSF.combineShadows(Shadow, PtrShadow, &SI);
   }
   DFSF.storeShadow(SI.getPointerOperand(), Size, Align, Shadow, &SI);
 }
@@ -1176,9 +1243,9 @@ void DFSanVisitor::visitSelectInst(SelectInst &I) {
 
   if (isa<VectorType>(I.getCondition()->getType())) {
     DFSF.setShadow(
-        &I, DFSF.DFS.combineShadows(
-                CondShadow,
-                DFSF.DFS.combineShadows(TrueShadow, FalseShadow, &I), &I));
+        &I,
+        DFSF.combineShadows(
+            CondShadow, DFSF.combineShadows(TrueShadow, FalseShadow, &I), &I));
   } else {
     Value *ShadowSel;
     if (TrueShadow == FalseShadow) {
@@ -1187,7 +1254,7 @@ void DFSanVisitor::visitSelectInst(SelectInst &I) {
       ShadowSel =
           SelectInst::Create(I.getCondition(), TrueShadow, FalseShadow, "", &I);
     }
-    DFSF.setShadow(&I, DFSF.DFS.combineShadows(CondShadow, ShadowSel, &I));
+    DFSF.setShadow(&I, DFSF.combineShadows(CondShadow, ShadowSel, &I));
   }
 }
 

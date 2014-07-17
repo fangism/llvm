@@ -281,26 +281,28 @@ MipsTargetELFStreamer::MipsTargetELFStreamer(MCStreamer &S,
   else
     EFlags |= ELF::EF_MIPS_ARCH_1;
 
-  if (T.isArch64Bit()) {
-    if (Features & Mips::FeatureN32)
-      EFlags |= ELF::EF_MIPS_ABI2;
-    else if (Features & Mips::FeatureO32) {
-      EFlags |= ELF::EF_MIPS_ABI_O32;
-      EFlags |= ELF::EF_MIPS_32BITMODE; /* Compatibility Mode */
-    }
-    // No need to set any bit for N64 which is the default ABI at the moment
-    // for 64-bit Mips architectures.
-  } else {
-    if (Features & Mips::FeatureMips64r2 || Features & Mips::FeatureMips64)
-      EFlags |= ELF::EF_MIPS_32BITMODE;
-
-    // ABI
+  // ABI
+  // N64 does not require any ABI bits.
+  if (Features & Mips::FeatureO32)
     EFlags |= ELF::EF_MIPS_ABI_O32;
-  }
+  else if (Features & Mips::FeatureN32)
+    EFlags |= ELF::EF_MIPS_ABI2;
+
+  if (Features & Mips::FeatureGP64Bit) {
+    if (Features & Mips::FeatureO32)
+      EFlags |= ELF::EF_MIPS_32BITMODE; /* Compatibility Mode */
+  } else if (Features & Mips::FeatureMips64r2 || Features & Mips::FeatureMips64)
+    EFlags |= ELF::EF_MIPS_32BITMODE;
 
   // Other options.
   if (Features & Mips::FeatureNaN2008)
     EFlags |= ELF::EF_MIPS_NAN2008;
+
+  // -mabicalls and -mplt are not implemented but we should act as if they were
+  // given.
+  EFlags |= ELF::EF_MIPS_CPIC;
+  if (Features & Mips::FeatureN64)
+    EFlags |= ELF::EF_MIPS_PIC;
 
   MCA.setELFHeaderEFlags(EFlags);
 }
@@ -323,13 +325,30 @@ void MipsTargetELFStreamer::finish() {
   MCAssembler &MCA = getStreamer().getAssembler();
   MCContext &Context = MCA.getContext();
   MCStreamer &OS = getStreamer();
+  const MCObjectFileInfo &OFI = *Context.getObjectFileInfo();
   Triple T(STI.getTargetTriple());
   uint64_t Features = STI.getFeatureBits();
 
+  // .bss, .text and .data are always at least 16-byte aligned.
+  MCSectionData &TextSectionData =
+      MCA.getOrCreateSectionData(*OFI.getTextSection());
+  MCSectionData &DataSectionData =
+      MCA.getOrCreateSectionData(*OFI.getDataSection());
+  MCSectionData &BSSSectionData =
+      MCA.getOrCreateSectionData(*OFI.getBSSSection());
+
+  TextSectionData.setAlignment(std::max(16u, TextSectionData.getAlignment()));
+  DataSectionData.setAlignment(std::max(16u, DataSectionData.getAlignment()));
+  BSSSectionData.setAlignment(std::max(16u, BSSSectionData.getAlignment()));
+
   if (T.isArch64Bit() && (Features & Mips::FeatureN64)) {
-    const MCSectionELF *Sec = Context.getELFSection(
-        ".MIPS.options", ELF::SHT_MIPS_OPTIONS,
-        ELF::SHF_ALLOC | ELF::SHF_MIPS_NOSTRIP, SectionKind::getMetadata());
+    // The EntrySize value of 1 seems strange since the records are neither
+    // 1-byte long nor fixed length but it matches the value GAS emits.
+    const MCSectionELF *Sec =
+        Context.getELFSection(".MIPS.options", ELF::SHT_MIPS_OPTIONS,
+                              ELF::SHF_ALLOC | ELF::SHF_MIPS_NOSTRIP,
+                              SectionKind::getMetadata(), 1, "");
+    MCA.getOrCreateSectionData(*Sec).setAlignment(8);
     OS.SwitchSection(Sec);
 
     OS.EmitIntValue(1, 1);  // kind
@@ -346,7 +365,9 @@ void MipsTargetELFStreamer::finish() {
   } else {
     const MCSectionELF *Sec =
         Context.getELFSection(".reginfo", ELF::SHT_MIPS_REGINFO, ELF::SHF_ALLOC,
-                              SectionKind::getMetadata());
+                              SectionKind::getMetadata(), 24, "");
+    MCA.getOrCreateSectionData(*Sec)
+        .setAlignment(Features & Mips::FeatureN32 ? 8 : 4);
     OS.SwitchSection(Sec);
 
     OS.EmitIntValue(0, 4); // ri_gprmask
@@ -638,7 +659,7 @@ void MipsTargetELFStreamer::emitMipsAbiFlags() {
   MCStreamer &OS = getStreamer();
   const MCSectionELF *Sec =
       Context.getELFSection(".MIPS.abiflags", ELF::SHT_MIPS_ABIFLAGS,
-                            ELF::SHF_ALLOC, SectionKind::getMetadata());
+                            ELF::SHF_ALLOC, SectionKind::getMetadata(), 24, "");
   MCSectionData &ABIShndxSD = MCA.getOrCreateSectionData(*Sec);
   ABIShndxSD.setAlignment(8);
   OS.SwitchSection(Sec);

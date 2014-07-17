@@ -153,9 +153,10 @@ MipsSubtarget::MipsSubtarget(const std::string &TT, const std::string &CPU,
                        false);
 
   if (!isABI_O32() && !useOddSPReg())
-    report_fatal_error("-mattr=+nooddspreg is not currently permitted for a "
-                       "the O32 ABI.",
-                       false);
+    report_fatal_error("-mattr=+nooddspreg requires the O32 ABI.", false);
+
+  if (IsFPXX && (isABI_N32() || isABI_N64()))
+    report_fatal_error("FPXX is not permitted for the N32/N64 ABI's.", false);
 
   if (hasMips32r6()) {
     StringRef ISA = hasMips64r6() ? "MIPS64r6" : "MIPS32r6";
@@ -176,15 +177,17 @@ MipsSubtarget::MipsSubtarget(const std::string &TT, const std::string &CPU,
   UseSmallSection = !IsLinux && (RM == Reloc::Static);
 }
 
-bool
-MipsSubtarget::enablePostRAScheduler(CodeGenOpt::Level OptLevel,
-                                    TargetSubtargetInfo::AntiDepBreakMode &Mode,
-                                     RegClassVector &CriticalPathRCs) const {
-  Mode = TargetSubtargetInfo::ANTIDEP_NONE;
+/// This overrides the PostRAScheduler bit in the SchedModel for any CPU.
+bool MipsSubtarget::enablePostMachineScheduler() const { return true; }
+
+void MipsSubtarget::getCriticalPathRCs(RegClassVector &CriticalPathRCs) const {
   CriticalPathRCs.clear();
-  CriticalPathRCs.push_back(isGP64bit() ? &Mips::GPR64RegClass
-                                        : &Mips::GPR32RegClass);
-  return OptLevel >= CodeGenOpt::Aggressive;
+  CriticalPathRCs.push_back(isGP64bit() ?
+                            &Mips::GPR64RegClass : &Mips::GPR32RegClass);
+}
+
+CodeGenOpt::Level MipsSubtarget::getOptLevelToEnablePostRAScheduler() const {
+  return CodeGenOpt::Aggressive;
 }
 
 MipsSubtarget &

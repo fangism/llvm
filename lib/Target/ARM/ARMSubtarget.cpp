@@ -18,6 +18,7 @@
 #include "ARMJITInfo.h"
 #include "ARMSelectionDAGInfo.h"
 #include "ARMSubtarget.h"
+#include "ARMMachineFunctionInfo.h"
 #include "Thumb1FrameLowering.h"
 #include "Thumb1InstrInfo.h"
 #include "Thumb2InstrInfo.h"
@@ -27,6 +28,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetOptions.h"
+#include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 
 using namespace llvm;
 
@@ -188,7 +191,6 @@ void ARMSubtarget::initializeEnvironment() {
   InThumbMode = false;
   HasThumb2 = false;
   NoARM = false;
-  PostRAScheduler = false;
   IsR9Reserved = ReserveR9;
   UseMovt = false;
   SupportsTailCall = false;
@@ -305,9 +307,6 @@ void ARMSubtarget::resetSubtargetFeatures(StringRef CPU, StringRef FS) {
     SupportsTailCall = !isThumb1Only();
   }
 
-  if (!isThumb() || hasThumb2())
-    PostRAScheduler = true;
-
   switch (Align) {
     case DefaultAlign:
       // Assume pre-ARMv6 doesn't support unaligned accesses.
@@ -422,23 +421,13 @@ bool ARMSubtarget::hasSinCos() const {
     !getTargetTriple().isOSVersionLT(7, 0);
 }
 
-// Enable the PostMachineScheduler if the target selects it instead of
-// PostRAScheduler. Currently only available on the command line via
-// -misched-postra.
+// This overrides the PostRAScheduler bit in the SchedModel for any CPU.
 bool ARMSubtarget::enablePostMachineScheduler() const {
-  return PostRAScheduler;
+  return (!isThumb() || hasThumb2());
 }
 
 bool ARMSubtarget::enableAtomicExpandLoadLinked() const {
   return hasAnyDataBarrier() && !isThumb1Only();
-}
-
-bool ARMSubtarget::enablePostRAScheduler(
-           CodeGenOpt::Level OptLevel,
-           TargetSubtargetInfo::AntiDepBreakMode& Mode,
-           RegClassVector& CriticalPathRCs) const {
-  Mode = TargetSubtargetInfo::ANTIDEP_NONE;
-  return PostRAScheduler && OptLevel >= CodeGenOpt::Default;
 }
 
 bool ARMSubtarget::useMovt(const MachineFunction &MF) const {

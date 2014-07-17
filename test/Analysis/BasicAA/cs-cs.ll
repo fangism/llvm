@@ -8,6 +8,8 @@ declare void @llvm.arm.neon.vst1.v8i16(i8*, <8 x i16>, i32) nounwind
 declare void @llvm.memset.p0i8.i64(i8* nocapture, i8, i64, i32, i1) nounwind
 declare void @llvm.memcpy.p0i8.p0i8.i64(i8* nocapture, i8* nocapture, i64, i32, i1) nounwind
 
+declare void @a_readonly_func(i8 *) noinline nounwind readonly
+
 define <8 x i16> @test1(i8* %p, <8 x i16> %y) {
 entry:
   %q = getelementptr i8* %p, i64 16
@@ -216,6 +218,19 @@ define void @test5(i8* %P, i8* %Q, i8* %R) nounwind ssp {
 ; CHECK: Both ModRef:  Ptr: i8* %R     <->  tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* %P, i8* %R, i64 12, i32 1, i1 false)
 ; CHECK: Both ModRef:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* %P, i8* %Q, i64 12, i32 1, i1 false) <->   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* %P, i8* %R, i64 12, i32 1, i1 false)
 ; CHECK: Both ModRef:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* %P, i8* %R, i64 12, i32 1, i1 false) <->   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* %P, i8* %Q, i64 12, i32 1, i1 false)
+}
+
+define void @test6(i8* %P) nounwind ssp {
+  call void @llvm.memset.p0i8.i64(i8* %P, i8 -51, i64 32, i32 8, i1 false)
+  call void @a_readonly_func(i8* %P)
+  ret void
+
+; CHECK-LABEL: Function: test6:
+
+; CHECK: Just Mod:  Ptr: i8* %P        <->  call void @llvm.memset.p0i8.i64(i8* %P, i8 -51, i64 32, i32 8, i1 false)
+; CHECK: Just Ref:  Ptr: i8* %P        <->  call void @a_readonly_func(i8* %P)
+; CHECK: Just Mod:   call void @llvm.memset.p0i8.i64(i8* %P, i8 -51, i64 32, i32 8, i1 false) <->   call void @a_readonly_func(i8* %P)
+; CHECK: Just Ref:   call void @a_readonly_func(i8* %P) <->   call void @llvm.memset.p0i8.i64(i8* %P, i8 -51, i64 32, i32 8, i1 false)
 }
 
 attributes #0 = { nounwind }

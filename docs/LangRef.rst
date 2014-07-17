@@ -582,7 +582,7 @@ to over-align the global if the global has an assigned section. In this
 case, the extra alignment could be observable: for example, code could
 assume that the globals are densely packed in their section and try to
 iterate over them as an array, alignment padding would break this
-iteration.
+iteration. The maximum alignment is ``1 << 29``.
 
 Globals can also have a :ref:`DLL storage class <dllstorageclass>`.
 
@@ -891,7 +891,7 @@ Currently, only the following parameter attributes are defined:
     address of outgoing stack arguments.  An ``inalloca`` argument must
     be a pointer to stack memory produced by an ``alloca`` instruction.
     The alloca, or argument allocation, must also be tagged with the
-    inalloca keyword.  Only the past argument may have the ``inalloca``
+    inalloca keyword.  Only the last argument may have the ``inalloca``
     attribute, and that argument is guaranteed to be passed in memory.
 
     An argument allocation may be used by a call at most once because
@@ -4925,9 +4925,10 @@ bytes of memory on the runtime stack, returning a pointer of the
 appropriate type to the program. If "NumElements" is specified, it is
 the number of elements allocated, otherwise "NumElements" is defaulted
 to be one. If a constant alignment is specified, the value result of the
-allocation is guaranteed to be aligned to at least that boundary. If not
-specified, or if zero, the target can choose to align the allocation on
-any convenient boundary compatible with the type.
+allocation is guaranteed to be aligned to at least that boundary. The
+alignment may not be greater than ``1 << 29``. If not specified, or if
+zero, the target can choose to align the allocation on any convenient
+boundary compatible with the type.
 
 '``type``' may be any sized type.
 
@@ -5001,7 +5002,8 @@ or an omitted ``align`` argument means that the operation has the ABI
 alignment for the target. It is the responsibility of the code emitter
 to ensure that the alignment information is correct. Overestimating the
 alignment results in undefined behavior. Underestimating the alignment
-may produce less efficient code. An alignment of 1 is always safe.
+may produce less efficient code. An alignment of 1 is always safe. The
+maximum possible alignment is ``1 << 29``.
 
 The optional ``!nontemporal`` metadata must reference a single
 metadata name ``<index>`` corresponding to a metadata node with one
@@ -5087,7 +5089,7 @@ alignment for the target. It is the responsibility of the code emitter
 to ensure that the alignment information is correct. Overestimating the
 alignment results in undefined behavior. Underestimating the
 alignment may produce less efficient code. An alignment of 1 is always
-safe.
+safe. The maximum possible alignment is ``1 << 29``.
 
 The optional ``!nontemporal`` metadata must reference a single metadata
 name ``<index>`` corresponding to a metadata node with one ``i32`` entry of
@@ -8651,14 +8653,14 @@ Syntax:
 
 ::
 
-      declare i16 @llvm.convert.to.fp16(float %a)
+      declare i16 @llvm.convert.to.fp16.f32(float %a)
+      declare i16 @llvm.convert.to.fp16.f64(double %a)
 
 Overview:
 """""""""
 
-The '``llvm.convert.to.fp16``' intrinsic function performs a conversion
-from single precision floating point format to half precision floating
-point format.
+The '``llvm.convert.to.fp16``' intrinsic function performs a conversion from a
+conventional floating point type to half precision floating point format.
 
 Arguments:
 """"""""""
@@ -8669,17 +8671,16 @@ converted.
 Semantics:
 """"""""""
 
-The '``llvm.convert.to.fp16``' intrinsic function performs a conversion
-from single precision floating point format to half precision floating
-point format. The return value is an ``i16`` which contains the
-converted number.
+The '``llvm.convert.to.fp16``' intrinsic function performs a conversion from a
+conventional floating point format to half precision floating point format. The
+return value is an ``i16`` which contains the converted number.
 
 Examples:
 """""""""
 
 .. code-block:: llvm
 
-      %res = call i16 @llvm.convert.to.fp16(float %a)
+      %res = call i16 @llvm.convert.to.fp16.f32(float %a)
       store i16 %res, i16* @x, align 2
 
 .. _int_convert_from_fp16:
@@ -8692,7 +8693,8 @@ Syntax:
 
 ::
 
-      declare float @llvm.convert.from.fp16(i16 %a)
+      declare float @llvm.convert.from.fp16.f32(i16 %a)
+      declare double @llvm.convert.from.fp16.f64(i16 %a)
 
 Overview:
 """""""""

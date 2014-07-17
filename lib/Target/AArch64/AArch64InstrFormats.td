@@ -539,6 +539,11 @@ def imm0_7 : Operand<i64>, ImmLeaf<i64, [{
   let ParserMatchClass = Imm0_7Operand;
 }
 
+// imm32_0_15 predicate - True if the 32-bit immediate is in the range [0,15]
+def imm32_0_15 : Operand<i32>, ImmLeaf<i32, [{
+  return ((uint32_t)Imm) < 16;
+}]>;
+
 // An arithmetic shifter operand:
 //  {7-6} - shift type: 00 = lsl, 01 = lsr, 10 = asr
 //  {5-0} - imm6
@@ -776,15 +781,17 @@ def simdimmtype10 : Operand<i32>,
 
 // Base encoding for system instruction operands.
 let mayLoad = 0, mayStore = 0, hasSideEffects = 1 in
-class BaseSystemI<bit L, dag oops, dag iops, string asm, string operands>
-    : I<oops, iops, asm, operands, "", []> {
+class BaseSystemI<bit L, dag oops, dag iops, string asm, string operands,
+                  list<dag> pattern = []>
+    : I<oops, iops, asm, operands, "", pattern> {
   let Inst{31-22} = 0b1101010100;
   let Inst{21}    = L;
 }
 
 // System instructions which do not have an Rt register.
-class SimpleSystemI<bit L, dag iops, string asm, string operands>
-    : BaseSystemI<L, (outs), iops, asm, operands> {
+class SimpleSystemI<bit L, dag iops, string asm, string operands,
+                    list<dag> pattern = []>
+    : BaseSystemI<L, (outs), iops, asm, operands, pattern> {
   let Inst{4-0} = 0b11111;
 }
 
@@ -797,13 +804,17 @@ class RtSystemI<bit L, dag oops, dag iops, string asm, string operands>
 }
 
 // Hint instructions that take both a CRm and a 3-bit immediate.
-class HintI<string mnemonic>
-    : SimpleSystemI<0, (ins imm0_127:$imm), mnemonic#" $imm", "">,
-      Sched<[WriteHint]> {
-  bits <7> imm;
-  let Inst{20-12} = 0b000110010;
-  let Inst{11-5} = imm;
-}
+// NOTE: ideally, this would have mayStore = 0, mayLoad = 0, but we cannot
+// model patterns with sufficiently fine granularity
+let mayStore = 1, mayLoad = 1, hasSideEffects = 1 in
+  class HintI<string mnemonic>
+      : SimpleSystemI<0, (ins imm0_127:$imm), mnemonic#" $imm", "",
+                      [(int_aarch64_hint imm0_127:$imm)]>,
+        Sched<[WriteHint]> {
+    bits <7> imm;
+    let Inst{20-12} = 0b000110010;
+    let Inst{11-5} = imm;
+  }
 
 // System instructions taking a single literal operand which encodes into
 // CRm. op2 differentiates the opcodes.
@@ -815,8 +826,9 @@ def barrier_op : Operand<i32> {
   let PrintMethod = "printBarrierOption";
   let ParserMatchClass = BarrierAsmOperand;
 }
-class CRmSystemI<Operand crmtype, bits<3> opc, string asm>
-    : SimpleSystemI<0, (ins crmtype:$CRm), asm, "\t$CRm">,
+class CRmSystemI<Operand crmtype, bits<3> opc, string asm,
+                 list<dag> pattern = []>
+    : SimpleSystemI<0, (ins crmtype:$CRm), asm, "\t$CRm", pattern>,
       Sched<[WriteBarrier]> {
   bits<4> CRm;
   let Inst{20-12} = 0b000110011;

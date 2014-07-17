@@ -1582,9 +1582,8 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
           Builder->CreateGEP(StrippedPtr, Idx, GEP.getName());
 
         // V and GEP are both pointer types --> BitCast
-        if (StrippedPtrTy->getAddressSpace() == GEP.getPointerAddressSpace())
-          return new BitCastInst(NewGEP, GEP.getType());
-        return new AddrSpaceCastInst(NewGEP, GEP.getType());
+        return CastInst::CreatePointerBitCastOrAddrSpaceCast(NewGEP,
+                                                             GEP.getType());
       }
 
       // Transform things like:
@@ -1616,9 +1615,8 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
               Builder->CreateGEP(StrippedPtr, NewIdx, GEP.getName());
 
             // The NewGEP must be pointer typed, so must the old one -> BitCast
-            if (StrippedPtrTy->getAddressSpace() == GEP.getPointerAddressSpace())
-              return new BitCastInst(NewGEP, GEP.getType());
-            return new AddrSpaceCastInst(NewGEP, GEP.getType());
+            return CastInst::CreatePointerBitCastOrAddrSpaceCast(NewGEP,
+                                                                 GEP.getType());
           }
         }
       }
@@ -1658,9 +1656,8 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
               Builder->CreateInBoundsGEP(StrippedPtr, Off, GEP.getName()) :
               Builder->CreateGEP(StrippedPtr, Off, GEP.getName());
             // The NewGEP must be pointer typed, so must the old one -> BitCast
-            if (StrippedPtrTy->getAddressSpace() == GEP.getPointerAddressSpace())
-              return new BitCastInst(NewGEP, GEP.getType());
-            return new AddrSpaceCastInst(NewGEP, GEP.getType());
+            return CastInst::CreatePointerBitCastOrAddrSpaceCast(NewGEP,
+                                                                 GEP.getType());
           }
         }
       }
@@ -2730,9 +2727,18 @@ bool InstCombiner::DoOneIteration(Function &F, unsigned Iteration) {
         // If the user is one of our immediate successors, and if that successor
         // only has us as a predecessors (we'd have to split the critical edge
         // otherwise), we can keep going.
-        if (UserIsSuccessor && UserParent->getSinglePredecessor())
+        if (UserIsSuccessor && UserParent->getSinglePredecessor()) {
           // Okay, the CFG is simple enough, try to sink this instruction.
-          MadeIRChange |= TryToSinkInstruction(I, UserParent);
+          if (TryToSinkInstruction(I, UserParent)) {
+            MadeIRChange = true;
+            // We'll add uses of the sunk instruction below, but since sinking
+            // can expose opportunities for it's *operands* add them to the
+            // worklist
+            for (Use &U : I->operands())
+              if (Instruction *OpI = dyn_cast<Instruction>(U.get()))
+                Worklist.Add(OpI);
+          }
+        }
       }
     }
 

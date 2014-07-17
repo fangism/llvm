@@ -29,6 +29,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/PatternMatch.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
 #include <cstring>
 using namespace llvm;
@@ -415,6 +416,7 @@ void llvm::computeKnownBits(Value *V, APInt &KnownZero, APInt &KnownOne,
     break; // Can't work with floating point.
   case Instruction::PtrToInt:
   case Instruction::IntToPtr:
+  case Instruction::AddrSpaceCast: // Pointers could be different sizes.
     // We can't handle these if we don't know the pointer size.
     if (!TD) break;
     // FALL THROUGH and handle them the same as zext/trunc.
@@ -1731,7 +1733,8 @@ Value *llvm::GetPointerBaseWithConstantOffset(Value *Ptr, int64_t &Offset,
       }
 
       Ptr = GEP->getPointerOperand();
-    } else if (Operator::getOpcode(Ptr) == Instruction::BitCast) {
+    } else if (Operator::getOpcode(Ptr) == Instruction::BitCast ||
+               Operator::getOpcode(Ptr) == Instruction::AddrSpaceCast) {
       Ptr = cast<Operator>(Ptr)->getOperand(0);
     } else if (GlobalAlias *GA = dyn_cast<GlobalAlias>(Ptr)) {
       if (GA->mayBeOverridden())
@@ -1900,7 +1903,8 @@ llvm::GetUnderlyingObject(Value *V, const DataLayout *TD, unsigned MaxLookup) {
   for (unsigned Count = 0; MaxLookup == 0 || Count < MaxLookup; ++Count) {
     if (GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
       V = GEP->getPointerOperand();
-    } else if (Operator::getOpcode(V) == Instruction::BitCast) {
+    } else if (Operator::getOpcode(V) == Instruction::BitCast ||
+               Operator::getOpcode(V) == Instruction::AddrSpaceCast) {
       V = cast<Operator>(V)->getOperand(0);
     } else if (GlobalAlias *GA = dyn_cast<GlobalAlias>(V)) {
       if (GA->mayBeOverridden())

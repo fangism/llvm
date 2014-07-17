@@ -1711,6 +1711,8 @@ SDValue AArch64TargetLowering::LowerFormalArguments(
         RC = &AArch64::GPR32RegClass;
       else if (RegVT == MVT::i64)
         RC = &AArch64::GPR64RegClass;
+      else if (RegVT == MVT::f16)
+        RC = &AArch64::FPR16RegClass;
       else if (RegVT == MVT::f32)
         RC = &AArch64::FPR32RegClass;
       else if (RegVT == MVT::f64 || RegVT.is64BitVector())
@@ -5582,11 +5584,12 @@ SDValue AArch64TargetLowering::LowerINSERT_VECTOR_ELT(SDValue Op,
                                                       SelectionDAG &DAG) const {
   assert(Op.getOpcode() == ISD::INSERT_VECTOR_ELT && "Unknown opcode!");
 
-  // Check for non-constant lane.
-  if (!isa<ConstantSDNode>(Op.getOperand(2)))
+  // Check for non-constant or out of range lane.
+  EVT VT = Op.getOperand(0).getValueType();
+  ConstantSDNode *CI = dyn_cast<ConstantSDNode>(Op.getOperand(2));
+  if (!CI || CI->getZExtValue() >= VT.getVectorNumElements())
     return SDValue();
 
-  EVT VT = Op.getOperand(0).getValueType();
 
   // Insertion/extraction are legal for V128 types.
   if (VT == MVT::v16i8 || VT == MVT::v8i16 || VT == MVT::v4i32 ||
@@ -5614,11 +5617,12 @@ AArch64TargetLowering::LowerEXTRACT_VECTOR_ELT(SDValue Op,
                                                SelectionDAG &DAG) const {
   assert(Op.getOpcode() == ISD::EXTRACT_VECTOR_ELT && "Unknown opcode!");
 
-  // Check for non-constant lane.
-  if (!isa<ConstantSDNode>(Op.getOperand(1)))
+  // Check for non-constant or out of range lane.
+  EVT VT = Op.getOperand(0).getValueType();
+  ConstantSDNode *CI = dyn_cast<ConstantSDNode>(Op.getOperand(1));
+  if (!CI || CI->getZExtValue() >= VT.getVectorNumElements())
     return SDValue();
 
-  EVT VT = Op.getOperand(0).getValueType();
 
   // Insertion/extraction are legal for V128 types.
   if (VT == MVT::v16i8 || VT == MVT::v8i16 || VT == MVT::v4i32 ||

@@ -15,15 +15,16 @@
 #include "llvm/MC/MCSectionCOFF.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Support/Win64EH.h"
 
 namespace llvm {
 
 // NOTE: All relocations generated here are 4-byte image-relative.
 
-static uint8_t CountOfUnwindCodes(std::vector<MCWin64EHInstruction> &Insns) {
+static uint8_t CountOfUnwindCodes(std::vector<WinEH::Instruction> &Insns) {
   uint8_t Count = 0;
   for (const auto &I : Insns) {
-    switch (I.getOperation()) {
+    switch (static_cast<Win64EH::UnwindOpcodes>(I.Operation)) {
     case Win64EH::UOP_PushNonVol:
     case Win64EH::UOP_AllocSmall:
     case Win64EH::UOP_SetFPReg:
@@ -39,86 +40,83 @@ static uint8_t CountOfUnwindCodes(std::vector<MCWin64EHInstruction> &Insns) {
       Count += 3;
       break;
     case Win64EH::UOP_AllocLarge:
-      Count += (I.getSize() > 512 * 1024 - 8) ? 3 : 2;
+      Count += (I.Offset > 512 * 1024 - 8) ? 3 : 2;
       break;
     }
   }
   return Count;
 }
 
-static void EmitAbsDifference(MCStreamer &streamer, MCSymbol *lhs,
-                              MCSymbol *rhs) {
-  MCContext &context = streamer.getContext();
-  const MCExpr *diff = MCBinaryExpr::CreateSub(MCSymbolRefExpr::Create(
-                                                                  lhs, context),
-                                               MCSymbolRefExpr::Create(
-                                                                  rhs, context),
-                                               context);
-  streamer.EmitAbsValue(diff, 1);
-
+static void EmitAbsDifference(MCStreamer &Streamer, const MCSymbol *LHS,
+                              const MCSymbol *RHS) {
+  MCContext &Context = Streamer.getContext();
+  const MCExpr *Diff =
+      MCBinaryExpr::CreateSub(MCSymbolRefExpr::Create(LHS, Context),
+                              MCSymbolRefExpr::Create(RHS, Context), Context);
+  Streamer.EmitAbsValue(Diff, 1);
 }
 
 static void EmitUnwindCode(MCStreamer &streamer, MCSymbol *begin,
-                           MCWin64EHInstruction &inst) {
+                           WinEH::Instruction &inst) {
   uint8_t b2;
   uint16_t w;
-  b2 = (inst.getOperation() & 0x0F);
-  switch (inst.getOperation()) {
+  b2 = (inst.Operation & 0x0F);
+  switch (static_cast<Win64EH::UnwindOpcodes>(inst.Operation)) {
   case Win64EH::UOP_PushNonVol:
-    EmitAbsDifference(streamer, inst.getLabel(), begin);
-    b2 |= (inst.getRegister() & 0x0F) << 4;
+    EmitAbsDifference(streamer, inst.Label, begin);
+    b2 |= (inst.Register & 0x0F) << 4;
     streamer.EmitIntValue(b2, 1);
     break;
   case Win64EH::UOP_AllocLarge:
-    EmitAbsDifference(streamer, inst.getLabel(), begin);
-    if (inst.getSize() > 512*1024-8) {
+    EmitAbsDifference(streamer, inst.Label, begin);
+    if (inst.Offset > 512 * 1024 - 8) {
       b2 |= 0x10;
       streamer.EmitIntValue(b2, 1);
-      w = inst.getSize() & 0xFFF8;
+      w = inst.Offset & 0xFFF8;
       streamer.EmitIntValue(w, 2);
-      w = inst.getSize() >> 16;
+      w = inst.Offset >> 16;
     } else {
       streamer.EmitIntValue(b2, 1);
-      w = inst.getSize() >> 3;
+      w = inst.Offset >> 3;
     }
     streamer.EmitIntValue(w, 2);
     break;
   case Win64EH::UOP_AllocSmall:
-    b2 |= (((inst.getSize()-8) >> 3) & 0x0F) << 4;
-    EmitAbsDifference(streamer, inst.getLabel(), begin);
+    b2 |= (((inst.Offset - 8) >> 3) & 0x0F) << 4;
+    EmitAbsDifference(streamer, inst.Label, begin);
     streamer.EmitIntValue(b2, 1);
     break;
   case Win64EH::UOP_SetFPReg:
-    EmitAbsDifference(streamer, inst.getLabel(), begin);
+    EmitAbsDifference(streamer, inst.Label, begin);
     streamer.EmitIntValue(b2, 1);
     break;
   case Win64EH::UOP_SaveNonVol:
   case Win64EH::UOP_SaveXMM128:
-    b2 |= (inst.getRegister() & 0x0F) << 4;
-    EmitAbsDifference(streamer, inst.getLabel(), begin);
+    b2 |= (inst.Register & 0x0F) << 4;
+    EmitAbsDifference(streamer, inst.Label, begin);
     streamer.EmitIntValue(b2, 1);
-    w = inst.getOffset() >> 3;
-    if (inst.getOperation() == Win64EH::UOP_SaveXMM128)
+    w = inst.Offset >> 3;
+    if (inst.Operation == Win64EH::UOP_SaveXMM128)
       w >>= 1;
     streamer.EmitIntValue(w, 2);
     break;
   case Win64EH::UOP_SaveNonVolBig:
   case Win64EH::UOP_SaveXMM128Big:
-    b2 |= (inst.getRegister() & 0x0F) << 4;
-    EmitAbsDifference(streamer, inst.getLabel(), begin);
+    b2 |= (inst.Register & 0x0F) << 4;
+    EmitAbsDifference(streamer, inst.Label, begin);
     streamer.EmitIntValue(b2, 1);
-    if (inst.getOperation() == Win64EH::UOP_SaveXMM128Big)
-      w = inst.getOffset() & 0xFFF0;
+    if (inst.Operation == Win64EH::UOP_SaveXMM128Big)
+      w = inst.Offset & 0xFFF0;
     else
-      w = inst.getOffset() & 0xFFF8;
+      w = inst.Offset & 0xFFF8;
     streamer.EmitIntValue(w, 2);
-    w = inst.getOffset() >> 16;
+    w = inst.Offset >> 16;
     streamer.EmitIntValue(w, 2);
     break;
   case Win64EH::UOP_PushMachFrame:
-    if (inst.isPushCodeFrame())
+    if (inst.Offset == 1)
       b2 |= 0x10;
-    EmitAbsDifference(streamer, inst.getLabel(), begin);
+    EmitAbsDifference(streamer, inst.Label, begin);
     streamer.EmitIntValue(b2, 1);
     break;
   }
@@ -138,7 +136,7 @@ static void EmitSymbolRefWithOfs(MCStreamer &streamer,
 }
 
 static void EmitRuntimeFunction(MCStreamer &streamer,
-                                const MCWin64EHUnwindInfo *info) {
+                                const MCWinFrameInfo *info) {
   MCContext &context = streamer.getContext();
 
   streamer.EmitValueToAlignment(4);
@@ -149,7 +147,7 @@ static void EmitRuntimeFunction(MCStreamer &streamer,
                                              context), 4);
 }
 
-static void EmitUnwindInfo(MCStreamer &streamer, MCWin64EHUnwindInfo *info) {
+static void EmitUnwindInfo(MCStreamer &streamer, MCWinFrameInfo *info) {
   // If this UNWIND_INFO already has a symbol, it's already been emitted.
   if (info->Symbol) return;
 
@@ -180,17 +178,16 @@ static void EmitUnwindInfo(MCStreamer &streamer, MCWin64EHUnwindInfo *info) {
 
   uint8_t frame = 0;
   if (info->LastFrameInst >= 0) {
-    MCWin64EHInstruction &frameInst = info->Instructions[info->LastFrameInst];
-    assert(frameInst.getOperation() == Win64EH::UOP_SetFPReg);
-    frame = (frameInst.getRegister() & 0x0F) |
-            (frameInst.getOffset() & 0xF0);
+    WinEH::Instruction &frameInst = info->Instructions[info->LastFrameInst];
+    assert(frameInst.Operation == Win64EH::UOP_SetFPReg);
+    frame = (frameInst.Register & 0x0F) | (frameInst.Offset & 0xF0);
   }
   streamer.EmitIntValue(frame, 1);
 
   // Emit unwind instructions (in reverse order).
   uint8_t numInst = info->Instructions.size();
   for (uint8_t c = 0; c < numInst; ++c) {
-    MCWin64EHInstruction inst = info->Instructions.back();
+    WinEH::Instruction inst = info->Instructions.back();
     info->Instructions.pop_back();
     EmitUnwindCode(streamer, info->Begin, inst);
   }
@@ -259,7 +256,7 @@ static const MCSection *getWin64EHFuncTableSection(StringRef suffix,
 }
 
 void MCWin64EHUnwindEmitter::EmitUnwindInfo(MCStreamer &streamer,
-                                            MCWin64EHUnwindInfo *info) {
+                                            MCWinFrameInfo *info) {
   // Switch sections (the static function above is meant to be called from
   // here and from Emit().
   MCContext &context = streamer.getContext();
@@ -274,7 +271,7 @@ void MCWin64EHUnwindEmitter::Emit(MCStreamer &Streamer) {
   MCContext &Context = Streamer.getContext();
 
   // Emit the unwind info structs first.
-  for (const auto &CFI : Streamer.getW64UnwindInfos()) {
+  for (const auto &CFI : Streamer.getWinFrameInfos()) {
     const MCSection *XData =
         getWin64EHTableSection(GetSectionSuffix(CFI->Function), Context);
     Streamer.SwitchSection(XData);
@@ -282,7 +279,7 @@ void MCWin64EHUnwindEmitter::Emit(MCStreamer &Streamer) {
   }
 
   // Now emit RUNTIME_FUNCTION entries.
-  for (const auto &CFI : Streamer.getW64UnwindInfos()) {
+  for (const auto &CFI : Streamer.getWinFrameInfos()) {
     const MCSection *PData =
         getWin64EHFuncTableSection(GetSectionSuffix(CFI->Function), Context);
     Streamer.SwitchSection(PData);

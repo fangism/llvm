@@ -199,14 +199,19 @@ AliasAnalysis::getModRefInfo(ImmutableCallSite CS1, ImmutableCallSite CS2) {
         Location CS1Loc =
           getArgLocation(CS1, (unsigned) std::distance(CS1.arg_begin(), I),
                          ArgMask);
-        if ((getModRefInfo(CS2, CS1Loc) & ArgMask) != NoModRef) {
-          R = Mask;
+	// ArgMask indicates what CS1 might do to CS1Loc; if CS1 might Mod
+	// CS1Loc, then we care about either a Mod or a Ref by CS2. If CS1
+	// might Ref, then we care only about a Mod by CS2.
+        ModRefResult ArgR = getModRefInfo(CS2, CS1Loc);
+        if (((ArgMask & Mod) != NoModRef && (ArgR & ModRef) != NoModRef) ||
+            ((ArgMask & Ref) != NoModRef && (ArgR & Mod)    != NoModRef))
+          R = ModRefResult((R | ArgMask) & Mask);
+
+        if (R == Mask)
           break;
-        }
       }
     }
-    if (R == NoModRef)
-      return R;
+    return R;
   }
 
   // If this is the end of the chain, don't forward.

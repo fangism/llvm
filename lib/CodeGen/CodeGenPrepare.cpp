@@ -2036,7 +2036,8 @@ bool AddressingModeMatcher::MatchOperationAddr(User *AddrInst, unsigned Opcode,
   case Instruction::Shl: {
     // Can only handle X*C and X << C.
     ConstantInt *RHS = dyn_cast<ConstantInt>(AddrInst->getOperand(1));
-    if (!RHS) return false;
+    if (!RHS)
+      return false;
     int64_t Scale = RHS->getSExtValue();
     if (Opcode == Instruction::Shl)
       Scale = 1LL << Scale;
@@ -2130,8 +2131,11 @@ bool AddressingModeMatcher::MatchOperationAddr(User *AddrInst, unsigned Opcode,
     return true;
   }
   case Instruction::SExt: {
+    Instruction *SExt = dyn_cast<Instruction>(AddrInst);
+    if (!SExt)
+      return false;
+
     // Try to move this sext out of the way of the addressing mode.
-    Instruction *SExt = cast<Instruction>(AddrInst);
     // Ask for a method for doing so.
     TypePromotionHelper::Action TPH = TypePromotionHelper::getAction(
         SExt, InsertedTruncs, TLI, PromotedInsts);

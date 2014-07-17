@@ -5155,12 +5155,13 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     return nullptr;
   }
   case Intrinsic::convert_to_fp16:
-    setValue(&I, DAG.getNode(ISD::FP32_TO_FP16, sdl,
+    setValue(&I, DAG.getNode(ISD::FP_TO_FP16, sdl,
                              MVT::i16, getValue(I.getArgOperand(0))));
     return nullptr;
   case Intrinsic::convert_from_fp16:
-    setValue(&I, DAG.getNode(ISD::FP16_TO_FP32, sdl,
-                             MVT::f32, getValue(I.getArgOperand(0))));
+    setValue(&I,
+             DAG.getNode(ISD::FP16_TO_FP, sdl, TLI->getValueType(I.getType()),
+                         getValue(I.getArgOperand(0))));
     return nullptr;
   case Intrinsic::pcmarker: {
     SDValue Tmp = getValue(I.getArgOperand(0));
@@ -5490,7 +5491,7 @@ void SelectionDAGBuilder::LowerCallTo(ImmutableCallSite CS, SDValue Callee,
 
   // Check if target-independent constraints permit a tail call here.
   // Target-dependent constraints are checked within TLI->LowerCallTo.
-  if (isTailCall && !isInTailCallPosition(CS, DAG))
+  if (isTailCall && !isInTailCallPosition(CS, DAG.getTarget()))
     isTailCall = false;
 
   TargetLowering::CallLoweringInfo CLI(DAG);
