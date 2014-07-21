@@ -24,7 +24,7 @@ public:
 
   unsigned getMaxStubSize() override { return 8; }
 
-  unsigned getStubAlignment() override { return 1; }
+  unsigned getStubAlignment() override { return 8; }
 
   relocation_iterator
   processRelocationRef(unsigned SectionID, relocation_iterator RelI,
@@ -59,8 +59,10 @@ public:
     RelocationValueRef Value(
         getRelocationValueRef(ObjImg, RelI, RE, ObjSectionToID, Symbols));
 
-    if (HasExplicitAddend)
+    if (HasExplicitAddend) {
+      RE.Addend = ExplicitAddend;
       Value.Addend = ExplicitAddend;
+    }
 
     bool IsExtern = Obj.getPlainRelocationExternal(RelInfo);
     if (!IsExtern && RE.IsPCRel)

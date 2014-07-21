@@ -104,7 +104,7 @@ static std::string computeDataLayout(const MipsSubtarget &ST) {
 
 MipsSubtarget::MipsSubtarget(const std::string &TT, const std::string &CPU,
                              const std::string &FS, bool little,
-                             Reloc::Model _RM, MipsTargetMachine *_TM)
+                             MipsTargetMachine *_TM)
     : MipsGenSubtargetInfo(TT, CPU, FS), MipsArchVersion(Mips32),
       MipsABI(UnknownABI), IsLittle(little), IsSingleFloat(false),
       IsFPXX(false), IsFP64bit(false), UseOddSPReg(true), IsNaN2008bit(false),
@@ -113,12 +113,11 @@ MipsSubtarget::MipsSubtarget(const std::string &TT, const std::string &CPU,
       HasMips4_32r2(false), HasMips5_32r2(false), InMips16Mode(false),
       InMips16HardFloat(Mips16HardFloat), InMicroMipsMode(false), HasDSP(false),
       HasDSPR2(false), AllowMixed16_32(Mixed16_32 | Mips_Os16), Os16(Mips_Os16),
-      HasMSA(false), RM(_RM), OverrideMode(NoOverride), TM(_TM),
-      TargetTriple(TT),
+      HasMSA(false), TM(_TM), TargetTriple(TT),
       DL(computeDataLayout(initializeSubtargetDependencies(CPU, FS, TM))),
-      TSInfo(DL), JITInfo(), InstrInfo(MipsInstrInfo::create(*TM)),
-      FrameLowering(MipsFrameLowering::create(*TM, *this)),
-      TLInfo(MipsTargetLowering::create(*TM)) {
+      TSInfo(DL), JITInfo(), InstrInfo(MipsInstrInfo::create(*this)),
+      FrameLowering(MipsFrameLowering::create(*this)),
+      TLInfo(MipsTargetLowering::create(*TM, *this)) {
 
   PreviousInMips16Mode = InMips16Mode;
 
@@ -174,7 +173,7 @@ MipsSubtarget::MipsSubtarget(const std::string &TT, const std::string &CPU,
   // Set UseSmallSection.
   // TODO: Investigate the IsLinux check. I suspect it's really checking for
   //       bare-metal.
-  UseSmallSection = !IsLinux && (RM == Reloc::Static);
+  UseSmallSection = !IsLinux && (TM->getRelocationModel() == Reloc::Static);
 }
 
 /// This overrides the PostRAScheduler bit in the SchedModel for any CPU.
@@ -200,104 +199,21 @@ MipsSubtarget::initializeSubtargetDependencies(StringRef CPU, StringRef FS,
   // Initialize scheduling itinerary for the specified CPU.
   InstrItins = getInstrItineraryForCPU(CPUName);
 
-  if (InMips16Mode && !TM->Options.UseSoftFloat) {
-    // Hard float for mips16 means essentially to compile as soft float
-    // but to use a runtime library for soft float that is written with
-    // native mips32 floating point instructions (those runtime routines
-    // run in mips32 hard float mode).
-    TM->Options.UseSoftFloat = true;
-    TM->Options.FloatABIType = FloatABI::Soft;
+  if (InMips16Mode && !TM->Options.UseSoftFloat)
     InMips16HardFloat = true;
-  }
 
   return *this;
 }
 
-//FIXME: This logic for reseting the subtarget along with
-// the helper classes can probably be simplified but there are a lot of
-// cases so we will defer rewriting this to later.
-//
-void MipsSubtarget::resetSubtarget(MachineFunction *MF) {
-  bool ChangeToMips16 = false, ChangeToNoMips16 = false;
-  DEBUG(dbgs() << "resetSubtargetFeatures" << "\n");
-  AttributeSet FnAttrs = MF->getFunction()->getAttributes();
-  ChangeToMips16 = FnAttrs.hasAttribute(AttributeSet::FunctionIndex,
-                                        "mips16");
-  ChangeToNoMips16 = FnAttrs.hasAttribute(AttributeSet::FunctionIndex,
-                                        "nomips16");
-  assert (!(ChangeToMips16 & ChangeToNoMips16) &&
-          "mips16 and nomips16 specified on the same function");
-  if (ChangeToMips16) {
-    if (PreviousInMips16Mode)
-      return;
-    OverrideMode = Mips16Override;
-    PreviousInMips16Mode = true;
-    setHelperClassesMips16();
-    return;
-  } else if (ChangeToNoMips16) {
-    if (!PreviousInMips16Mode)
-      return;
-    OverrideMode = NoMips16Override;
-    PreviousInMips16Mode = false;
-    setHelperClassesMipsSE();
-    return;
-  } else {
-    if (OverrideMode == NoOverride)
-      return;
-    OverrideMode = NoOverride;
-    DEBUG(dbgs() << "back to default" << "\n");
-    if (inMips16Mode() && !PreviousInMips16Mode) {
-      setHelperClassesMips16();
-      PreviousInMips16Mode = true;
-    } else if (!inMips16Mode() && PreviousInMips16Mode) {
-      setHelperClassesMipsSE();
-      PreviousInMips16Mode = false;
-    }
-    return;
-  }
-}
-
-void MipsSubtarget::setHelperClassesMips16() {
-  InstrInfoSE.swap(InstrInfo);
-  FrameLoweringSE.swap(FrameLowering);
-  TLInfoSE.swap(TLInfo);
-  if (!InstrInfo16) {
-    InstrInfo.reset(MipsInstrInfo::create(*TM));
-    FrameLowering.reset(MipsFrameLowering::create(*TM, *this));
-    TLInfo.reset(MipsTargetLowering::create(*TM));
-  } else {
-    InstrInfo16.swap(InstrInfo);
-    FrameLowering16.swap(FrameLowering);
-    TLInfo16.swap(TLInfo);
-  }
-  assert(TLInfo && "null target lowering 16");
-  assert(InstrInfo && "null instr info 16");
-  assert(FrameLowering && "null frame lowering 16");
-}
-
-void MipsSubtarget::setHelperClassesMipsSE() {
-  InstrInfo16.swap(InstrInfo);
-  FrameLowering16.swap(FrameLowering);
-  TLInfo16.swap(TLInfo);
-  if (!InstrInfoSE) {
-    InstrInfo.reset(MipsInstrInfo::create(*TM));
-    FrameLowering.reset(MipsFrameLowering::create(*TM, *this));
-    TLInfo.reset(MipsTargetLowering::create(*TM));
-  } else {
-    InstrInfoSE.swap(InstrInfo);
-    FrameLoweringSE.swap(FrameLowering);
-    TLInfoSE.swap(TLInfo);
-  }
-  assert(TLInfo && "null target lowering in SE");
-  assert(InstrInfo && "null instr info SE");
-  assert(FrameLowering && "null frame lowering SE");
-}
-
-bool MipsSubtarget::mipsSEUsesSoftFloat() const {
+bool MipsSubtarget::abiUsesSoftFloat() const {
   return TM->Options.UseSoftFloat && !InMips16HardFloat;
 }
 
 bool MipsSubtarget::useConstantIslands() {
   DEBUG(dbgs() << "use constant islands " << Mips16ConstantIslands << "\n");
   return Mips16ConstantIslands;
+}
+
+Reloc::Model MipsSubtarget::getRelocationModel() const {
+  return TM->getRelocationModel();
 }

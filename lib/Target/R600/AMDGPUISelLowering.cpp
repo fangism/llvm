@@ -21,7 +21,6 @@
 #include "AMDGPUSubtarget.h"
 #include "R600MachineFunctionInfo.h"
 #include "SIMachineFunctionInfo.h"
-#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -241,6 +240,12 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
     setOperationAction(ISD::FCOPYSIGN, MVT::f32, Expand);
     setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
   }
+
+  setOperationAction(ISD::FP16_TO_FP, MVT::f64, Expand);
+
+  setLoadExtAction(ISD::EXTLOAD, MVT::f16, Expand);
+  setTruncStoreAction(MVT::f32, MVT::f16, Expand);
+  setTruncStoreAction(MVT::f64, MVT::f16, Expand);
 
   const MVT ScalarIntVTs[] = { MVT::i32, MVT::i64 };
   for (MVT VT : ScalarIntVTs) {
@@ -1169,21 +1174,6 @@ SDValue AMDGPUTargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
     };
 
     return DAG.getMergeValues(Ops, DL);
-  }
-
-  // Lower loads constant address space global variable loads
-  if (Load->getAddressSpace() == AMDGPUAS::CONSTANT_ADDRESS &&
-      isa<GlobalVariable>(
-          GetUnderlyingObject(Load->getMemOperand()->getValue()))) {
-
-
-    SDValue Ptr = DAG.getZExtOrTrunc(Load->getBasePtr(), DL,
-        getPointerTy(AMDGPUAS::PRIVATE_ADDRESS));
-    Ptr = DAG.getNode(ISD::SRL, DL, MVT::i32, Ptr,
-        DAG.getConstant(2, MVT::i32));
-    return DAG.getNode(AMDGPUISD::REGISTER_LOAD, DL, Op->getVTList(),
-                       Load->getChain(), Ptr,
-                       DAG.getTargetConstant(0, MVT::i32), Op.getOperand(2));
   }
 
   if (Load->getAddressSpace() != AMDGPUAS::PRIVATE_ADDRESS ||
@@ -2216,6 +2206,7 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(CVT_F32_UBYTE2)
   NODE_NAME_CASE(CVT_F32_UBYTE3)
   NODE_NAME_CASE(BUILD_VERTICAL_VECTOR)
+  NODE_NAME_CASE(CONST_DATA_PTR)
   NODE_NAME_CASE(STORE_MSKOR)
   NODE_NAME_CASE(TBUFFER_STORE_FORMAT)
   }

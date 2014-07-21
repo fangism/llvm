@@ -361,6 +361,26 @@ bool SIInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
     MI->eraseFromParent();
     break;
   }
+  case AMDGPU::SI_CONSTDATA_PTR: {
+    unsigned Reg = MI->getOperand(0).getReg();
+    unsigned RegLo = RI.getSubReg(Reg, AMDGPU::sub0);
+    unsigned RegHi = RI.getSubReg(Reg, AMDGPU::sub1);
+
+    BuildMI(MBB, MI, DL, get(AMDGPU::S_GETPC_B64), Reg);
+
+    // Add 32-bit offset from this instruction to the start of the constant data.
+    BuildMI(MBB, MI, DL, get(AMDGPU::S_ADD_I32), RegLo)
+            .addReg(RegLo)
+            .addTargetIndex(AMDGPU::TI_CONSTDATA_START)
+            .addReg(AMDGPU::SCC, RegState::Define | RegState::Implicit);
+    BuildMI(MBB, MI, DL, get(AMDGPU::S_ADDC_U32), RegHi)
+            .addReg(RegHi)
+            .addImm(0)
+            .addReg(AMDGPU::SCC, RegState::Define | RegState::Implicit)
+            .addReg(AMDGPU::SCC, RegState::Implicit);
+    MI->eraseFromParent();
+    break;
+  }
   }
   return true;
 }
@@ -541,6 +561,21 @@ static bool compareMachineOp(const MachineOperand &Op0,
   }
 }
 
+bool SIInstrInfo::isImmOperandLegal(const MachineInstr *MI, unsigned OpNo,
+                                 const MachineOperand &MO) const {
+  const MCOperandInfo &OpInfo = get(MI->getOpcode()).OpInfo[OpNo];
+
+  assert(MO.isImm() || MO.isFPImm());
+
+  if (OpInfo.OperandType == MCOI::OPERAND_IMMEDIATE)
+    return true;
+
+  if (OpInfo.RegClass < 0)
+    return false;
+
+  return RI.regClassCanUseImmediate(OpInfo.RegClass);
+}
+
 bool SIInstrInfo::verifyInstruction(const MachineInstr *MI,
                                     StringRef &ErrInfo) const {
   uint16_t Opcode = MI->getOpcode();
@@ -569,7 +604,11 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr *MI,
     }
       break;
     case MCOI::OPERAND_IMMEDIATE:
-      if (!MI->getOperand(i).isImm() && !MI->getOperand(i).isFPImm()) {
+      // Check if this operand is an immediate.
+      // FrameIndex operands will be replaced by immediates, so they are
+      // allowed.
+      if (!MI->getOperand(i).isImm() && !MI->getOperand(i).isFPImm() &&
+          !MI->getOperand(i).isFI()) {
         ErrInfo = "Expected immediate, but got non-immediate";
         return false;
       }
@@ -1599,4 +1638,13 @@ void SIInstrInfo::reserveIndirectRegisters(BitVector &Reserved,
 
   for (int Index = std::max(0, Begin - 15); Index <= End; ++Index)
     Reserved.set(AMDGPU::VReg_512RegClass.getRegister(Index));
+}
+
+const MachineOperand *SIInstrInfo::getNamedOperand(const MachineInstr& MI,
+                                                   unsigned OperandName) const {
+  int Idx = AMDGPU::getNamedOperandIdx(MI.getOpcode(), OperandName);
+  if (Idx == -1)
+    return nullptr;
+
+  return &MI.getOperand(Idx);
 }

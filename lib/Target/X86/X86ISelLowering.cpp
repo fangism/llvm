@@ -529,6 +529,11 @@ void X86TargetLowering::resetOperationActions() {
   setOperationAction(ISD::FP_TO_FP16, MVT::f64, Expand);
   setOperationAction(ISD::FP_TO_FP16, MVT::f80, Expand);
 
+  setLoadExtAction(ISD::EXTLOAD, MVT::f16, Expand);
+  setTruncStoreAction(MVT::f32, MVT::f16, Expand);
+  setTruncStoreAction(MVT::f64, MVT::f16, Expand);
+  setTruncStoreAction(MVT::f80, MVT::f16, Expand);
+
   if (Subtarget->hasPOPCNT()) {
     setOperationAction(ISD::CTPOP          , MVT::i8   , Promote);
   } else {
@@ -4762,28 +4767,6 @@ bool X86::isZeroNode(SDValue Elt) {
   return false;
 }
 
-/// CommuteVectorShuffle - Swap vector_shuffle operands as well as values in
-/// their permute mask.
-static SDValue CommuteVectorShuffle(ShuffleVectorSDNode *SVOp,
-                                    SelectionDAG &DAG) {
-  MVT VT = SVOp->getSimpleValueType(0);
-  unsigned NumElems = VT.getVectorNumElements();
-  SmallVector<int, 8> MaskVec;
-
-  for (unsigned i = 0; i != NumElems; ++i) {
-    int Idx = SVOp->getMaskElt(i);
-    if (Idx >= 0) {
-      if (Idx < (int)NumElems)
-        Idx += NumElems;
-      else
-        Idx -= NumElems;
-    }
-    MaskVec.push_back(Idx);
-  }
-  return DAG.getVectorShuffle(VT, SDLoc(SVOp), SVOp->getOperand(1),
-                              SVOp->getOperand(0), &MaskVec[0]);
-}
-
 /// ShouldXformToMOVHLPS - Return true if the node should be transformed to
 /// match movhlps. The lower half elements should come from upper half of
 /// V1 (and in order), and the upper half elements should come from the upper
@@ -7947,7 +7930,7 @@ static SDValue lowerVectorShuffle(SDValue Op, const X86Subtarget *Subtarget,
   // but in some cases the first operand may be transformed to UNDEF.
   // In this case we should just commute the node.
   if (V1IsUndef)
-    return CommuteVectorShuffle(SVOp, DAG);
+    return DAG.getCommutedVectorShuffle(*SVOp);
 
   // Check for non-undef masks pointing at an undef vector and make the masks
   // undef as well. This makes it easier to match the shuffle based solely on
@@ -7993,7 +7976,7 @@ static SDValue lowerVectorShuffle(SDValue Op, const X86Subtarget *Subtarget,
   // V2. This allows us to match the shuffle pattern strictly on how many
   // elements come from V1 without handling the symmetric cases.
   if (NumV2Elements > NumV1Elements)
-    return CommuteVectorShuffle(SVOp, DAG);
+    return DAG.getCommutedVectorShuffle(*SVOp);
 
   // When the number of V1 and V2 elements are the same, try to minimize the
   // number of uses of V2 in the low half of the vector.
@@ -8005,7 +7988,7 @@ static SDValue lowerVectorShuffle(SDValue Op, const X86Subtarget *Subtarget,
       else if (M >= 0)
         ++LowV1Elements;
     if (LowV2Elements > LowV1Elements)
-      return CommuteVectorShuffle(SVOp, DAG);
+      return DAG.getCommutedVectorShuffle(*SVOp);
   }
 
   // For each vector width, delegate to a specialized lowering routine.
@@ -9289,7 +9272,7 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
   // but in some cases the first operand may be transformed to UNDEF.
   // In this case we should just commute the node.
   if (V1IsUndef)
-    return CommuteVectorShuffle(SVOp, DAG);
+    return DAG.getCommutedVectorShuffle(*SVOp);
 
   // Vector shuffle lowering takes 3 steps:
   //
@@ -9401,7 +9384,7 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
 
   if (ShouldXformToMOVHLPS(M, VT) ||
       ShouldXformToMOVLP(V1.getNode(), V2.getNode(), M, VT))
-    return CommuteVectorShuffle(SVOp, DAG);
+    return DAG.getCommutedVectorShuffle(*SVOp);
 
   if (isShift) {
     // No better options. Use a vshldq / vsrldq.
@@ -9473,7 +9456,7 @@ X86TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) const {
 
   // Normalize the node to match x86 shuffle ops if needed
   if (!V2IsUndef && (isSHUFPMask(M, VT, /* Commuted */ true)))
-    return CommuteVectorShuffle(SVOp, DAG);
+    return DAG.getCommutedVectorShuffle(*SVOp);
 
   // The checks below are all present in isShuffleMaskLegal, but they are
   // inlined here right now to enable us to directly emit target specific
@@ -21847,8 +21830,59 @@ static SDValue PerformBrCondCombine(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
+static SDValue performVectorCompareAndMaskUnaryOpCombine(SDNode *N,
+                                                         SelectionDAG &DAG) {
+  // Take advantage of vector comparisons producing 0 or -1 in each lane to
+  // optimize away operation when it's from a constant.
+  //
+  // The general transformation is:
+  //    UNARYOP(AND(VECTOR_CMP(x,y), constant)) -->
+  //       AND(VECTOR_CMP(x,y), constant2)
+  //    constant2 = UNARYOP(constant)
+
+  // Early exit if this isn't a vector operation or if the operand of the
+  // unary operation isn't a bitwise AND.
+  EVT VT = N->getValueType(0);
+  if (!VT.isVector() || N->getOperand(0)->getOpcode() != ISD::AND ||
+      N->getOperand(0)->getOperand(0)->getOpcode() != ISD::SETCC)
+    return SDValue();
+
+  // Now check that the other operand of the AND is a constant splat. We could
+  // make the transformation for non-constant splats as well, but it's unclear
+  // that would be a benefit as it would not eliminate any operations, just
+  // perform one more step in scalar code before moving to the vector unit.
+  if (BuildVectorSDNode *BV =
+          dyn_cast<BuildVectorSDNode>(N->getOperand(0)->getOperand(1))) {
+    // Bail out if the vector isn't a constant splat.
+    if (!BV->getConstantSplatNode())
+      return SDValue();
+
+    // Everything checks out. Build up the new and improved node.
+    SDLoc DL(N);
+    EVT IntVT = BV->getValueType(0);
+    // Create a new constant of the appropriate type for the transformed
+    // DAG.
+    SDValue SourceConst = DAG.getNode(N->getOpcode(), DL, VT, SDValue(BV, 0));
+    // The AND node needs bitcasts to/from an integer vector type around it.
+    SDValue MaskConst = DAG.getNode(ISD::BITCAST, DL, IntVT, SourceConst);
+    SDValue NewAnd = DAG.getNode(ISD::AND, DL, IntVT,
+                                 N->getOperand(0)->getOperand(0), MaskConst);
+    SDValue Res = DAG.getNode(ISD::BITCAST, DL, VT, NewAnd);
+    return Res;
+  }
+
+  return SDValue();
+}
+
 static SDValue PerformSINT_TO_FPCombine(SDNode *N, SelectionDAG &DAG,
                                         const X86TargetLowering *XTLI) {
+  // First try to optimize away the conversion entirely when it's
+  // conditionally from a constant. Vectors only.
+  SDValue Res = performVectorCompareAndMaskUnaryOpCombine(N, DAG);
+  if (Res != SDValue())
+    return Res;
+
+  // Now move on to more general possibilities.
   SDValue Op0 = N->getOperand(0);
   EVT InVT = Op0->getValueType(0);
 

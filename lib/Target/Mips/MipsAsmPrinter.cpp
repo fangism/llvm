@@ -58,10 +58,12 @@ MipsTargetStreamer &MipsAsmPrinter::getTargetStreamer() {
 }
 
 bool MipsAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
+  Subtarget = &TM.getSubtarget<MipsSubtarget>();
+
   // Initialize TargetLoweringObjectFile.
-  if (Subtarget->allowMixed16_32())
-    const_cast<TargetLoweringObjectFile&>(getObjFileLowering())
+  const_cast<TargetLoweringObjectFile &>(getObjFileLowering())
       .Initialize(OutContext, TM);
+
   MipsFI = MF.getInfo<MipsFunctionInfo>();
   if (Subtarget->inMips16Mode())
     for (std::map<
@@ -672,7 +674,7 @@ void MipsAsmPrinter::EmitStartOfAsmFile(Module &M) {
   bool IsABICalls = true;
   if (IsABICalls) {
     getTargetStreamer().emitDirectiveAbiCalls();
-    Reloc::Model RM = Subtarget->getRelocationModel();
+    Reloc::Model RM = TM.getRelocationModel();
     // FIXME: This condition should be a lot more complicated that it is here.
     //        Ideally it should test for properties of the ABI and not the ABI
     //        itself.
@@ -706,9 +708,19 @@ void MipsAsmPrinter::EmitStartOfAsmFile(Module &M) {
   }
 
   getTargetStreamer().updateABIInfo(*Subtarget);
-  getTargetStreamer().emitDirectiveModuleFP();
 
-  if (Subtarget->isABI_O32())
+  // We should always emit a '.module fp=...' but binutils 2.24 does not accept
+  // it. We therefore emit it when it contradicts the ABI defaults (-mfpxx or
+  // -mfp64) and omit it otherwise.
+  if (Subtarget->isABI_O32() && (Subtarget->isABI_FPXX() ||
+                                 Subtarget->isFP64bit()))
+    getTargetStreamer().emitDirectiveModuleFP();
+
+  // We should always emit a '.module [no]oddspreg' but binutils 2.24 does not
+  // accept it. We therefore emit it when it contradicts the default or an
+  // option has changed the default (i.e. FPXX) and omit it otherwise.
+  if (Subtarget->isABI_O32() && (!Subtarget->useOddSPReg() ||
+                                 Subtarget->isABI_FPXX()))
     getTargetStreamer().emitDirectiveModuleOddSPReg(Subtarget->useOddSPReg(),
                                                     Subtarget->isABI_O32());
 }

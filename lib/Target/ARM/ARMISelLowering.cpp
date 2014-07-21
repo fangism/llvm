@@ -396,8 +396,6 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
     addRegisterClass(MVT::f32, &ARM::SPRRegClass);
     if (!Subtarget->isFPOnlySP())
       addRegisterClass(MVT::f64, &ARM::DPRRegClass);
-
-    setTruncStoreAction(MVT::f64, MVT::f32, Expand);
   }
 
   for (unsigned VT = (unsigned)MVT::FIRST_VECTOR_VALUETYPE;
@@ -582,8 +580,14 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
 
   computeRegisterProperties();
 
-  // ARM does not have f32 extending load.
+  // ARM does not have floating-point extending loads.
   setLoadExtAction(ISD::EXTLOAD, MVT::f32, Expand);
+  setLoadExtAction(ISD::EXTLOAD, MVT::f16, Expand);
+
+  // ... or truncating stores
+  setTruncStoreAction(MVT::f64, MVT::f32, Expand);
+  setTruncStoreAction(MVT::f32, MVT::f16, Expand);
+  setTruncStoreAction(MVT::f64, MVT::f16, Expand);
 
   // ARM does not have i1 sign extending load.
   setLoadExtAction(ISD::SEXTLOAD, MVT::i1, Promote);
@@ -7223,8 +7227,7 @@ ARMTargetLowering::EmitLowered__chkstk(MachineInstr *MI,
 
   AddDefaultCC(AddDefaultPred(BuildMI(*MBB, MI, DL, TII.get(ARM::t2SUBrr),
                                       ARM::SP)
-                              .addReg(ARM::SP, RegState::Define)
-                              .addReg(ARM::R4, RegState::Kill)));
+                              .addReg(ARM::SP).addReg(ARM::R4)));
 
   MI->eraseFromParent();
   return MBB;
@@ -10618,7 +10621,7 @@ ARMTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const 
   Chain = DAG.getCopyToReg(Chain, DL, ARM::R4, Words, Flag);
   Flag = Chain.getValue(1);
 
-  SDVTList NodeTys = DAG.getVTList(MVT::i32, MVT::Glue);
+  SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
   Chain = DAG.getNode(ARMISD::WIN__CHKSTK, DL, NodeTys, Chain, Flag);
 
   SDValue NewSP = DAG.getCopyFromReg(Chain, DL, ARM::SP, MVT::i32);

@@ -97,7 +97,7 @@ public:
   /// Callback used to implement the ldr= pseudo.
   /// Add a new entry to the constant pool for the current section and return an
   /// MCExpr that can be used to refer to the constant pool location.
-  const MCExpr *addConstantPoolEntry(const MCExpr *);
+  const MCExpr *addConstantPoolEntry(const MCExpr *, unsigned Size);
 
   /// Callback used to implemnt the .ltorg directive.
   /// Emit contents of constant pool for the current section.
@@ -572,7 +572,8 @@ public:
 
   /// EmitSymbolValue - Special case of EmitValue that avoids the client
   /// having to pass in a MCExpr for MCSymbols.
-  void EmitSymbolValue(const MCSymbol *Sym, unsigned Size);
+  void EmitSymbolValue(const MCSymbol *Sym, unsigned Size,
+                       bool IsSectionRelative = false);
 
   /// EmitGPRel64Value - Emit the expression @p Value into the output as a
   /// gprel64 (64-bit GP relative) value.

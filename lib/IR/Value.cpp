@@ -15,6 +15,7 @@
 #include "LLVMContextImpl.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
@@ -454,7 +455,8 @@ Value *Value::stripAndAccumulateInBoundsConstantOffsets(const DataLayout &DL,
         return V;
       Offset = GEPOffset;
       V = GEP->getPointerOperand();
-    } else if (Operator::getOpcode(V) == Instruction::BitCast) {
+    } else if (Operator::getOpcode(V) == Instruction::BitCast ||
+               Operator::getOpcode(V) == Instruction::AddrSpaceCast) {
       V = cast<Operator>(V)->getOperand(0);
     } else if (GlobalAlias *GA = dyn_cast<GlobalAlias>(V)) {
       V = GA->getAliasee();
@@ -504,9 +506,29 @@ static bool isDereferenceablePointer(const Value *V, const DataLayout *DL,
   if (const GlobalVariable *GV = dyn_cast<GlobalVariable>(V))
     return !GV->hasExternalWeakLinkage();
 
-  // byval arguments are ok.
-  if (const Argument *A = dyn_cast<Argument>(V))
-    return A->hasByValAttr();
+  // byval arguments are okay. Arguments specifically marked as
+  // dereferenceable are okay too.
+  if (const Argument *A = dyn_cast<Argument>(V)) {
+    if (A->hasByValAttr())
+      return true;
+    else if (uint64_t Bytes = A->getDereferenceableBytes()) {
+      Type *Ty = V->getType()->getPointerElementType();
+      if (Ty->isSized() && DL && DL->getTypeStoreSize(Ty) <= Bytes)
+        return true;
+    }
+
+    return false;
+  }
+
+  // Return values from call sites specifically marked as dereferenceable are
+  // also okay.
+  if (ImmutableCallSite CS = V) {
+    if (uint64_t Bytes = CS.getDereferenceableBytes(0)) {
+      Type *Ty = V->getType()->getPointerElementType();
+      if (Ty->isSized() && DL && DL->getTypeStoreSize(Ty) <= Bytes)
+        return true;
+    }
+  }
 
   // For GEPs, determine if the indexing lands within the allocated object.
   if (const GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
@@ -553,6 +575,27 @@ static bool isDereferenceablePointer(const Value *V, const DataLayout *DL,
 /// isDereferenceablePointer - Test if this value is always a pointer to
 /// allocated and suitably aligned memory for a simple load or store.
 bool Value::isDereferenceablePointer(const DataLayout *DL) const {
+  // When dereferenceability information is provided by a dereferenceable
+  // attribute, we know exactly how many bytes are dereferenceable. If we can
+  // determine the exact offset to the attributed variable, we can use that
+  // information here.
+  Type *Ty = getType()->getPointerElementType();
+  if (Ty->isSized() && DL) {
+    APInt Offset(DL->getTypeStoreSizeInBits(getType()), 0);
+    const Value *BV = stripAndAccumulateInBoundsConstantOffsets(*DL, Offset);
+
+    APInt DerefBytes(Offset.getBitWidth(), 0);
+    if (const Argument *A = dyn_cast<Argument>(BV))
+      DerefBytes = A->getDereferenceableBytes();
+    else if (ImmutableCallSite CS = BV)
+      DerefBytes = CS.getDereferenceableBytes(0);
+
+    if (DerefBytes.getBoolValue() && Offset.isNonNegative()) {
+      if (DerefBytes.uge(Offset + DL->getTypeStoreSize(Ty)))
+        return true;
+    }
+  }
+
   SmallPtrSet<const Value *, 32> Visited;
   return ::isDereferenceablePointer(this, DL, Visited);
 }

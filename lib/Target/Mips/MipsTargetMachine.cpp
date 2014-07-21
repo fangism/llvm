@@ -56,7 +56,12 @@ MipsTargetMachine::MipsTargetMachine(const Target &T, StringRef TT,
                                      Reloc::Model RM, CodeModel::Model CM,
                                      CodeGenOpt::Level OL, bool isLittle)
     : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
-      Subtarget(TT, CPU, FS, isLittle, RM, this) {
+      Subtarget(nullptr), DefaultSubtarget(TT, CPU, FS, isLittle, this),
+      NoMips16Subtarget(TT, CPU, FS.empty() ? "-mips16" : FS.str() + ",-mips16",
+                        isLittle, this),
+      Mips16Subtarget(TT, CPU, FS.empty() ? "+mips16" : FS.str() + ",+mips16",
+                      isLittle, this) {
+  Subtarget = &DefaultSubtarget;
   initAsmInfo();
 }
 
@@ -77,6 +82,23 @@ MipselTargetMachine(const Target &T, StringRef TT,
                     Reloc::Model RM, CodeModel::Model CM,
                     CodeGenOpt::Level OL)
   : MipsTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL, true) {}
+
+void MipsTargetMachine::resetSubtarget(MachineFunction *MF) {
+  DEBUG(dbgs() << "resetSubtarget\n");
+  AttributeSet FnAttrs = MF->getFunction()->getAttributes();
+  bool Mips16Attr = FnAttrs.hasAttribute(AttributeSet::FunctionIndex, "mips16");
+  bool NoMips16Attr =
+      FnAttrs.hasAttribute(AttributeSet::FunctionIndex, "nomips16");
+  assert(!(Mips16Attr && NoMips16Attr) &&
+         "mips16 and nomips16 specified on the same function");
+  if (Mips16Attr)
+    Subtarget = &Mips16Subtarget;
+  else if (NoMips16Attr)
+    Subtarget = &NoMips16Subtarget;
+  else
+    Subtarget = &DefaultSubtarget;
+  return;
+}
 
 namespace {
 /// Mips Code Generator Pass Configuration Options.
@@ -124,13 +146,9 @@ void MipsPassConfig::addIRPasses() {
 // Install an instruction selector pass using
 // the ISelDag to gen Mips code.
 bool MipsPassConfig::addInstSelector() {
-  if (getMipsSubtarget().allowMixed16_32()) {
-    addPass(createMipsModuleISelDag(getMipsTargetMachine()));
-    addPass(createMips16ISelDag(getMipsTargetMachine()));
-    addPass(createMipsSEISelDag(getMipsTargetMachine()));
-  } else {
-    addPass(createMipsISelDag(getMipsTargetMachine()));
-  }
+  addPass(createMipsModuleISelDag(getMipsTargetMachine()));
+  addPass(createMips16ISelDag(getMipsTargetMachine()));
+  addPass(createMipsSEISelDag(getMipsTargetMachine()));
   return false;
 }
 
@@ -149,7 +167,7 @@ bool MipsPassConfig::addPreRegAlloc() {
 }
 
 void MipsTargetMachine::addAnalysisPasses(PassManagerBase &PM) {
-  if (Subtarget.allowMixed16_32()) {
+  if (Subtarget->allowMixed16_32()) {
     DEBUG(errs() << "No ");
     //FIXME: The Basic Target Transform Info
     // pass needs to become a function pass instead of
@@ -166,15 +184,9 @@ void MipsTargetMachine::addAnalysisPasses(PassManagerBase &PM) {
 // print out the code after the passes.
 bool MipsPassConfig::addPreEmitPass() {
   MipsTargetMachine &TM = getMipsTargetMachine();
-  const MipsSubtarget &Subtarget = TM.getSubtarget<MipsSubtarget>();
   addPass(createMipsDelaySlotFillerPass(TM));
-
-  if (Subtarget.enableLongBranchPass())
-    addPass(createMipsLongBranchPass(TM));
-  if (Subtarget.inMips16Mode() ||
-      Subtarget.allowMixed16_32())
-    addPass(createMipsConstantIslandPass(TM));
-
+  addPass(createMipsLongBranchPass(TM));
+  addPass(createMipsConstantIslandPass(TM));
   return true;
 }
 

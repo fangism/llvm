@@ -588,6 +588,8 @@ static Attribute::AttrKind GetAttrFromCode(uint64_t Code) {
     return Attribute::NonLazyBind;
   case bitc::ATTR_KIND_NON_NULL:
     return Attribute::NonNull;
+  case bitc::ATTR_KIND_DEREFERENCEABLE:
+    return Attribute::Dereferenceable;
   case bitc::ATTR_KIND_NO_RED_ZONE:
     return Attribute::NoRedZone;
   case bitc::ATTR_KIND_NO_RETURN:
@@ -683,14 +685,16 @@ std::error_code BitcodeReader::ParseAttributeGroupBlock() {
             return EC;
 
           B.addAttribute(Kind);
-        } else if (Record[i] == 1) { // Align attribute
+        } else if (Record[i] == 1) { // Integer attribute
           Attribute::AttrKind Kind;
           if (std::error_code EC = ParseAttrKind(Record[++i], &Kind))
             return EC;
           if (Kind == Attribute::Alignment)
             B.addAlignmentAttr(Record[++i]);
-          else
+          else if (Kind == Attribute::StackAlignment)
             B.addStackAlignmentAttr(Record[++i]);
+          else if (Kind == Attribute::Dereferenceable)
+            B.addDereferenceableAttr(Record[++i]);
         } else {                     // String attribute
           assert((Record[i] == 3 || Record[i] == 4) &&
                  "Invalid attribute group entry");

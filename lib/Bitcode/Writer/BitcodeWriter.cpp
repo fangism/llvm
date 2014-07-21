@@ -201,6 +201,8 @@ static uint64_t getAttrKindEncoding(Attribute::AttrKind Kind) {
     return bitc::ATTR_KIND_NON_LAZY_BIND;
   case Attribute::NonNull:
     return bitc::ATTR_KIND_NON_NULL;
+  case Attribute::Dereferenceable:
+    return bitc::ATTR_KIND_DEREFERENCEABLE;
   case Attribute::NoRedZone:
     return bitc::ATTR_KIND_NO_RED_ZONE;
   case Attribute::NoReturn:
@@ -272,7 +274,7 @@ static void WriteAttributeGroupTable(const ValueEnumerator &VE,
         if (Attr.isEnumAttribute()) {
           Record.push_back(0);
           Record.push_back(getAttrKindEncoding(Attr.getKindAsEnum()));
-        } else if (Attr.isAlignAttribute()) {
+        } else if (Attr.isIntAttribute()) {
           Record.push_back(1);
           Record.push_back(getAttrKindEncoding(Attr.getKindAsEnum()));
           Record.push_back(Attr.getValueAsInt());

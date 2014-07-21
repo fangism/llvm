@@ -222,8 +222,14 @@ public:
   /// isBGQ - True if this is a BG/Q platform.
   bool isBGQ() const { return TargetTriple.getVendor() == Triple::BGQ; }
 
+  bool isTargetELF() const { return TargetTriple.isOSBinFormatELF(); }
+  bool isTargetMachO() const { return TargetTriple.isOSBinFormatMachO(); }
+
   bool isDarwinABI() const { return isDarwin(); }
   bool isSVR4ABI() const { return !isDarwin(); }
+  /// FIXME: Should use a command-line option.
+  bool isELFv2ABI() const { return isPPC64() && isSVR4ABI() &&
+                                   isLittleEndian(); }
 
   bool enableEarlyIfConversion() const override { return hasISEL(); }
 

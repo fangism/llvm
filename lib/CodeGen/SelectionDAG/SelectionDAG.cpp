@@ -1598,6 +1598,27 @@ SDValue SelectionDAG::getVectorShuffle(EVT VT, SDLoc dl, SDValue N1,
   return SDValue(N, 0);
 }
 
+SDValue SelectionDAG::getCommutedVectorShuffle(const ShuffleVectorSDNode &SV) {
+  MVT VT = SV.getSimpleValueType(0);
+  unsigned NumElems = VT.getVectorNumElements();
+  SmallVector<int, 8> MaskVec;
+
+  for (unsigned i = 0; i != NumElems; ++i) {
+    int Idx = SV.getMaskElt(i);
+    if (Idx >= 0) {
+      if (Idx < (int)NumElems)
+        Idx += NumElems;
+      else
+        Idx -= NumElems;
+    }
+    MaskVec.push_back(Idx);
+  }
+
+  SDValue Op0 = SV.getOperand(0);
+  SDValue Op1 = SV.getOperand(1);
+  return getVectorShuffle(VT, SDLoc(&SV), Op1, Op0, &MaskVec[0]);
+}
+
 SDValue SelectionDAG::getConvertRndSat(EVT VT, SDLoc dl,
                                        SDValue Val, SDValue DTy,
                                        SDValue STy, SDValue Rnd, SDValue Sat,
@@ -2769,6 +2790,32 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL,
       else if (VT == MVT::i64 && C->getValueType(0) == MVT::f64)
         return getConstant(V.bitcastToAPInt().getZExtValue(), VT);
       break;
+    }
+  }
+
+  // Constant fold unary operations with a vector integer operand.
+  if (BuildVectorSDNode *BV = dyn_cast<BuildVectorSDNode>(Operand.getNode())) {
+    APInt Val;
+    APInt DummyUndefs;
+    unsigned SplatBitSize;
+    bool DummyHasUndefs;
+    if (BV->isConstantSplat(Val, DummyUndefs, SplatBitSize, DummyHasUndefs)) {
+      switch (Opcode) {
+      default:
+        // FIXME: Entirely reasonable to perform folding of other unary
+        // operations here as the need arises.
+        break;
+      case ISD::UINT_TO_FP:
+      case ISD::SINT_TO_FP: {
+        APFloat APF(
+            EVTToAPFloatSemantics(VT.getVectorElementType()),
+            APInt::getNullValue(VT.getVectorElementType().getSizeInBits()));
+        (void)APF.convertFromAPInt(Val, Opcode == ISD::SINT_TO_FP,
+                                   APFloat::rmNearestTiesToEven);
+
+        return getConstantFP(APF, VT);
+      }
+      }
     }
   }
 

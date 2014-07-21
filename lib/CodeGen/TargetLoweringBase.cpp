@@ -422,7 +422,10 @@ static void InitLibcallCallingConvs(CallingConv::ID *CCs) {
 /// getFPEXT - Return the FPEXT_*_* value for the given types, or
 /// UNKNOWN_LIBCALL if there is none.
 RTLIB::Libcall RTLIB::getFPEXT(EVT OpVT, EVT RetVT) {
-  if (OpVT == MVT::f32) {
+  if (OpVT == MVT::f16) {
+    if (RetVT == MVT::f32)
+      return FPEXT_F16_F32;
+  } else if (OpVT == MVT::f32) {
     if (RetVT == MVT::f64)
       return FPEXT_F32_F64;
     if (RetVT == MVT::f128)
@@ -1102,6 +1105,13 @@ void TargetLoweringBase::computeRegisterProperties() {
       TransformToType[MVT::f32] = MVT::i32;
       ValueTypeActions.setTypeAction(MVT::f32, TypeSoftenFloat);
     }
+  }
+
+  if (!isTypeLegal(MVT::f16)) {
+    NumRegistersForVT[MVT::f16] = NumRegistersForVT[MVT::i16];
+    RegisterTypeForVT[MVT::f16] = RegisterTypeForVT[MVT::i16];
+    TransformToType[MVT::f16] = MVT::i16;
+    ValueTypeActions.setTypeAction(MVT::f16, TypeSoftenFloat);
   }
 
   // Loop over all of the vector value types to see which need transformations.
