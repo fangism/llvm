@@ -1031,14 +1031,14 @@ def : Pat<(i8 (int_x86_avx512_mask_cmp_pd_512 (v8f64 VR512:$src1),
 //
 multiclass avx512_mask_mov<bits<8> opc_kk, bits<8> opc_km, bits<8> opc_mk,
                          string OpcodeStr, RegisterClass KRC,
-                         ValueType vt, X86MemOperand x86memop> {
+                         ValueType vvt, ValueType ivt, X86MemOperand x86memop> {
   let hasSideEffects = 0 in {
     def kk : I<opc_kk, MRMSrcReg, (outs KRC:$dst), (ins KRC:$src),
                !strconcat(OpcodeStr, " \t{$src, $dst|$dst, $src}"), []>;
     let mayLoad = 1 in
     def km : I<opc_km, MRMSrcMem, (outs KRC:$dst), (ins x86memop:$src),
                !strconcat(OpcodeStr, " \t{$src, $dst|$dst, $src}"),
-               [(set KRC:$dst, (vt (load addr:$src)))]>;
+               [(set KRC:$dst, (vvt (bitconvert (ivt (load addr:$src)))))]>;
     let mayStore = 1 in
     def mk : I<opc_mk, MRMDestMem, (outs), (ins x86memop:$dst, KRC:$src),
                !strconcat(OpcodeStr, " \t{$src, $dst|$dst, $src}"), []>;
@@ -1056,33 +1056,79 @@ multiclass avx512_mask_mov_gpr<bits<8> opc_kr, bits<8> opc_rk,
   }
 }
 
-let Predicates = [HasAVX512] in {
-  defm KMOVW : avx512_mask_mov<0x90, 0x90, 0x91, "kmovw", VK16, v16i1, i16mem>,
+let Predicates = [HasDQI] in
+  defm KMOVB : avx512_mask_mov<0x90, 0x90, 0x91, "kmovb", VK8, v8i1, i8,
+                               i8mem>,
+               avx512_mask_mov_gpr<0x92, 0x93, "kmovb", VK8, GR32>,
+               VEX, PD;
+
+let Predicates = [HasAVX512] in
+  defm KMOVW : avx512_mask_mov<0x90, 0x90, 0x91, "kmovw", VK16, v16i1, i16,
+                               i16mem>,
+               avx512_mask_mov_gpr<0x92, 0x93, "kmovw", VK16, GR32>,
                VEX, PS;
-  defm KMOVW : avx512_mask_mov_gpr<0x92, 0x93, "kmovw", VK16, GR32>,
-               VEX, PS;
+
+let Predicates = [HasBWI] in {
+  defm KMOVD : avx512_mask_mov<0x90, 0x90, 0x91, "kmovd", VK32, v32i1, i32,
+                               i32mem>, VEX, PD, VEX_W;
+  defm KMOVD : avx512_mask_mov_gpr<0x92, 0x93, "kmovd", VK32, GR32>,
+               VEX, XD;
 }
 
+let Predicates = [HasBWI] in {
+  defm KMOVQ : avx512_mask_mov<0x90, 0x90, 0x91, "kmovq", VK64, v64i1, i64,
+                               i64mem>, VEX, PS, VEX_W;
+  defm KMOVQ : avx512_mask_mov_gpr<0x92, 0x93, "kmovq", VK64, GR64>,
+               VEX, XD, VEX_W;
+}
+
+// GR from/to mask register
+let Predicates = [HasDQI] in {
+  def : Pat<(v8i1 (bitconvert (i8 GR8:$src))),
+            (KMOVBkr (SUBREG_TO_REG (i32 0), GR8:$src, sub_8bit))>;
+  def : Pat<(i8 (bitconvert (v8i1 VK8:$src))),
+            (EXTRACT_SUBREG (KMOVBrk VK8:$src), sub_8bit)>;
+}
 let Predicates = [HasAVX512] in {
-  // GR16 from/to 16-bit mask
   def : Pat<(v16i1 (bitconvert (i16 GR16:$src))),
             (KMOVWkr (SUBREG_TO_REG (i32 0), GR16:$src, sub_16bit))>;
   def : Pat<(i16 (bitconvert (v16i1 VK16:$src))),
             (EXTRACT_SUBREG (KMOVWrk VK16:$src), sub_16bit)>;
+}
+let Predicates = [HasBWI] in {
+  def : Pat<(v32i1 (bitconvert (i32 GR32:$src))), (KMOVDkr GR32:$src)>;
+  def : Pat<(i32 (bitconvert (v32i1 VK32:$src))), (KMOVDrk VK32:$src)>;
+}
+let Predicates = [HasBWI] in {
+  def : Pat<(v64i1 (bitconvert (i64 GR64:$src))), (KMOVQkr GR64:$src)>;
+  def : Pat<(i64 (bitconvert (v64i1 VK64:$src))), (KMOVQrk VK64:$src)>;
+}
 
-  // Store kreg in memory
-  def : Pat<(store (v16i1 VK16:$src), addr:$dst),
+// Load/store kreg
+let Predicates = [HasDQI] in {
+  def : Pat<(store (i8 (bitconvert (v8i1 VK8:$src))), addr:$dst),
+            (KMOVBmk addr:$dst, VK8:$src)>;
+}
+let Predicates = [HasAVX512] in {
+  def : Pat<(store (i16 (bitconvert (v16i1 VK16:$src))), addr:$dst),
             (KMOVWmk addr:$dst, VK16:$src)>;
-
-  def : Pat<(store VK8:$src, addr:$dst),
+  def : Pat<(store (i8 (bitconvert (v8i1 VK8:$src))), addr:$dst),
             (KMOVWmk addr:$dst, (COPY_TO_REGCLASS VK8:$src, VK16))>;
-
   def : Pat<(i1 (load addr:$src)),
             (COPY_TO_REGCLASS (KMOVWkm addr:$src), VK1)>;
-
-  def : Pat<(v8i1 (load addr:$src)),
+  def : Pat<(v8i1 (bitconvert (i8 (load addr:$src)))),
             (COPY_TO_REGCLASS (KMOVWkm addr:$src), VK8)>;
+}
+let Predicates = [HasBWI] in {
+  def : Pat<(store (i32 (bitconvert (v32i1 VK32:$src))), addr:$dst),
+            (KMOVDmk addr:$dst, VK32:$src)>;
+}
+let Predicates = [HasBWI] in {
+  def : Pat<(store (i64 (bitconvert (v64i1 VK64:$src))), addr:$dst),
+            (KMOVQmk addr:$dst, VK64:$src)>;
+}
 
+let Predicates = [HasAVX512] in {
   def : Pat<(i1 (trunc (i32 GR32:$src))),
             (COPY_TO_REGCLASS (KMOVWkr (AND32ri $src, (i32 1))), VK1)>;
 
@@ -1094,7 +1140,7 @@ let Predicates = [HasAVX512] in {
        (COPY_TO_REGCLASS
         (KMOVWkr (AND32ri (SUBREG_TO_REG (i32 0), $src, sub_16bit), (i32 1))),
        VK1)>;
-            
+
   def : Pat<(i32 (zext VK1:$src)),
             (AND32ri (KMOVWrk (COPY_TO_REGCLASS VK1:$src, VK16)), (i32 1))>;
   def : Pat<(i8 (zext VK1:$src)),
@@ -1113,6 +1159,14 @@ let Predicates = [HasAVX512] in {
   def : Pat<(v8i1 (scalar_to_vector VK1:$src)),
             (COPY_TO_REGCLASS VK1:$src, VK8)>;
 }
+let Predicates = [HasBWI] in {
+  def : Pat<(v32i1 (scalar_to_vector VK1:$src)),
+            (COPY_TO_REGCLASS VK1:$src, VK32)>;
+  def : Pat<(v64i1 (scalar_to_vector VK1:$src)),
+            (COPY_TO_REGCLASS VK1:$src, VK64)>;
+}
+
+
 // With AVX-512 only, 8-bit mask is promoted to 16-bit mask.
 let Predicates = [HasAVX512] in {
   // GR from/to 8-bit mask without native support
@@ -1129,26 +1183,38 @@ let Predicates = [HasAVX512] in {
             (COPY_TO_REGCLASS VK16:$src, VK1)>;
   def : Pat<(i1 (X86Vextract VK8:$src, (iPTR 0))),
             (COPY_TO_REGCLASS VK8:$src, VK1)>;
-
+}
+let Predicates = [HasBWI] in {
+  def : Pat<(i1 (X86Vextract VK32:$src, (iPTR 0))),
+            (COPY_TO_REGCLASS VK32:$src, VK1)>;
+  def : Pat<(i1 (X86Vextract VK64:$src, (iPTR 0))),
+            (COPY_TO_REGCLASS VK64:$src, VK1)>;
 }
 
 // Mask unary operation
 // - KNOT
 multiclass avx512_mask_unop<bits<8> opc, string OpcodeStr,
-                         RegisterClass KRC, SDPatternOperator OpNode> {
-  let Predicates = [HasAVX512] in
+                            RegisterClass KRC, SDPatternOperator OpNode,
+                            Predicate prd> {
+  let Predicates = [prd] in
     def rr : I<opc, MRMSrcReg, (outs KRC:$dst), (ins KRC:$src),
                !strconcat(OpcodeStr, " \t{$src, $dst|$dst, $src}"),
                [(set KRC:$dst, (OpNode KRC:$src))]>;
 }
 
-multiclass avx512_mask_unop_w<bits<8> opc, string OpcodeStr,
-                               SDPatternOperator OpNode> {
-  defm W : avx512_mask_unop<opc, !strconcat(OpcodeStr, "w"), VK16, OpNode>,
-                          VEX, PS;
+multiclass avx512_mask_unop_all<bits<8> opc, string OpcodeStr,
+                                SDPatternOperator OpNode> {
+  defm B : avx512_mask_unop<opc, !strconcat(OpcodeStr, "b"), VK8, OpNode,
+                            HasDQI>, VEX, PD;
+  defm W : avx512_mask_unop<opc, !strconcat(OpcodeStr, "w"), VK16, OpNode,
+                            HasAVX512>, VEX, PS;
+  defm D : avx512_mask_unop<opc, !strconcat(OpcodeStr, "d"), VK32, OpNode,
+                            HasBWI>, VEX, PD, VEX_W;
+  defm Q : avx512_mask_unop<opc, !strconcat(OpcodeStr, "q"), VK64, OpNode,
+                            HasBWI>, VEX, PS, VEX_W;
 }
 
-defm KNOT : avx512_mask_unop_w<0x44, "knot", not>;
+defm KNOT : avx512_mask_unop_all<0x44, "knot", not>;
 
 multiclass avx512_mask_unop_int<string IntName, string InstName> {
   let Predicates = [HasAVX512] in
@@ -1159,43 +1225,60 @@ multiclass avx512_mask_unop_int<string IntName, string InstName> {
 }
 defm : avx512_mask_unop_int<"knot", "KNOT">;
 
+let Predicates = [HasDQI] in
+def : Pat<(xor VK8:$src1, (v8i1 immAllOnesV)), (KNOTBrr VK8:$src1)>;
+let Predicates = [HasAVX512] in
 def : Pat<(xor VK16:$src1, (v16i1 immAllOnesV)), (KNOTWrr VK16:$src1)>;
+let Predicates = [HasBWI] in
+def : Pat<(xor VK32:$src1, (v32i1 immAllOnesV)), (KNOTDrr VK32:$src1)>;
+let Predicates = [HasBWI] in
+def : Pat<(xor VK64:$src1, (v64i1 immAllOnesV)), (KNOTQrr VK64:$src1)>;
+
+// KNL does not support KMOVB, 8-bit mask is promoted to 16-bit
+let Predicates = [HasAVX512] in {
 def : Pat<(xor VK8:$src1,  (v8i1 immAllOnesV)),
           (COPY_TO_REGCLASS (KNOTWrr (COPY_TO_REGCLASS VK8:$src1, VK16)), VK8)>;
 
-// With AVX-512, 8-bit mask is promoted to 16-bit mask.
 def : Pat<(not VK8:$src),
           (COPY_TO_REGCLASS
             (KNOTWrr (COPY_TO_REGCLASS VK8:$src, VK16)), VK8)>;
+}
 
 // Mask binary operation
 // - KAND, KANDN, KOR, KXNOR, KXOR
 multiclass avx512_mask_binop<bits<8> opc, string OpcodeStr,
-                           RegisterClass KRC, SDPatternOperator OpNode> {
-  let Predicates = [HasAVX512] in
+                           RegisterClass KRC, SDPatternOperator OpNode,
+                           Predicate prd> {
+  let Predicates = [prd] in
     def rr : I<opc, MRMSrcReg, (outs KRC:$dst), (ins KRC:$src1, KRC:$src2),
                !strconcat(OpcodeStr,
                           " \t{$src2, $src1, $dst|$dst, $src1, $src2}"),
                [(set KRC:$dst, (OpNode KRC:$src1, KRC:$src2))]>;
 }
 
-multiclass avx512_mask_binop_w<bits<8> opc, string OpcodeStr,
-                             SDPatternOperator OpNode> {
-  defm W : avx512_mask_binop<opc, !strconcat(OpcodeStr, "w"), VK16, OpNode>,
-                           VEX_4V, VEX_L, PS;
+multiclass avx512_mask_binop_all<bits<8> opc, string OpcodeStr,
+                               SDPatternOperator OpNode> {
+  defm B : avx512_mask_binop<opc, !strconcat(OpcodeStr, "b"), VK8, OpNode,
+                             HasDQI>, VEX_4V, VEX_L, PD;
+  defm W : avx512_mask_binop<opc, !strconcat(OpcodeStr, "w"), VK16, OpNode,
+                             HasAVX512>, VEX_4V, VEX_L, PS;
+  defm D : avx512_mask_binop<opc, !strconcat(OpcodeStr, "d"), VK32, OpNode,
+                             HasBWI>, VEX_4V, VEX_L, VEX_W, PD;
+  defm Q : avx512_mask_binop<opc, !strconcat(OpcodeStr, "q"), VK64, OpNode,
+                             HasBWI>, VEX_4V, VEX_L, VEX_W, PS;
 }
 
 def andn : PatFrag<(ops node:$i0, node:$i1), (and (not node:$i0), node:$i1)>;
 def xnor : PatFrag<(ops node:$i0, node:$i1), (not (xor node:$i0, node:$i1))>;
 
 let isCommutable = 1 in {
-  defm KAND  : avx512_mask_binop_w<0x41, "kand",  and>;
-  let isCommutable = 0 in
-  defm KANDN : avx512_mask_binop_w<0x42, "kandn", andn>;
-  defm KOR   : avx512_mask_binop_w<0x45, "kor",   or>;
-  defm KXNOR : avx512_mask_binop_w<0x46, "kxnor", xnor>;
-  defm KXOR  : avx512_mask_binop_w<0x47, "kxor",  xor>;
+  defm KAND  : avx512_mask_binop_all<0x41, "kand",  and>;
+  defm KOR   : avx512_mask_binop_all<0x45, "kor",   or>;
+  defm KXNOR : avx512_mask_binop_all<0x46, "kxnor", xnor>;
+  defm KXOR  : avx512_mask_binop_all<0x47, "kxor",  xor>;
 }
+let isCommutable = 0 in
+  defm KANDN : avx512_mask_binop_all<0x42, "kandn", andn>;
 
 def : Pat<(xor VK1:$src1, VK1:$src2),
      (COPY_TO_REGCLASS (KXORWrr (COPY_TO_REGCLASS VK1:$src1, VK16),
@@ -3629,7 +3712,6 @@ def : Pat <(v8f64 (int_x86_avx512_rcp28_pd (v8f64 VR512:$src),
            (VRCP28PDZrb VR512:$src)>;
 
 multiclass avx512_sqrt_packed<bits<8> opc, string OpcodeStr, SDNode OpNode,
-                              Intrinsic V16F32Int, Intrinsic V8F64Int,
                               OpndItins itins_s, OpndItins itins_d> {
   def PSZrr :AVX512PSI<opc, MRMSrcReg, (outs VR512:$dst), (ins VR512:$src),
              !strconcat(OpcodeStr, "ps\t{$src, $dst|$dst, $src}"),
@@ -3655,27 +3737,6 @@ multiclass avx512_sqrt_packed<bits<8> opc, string OpcodeStr, SDNode OpNode,
                   (v8f64 (bitconvert (memopv16f32 addr:$src)))))],
                 itins_d.rm>, EVEX, EVEX_V512, EVEX_CD8<64, CD8VF>;
 
-let isCodeGenOnly = 1 in {
-  def PSZr_Int : AVX512PSI<opc, MRMSrcReg, (outs VR512:$dst), (ins VR512:$src),
-                           !strconcat(OpcodeStr,
-                                      "ps\t{$src, $dst|$dst, $src}"),
-                           [(set VR512:$dst, (V16F32Int VR512:$src))]>, 
-                           EVEX, EVEX_V512;
-  def PSZm_Int : AVX512PSI<opc, MRMSrcMem, (outs VR512:$dst), (ins f512mem:$src),
-                          !strconcat(OpcodeStr, "ps\t{$src, $dst|$dst, $src}"),
-                          [(set VR512:$dst, 
-                           (V16F32Int (memopv16f32 addr:$src)))]>, EVEX,
-                          EVEX_V512, EVEX_CD8<32, CD8VF>;
-  def PDZr_Int : AVX512PDI<opc, MRMSrcReg, (outs VR512:$dst), (ins VR512:$src),
-                           !strconcat(OpcodeStr, "pd\t{$src, $dst|$dst, $src}"),
-                           [(set VR512:$dst, (V8F64Int VR512:$src))]>, 
-                           EVEX, EVEX_V512, VEX_W;
-  def PDZm_Int : AVX512PDI<opc, MRMSrcMem, (outs VR512:$dst), (ins f512mem:$src),
-                         !strconcat(OpcodeStr,
-                         "pd\t{$src, $dst|$dst, $src}"),
-                         [(set VR512:$dst, (V8F64Int (memopv8f64 addr:$src)))]>,
-                         EVEX, EVEX_V512, VEX_W, EVEX_CD8<64, CD8VF>; 
-} // isCodeGenOnly = 1
 }
 
 multiclass avx512_sqrt_scalar<bits<8> opc, string OpcodeStr,
@@ -3744,10 +3805,16 @@ defm VSQRT  : avx512_sqrt_scalar<0x51, "sqrt",
                 int_x86_avx512_sqrt_ss, int_x86_avx512_sqrt_sd, 
                 SSE_SQRTSS, SSE_SQRTSD>,
               avx512_sqrt_packed<0x51, "vsqrt", fsqrt,
-                int_x86_avx512_sqrt_ps_512, int_x86_avx512_sqrt_pd_512,
                 SSE_SQRTPS, SSE_SQRTPD>;
 
 let Predicates = [HasAVX512] in {
+  def : Pat<(v16f32 (int_x86_avx512_sqrt_ps_512 (v16f32 VR512:$src1),
+                    (bc_v16f32 (v16i32 immAllZerosV)), (i16 -1), FROUND_CURRENT)),
+                   (VSQRTPSZrr VR512:$src1)>;
+  def : Pat<(v8f64 (int_x86_avx512_sqrt_pd_512 (v8f64 VR512:$src1),
+                    (bc_v8f64 (v16i32 immAllZerosV)), (i8 -1), FROUND_CURRENT)),
+                   (VSQRTPDZrr VR512:$src1)>;
+  
   def : Pat<(f32 (fsqrt FR32X:$src)),
             (VSQRTSSZr (f32 (IMPLICIT_DEF)), FR32X:$src)>;
   def : Pat<(f32 (fsqrt (load addr:$src))),

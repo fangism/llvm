@@ -3624,6 +3624,16 @@ Value *SwitchLookupTable::BuildLookup(Value *Index, IRBuilder<> &Builder) {
                                  "switch.masked");
     }
     case ArrayKind: {
+      // Make sure the table index will not overflow when treated as signed.
+      IntegerType *IT = cast<IntegerType>(Index->getType());
+      uint64_t TableSize = Array->getInitializer()->getType()
+                                ->getArrayNumElements();
+      if (TableSize > (1ULL << (IT->getBitWidth() - 1)))
+        Index = Builder.CreateZExt(Index,
+                                   IntegerType::get(IT->getContext(),
+                                                    IT->getBitWidth() + 1),
+                                   "switch.tableidx.zext");
+
       Value *GEPIndices[] = { Builder.getInt32(0), Index };
       Value *GEP = Builder.CreateInBoundsGEP(Array, GEPIndices,
                                              "switch.gep");
@@ -3823,7 +3833,7 @@ static bool SwitchToLookupTable(SwitchInst *SI,
     SI->getDefaultDest()->removePredecessor(SI->getParent());
   } else {
     Value *Cmp = Builder.CreateICmpULT(TableIndex, ConstantInt::get(
-                                         MinCaseVal->getType(), TableSize));
+                                       MinCaseVal->getType(), TableSize));
     Builder.CreateCondBr(Cmp, LookupBB, SI->getDefaultDest());
   }
 
@@ -3998,7 +4008,7 @@ bool SimplifyCFGOpt::SimplifyUncondBranch(BranchInst *BI, IRBuilder<> &Builder){
     return true;
 
   // If the Terminator is the only non-phi instruction, simplify the block.
-  BasicBlock::iterator I = BB->getFirstNonPHIOrDbgOrLifetime();
+  BasicBlock::iterator I = BB->getFirstNonPHIOrDbg();
   if (I->isTerminator() && BB != &BB->getParent()->getEntryBlock() &&
       TryToSimplifyUncondBranchFromEmptyBlock(BB))
     return true;

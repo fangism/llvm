@@ -14,9 +14,9 @@
 #ifndef AArch64SUBTARGET_H
 #define AArch64SUBTARGET_H
 
-#include "AArch64InstrInfo.h"
 #include "AArch64FrameLowering.h"
 #include "AArch64ISelLowering.h"
+#include "AArch64InstrInfo.h"
 #include "AArch64RegisterInfo.h"
 #include "AArch64SelectionDAGInfo.h"
 #include "llvm/IR/DataLayout.h"
@@ -100,6 +100,8 @@ public:
   bool isTargetMachO() const { return TargetTriple.isOSBinFormatMachO(); }
 
   bool isCyclone() const { return CPUString == "cyclone"; }
+  bool isCortexA57() const { return CPUString == "cortex-a57"; }
+  bool isCortexA53() const { return CPUString == "cortex-a53"; }
 
   /// getMaxInlineSizeThreshold - Returns the maximum memset / memcpy size
   /// that still makes it profitable to inline the call.

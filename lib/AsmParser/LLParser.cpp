@@ -254,8 +254,6 @@ bool LLParser::ParseTopLevelEntities() {
     //               ('constant'|'global') ...
     case lltok::kw_private:             // OptionalLinkage
     case lltok::kw_internal:            // OptionalLinkage
-    case lltok::kw_linker_private:      // Obsolete OptionalLinkage
-    case lltok::kw_linker_private_weak: // Obsolete OptionalLinkage
     case lltok::kw_weak:                // OptionalLinkage
     case lltok::kw_weak_odr:            // OptionalLinkage
     case lltok::kw_linkonce:            // OptionalLinkage
@@ -483,10 +481,10 @@ bool LLParser::ParseUnnamedGlobal() {
       parseOptionalUnnamedAddr(UnnamedAddr))
     return true;
 
-  if (HasLinkage || Lex.getKind() != lltok::kw_alias)
+  if (Lex.getKind() != lltok::kw_alias)
     return ParseGlobal(Name, NameLoc, Linkage, HasLinkage, Visibility,
                        DLLStorageClass, TLM, UnnamedAddr);
-  return ParseAlias(Name, NameLoc, Visibility, DLLStorageClass, TLM,
+  return ParseAlias(Name, NameLoc, Linkage, Visibility, DLLStorageClass, TLM,
                     UnnamedAddr);
 }
 
@@ -512,10 +510,11 @@ bool LLParser::ParseNamedGlobal() {
       parseOptionalUnnamedAddr(UnnamedAddr))
     return true;
 
-  if (HasLinkage || Lex.getKind() != lltok::kw_alias)
+  if (Lex.getKind() != lltok::kw_alias)
     return ParseGlobal(Name, NameLoc, Linkage, HasLinkage, Visibility,
                        DLLStorageClass, TLM, UnnamedAddr);
-  return ParseAlias(Name, NameLoc, Visibility, DLLStorageClass, TLM,
+
+  return ParseAlias(Name, NameLoc, Linkage, Visibility, DLLStorageClass, TLM,
                     UnnamedAddr);
 }
 
@@ -693,33 +692,29 @@ static bool isValidVisibilityForLinkage(unsigned V, unsigned L) {
 }
 
 /// ParseAlias:
-///   ::= GlobalVar '=' OptionalVisibility OptionalDLLStorageClass
-///                     OptionalThreadLocal OptionalUnNammedAddr 'alias'
-///                     OptionalLinkage Aliasee
+///   ::= GlobalVar '=' OptionalLinkage OptionalVisibility
+///                     OptionalDLLStorageClass OptionalThreadLocal
+///                     OptionalUnNammedAddr 'alias' Aliasee
 ///
 /// Aliasee
 ///   ::= TypeAndValue
 ///
 /// Everything through OptionalUnNammedAddr has already been parsed.
 ///
-bool LLParser::ParseAlias(const std::string &Name, LocTy NameLoc,
+bool LLParser::ParseAlias(const std::string &Name, LocTy NameLoc, unsigned L,
                           unsigned Visibility, unsigned DLLStorageClass,
                           GlobalVariable::ThreadLocalMode TLM,
                           bool UnnamedAddr) {
   assert(Lex.getKind() == lltok::kw_alias);
   Lex.Lex();
-  LocTy LinkageLoc = Lex.getLoc();
-  unsigned L;
-  if (ParseOptionalLinkage(L))
-    return true;
 
   GlobalValue::LinkageTypes Linkage = (GlobalValue::LinkageTypes) L;
 
   if(!GlobalAlias::isValidLinkage(Linkage))
-    return Error(LinkageLoc, "invalid linkage type for alias");
+    return Error(NameLoc, "invalid linkage type for alias");
 
   if (!isValidVisibilityForLinkage(Visibility, L))
-    return Error(LinkageLoc,
+    return Error(NameLoc,
                  "symbol with local linkage must have default visibility");
 
   Constant *Aliasee;
@@ -1434,10 +1429,6 @@ bool LLParser::ParseOptionalReturnAttrs(AttrBuilder &B) {
 ///   ::= 'common'
 ///   ::= 'extern_weak'
 ///   ::= 'external'
-///
-///   Deprecated Values:
-///     ::= 'linker_private'
-///     ::= 'linker_private_weak'
 bool LLParser::ParseOptionalLinkage(unsigned &Res, bool &HasLinkage) {
   HasLinkage = false;
   switch (Lex.getKind()) {
@@ -1455,15 +1446,6 @@ bool LLParser::ParseOptionalLinkage(unsigned &Res, bool &HasLinkage) {
   case lltok::kw_common:         Res = GlobalValue::CommonLinkage;        break;
   case lltok::kw_extern_weak:    Res = GlobalValue::ExternalWeakLinkage;  break;
   case lltok::kw_external:       Res = GlobalValue::ExternalLinkage;      break;
-
-  case lltok::kw_linker_private:
-  case lltok::kw_linker_private_weak:
-    Lex.Warning("'" + Lex.getStrVal() + "' is deprecated, treating as"
-                " PrivateLinkage");
-    Lex.Lex();
-    // treat linker_private and linker_private_weak as PrivateLinkage
-    Res = GlobalValue::PrivateLinkage;
-    return false;
   }
   Lex.Lex();
   HasLinkage = true;

@@ -690,7 +690,7 @@ void DwarfUnit::addBlockByrefAddress(const DbgVariable &DV, DIE &Die,
 
   // Find the __forwarding field and the variable field in the __Block_byref
   // struct.
-  DIArray Fields = blockStruct.getTypeArray();
+  DIArray Fields = blockStruct.getElements();
   DIDerivedType varField;
   DIDerivedType forwardingField;
 
@@ -1129,10 +1129,10 @@ void DwarfUnit::constructTypeDIE(DIE &Buffer, DIDerivedType DTy) {
 }
 
 /// constructSubprogramArguments - Construct function argument DIEs.
-void DwarfUnit::constructSubprogramArguments(DIE &Buffer, DIArray Args) {
+void DwarfUnit::constructSubprogramArguments(DIE &Buffer, DITypeArray Args) {
   for (unsigned i = 1, N = Args.getNumElements(); i < N; ++i) {
-    DIDescriptor Ty = Args.getElement(i);
-    if (Ty.isUnspecifiedParameter()) {
+    DIType Ty = resolve(Args.getElement(i));
+    if (!Ty) {
       assert(i == N-1 && "Unspecified parameter must be the last argument");
       createAndAddDIE(dwarf::DW_TAG_unspecified_parameters, Buffer);
     } else {
@@ -1161,14 +1161,14 @@ void DwarfUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
     break;
   case dwarf::DW_TAG_subroutine_type: {
     // Add return type. A void return won't have a type.
-    DIArray Elements = CTy.getTypeArray();
-    DIType RTy(Elements.getElement(0));
+    DITypeArray Elements = DISubroutineType(CTy).getTypeArray();
+    DIType RTy(resolve(Elements.getElement(0)));
     if (RTy)
       addType(Buffer, RTy);
 
     bool isPrototyped = true;
     if (Elements.getNumElements() == 2 &&
-        Elements.getElement(1).isUnspecifiedParameter())
+        !Elements.getElement(1))
       isPrototyped = false;
 
     constructSubprogramArguments(Buffer, Elements);
@@ -1191,7 +1191,7 @@ void DwarfUnit::constructTypeDIE(DIE &Buffer, DICompositeType CTy) {
   case dwarf::DW_TAG_union_type:
   case dwarf::DW_TAG_class_type: {
     // Add elements to structure type.
-    DIArray Elements = CTy.getTypeArray();
+    DIArray Elements = CTy.getElements();
     for (unsigned i = 0, N = Elements.getNumElements(); i < N; ++i) {
       DIDescriptor Element = Elements.getElement(i);
       if (Element.isSubprogram())
@@ -1452,15 +1452,15 @@ void DwarfUnit::applySubprogramAttributes(DISubprogram SP, DIE &SPDie) {
        Language == dwarf::DW_LANG_ObjC))
     addFlag(SPDie, dwarf::DW_AT_prototyped);
 
-  DICompositeType SPTy = SP.getType();
+  DISubroutineType SPTy = SP.getType();
   assert(SPTy.getTag() == dwarf::DW_TAG_subroutine_type &&
          "the type of a subprogram should be a subroutine");
 
-  DIArray Args = SPTy.getTypeArray();
+  DITypeArray Args = SPTy.getTypeArray();
   // Add a return type. If this is a type like a C/C++ void type we don't add a
   // return type.
-  if (Args.getElement(0))
-    addType(SPDie, DIType(Args.getElement(0)));
+  if (resolve(Args.getElement(0)))
+    addType(SPDie, DIType(resolve(Args.getElement(0))));
 
   unsigned VK = SP.getVirtuality();
   if (VK) {
@@ -1740,7 +1740,7 @@ void DwarfUnit::constructArrayTypeDIE(DIE &Buffer, DICompositeType CTy) {
   }
 
   // Add subranges to array type.
-  DIArray Elements = CTy.getTypeArray();
+  DIArray Elements = CTy.getElements();
   for (unsigned i = 0, N = Elements.getNumElements(); i < N; ++i) {
     DIDescriptor Element = Elements.getElement(i);
     if (Element.getTag() == dwarf::DW_TAG_subrange_type)
@@ -1750,7 +1750,7 @@ void DwarfUnit::constructArrayTypeDIE(DIE &Buffer, DICompositeType CTy) {
 
 /// constructEnumTypeDIE - Construct an enum type DIE from DICompositeType.
 void DwarfUnit::constructEnumTypeDIE(DIE &Buffer, DICompositeType CTy) {
-  DIArray Elements = CTy.getTypeArray();
+  DIArray Elements = CTy.getElements();
 
   // Add enumerators to enumeration type.
   for (unsigned i = 0, N = Elements.getNumElements(); i < N; ++i) {

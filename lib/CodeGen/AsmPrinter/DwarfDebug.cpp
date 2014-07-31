@@ -150,7 +150,7 @@ DIType DbgVariable::getType() const {
     if (tag == dwarf::DW_TAG_pointer_type)
       subType = resolve(DIDerivedType(Ty).getTypeDerivedFrom());
 
-    DIArray Elements = DICompositeType(subType).getTypeArray();
+    DIArray Elements = DICompositeType(subType).getElements();
     for (unsigned i = 0, N = Elements.getNumElements(); i < N; ++i) {
       DIDerivedType DT(Elements.getElement(i));
       if (getName() == DT.getName())
@@ -468,12 +468,14 @@ DIE *DwarfDebug::createScopeChildrenDIE(
 
     // If this is a variadic function, add an unspecified parameter.
     DISubprogram SP(Scope->getScopeNode());
-    DIArray FnArgs = SP.getType().getTypeArray();
-    if (FnArgs.getElement(FnArgs.getNumElements() - 1)
-            .isUnspecifiedParameter()) {
+    DITypeArray FnArgs = SP.getType().getTypeArray();
+    // If we have a single element of null, it is a function that returns void.
+    // If we have more than one elements and the last one is null, it is a
+    // variadic function.
+    if (FnArgs.getNumElements() > 1 &&
+        !FnArgs.getElement(FnArgs.getNumElements() - 1))
       Children.push_back(
           make_unique<DIE>(dwarf::DW_TAG_unspecified_parameters));
-    }
   }
 
   // Collect lexical scope children first.
@@ -731,6 +733,8 @@ void DwarfDebug::beginModule() {
 
   const Module *M = MMI->getModule();
 
+  FunctionDIs = makeSubprogramMap(*M);
+
   // If module has named metadata anchors then use them, otherwise scan the
   // module using debug info finder to collect debug info.
   NamedMDNode *CU_Nodes = M->getNamedMetadata("llvm.dbg.cu");
@@ -760,8 +764,13 @@ void DwarfDebug::beginModule() {
     for (unsigned i = 0, e = SPs.getNumElements(); i != e; ++i)
       SPMap.insert(std::make_pair(SPs.getElement(i), &CU));
     DIArray EnumTypes = CUNode.getEnumTypes();
-    for (unsigned i = 0, e = EnumTypes.getNumElements(); i != e; ++i)
-      CU.getOrCreateTypeDIE(EnumTypes.getElement(i));
+    for (unsigned i = 0, e = EnumTypes.getNumElements(); i != e; ++i) {
+      DIType Ty(EnumTypes.getElement(i));
+      // The enum types array by design contains pointers to
+      // MDNodes rather than DIRefs. Unique them here.
+      DIType UniqueTy(resolve(Ty.getRef()));
+      CU.getOrCreateTypeDIE(UniqueTy);
+    }
     DIArray RetainedTypes = CUNode.getRetainedTypes();
     for (unsigned i = 0, e = RetainedTypes.getNumElements(); i != e; ++i) {
       DIType Ty(RetainedTypes.getElement(i));
@@ -1416,6 +1425,10 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
   if (!MMI->hasDebugInfo())
     return;
 
+  auto DI = FunctionDIs.find(MF->getFunction());
+  if (DI == FunctionDIs.end())
+    return;
+
   // Grab the lexical scopes for the function, if we don't have any of those
   // then we're not going to be able to do anything.
   LScopes.initialize(*MF);
@@ -1431,6 +1444,14 @@ void DwarfDebug::beginFunction(const MachineFunction *MF) {
   // belongs to so that we add to the correct per-cu line table in the
   // non-asm case.
   LexicalScope *FnScope = LScopes.getCurrentFunctionScope();
+  // FnScope->getScopeNode() and DI->second should represent the same function,
+  // though they may not be the same MDNode due to inline functions merged in
+  // LTO where the debug info metadata still differs (either due to distinct
+  // written differences - two versions of a linkonce_odr function
+  // written/copied into two separate files, or some sub-optimal metadata that
+  // isn't structurally identical (see: file path/name info from clang, which
+  // includes the directory of the cpp file being built, even when the file name
+  // is absolute (such as an <> lookup header)))
   DwarfCompileUnit *TheCU = SPMap.lookup(FnScope->getScopeNode());
   assert(TheCU && "Unable to find compile unit!");
   if (Asm->OutStreamer.hasRawTextSupport())
@@ -1528,7 +1549,8 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
     assert(CurFn == MF);
   assert(CurFn != nullptr);
 
-  if (!MMI->hasDebugInfo() || LScopes.empty()) {
+  if (!MMI->hasDebugInfo() || LScopes.empty() ||
+      !FunctionDIs.count(MF->getFunction())) {
     // If we don't have a lexical scope for this function then there will
     // be a hole in the range information. Keep note of this by setting the
     // previously used section to nullptr.
@@ -1625,9 +1647,12 @@ void DwarfDebug::emitSectionLabels() {
   // Dwarf sections base addresses.
   DwarfInfoSectionSym =
       emitSectionSym(Asm, TLOF.getDwarfInfoSection(), "section_info");
-  if (useSplitDwarf())
+  if (useSplitDwarf()) {
     DwarfInfoDWOSectionSym =
         emitSectionSym(Asm, TLOF.getDwarfInfoDWOSection(), "section_info_dwo");
+    DwarfTypesDWOSectionSym =
+        emitSectionSym(Asm, TLOF.getDwarfTypesDWOSection(), "section_types_dwo");
+  }
   DwarfAbbrevSectionSym =
       emitSectionSym(Asm, TLOF.getDwarfAbbrevSection(), "section_abbrev");
   if (useSplitDwarf())
@@ -2391,9 +2416,9 @@ void DwarfDebug::addDwarfTypeUnitType(DwarfCompileUnit &CU,
   bool TopLevelType = TypeUnitsUnderConstruction.empty();
   AddrPool.resetUsedFlag();
 
-  auto OwnedUnit =
-      make_unique<DwarfTypeUnit>(InfoHolder.getUnits().size(), CU, Asm, this,
-                                 &InfoHolder, getDwoLineTable(CU));
+  auto OwnedUnit = make_unique<DwarfTypeUnit>(
+      InfoHolder.getUnits().size() + TypeUnitsUnderConstruction.size(), CU, Asm,
+      this, &InfoHolder, getDwoLineTable(CU));
   DwarfTypeUnit &NewTU = *OwnedUnit;
   DIE &UnitDie = NewTU.getUnitDie();
   TU = &NewTU;
@@ -2406,15 +2431,14 @@ void DwarfDebug::addDwarfTypeUnitType(DwarfCompileUnit &CU,
   uint64_t Signature = makeTypeSignature(Identifier);
   NewTU.setTypeSignature(Signature);
 
-  if (!useSplitDwarf())
+  if (useSplitDwarf())
+    NewTU.initSection(Asm->getObjFileLowering().getDwarfTypesDWOSection(),
+                      DwarfTypesDWOSectionSym);
+  else {
     CU.applyStmtList(UnitDie);
-
-  // FIXME: Skip using COMDAT groups for type units in the .dwo file once tools
-  // such as DWP ( http://gcc.gnu.org/wiki/DebugFissionDWP ) can cope with it.
-  NewTU.initSection(
-      useSplitDwarf()
-          ? Asm->getObjFileLowering().getDwarfTypesDWOSection(Signature)
-          : Asm->getObjFileLowering().getDwarfTypesSection(Signature));
+    NewTU.initSection(
+        Asm->getObjFileLowering().getDwarfTypesSection(Signature));
+  }
 
   NewTU.setType(NewTU.createTypeDIE(CTy));
 

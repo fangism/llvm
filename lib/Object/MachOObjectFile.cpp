@@ -755,7 +755,6 @@ MachOObjectFile::getRelocationTypeName(DataRefImpl Rel,
         res = Table[RType];
       break;
     }
-    case Triple::arm64:
     case Triple::aarch64: {
       static const char *const Table[] = {
         "ARM64_RELOC_UNSIGNED",           "ARM64_RELOC_SUBTRACTOR",
@@ -1303,7 +1302,7 @@ Triple::ArchType MachOObjectFile::getArch(uint32_t CPUType) {
   case llvm::MachO::CPU_TYPE_ARM:
     return Triple::arm;
   case llvm::MachO::CPU_TYPE_ARM64:
-    return Triple::arm64;
+    return Triple::aarch64;
   case llvm::MachO::CPU_TYPE_POWERPC:
     return Triple::ppc;
   case llvm::MachO::CPU_TYPE_POWERPC64:
@@ -1722,7 +1721,7 @@ void MachOObjectFile::ReadULEB128s(uint64_t Index,
   }
 }
 
-ErrorOr<ObjectFile *>
+ErrorOr<std::unique_ptr<MachOObjectFile>>
 ObjectFile::createMachOObjectFile(std::unique_ptr<MemoryBuffer> &Buffer) {
   StringRef Magic = Buffer->getBuffer().slice(0, 4);
   std::error_code EC;
@@ -1740,6 +1739,6 @@ ObjectFile::createMachOObjectFile(std::unique_ptr<MemoryBuffer> &Buffer) {
 
   if (EC)
     return EC;
-  return Ret.release();
+  return std::move(Ret);
 }
 

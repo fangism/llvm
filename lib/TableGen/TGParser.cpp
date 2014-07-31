@@ -135,11 +135,18 @@ bool TGParser::SetValue(Record *CurRec, SMLoc Loc, Init *ValName,
     V = BitsInit::get(NewBits);
   }
 
-  if (RV->setValue(V))
+  if (RV->setValue(V)) {
+    std::string InitType = "";
+    if (BitsInit *BI = dyn_cast<BitsInit>(V)) {
+      InitType = (Twine("' of type bit initializer with length ") +
+                  Twine(BI->getNumBits())).str();
+    }
     return Error(Loc, "Value '" + ValName->getAsUnquotedString() + "' of type '"
                  + RV->getType()->getAsString() +
                  "' is incompatible with initializer '" + V->getAsString()
+                 + InitType
                  + "'");
+  }
   return false;
 }
 
@@ -1727,7 +1734,10 @@ Init *TGParser::ParseDeclaration(Record *CurRec,
     Init *Val = ParseValue(CurRec, Type);
     if (!Val ||
         SetValue(CurRec, ValLoc, DeclName, std::vector<unsigned>(), Val))
-      return nullptr;
+      // Return the name, even if an error is thrown.  This is so that we can
+      // continue to make some progress, even without the value having been
+      // initialized.
+      return DeclName;
   }
 
   return DeclName;

@@ -116,6 +116,39 @@ entry:
   ret i32 %cond
 }
 
+; ALL-LABEL: cmov3_ne:
+
+; We won't check the result register since we can't know if the move is first
+; or last. We do know it will be either one of two registers so we can at least
+; check that.
+
+; FIXME: Use xori instead of addiu+xor.
+; 32-CMOV:      addiu $[[R0:[0-9]+]], $zero, 234
+; 32-CMOV:      xor $[[R1:[0-9]+]], $4, $[[R0]]
+; 32-CMOV:      movn ${{[26]}}, $5, $[[R1]]
+
+; 32-CMP-DAG:   xori $[[CC:[0-9]+]], $4, 234
+; 32-CMP-DAG:   selnez $[[T0:[0-9]+]], $5, $[[CC]]
+; 32-CMP-DAG:   seleqz $[[T1:[0-9]+]], $6, $[[CC]]
+; 32-CMP-DAG:   or $2, $[[T0]], $[[T1]]
+
+; FIXME: Use xori instead of addiu+xor.
+; 64-CMOV:      addiu $[[R0:[0-9]+]], $zero, 234
+; 64-CMOV:      xor $[[R1:[0-9]+]], $4, $[[R0]]
+; 64-CMOV:      movn ${{[26]}}, $5, $[[R1]]
+
+; 64-CMP-DAG:   xori $[[CC:[0-9]+]], $4, 234
+; 64-CMP-DAG:   selnez $[[T0:[0-9]+]], $5, $[[CC]]
+; 64-CMP-DAG:   seleqz $[[T1:[0-9]+]], $6, $[[CC]]
+; 64-CMP-DAG:   or $2, $[[T0]], $[[T1]]
+
+define i32 @cmov3_ne(i32 %a, i32 %b, i32 %c) nounwind readnone {
+entry:
+  %cmp = icmp ne i32 %a, 234
+  %cond = select i1 %cmp, i32 %b, i32 %c
+  ret i32 %cond
+}
+
 ; ALL-LABEL: cmov4:
 
 ; We won't check the result register since we can't know if the move is first
@@ -149,6 +182,47 @@ entry:
 define i64 @cmov4(i32 %a, i64 %b, i64 %c) nounwind readnone {
 entry:
   %cmp = icmp eq i32 %a, 234
+  %cond = select i1 %cmp, i64 %b, i64 %c
+  ret i64 %cond
+}
+
+; ALL-LABEL: cmov4_ne:
+
+; We won't check the result register since we can't know if the move is first
+; or last. We do know it will be one of two registers so we can at least check
+; that.
+
+; FIXME: Use xori instead of addiu+xor.
+; 32-CMOV-DAG: addiu $[[R0:[0-9]+]], $zero, 234
+; 32-CMOV-DAG: xor $[[R1:[0-9]+]], $4, $[[R0]]
+; 32-CMOV-DAG: lw $[[R2:2]], 16($sp)
+; 32-CMOV-DAG: lw $[[R3:3]], 20($sp)
+; 32-CMOV-DAG: movn $[[R2]], $6, $[[R1]]
+; 32-CMOV-DAG: movn $[[R3]], $7, $[[R1]]
+
+; 32-CMP-DAG:  xori $[[R0:[0-9]+]], $4, 234
+; 32-CMP-DAG:  lw $[[R1:[0-9]+]], 16($sp)
+; 32-CMP-DAG:  lw $[[R2:[0-9]+]], 20($sp)
+; 32-CMP-DAG:  selnez $[[T0:[0-9]+]], $6, $[[R0]]
+; 32-CMP-DAG:  selnez $[[T1:[0-9]+]], $7, $[[R0]]
+; 32-CMP-DAG:  seleqz $[[T2:[0-9]+]], $[[R1]], $[[R0]]
+; 32-CMP-DAG:  seleqz $[[T3:[0-9]+]], $[[R2]], $[[R0]]
+; 32-CMP-DAG:  or $2, $[[T0]], $[[T2]]
+; 32-CMP-DAG:  or $3, $[[T1]], $[[T3]]
+
+; FIXME: Use xori instead of addiu+xor.
+; 64-CMOV: addiu $[[R0:[0-9]+]], $zero, 234
+; 64-CMOV: xor $[[R1:[0-9]+]], $4, $[[R0]]
+; 64-CMOV: movn ${{[26]}}, $5, $[[R1]]
+
+; 64-CMP-DAG:  xori $[[R0:[0-9]+]], $4, 234
+; 64-CMP-DAG:  selnez $[[T0:[0-9]+]], $5, $[[R0]]
+; 64-CMP-DAG:  seleqz $[[T1:[0-9]+]], $6, $[[R0]]
+; 64-CMP-DAG:  or $2, $[[T0]], $[[T1]]
+
+define i64 @cmov4_ne(i32 %a, i64 %b, i64 %c) nounwind readnone {
+entry:
+  %cmp = icmp ne i32 %a, 234
   %cond = select i1 %cmp, i64 %b, i64 %c
   ret i64 %cond
 }
@@ -683,24 +757,9 @@ define i32 @slti6(i32 %a) nounwind readnone {
 
 ; ALL-LABEL: slti6:
 
-; 32-CMOV-DAG: slti [[R1:\$[0-9]+]], $4, 7
-; 32-CMOV-DAG: xori [[R1]], [[R1]], 1
-; 32-CMOV-DAG: addiu [[R2:\$[0-9]+]], [[R1]], 3
-; 32-CMOV-NOT: movn
-
-; 32-CMP-DAG:  slti [[R1:\$[0-9]+]], $4, 7
-; 32-CMP-DAG:  xori [[R1]], [[R1]], 1
-; 32-CMP-DAG:  addiu [[R2:\$[0-9]+]], [[R1]], 3
-; 32-CMP-NOT:  seleqz
-; 32-CMP-NOT:  selnez
-
-; 64-CMOV-DAG: slti [[R1:\$[0-9]+]], $4, 7
-; 64-CMOV-DAG: xori [[R1]], [[R1]], 1
-; 64-CMOV-DAG: addiu [[R2:\$[0-9]+]], [[R1]], 3
-; 64-CMOV-NOT: movn
-
-; 64-CMP-DAG:  slti [[R1:\$[0-9]+]], $4, 7
-; 64-CMP-DAG:  xori [[R1]], [[R1]], 1
-; 64-CMP-DAG:  addiu [[R2:\$[0-9]+]], [[R1]], 3
-; 64-CMP-NOT:  seleqz
-; 64-CMP-NOT:  selnez
+; ALL-DAG: addiu [[R1:\$[0-9]+]], $zero, 6
+; ALL-DAG: slt [[R1]], [[R1]], $4
+; ALL-DAG: addiu [[R2:\$[0-9]+]], [[R1]], 3
+; ALL-NOT: movn
+; ALL-NOT:  seleqz
+; ALL-NOT:  selnez

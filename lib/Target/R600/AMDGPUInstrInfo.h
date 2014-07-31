@@ -13,10 +13,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef AMDGPUINSTRUCTIONINFO_H
-#define AMDGPUINSTRUCTIONINFO_H
+#ifndef AMDGPUINSTRINFO_H
+#define AMDGPUINSTRINFO_H
 
-#include "AMDGPUInstrInfo.h"
 #include "AMDGPURegisterInfo.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include <map>
@@ -120,6 +119,9 @@ public:
   unsigned getOpcodeAfterMemoryUnfold(unsigned Opc,
                                bool UnfoldLoad, bool UnfoldStore,
                                unsigned *LoadRegIndex = nullptr) const override;
+
+  bool enableClusterLoads() const override;
+
   bool shouldScheduleLoadsNear(SDNode *Load1, SDNode *Load2,
                                int64_t Offset1, int64_t Offset2,
                                unsigned NumLoads) const override;

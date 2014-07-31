@@ -147,7 +147,6 @@ bool AMDGPUInstrInfo::expandPostRAPseudo (MachineBasicBlock::iterator MI) const 
   } else if (isRegisterStore(*MI)) {
     int ValOpIdx = AMDGPU::getNamedOperandIdx(MI->getOpcode(),
                                               AMDGPU::OpName::val);
-    AMDGPU::getNamedOperandIdx(MI->getOpcode(), AMDGPU::OpName::dst);
     unsigned RegIndex = MI->getOperand(RegOpIdx).getImm();
     unsigned Channel = MI->getOperand(ChanOpIdx).getImm();
     unsigned Address = calculateIndirectAddress(RegIndex, Channel);
@@ -213,6 +212,10 @@ AMDGPUInstrInfo::getOpcodeAfterMemoryUnfold(unsigned Opc,
                                            unsigned *LoadRegIndex) const {
   // TODO: Implement this function
   return 0;
+}
+
+bool AMDGPUInstrInfo::enableClusterLoads() const {
+  return true;
 }
 
 bool AMDGPUInstrInfo::shouldScheduleLoadsNear(SDNode *Load1, SDNode *Load2,

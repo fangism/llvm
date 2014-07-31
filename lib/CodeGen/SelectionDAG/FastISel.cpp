@@ -769,7 +769,7 @@ bool FastISel::SelectPatchpoint(const CallInst *I) {
 
   // Assume that the callee is a constant address or null pointer.
   // FIXME: handle function symbols in the future.
-  unsigned CalleeAddr;
+  uint64_t CalleeAddr;
   if (const auto *C = dyn_cast<IntToPtrInst>(Callee))
     CalleeAddr = cast<ConstantInt>(C->getOperand(0))->getZExtValue();
   else if (const auto *C = dyn_cast<ConstantExpr>(Callee)) {
@@ -2158,8 +2158,10 @@ FastISel::createMachineMemOperandFor(const Instruction *I) const {
 
   bool IsNonTemporal = I->getMetadata("nontemporal") != nullptr;
   bool IsInvariant = I->getMetadata("invariant.load") != nullptr;
-  const MDNode *TBAAInfo = I->getMetadata(LLVMContext::MD_tbaa);
   const MDNode *Ranges = I->getMetadata(LLVMContext::MD_range);
+
+  AAMDNodes AAInfo;
+  I->getAAMetadata(AAInfo);
 
   if (Alignment == 0)  // Ensure that codegen never sees alignment 0.
     Alignment = DL.getABITypeAlignment(ValTy);
@@ -2174,5 +2176,5 @@ FastISel::createMachineMemOperandFor(const Instruction *I) const {
     Flags |= MachineMemOperand::MOInvariant;
 
   return FuncInfo.MF->getMachineMemOperand(MachinePointerInfo(Ptr), Flags, Size,
-                                           Alignment, TBAAInfo, Ranges);
+                                           Alignment, AAInfo, Ranges);
 }

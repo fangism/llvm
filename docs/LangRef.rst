@@ -75,11 +75,12 @@ identifiers, for different purposes:
 #. Named values are represented as a string of characters with their
    prefix. For example, ``%foo``, ``@DivisionByZero``,
    ``%a.really.long.identifier``. The actual regular expression used is
-   '``[%@][a-zA-Z$._][a-zA-Z$._0-9]*``'. Identifiers which require other
+   '``[%@][a-zA-Z$._][a-zA-Z$._0-9]*``'. Identifiers that require other
    characters in their names can be surrounded with quotes. Special
    characters may be escaped using ``"\xx"`` where ``xx`` is the ASCII
    code for the character in hexadecimal. In this way, any character can
-   be used in a name value, even quotes themselves.
+   be used in a name value, even quotes themselves. The ``"\01"`` prefix
+   can be used on global variables to suppress mangling.
 #. Unnamed values are represented as an unsigned numeric value with
    their prefix. For example, ``%12``, ``@2``, ``%44``.
 #. Constants, which are described in the section  Constants_ below.
@@ -500,7 +501,7 @@ Structure Types
 LLVM IR allows you to specify both "identified" and "literal" :ref:`structure
 types <t_struct>`.  Literal types are uniqued structurally, but identified types
 are never uniqued.  An :ref:`opaque structural type <t_opaque>` can also be used
-to forward declare a type which is not yet available.
+to forward declare a type that is not yet available.
 
 An example of a identified structure specification is:
 
@@ -697,7 +698,7 @@ Aliases may have an optional :ref:`linkage type <linkage>`, an optional
 
 Syntax::
 
-    @<Name> = [Visibility] [DLLStorageClass] [ThreadLocal] [unnamed_addr] alias [Linkage] <AliaseeTy> @<Aliasee>
+    @<Name> = [Linkage] [Visibility] [DLLStorageClass] [ThreadLocal] [unnamed_addr] alias <AliaseeTy> @<Aliasee>
 
 The linkage must be one of ``private``, ``internal``, ``linkonce``, ``weak``,
 ``linkonce_odr``, ``weak_odr``, ``external``. Note that some system linkers
@@ -727,7 +728,7 @@ Comdats
 
 Comdat IR provides access to COFF and ELF object file COMDAT functionality.
 
-Comdats have a name which represents the COMDAT key.  All global objects which
+Comdats have a name which represents the COMDAT key.  All global objects that
 specify this key will only end up in the final object file if the linker chooses
 that key over some other key.  Aliases are placed in the same COMDAT that their
 aliasee computes to, if any.
@@ -921,11 +922,18 @@ Currently, only the following parameter attributes are defined:
     the first parameter. This is not a valid attribute for return
     values.
 
+``align <n>``
+    This indicates that the pointer value may be assumed by the optimizer to
+    have the specified alignment.
+
+    Note that this attribute has additional semantics when combined with the
+    ``byval`` attribute.
+
 .. _noalias:
 
 ``noalias``
     This indicates that pointer values :ref:`based <pointeraliasing>` on
-    the argument or return value do not alias pointer values which are
+    the argument or return value do not alias pointer values that are
     not *based* on it, ignoring certain "irrelevant" dependencies. For a
     call to the parent function, dependencies between memory references
     from before or after the call and from those during the call are
@@ -993,7 +1001,7 @@ string:
     define void @f() gc "name" { ... }
 
 The compiler declares the supported values of *name*. Specifying a
-collector which will cause the compiler to alter its output in order to
+collector will cause the compiler to alter its output in order to
 support the named garbage collection algorithm.
 
 .. _prefixdata:
@@ -1109,7 +1117,7 @@ example:
     This indicates that the callee function at a call site should be
     recognized as a built-in function, even though the function's declaration
     uses the ``nobuiltin`` attribute. This is only valid at call sites for
-    direct calls to functions which are declared with the ``nobuiltin``
+    direct calls to functions that are declared with the ``nobuiltin``
     attribute.
 ``cold``
     This attribute indicates that this function is rarely called. When
@@ -1604,7 +1612,7 @@ Given that definition, R\ :sub:`byte` is defined as follows:
 
 -  If R is volatile, the result is target-dependent. (Volatile is
    supposed to give guarantees which can support ``sig_atomic_t`` in
-   C/C++, and may be used for accesses to addresses which do not behave
+   C/C++, and may be used for accesses to addresses that do not behave
    like normal memory. It does not generally provide cross-thread
    synchronization.)
 -  Otherwise, if there is no write to the same byte that happens before
@@ -1692,7 +1700,7 @@ For a simpler introduction to the ordering constraints, see the
     address. This corresponds to the C++0x/C1x ``memory_order_acq_rel``.
 ``seq_cst`` (sequentially consistent)
     In addition to the guarantees of ``acq_rel`` (``acquire`` for an
-    operation which only reads, ``release`` for an operation which only
+    operation that only reads, ``release`` for an operation that only
     writes), there is a global total order on all
     sequentially-consistent operations on all addresses, which is
     consistent with the *happens-before* partial order and with the
@@ -1959,8 +1967,8 @@ type. Vector types are considered :ref:`first class <t_firstclass>`.
       < <# elements> x <elementtype> >
 
 The number of elements is a constant integer value larger than 0;
-elementtype may be any integer or floating point type, or a pointer to
-these types. Vectors of size zero are not allowed.
+elementtype may be any integer, floating point or pointer type. Vectors
+of size zero are not allowed.
 
 :Examples:
 
@@ -2395,8 +2403,8 @@ Poison Values
 
 Poison values are similar to :ref:`undef values <undefvalues>`, however
 they also represent the fact that an instruction or constant expression
-which cannot evoke side effects has nevertheless detected a condition
-which results in undefined behavior.
+that cannot evoke side effects has nevertheless detected a condition
+that results in undefined behavior.
 
 There is currently no way of representing a poison value in the IR; they
 only exist when produced by operations such as :ref:`add <i_add>` with
@@ -2433,8 +2441,8 @@ Poison value behavior is defined in terms of value *dependence*:
    successor.
 -  Dependence is transitive.
 
-Poison Values have the same behavior as :ref:`undef values <undefvalues>`,
-with the additional affect that any instruction which has a *dependence*
+Poison values have the same behavior as :ref:`undef values <undefvalues>`,
+with the additional effect that any instruction that has a *dependence*
 on a poison value has undefined behavior.
 
 Here are some examples:
@@ -2822,6 +2830,67 @@ Note that the fields need not be contiguous. In this example, there is a
 4 byte gap between the two fields. This gap represents padding which
 does not carry useful data and need not be preserved.
 
+'``noalias``' and '``alias.scope``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``noalias`` and ``alias.scope`` metadata provide the ability to specify generic
+noalias memory-access sets. This means that some collection of memory access
+instructions (loads, stores, memory-accessing calls, etc.) that carry
+``noalias`` metadata can specifically be specified not to alias with some other
+collection of memory access instructions that carry ``alias.scope`` metadata.
+Each type of metadata specifies a list of scopes where each scope has an id and
+a domain. When evaluating an aliasing query, if for some some domain, the set
+of scopes with that domain in one instruction's ``alias.scope`` list is a
+subset of (or qual to) the set of scopes for that domain in another
+instruction's ``noalias`` list, then the two memory accesses are assumed not to
+alias.
+
+The metadata identifying each domain is itself a list containing one or two
+entries. The first entry is the name of the domain. Note that if the name is a
+string then it can be combined accross functions and translation units. A
+self-reference can be used to create globally unique domain names. A
+descriptive string may optionally be provided as a second list entry.
+
+The metadata identifying each scope is also itself a list containing two or
+three entries. The first entry is the name of the scope. Note that if the name
+is a string then it can be combined accross functions and translation units. A
+self-reference can be used to create globally unique scope names. A metadata
+reference to the scope's domain is the second entry. A descriptive string may
+optionally be provided as a third list entry.
+
+For example,
+
+.. code-block:: llvm
+
+    ; Two scope domains:
+    !0 = metadata !{metadata !0}
+    !1 = metadata !{metadata !1}
+
+    ; Some scopes in these domains:
+    !2 = metadata !{metadata !2, metadata !0}
+    !3 = metadata !{metadata !3, metadata !0}
+    !4 = metadata !{metadata !4, metadata !1}
+
+    ; Some scope lists:
+    !5 = metadata !{metadata !4} ; A list containing only scope !4
+    !6 = metadata !{metadata !4, metadata !3, metadata !2}
+    !7 = metadata !{metadata !3}
+
+    ; These two instructions don't alias:
+    %0 = load float* %c, align 4, !alias.scope !5
+    store float %0, float* %arrayidx.i, align 4, !noalias !5
+
+    ; These two instructions also don't alias (for domain !1, the set of scopes
+    ; in the !alias.scope equals that in the !noalias list):
+    %2 = load float* %c, align 4, !alias.scope !5
+    store float %2, float* %arrayidx.i2, align 4, !noalias !6
+
+    ; These two instructions don't alias (for domain !0, the set of scopes in
+    ; the !noalias list is not a superset of, or equal to, the scopes in the
+    ; !alias.scope list):
+    %2 = load float* %c, align 4, !alias.scope !6
+    store float %0, float* %arrayidx.i, align 4, !noalias !7
+
 '``fpmath``' Metadata
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -2942,7 +3011,7 @@ multiple iterations of the loop.  If ``llvm.loop.interleave.count`` is set to 0
 then the interleave count will be determined automatically.
 
 '``llvm.loop.vectorize.enable``' Metadata
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This metadata selectively enables or disables vectorization for the loop. The
 first operand is the string ``llvm.loop.vectorize.enable`` and the second operand
@@ -2980,20 +3049,6 @@ identification metadata. The ``llvm.loop.unroll`` metadata are only
 optimization hints and the unrolling will only be performed if the
 optimizer believes it is safe to do so.
 
-'``llvm.loop.unroll.enable``' Metadata
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-This metadata either disables loop unrolling or suggests that the loop
-be unrolled fully. The first operand is the string
-``llvm.loop.unroll.enable`` and the second operand is a bit.  If the
-bit operand value is 0 loop unrolling is disabled. A value of 1
-indicates that the loop should be fully unrolled. For example:
-
-.. code-block:: llvm
-
-   !0 = metadata !{ metadata !"llvm.loop.unroll.enable", i1 0 }
-   !1 = metadata !{ metadata !"llvm.loop.unroll.enable", i1 1 }
-
 '``llvm.loop.unroll.count``' Metadata
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -3009,12 +3064,26 @@ example:
 If the trip count of the loop is less than the unroll count the loop
 will be partially unrolled.
 
-If a loop has both a ``llvm.loop.unroll.enable`` metadata and
-``llvm.loop.unroll.count`` metadata the behavior depends upon the
-value of the ``llvm.loop.unroll.enable`` operand.  If the value is 0,
-the loop will not be unrolled.  If the value is 1, the loop will be
-unrolled with a factor determined by the ``llvm.loop.unroll.count``
-operand effectively ignoring the ``llvm.loop.unroll.enable`` metadata.
+'``llvm.loop.unroll.disable``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This metadata either disables loop unrolling. The metadata has a single operand
+which is the string ``llvm.loop.unroll.disable``.  For example:
+
+.. code-block:: llvm
+
+   !0 = metadata !{ metadata !"llvm.loop.unroll.disable" }
+
+'``llvm.loop.unroll.full``' Metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This metadata either suggests that the loop should be unrolled fully. The
+metadata has a single operand which is the string ``llvm.loop.unroll.disable``.
+For example:
+
+.. code-block:: llvm
+
+   !0 = metadata !{ metadata !"llvm.loop.unroll.full" }
 
 '``llvm.mem``'
 ^^^^^^^^^^^^^^^
@@ -9358,6 +9427,46 @@ Semantics:
 """"""""""
 
 This intrinsic is lowered to the ``val``.
+
+'``llvm.assume``' Intrinsic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Syntax:
+"""""""
+
+::
+
+      declare void @llvm.assume(i1 %cond)
+
+Overview:
+"""""""""
+
+The ``llvm.assume`` allows the optimizer to assume that the provided
+condition is true. This information can then be used in simplifying other parts
+of the code.
+
+Arguments:
+""""""""""
+
+The condition which the optimizer may assume is always true.
+
+Semantics:
+""""""""""
+
+The intrinsic allows the optimizer to assume that the provided condition is
+always true whenever the control flow reaches the intrinsic call. No code is
+generated for this intrinsic, and instructions that contribute only to the
+provided condition are not used for code generation. If the condition is
+violated during execution, the behavior is undefined.
+
+Please note that optimizer might limit the transformations performed on values
+used by the ``llvm.assume`` intrinsic in order to preserve the instructions
+only used to form the intrinsic's input argument. This might prove undesirable
+if the extra information provided by the ``llvm.assume`` intrinsic does cause
+sufficient overall improvement in code quality. For this reason,
+``llvm.assume`` should not be used to document basic mathematical invariants
+that the optimizer can otherwise deduce or facts that are of little use to the
+optimizer.
 
 '``llvm.donothing``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

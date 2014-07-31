@@ -266,11 +266,12 @@ namespace llvm {
 
     bool isDesirableToTransformToIntegerOp(unsigned Opc, EVT VT) const override;
 
-    /// allowsUnalignedMemoryAccesses - Returns true if the target allows
+    /// allowsMisalignedMemoryAccesses - Returns true if the target allows
     /// unaligned memory accesses of the specified type. Returns whether it
     /// is "fast" by reference in the second argument.
-    bool allowsUnalignedMemoryAccesses(EVT VT, unsigned AddrSpace,
-                                       bool *Fast) const override;
+    bool allowsMisalignedMemoryAccesses(EVT VT, unsigned AddrSpace,
+                                        unsigned Align,
+                                        bool *Fast) const override;
 
     EVT getOptimalMemOpType(uint64_t Size,
                             unsigned DstAlign, unsigned SrcAlign,
@@ -397,6 +398,8 @@ namespace llvm {
                                 Value *Addr, AtomicOrdering Ord) const override;
 
     bool shouldExpandAtomicInIR(Instruction *Inst) const override;
+
+    bool useLoadStackGuardNode() const override;
 
   protected:
     std::pair<const TargetRegisterClass*, uint8_t>

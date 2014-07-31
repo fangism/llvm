@@ -535,6 +535,8 @@ static void propagateMetadata(Instruction *To, const Instruction *From) {
     // non-speculated memory access when the condition was false, this would be
     // caught by the runtime overlap checks).
     if (Kind != LLVMContext::MD_tbaa &&
+        Kind != LLVMContext::MD_alias_scope &&
+        Kind != LLVMContext::MD_noalias &&
         Kind != LLVMContext::MD_fpmath)
       continue;
 
@@ -1019,24 +1021,20 @@ public:
 
   std::string emitRemark() const {
     Report R;
-    R << "vectorization ";
-    switch (Force) {
-    case LoopVectorizeHints::FK_Disabled:
-      R << "is explicitly disabled";
-      break;
-    case LoopVectorizeHints::FK_Enabled:
-      R << "is explicitly enabled";
-      if (Width != 0 && Unroll != 0)
-        R << " with width " << Width << " and interleave count " << Unroll;
-      else if (Width != 0)
-        R << " with width " << Width;
-      else if (Unroll != 0)
-        R << " with interleave count " << Unroll;
-      break;
-    case LoopVectorizeHints::FK_Undefined:
-      R << "was not specified";
-      break;
+    if (Force == LoopVectorizeHints::FK_Disabled)
+      R << "vectorization is explicitly disabled";
+    else {
+      R << "use -Rpass-analysis=loop-vectorize for more info";
+      if (Force == LoopVectorizeHints::FK_Enabled) {
+        R << " (Force=true";
+        if (Width != 0)
+          R << ", Vector Width=" << Width;
+        if (Unroll != 0)
+          R << ", Interleave Count=" << Unroll;
+        R << ")";
+      }
     }
+
     return R.str();
   }
 
@@ -3588,8 +3586,8 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
           // identified reduction value with an outside user.
           if (!hasOutsideLoopUser(TheLoop, it, AllowedExit))
             continue;
-          emitAnalysis(Report(it) << "value that could not be identified as "
-                                     "reduction is used outside the loop");
+          emitAnalysis(Report(it) << "value could not be identified as "
+                                     "an induction or reduction variable");
           return false;
         }
 
@@ -3674,7 +3672,8 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
           continue;
         }
 
-        emitAnalysis(Report(it) << "unvectorizable operation");
+        emitAnalysis(Report(it) << "value that could not be identified as "
+                                   "reduction is used outside the loop");
         DEBUG(dbgs() << "LV: Found an unidentified PHI."<< *Phi <<"\n");
         return false;
       }// end of PHI handling
@@ -3937,7 +3936,7 @@ public:
   /// \brief Register a load  and whether it is only read from.
   void addLoad(AliasAnalysis::Location &Loc, bool IsReadOnly) {
     Value *Ptr = const_cast<Value*>(Loc.Ptr);
-    AST.add(Ptr, AliasAnalysis::UnknownSize, Loc.TBAATag);
+    AST.add(Ptr, AliasAnalysis::UnknownSize, Loc.AATags);
     Accesses.insert(MemAccessInfo(Ptr, false));
     if (IsReadOnly)
       ReadOnlyPtr.insert(Ptr);
@@ -3946,7 +3945,7 @@ public:
   /// \brief Register a store.
   void addStore(AliasAnalysis::Location &Loc) {
     Value *Ptr = const_cast<Value*>(Loc.Ptr);
-    AST.add(Ptr, AliasAnalysis::UnknownSize, Loc.TBAATag);
+    AST.add(Ptr, AliasAnalysis::UnknownSize, Loc.AATags);
     Accesses.insert(MemAccessInfo(Ptr, true));
   }
 
@@ -4737,7 +4736,7 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
       // condition, so we cannot rely on it when determining whether or not we
       // need runtime pointer checks.
       if (blockNeedsPredication(ST->getParent()))
-        Loc.TBAATag = nullptr;
+        Loc.AATags.TBAA = nullptr;
 
       Accesses.addStore(Loc);
     }
@@ -4772,7 +4771,7 @@ bool LoopVectorizationLegality::canVectorizeMemory() {
     // condition, so we cannot rely on it when determining whether or not we
     // need runtime pointer checks.
     if (blockNeedsPredication(LD->getParent()))
-      Loc.TBAATag = nullptr;
+      Loc.AATags.TBAA = nullptr;
 
     Accesses.addLoad(Loc, IsReadOnlyPtr);
   }

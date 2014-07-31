@@ -626,6 +626,13 @@ PPCTargetLowering::PPCTargetLowering(PPCTargetMachine &TM)
   // Altivec instructions set fields to all zeros or all ones.
   setBooleanVectorContents(ZeroOrNegativeOneBooleanContent);
 
+  if (!isPPC64) {
+    // These libcalls are not available in 32-bit.
+    setLibcallName(RTLIB::SHL_I128, nullptr);
+    setLibcallName(RTLIB::SRL_I128, nullptr);
+    setLibcallName(RTLIB::SRA_I128, nullptr);
+  }
+
   if (isPPC64) {
     setStackPointerRegisterToSaveRestore(PPC::X1);
     setExceptionPointerRegister(PPC::X3);
@@ -919,31 +926,51 @@ static bool isVMerge(ShuffleVectorSDNode *N, unsigned UnitSize,
 
 /// isVMRGLShuffleMask - Return true if this is a shuffle mask suitable for
 /// a VMRGL* instruction with the specified unit size (1,2 or 4 bytes).
+/// The ShuffleKind distinguishes between big-endian merges with two 
+/// different inputs (0), either-endian merges with two identical inputs (1),
+/// and little-endian merges with two different inputs (2).  For the latter,
+/// the input operands are swapped (see PPCInstrAltivec.td).
 bool PPC::isVMRGLShuffleMask(ShuffleVectorSDNode *N, unsigned UnitSize,
-                             bool isUnary, SelectionDAG &DAG) {
+                             unsigned ShuffleKind, SelectionDAG &DAG) {
   if (DAG.getTarget().getDataLayout()->isLittleEndian()) {
-    if (!isUnary)
+    if (ShuffleKind == 1) // unary
+      return isVMerge(N, UnitSize, 0, 0);
+    else if (ShuffleKind == 2) // swapped
       return isVMerge(N, UnitSize, 0, 16);
-    return isVMerge(N, UnitSize, 0, 0);
+    else
+      return false;
   } else {
-    if (!isUnary)
+    if (ShuffleKind == 1) // unary
+      return isVMerge(N, UnitSize, 8, 8);
+    else if (ShuffleKind == 0) // normal
       return isVMerge(N, UnitSize, 8, 24);
-    return isVMerge(N, UnitSize, 8, 8);
+    else
+      return false;
   }
 }
 
 /// isVMRGHShuffleMask - Return true if this is a shuffle mask suitable for
 /// a VMRGH* instruction with the specified unit size (1,2 or 4 bytes).
+/// The ShuffleKind distinguishes between big-endian merges with two 
+/// different inputs (0), either-endian merges with two identical inputs (1),
+/// and little-endian merges with two different inputs (2).  For the latter,
+/// the input operands are swapped (see PPCInstrAltivec.td).
 bool PPC::isVMRGHShuffleMask(ShuffleVectorSDNode *N, unsigned UnitSize,
-                             bool isUnary, SelectionDAG &DAG) {
+                             unsigned ShuffleKind, SelectionDAG &DAG) {
   if (DAG.getTarget().getDataLayout()->isLittleEndian()) {
-    if (!isUnary)
+    if (ShuffleKind == 1) // unary
+      return isVMerge(N, UnitSize, 8, 8);
+    else if (ShuffleKind == 2) // swapped
       return isVMerge(N, UnitSize, 8, 24);
-    return isVMerge(N, UnitSize, 8, 8);
+    else
+      return false;
   } else {
-    if (!isUnary)
+    if (ShuffleKind == 1) // unary
+      return isVMerge(N, UnitSize, 0, 0);
+    else if (ShuffleKind == 0) // normal
       return isVMerge(N, UnitSize, 0, 16);
-    return isVMerge(N, UnitSize, 0, 0);
+    else
+      return false;
   }
 }
 
@@ -1656,47 +1683,61 @@ SDValue PPCTargetLowering::LowerGlobalTLSAddress(SDValue Op,
 
   if (Model == TLSModel::GeneralDynamic) {
     SDValue TGA = DAG.getTargetGlobalAddress(GV, dl, PtrVT, 0, 0);
-    SDValue GOTReg = DAG.getRegister(PPC::X2, MVT::i64);
-    SDValue GOTEntryHi = DAG.getNode(PPCISD::ADDIS_TLSGD_HA, dl, PtrVT,
-                                     GOTReg, TGA);
+    SDValue GOTPtr;
+    if (is64bit) {
+      SDValue GOTReg = DAG.getRegister(PPC::X2, MVT::i64);
+      GOTPtr = DAG.getNode(PPCISD::ADDIS_TLSGD_HA, dl, PtrVT,
+                                   GOTReg, TGA);
+    } else {
+      GOTPtr = DAG.getNode(PPCISD::PPC32_PICGOT, dl, PtrVT);
+    }
     SDValue GOTEntry = DAG.getNode(PPCISD::ADDI_TLSGD_L, dl, PtrVT,
-                                   GOTEntryHi, TGA);
+                                   GOTPtr, TGA);
 
     // We need a chain node, and don't have one handy.  The underlying
     // call has no side effects, so using the function entry node
     // suffices.
     SDValue Chain = DAG.getEntryNode();
-    Chain = DAG.getCopyToReg(Chain, dl, PPC::X3, GOTEntry);
-    SDValue ParmReg = DAG.getRegister(PPC::X3, MVT::i64);
+    Chain = DAG.getCopyToReg(Chain, dl,
+                             is64bit ? PPC::X3 : PPC::R3, GOTEntry);
+    SDValue ParmReg = DAG.getRegister(is64bit ? PPC::X3 : PPC::R3,
+                                      is64bit ? MVT::i64 : MVT::i32);
     SDValue TLSAddr = DAG.getNode(PPCISD::GET_TLS_ADDR, dl,
                                   PtrVT, ParmReg, TGA);
     // The return value from GET_TLS_ADDR really is in X3 already, but
     // some hacks are needed here to tie everything together.  The extra
     // copies dissolve during subsequent transforms.
-    Chain = DAG.getCopyToReg(Chain, dl, PPC::X3, TLSAddr);
-    return DAG.getCopyFromReg(Chain, dl, PPC::X3, PtrVT);
+    Chain = DAG.getCopyToReg(Chain, dl, is64bit ? PPC::X3 : PPC::R3, TLSAddr);
+    return DAG.getCopyFromReg(Chain, dl, is64bit ? PPC::X3 : PPC::R3, PtrVT);
   }
 
   if (Model == TLSModel::LocalDynamic) {
     SDValue TGA = DAG.getTargetGlobalAddress(GV, dl, PtrVT, 0, 0);
-    SDValue GOTReg = DAG.getRegister(PPC::X2, MVT::i64);
-    SDValue GOTEntryHi = DAG.getNode(PPCISD::ADDIS_TLSLD_HA, dl, PtrVT,
-                                     GOTReg, TGA);
+    SDValue GOTPtr;
+    if (is64bit) {
+      SDValue GOTReg = DAG.getRegister(PPC::X2, MVT::i64);
+      GOTPtr = DAG.getNode(PPCISD::ADDIS_TLSLD_HA, dl, PtrVT,
+                           GOTReg, TGA);
+    } else {
+      GOTPtr = DAG.getNode(PPCISD::PPC32_PICGOT, dl, PtrVT);
+    }
     SDValue GOTEntry = DAG.getNode(PPCISD::ADDI_TLSLD_L, dl, PtrVT,
-                                   GOTEntryHi, TGA);
+                                   GOTPtr, TGA);
 
     // We need a chain node, and don't have one handy.  The underlying
     // call has no side effects, so using the function entry node
     // suffices.
     SDValue Chain = DAG.getEntryNode();
-    Chain = DAG.getCopyToReg(Chain, dl, PPC::X3, GOTEntry);
-    SDValue ParmReg = DAG.getRegister(PPC::X3, MVT::i64);
+    Chain = DAG.getCopyToReg(Chain, dl,
+                             is64bit ? PPC::X3 : PPC::R3, GOTEntry);
+    SDValue ParmReg = DAG.getRegister(is64bit ? PPC::X3 : PPC::R3,
+                                      is64bit ? MVT::i64 : MVT::i32);
     SDValue TLSAddr = DAG.getNode(PPCISD::GET_TLSLD_ADDR, dl,
                                   PtrVT, ParmReg, TGA);
     // The return value from GET_TLSLD_ADDR really is in X3 already, but
     // some hacks are needed here to tie everything together.  The extra
     // copies dissolve during subsequent transforms.
-    Chain = DAG.getCopyToReg(Chain, dl, PPC::X3, TLSAddr);
+    Chain = DAG.getCopyToReg(Chain, dl, is64bit ? PPC::X3 : PPC::R3, TLSAddr);
     SDValue DtvOffsetHi = DAG.getNode(PPCISD::ADDIS_DTPREL_HA, dl, PtrVT,
                                       Chain, ParmReg, TGA);
     return DAG.getNode(PPCISD::ADDI_DTPREL_L, dl, PtrVT, DtvOffsetHi, TGA);
@@ -6015,12 +6056,12 @@ SDValue PPCTargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
         PPC::isVPKUWUMShuffleMask(SVOp, true, DAG) ||
         PPC::isVPKUHUMShuffleMask(SVOp, true, DAG) ||
         PPC::isVSLDOIShuffleMask(SVOp, true, DAG) != -1 ||
-        PPC::isVMRGLShuffleMask(SVOp, 1, true, DAG) ||
-        PPC::isVMRGLShuffleMask(SVOp, 2, true, DAG) ||
-        PPC::isVMRGLShuffleMask(SVOp, 4, true, DAG) ||
-        PPC::isVMRGHShuffleMask(SVOp, 1, true, DAG) ||
-        PPC::isVMRGHShuffleMask(SVOp, 2, true, DAG) ||
-        PPC::isVMRGHShuffleMask(SVOp, 4, true, DAG)) {
+        PPC::isVMRGLShuffleMask(SVOp, 1, 1, DAG) ||
+        PPC::isVMRGLShuffleMask(SVOp, 2, 1, DAG) ||
+        PPC::isVMRGLShuffleMask(SVOp, 4, 1, DAG) ||
+        PPC::isVMRGHShuffleMask(SVOp, 1, 1, DAG) ||
+        PPC::isVMRGHShuffleMask(SVOp, 2, 1, DAG) ||
+        PPC::isVMRGHShuffleMask(SVOp, 4, 1, DAG)) {
       return Op;
     }
   }
@@ -6028,15 +6069,16 @@ SDValue PPCTargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
   // Altivec has a variety of "shuffle immediates" that take two vector inputs
   // and produce a fixed permutation.  If any of these match, do not lower to
   // VPERM.
+  unsigned int ShuffleKind = isLittleEndian ? 2 : 0;
   if (PPC::isVPKUWUMShuffleMask(SVOp, false, DAG) ||
       PPC::isVPKUHUMShuffleMask(SVOp, false, DAG) ||
       PPC::isVSLDOIShuffleMask(SVOp, false, DAG) != -1 ||
-      PPC::isVMRGLShuffleMask(SVOp, 1, false, DAG) ||
-      PPC::isVMRGLShuffleMask(SVOp, 2, false, DAG) ||
-      PPC::isVMRGLShuffleMask(SVOp, 4, false, DAG) ||
-      PPC::isVMRGHShuffleMask(SVOp, 1, false, DAG) ||
-      PPC::isVMRGHShuffleMask(SVOp, 2, false, DAG) ||
-      PPC::isVMRGHShuffleMask(SVOp, 4, false, DAG))
+      PPC::isVMRGLShuffleMask(SVOp, 1, ShuffleKind, DAG) ||
+      PPC::isVMRGLShuffleMask(SVOp, 2, ShuffleKind, DAG) ||
+      PPC::isVMRGLShuffleMask(SVOp, 4, ShuffleKind, DAG) ||
+      PPC::isVMRGHShuffleMask(SVOp, 1, ShuffleKind, DAG) ||
+      PPC::isVMRGHShuffleMask(SVOp, 2, ShuffleKind, DAG) ||
+      PPC::isVMRGHShuffleMask(SVOp, 4, ShuffleKind, DAG))
     return Op;
 
   // Check to see if this is a shuffle of 4-byte values.  If so, we can use our
@@ -7550,9 +7592,9 @@ static bool isConsecutiveLS(LSBaseSDNode *LS, LSBaseSDNode *Base,
 
 // Return true is there is a nearyby consecutive load to the one provided
 // (regardless of alignment). We search up and down the chain, looking though
-// token factors and other loads (but nothing else). As a result, a true
-// results indicates that it is safe to create a new consecutive load adjacent
-// to the load provided.
+// token factors and other loads (but nothing else). As a result, a true result
+// indicates that it is safe to create a new consecutive load adjacent to the
+// load provided.
 static bool findConsecutiveLoad(LoadSDNode *LD, SelectionDAG &DAG) {
   SDValue Chain = LD->getChain();
   EVT VT = LD->getMemoryVT();
@@ -9173,9 +9215,10 @@ bool PPCTargetLowering::isLegalAddImmediate(int64_t Imm) const {
   return isInt<16>(Imm) || isUInt<16>(Imm);
 }
 
-bool PPCTargetLowering::allowsUnalignedMemoryAccesses(EVT VT,
-                                                      unsigned,
-                                                      bool *Fast) const {
+bool PPCTargetLowering::allowsMisalignedMemoryAccesses(EVT VT,
+                                                       unsigned,
+                                                       unsigned,
+                                                       bool *Fast) const {
   if (DisablePPCUnaligned)
     return false;
 

@@ -258,6 +258,7 @@ class DwarfDebug : public AsmPrinterHandler {
   MCSymbol *DwarfDebugLocSectionSym, *DwarfLineSectionSym, *DwarfAddrSectionSym;
   MCSymbol *FunctionBeginSym, *FunctionEndSym;
   MCSymbol *DwarfInfoDWOSectionSym, *DwarfAbbrevDWOSectionSym;
+  MCSymbol *DwarfTypesDWOSectionSym;
   MCSymbol *DwarfStrDWOSectionSym;
   MCSymbol *DwarfGnuPubNamesSectionSym, *DwarfGnuPubTypesSectionSym;
 
@@ -329,6 +330,8 @@ class DwarfDebug : public AsmPrinterHandler {
   DwarfAccelTable AccelObjC;
   DwarfAccelTable AccelNamespace;
   DwarfAccelTable AccelTypes;
+
+  DenseMap<const Function *, DISubprogram> FunctionDIs;
 
   MCDwarfDwoLineTable *getDwoLineTable(const DwarfCompileUnit &);
 

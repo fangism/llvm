@@ -17,6 +17,9 @@ endforeach(t)
 
 add_llvm_library(LLVMMCDisassembler
   Disassembler.cpp
+  MCRelocationInfo.cpp
+  MCExternalSymbolizer.cpp
+  MCDisassembler.cpp
   )
 
 target_link_libraries(LLVMMCDisassembler

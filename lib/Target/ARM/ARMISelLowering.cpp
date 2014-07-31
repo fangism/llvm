@@ -312,6 +312,7 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
       // Conversions between floating types.
       // RTABI chapter 4.1.2, Table 7
       { RTLIB::FPROUND_F64_F32, "__aeabi_d2f", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
+      { RTLIB::FPROUND_F64_F16, "__aeabi_d2h", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
       { RTLIB::FPEXT_F32_F64,   "__aeabi_f2d", CallingConv::ARM_AAPCS, ISD::SETCC_INVALID },
 
       // Integer to floating-point conversions.
@@ -8606,7 +8607,7 @@ static SDValue PerformSTORECombine(SDNode *N,
   return DAG.getStore(St->getChain(), dl, V, St->getBasePtr(),
                       St->getPointerInfo(), St->isVolatile(),
                       St->isNonTemporal(), St->getAlignment(),
-                      St->getTBAAInfo());
+                      St->getAAInfo());
 }
 
 /// hasNormalLoadOperand - Check if any of the operands of a BUILD_VECTOR node
@@ -9696,8 +9697,10 @@ bool ARMTargetLowering::isDesirableToTransformToIntegerOp(unsigned Opc,
   return (VT == MVT::f32) && (Opc == ISD::LOAD || Opc == ISD::STORE);
 }
 
-bool ARMTargetLowering::allowsUnalignedMemoryAccesses(EVT VT, unsigned,
-                                                      bool *Fast) const {
+bool ARMTargetLowering::allowsMisalignedMemoryAccesses(EVT VT,
+                                                       unsigned,
+                                                       unsigned,
+                                                       bool *Fast) const {
   // The AllowsUnaliged flag models the SCTLR.A setting in ARM cpus
   bool AllowsUnaligned = Subtarget->allowsUnalignedMem();
 
@@ -9751,11 +9754,12 @@ EVT ARMTargetLowering::getOptimalMemOpType(uint64_t Size,
     bool Fast;
     if (Size >= 16 &&
         (memOpAlign(SrcAlign, DstAlign, 16) ||
-         (allowsUnalignedMemoryAccesses(MVT::v2f64, 0, &Fast) && Fast))) {
+         (allowsMisalignedMemoryAccesses(MVT::v2f64, 0, 1, &Fast) && Fast))) {
       return MVT::v2f64;
     } else if (Size >= 8 &&
                (memOpAlign(SrcAlign, DstAlign, 8) ||
-                (allowsUnalignedMemoryAccesses(MVT::f64, 0, &Fast) && Fast))) {
+                (allowsMisalignedMemoryAccesses(MVT::f64, 0, 1, &Fast) &&
+                 Fast))) {
       return MVT::f64;
     }
   }
@@ -10802,6 +10806,11 @@ bool ARMTargetLowering::shouldExpandAtomicInIR(Instruction *Inst) const {
   // and up to 64 bits on the non-M profiles
   unsigned AtomicLimit = IsMClass ? 32 : 64;
   return Inst->getType()->getPrimitiveSizeInBits() <= AtomicLimit;
+}
+
+// This has so far only been implemented for MachO.
+bool ARMTargetLowering::useLoadStackGuardNode() const {
+  return Subtarget->getTargetTriple().getObjectFormat() == Triple::MachO;
 }
 
 Value *ARMTargetLowering::emitLoadLinked(IRBuilder<> &Builder, Value *Addr,

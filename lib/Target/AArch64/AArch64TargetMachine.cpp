@@ -12,8 +12,8 @@
 
 #include "AArch64.h"
 #include "AArch64TargetMachine.h"
-#include "llvm/PassManager.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Target/TargetOptions.h"
@@ -63,9 +63,7 @@ extern "C" void LLVMInitializeAArch64Target() {
   // Register the target.
   RegisterTargetMachine<AArch64leTargetMachine> X(TheAArch64leTarget);
   RegisterTargetMachine<AArch64beTargetMachine> Y(TheAArch64beTarget);
-
-  RegisterTargetMachine<AArch64leTargetMachine> Z(TheARM64leTarget);
-  RegisterTargetMachine<AArch64beTargetMachine> W(TheARM64beTarget);
+  RegisterTargetMachine<AArch64leTargetMachine> Z(TheARM64Target);
 }
 
 /// TargetMachine ctor - Create an AArch64 architecture model.

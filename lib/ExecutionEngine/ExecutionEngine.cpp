@@ -57,7 +57,6 @@ ExecutionEngine *(*ExecutionEngine::MCJITCtor)(
   Module *M,
   std::string *ErrorStr,
   RTDyldMemoryManager *MCJMM,
-  bool GVsWithCode,
   TargetMachine *TM) = nullptr;
 ExecutionEngine *(*ExecutionEngine::InterpCtor)(Module *M,
                                                 std::string *ErrorStr) =nullptr;
@@ -406,57 +405,6 @@ int ExecutionEngine::runFunctionAsMain(Function *Fn,
   return runFunction(Fn, GVArgs).IntVal.getZExtValue();
 }
 
-ExecutionEngine *ExecutionEngine::create(Module *M,
-                                         bool ForceInterpreter,
-                                         std::string *ErrorStr,
-                                         CodeGenOpt::Level OptLevel,
-                                         bool GVsWithCode) {
-
-  EngineBuilder EB =
-      EngineBuilder(M)
-          .setEngineKind(ForceInterpreter ? EngineKind::Interpreter
-                                          : EngineKind::Either)
-          .setErrorStr(ErrorStr)
-          .setOptLevel(OptLevel)
-          .setAllocateGVsWithCode(GVsWithCode);
-
-  return EB.create();
-}
-
-/// createJIT - This is the factory method for creating a JIT for the current
-/// machine, it does not fall back to the interpreter.  This takes ownership
-/// of the module.
-ExecutionEngine *ExecutionEngine::createJIT(Module *M,
-                                            std::string *ErrorStr,
-                                            JITMemoryManager *JMM,
-                                            CodeGenOpt::Level OL,
-                                            bool GVsWithCode,
-                                            Reloc::Model RM,
-                                            CodeModel::Model CMM) {
-  if (!ExecutionEngine::JITCtor) {
-    if (ErrorStr)
-      *ErrorStr = "JIT has not been linked in.";
-    return nullptr;
-  }
-
-  // Use the defaults for extra parameters.  Users can use EngineBuilder to
-  // set them.
-  EngineBuilder EB(M);
-  EB.setEngineKind(EngineKind::JIT);
-  EB.setErrorStr(ErrorStr);
-  EB.setRelocationModel(RM);
-  EB.setCodeModel(CMM);
-  EB.setAllocateGVsWithCode(GVsWithCode);
-  EB.setOptLevel(OL);
-  EB.setJITMemoryManager(JMM);
-
-  // TODO: permit custom TargetOptions here
-  TargetMachine *TM = EB.selectTarget();
-  if (!TM || (ErrorStr && ErrorStr->length() > 0)) return nullptr;
-
-  return ExecutionEngine::JITCtor(M, ErrorStr, JMM, GVsWithCode, TM);
-}
-
 void EngineBuilder::InitEngine() {
   WhichEngine = EngineKind::Either;
   ErrorStr = nullptr;
@@ -522,7 +470,7 @@ ExecutionEngine *EngineBuilder::create(TargetMachine *TM) {
     ExecutionEngine *EE = nullptr;
     if (UseMCJIT && ExecutionEngine::MCJITCtor)
       EE = ExecutionEngine::MCJITCtor(M, ErrorStr, MCJMM ? MCJMM : JMM,
-                                      AllocateGVsWithCode, TheTM.release());
+                                      TheTM.release());
     else if (ExecutionEngine::JITCtor)
       EE = ExecutionEngine::JITCtor(M, ErrorStr, JMM,
                                     AllocateGVsWithCode, TheTM.release());

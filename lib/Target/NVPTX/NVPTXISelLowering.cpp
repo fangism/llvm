@@ -3866,8 +3866,8 @@ static SDValue PerformADDCombineWithOperands(SDNode *N, SDValue N0, SDValue N1,
   }
   else if (N0.getOpcode() == ISD::FMUL) {
     if (VT == MVT::f32 || VT == MVT::f64) {
-      NVPTXTargetLowering *TLI =
-        (NVPTXTargetLowering *)&DAG.getTargetLoweringInfo();
+      const auto *TLI = static_cast<const NVPTXTargetLowering *>(
+          &DAG.getTargetLoweringInfo());
       if (!TLI->allowFMA(DAG.getMachineFunction(), OptLevel))
         return SDValue();
 
@@ -4053,13 +4053,13 @@ static bool IsMulWideOperandDemotable(SDValue Op,
   if (Op.getOpcode() == ISD::SIGN_EXTEND ||
       Op.getOpcode() == ISD::SIGN_EXTEND_INREG) {
     EVT OrigVT = Op.getOperand(0).getValueType();
-    if (OrigVT.getSizeInBits() == OptSize) {
+    if (OrigVT.getSizeInBits() <= OptSize) {
       S = Signed;
       return true;
     }
   } else if (Op.getOpcode() == ISD::ZERO_EXTEND) {
     EVT OrigVT = Op.getOperand(0).getValueType();
-    if (OrigVT.getSizeInBits() == OptSize) {
+    if (OrigVT.getSizeInBits() <= OptSize) {
       S = Unsigned;
       return true;
     }
@@ -4213,8 +4213,7 @@ static SDValue PerformSHLCombine(SDNode *N,
 
 SDValue NVPTXTargetLowering::PerformDAGCombine(SDNode *N,
                                                DAGCombinerInfo &DCI) const {
-  // FIXME: Get this from the DAG somehow
-  CodeGenOpt::Level OptLevel = CodeGenOpt::Aggressive;
+  CodeGenOpt::Level OptLevel = getTargetMachine().getOptLevel();
   switch (N->getOpcode()) {
     default: break;
     case ISD::ADD:

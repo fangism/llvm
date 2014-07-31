@@ -720,9 +720,9 @@ DICompositeType DIBuilder::createUnionType(DIDescriptor Scope, StringRef Name,
 }
 
 /// createSubroutineType - Create subroutine type.
-DICompositeType DIBuilder::createSubroutineType(DIFile File,
-                                                DIArray ParameterTypes,
-                                                unsigned Flags) {
+DISubroutineType DIBuilder::createSubroutineType(DIFile File,
+                                                 DITypeArray ParameterTypes,
+                                                 unsigned Flags) {
   // TAG_subroutine_type is encoded in DICompositeType format.
   Value *Elts[] = {
     GetTagConstant(VMContext, dwarf::DW_TAG_subroutine_type),
@@ -741,7 +741,7 @@ DICompositeType DIBuilder::createSubroutineType(DIFile File,
     nullptr,
     nullptr  // Type Identifer
   };
-  return DICompositeType(MDNode::get(VMContext, Elts));
+  return DISubroutineType(MDNode::get(VMContext, Elts));
 }
 
 /// createEnumerationType - Create debugging information entry for an
@@ -875,11 +875,8 @@ void DIBuilder::retainType(DIType T) {
 
 /// createUnspecifiedParameter - Create unspeicified type descriptor
 /// for the subroutine type.
-DIDescriptor DIBuilder::createUnspecifiedParameter() {
-  Value *Elts[] = {
-    GetTagConstant(VMContext, dwarf::DW_TAG_unspecified_parameters)
-  };
-  return DIDescriptor(MDNode::get(VMContext, Elts));
+DIBasicType DIBuilder::createUnspecifiedParameter() {
+  return DIBasicType();
 }
 
 /// createForwardDecl - Create a temporary forward-declared type that
@@ -954,6 +951,18 @@ DICompositeType DIBuilder::createReplaceableForwardDecl(
 /// getOrCreateArray - Get a DIArray, create one if required.
 DIArray DIBuilder::getOrCreateArray(ArrayRef<Value *> Elements) {
   return DIArray(MDNode::get(VMContext, Elements));
+}
+
+/// getOrCreateTypeArray - Get a DITypeArray, create one if required.
+DITypeArray DIBuilder::getOrCreateTypeArray(ArrayRef<Value *> Elements) {
+  SmallVector<llvm::Value *, 16> Elts; 
+  for (unsigned i = 0, e = Elements.size(); i != e; ++i) {
+    if (Elements[i] && isa<MDNode>(Elements[i]))
+      Elts.push_back(DIType(cast<MDNode>(Elements[i])).getRef());
+    else
+      Elts.push_back(Elements[i]);
+  }
+  return DITypeArray(MDNode::get(VMContext, Elts));
 }
 
 /// getOrCreateSubrange - Create a descriptor for a value range.  This

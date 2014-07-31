@@ -48,8 +48,6 @@ public:
 
     arm,        // ARM (little endian): arm, armv.*, xscale
     armeb,      // ARM (big endian): armeb
-    arm64,      // ARM64 (little endian): arm64
-    arm64_be,   // ARM64 (big endian): arm64_be
     aarch64,    // AArch64 (little endian): aarch64
     aarch64_be, // AArch64 (big endian): aarch64_be
     hexagon,    // Hexagon: hexagon
@@ -474,10 +472,6 @@ public:
   /// setOSAndEnvironmentName - Set the operating system and optional
   /// environment components with a single string.
   void setOSAndEnvironmentName(StringRef Str);
-
-  /// getArchNameForAssembler - Get an architecture name that is understood by
-  /// the target assembler.
-  const char *getArchNameForAssembler();
 
   /// @}
   /// @name Helpers to build variants of a particular triple.

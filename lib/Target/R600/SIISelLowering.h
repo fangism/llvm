@@ -27,6 +27,9 @@ class SITargetLowering : public AMDGPUTargetLowering {
                                SelectionDAG &DAG) const;
   SDValue LowerGlobalAddress(AMDGPUMachineFunction *MFI, SDValue Op,
                              SelectionDAG &DAG) const override;
+
+  SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerINTRINSIC_VOID(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerFrameIndex(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerLOAD(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSELECT(SDValue Op, SelectionDAG &DAG) const;
@@ -56,8 +59,15 @@ class SITargetLowering : public AMDGPUTargetLowering {
 
 public:
   SITargetLowering(TargetMachine &tm);
-  bool allowsUnalignedMemoryAccesses(EVT VT, unsigned AS,
-                                     bool *IsFast) const override;
+  bool allowsMisalignedMemoryAccesses(EVT VT, unsigned AS,
+                                      unsigned Align,
+                                      bool *IsFast) const override;
+
+  EVT getOptimalMemOpType(uint64_t Size, unsigned DstAlign,
+                          unsigned SrcAlign, bool IsMemset,
+                          bool ZeroMemset,
+                          bool MemcpyStrSrc,
+                          MachineFunction &MF) const override;
 
   TargetLoweringBase::LegalizeTypeAction
   getPreferredVectorAction(EVT VT) const override;

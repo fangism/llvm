@@ -46,6 +46,8 @@ public:
 
   unsigned GetInstSizeInBytes(const MachineInstr *MI) const;
 
+  bool isAsCheapAsAMove(const MachineInstr *MI) const override;
+
   bool isCoalescableExtInstr(const MachineInstr &MI, unsigned &SrcReg,
                              unsigned &DstReg, unsigned &SubIdx) const override;
 
@@ -117,6 +119,7 @@ public:
                             int FrameIndex, const TargetRegisterClass *RC,
                             const TargetRegisterInfo *TRI) const override;
 
+  using TargetInstrInfo::foldMemoryOperandImpl;
   MachineInstr *
   foldMemoryOperandImpl(MachineFunction &MF, MachineInstr *MI,
                         const SmallVectorImpl<unsigned> &Ops,
@@ -153,6 +156,8 @@ public:
   bool optimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg,
                             unsigned SrcReg2, int CmpMask, int CmpValue,
                             const MachineRegisterInfo *MRI) const override;
+
+  bool expandPostRAPseudo(MachineBasicBlock::iterator MI) const override;
 
 private:
   void instantiateCondBranch(MachineBasicBlock &MBB, DebugLoc DL,

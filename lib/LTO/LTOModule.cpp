@@ -15,6 +15,7 @@
 #include "llvm/LTO/LTOModule.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/CodeGen/Analysis.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
@@ -138,8 +139,7 @@ LTOModule *LTOModule::makeLTOModule(std::unique_ptr<MemoryBuffer> Buffer,
       CPU = "core2";
     else if (Triple.getArch() == llvm::Triple::x86)
       CPU = "yonah";
-    else if (Triple.getArch() == llvm::Triple::arm64 ||
-             Triple.getArch() == llvm::Triple::aarch64)
+    else if (Triple.getArch() == llvm::Triple::aarch64)
       CPU = "cyclone";
   }
 
@@ -348,30 +348,6 @@ void LTOModule::addDefinedFunctionSymbol(const char *Name, const Function *F) {
   addDefinedSymbol(Name, F, true);
 }
 
-static bool canBeHidden(const GlobalValue *GV) {
-  // FIXME: this is duplicated with another static function in AsmPrinter.cpp
-  GlobalValue::LinkageTypes L = GV->getLinkage();
-
-  if (L != GlobalValue::LinkOnceODRLinkage)
-    return false;
-
-  if (GV->hasUnnamedAddr())
-    return true;
-
-  // If it is a non constant variable, it needs to be uniqued across shared
-  // objects.
-  if (const GlobalVariable *Var = dyn_cast<GlobalVariable>(GV)) {
-    if (!Var->isConstant())
-      return false;
-  }
-
-  GlobalStatus GS;
-  if (GlobalStatus::analyzeGlobal(GV, GS))
-    return false;
-
-  return !GS.IsCompared;
-}
-
 void LTOModule::addDefinedSymbol(const char *Name, const GlobalValue *def,
                                  bool isFunction) {
   // set alignment part log2() can have rounding errors
@@ -405,7 +381,7 @@ void LTOModule::addDefinedSymbol(const char *Name, const GlobalValue *def,
     attr |= LTO_SYMBOL_SCOPE_HIDDEN;
   else if (def->hasProtectedVisibility())
     attr |= LTO_SYMBOL_SCOPE_PROTECTED;
-  else if (canBeHidden(def))
+  else if (canBeOmittedFromSymbolTable(def))
     attr |= LTO_SYMBOL_SCOPE_DEFAULT_CAN_BE_HIDDEN;
   else
     attr |= LTO_SYMBOL_SCOPE_DEFAULT;

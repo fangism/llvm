@@ -541,6 +541,51 @@ void AArch64InstrInfo::insertSelect(MachineBasicBlock &MBB,
       CC);
 }
 
+// FIXME: this implementation should be micro-architecture dependent, so a
+// micro-architecture target hook should be introduced here in future.
+bool AArch64InstrInfo::isAsCheapAsAMove(const MachineInstr *MI) const {
+  if (!Subtarget.isCortexA57() && !Subtarget.isCortexA53())
+    return MI->isAsCheapAsAMove();
+
+  switch (MI->getOpcode()) {
+  default:
+    return false;
+
+  // add/sub on register without shift
+  case AArch64::ADDWri:
+  case AArch64::ADDXri:
+  case AArch64::SUBWri:
+  case AArch64::SUBXri:
+    return (MI->getOperand(3).getImm() == 0);
+
+  // logical ops on immediate
+  case AArch64::ANDWri:
+  case AArch64::ANDXri:
+  case AArch64::EORWri:
+  case AArch64::EORXri:
+  case AArch64::ORRWri:
+  case AArch64::ORRXri:
+    return true;
+
+  // logical ops on register without shift
+  case AArch64::ANDWrr:
+  case AArch64::ANDXrr:
+  case AArch64::BICWrr:
+  case AArch64::BICXrr:
+  case AArch64::EONWrr:
+  case AArch64::EONXrr:
+  case AArch64::EORWrr:
+  case AArch64::EORXrr:
+  case AArch64::ORNWrr:
+  case AArch64::ORNXrr:
+  case AArch64::ORRWrr:
+  case AArch64::ORRXrr:
+    return true;
+  }
+
+  llvm_unreachable("Unknown opcode to check as cheap as a move!");
+}
+
 bool AArch64InstrInfo::isCoalescableExtInstr(const MachineInstr &MI,
                                              unsigned &SrcReg, unsigned &DstReg,
                                              unsigned &SubIdx) const {
@@ -845,6 +890,56 @@ bool AArch64InstrInfo::optimizeCompareInstr(
   (void)succeeded;
   assert(succeeded && "Some operands reg class are incompatible!");
   MI->addRegisterDefined(AArch64::NZCV, TRI);
+  return true;
+}
+
+bool
+AArch64InstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
+  if (MI->getOpcode() != TargetOpcode::LOAD_STACK_GUARD)
+    return false;
+
+  MachineBasicBlock &MBB = *MI->getParent();
+  DebugLoc DL = MI->getDebugLoc();
+  unsigned Reg = MI->getOperand(0).getReg();
+  const GlobalValue *GV =
+      cast<GlobalValue>((*MI->memoperands_begin())->getValue());
+  const TargetMachine &TM = MBB.getParent()->getTarget();
+  unsigned char OpFlags = Subtarget.ClassifyGlobalReference(GV, TM);
+  const unsigned char MO_NC = AArch64II::MO_NC;
+
+  if ((OpFlags & AArch64II::MO_GOT) != 0) {
+    BuildMI(MBB, MI, DL, get(AArch64::LOADgot), Reg)
+        .addGlobalAddress(GV, 0, AArch64II::MO_GOT);
+    BuildMI(MBB, MI, DL, get(AArch64::LDRXui), Reg)
+        .addReg(Reg, RegState::Kill).addImm(0)
+        .addMemOperand(*MI->memoperands_begin());
+  } else if (TM.getCodeModel() == CodeModel::Large) {
+    BuildMI(MBB, MI, DL, get(AArch64::MOVZXi), Reg)
+        .addGlobalAddress(GV, 0, AArch64II::MO_G3).addImm(48);
+    BuildMI(MBB, MI, DL, get(AArch64::MOVKXi), Reg)
+        .addReg(Reg, RegState::Kill)
+        .addGlobalAddress(GV, 0, AArch64II::MO_G2 | MO_NC).addImm(32);
+    BuildMI(MBB, MI, DL, get(AArch64::MOVKXi), Reg)
+        .addReg(Reg, RegState::Kill)
+        .addGlobalAddress(GV, 0, AArch64II::MO_G1 | MO_NC).addImm(16);
+    BuildMI(MBB, MI, DL, get(AArch64::MOVKXi), Reg)
+        .addReg(Reg, RegState::Kill)
+        .addGlobalAddress(GV, 0, AArch64II::MO_G0 | MO_NC).addImm(0);
+    BuildMI(MBB, MI, DL, get(AArch64::LDRXui), Reg)
+        .addReg(Reg, RegState::Kill).addImm(0)
+        .addMemOperand(*MI->memoperands_begin());
+  } else {
+    BuildMI(MBB, MI, DL, get(AArch64::ADRP), Reg)
+        .addGlobalAddress(GV, 0, OpFlags | AArch64II::MO_PAGE);
+    unsigned char LoFlags = OpFlags | AArch64II::MO_PAGEOFF | MO_NC;
+    BuildMI(MBB, MI, DL, get(AArch64::LDRXui), Reg)
+        .addReg(Reg, RegState::Kill)
+        .addGlobalAddress(GV, 0, LoFlags)
+        .addMemOperand(*MI->memoperands_begin());
+  }
+
+  MBB.erase(MI);
+
   return true;
 }
 

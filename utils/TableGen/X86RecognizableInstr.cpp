@@ -1059,6 +1059,8 @@ RecognizableInstr::rmRegisterEncodingFromString(const std::string &s,
   ENCODING("VK1",             ENCODING_RM)
   ENCODING("VK8",             ENCODING_RM)
   ENCODING("VK16",            ENCODING_RM)
+  ENCODING("VK32",            ENCODING_RM)
+  ENCODING("VK64",            ENCODING_RM)
   errs() << "Unhandled R/M register encoding " << s << "\n";
   llvm_unreachable("Unhandled R/M register encoding");
 }
@@ -1087,6 +1089,8 @@ RecognizableInstr::roRegisterEncodingFromString(const std::string &s,
   ENCODING("VK1",             ENCODING_REG)
   ENCODING("VK8",             ENCODING_REG)
   ENCODING("VK16",            ENCODING_REG)
+  ENCODING("VK32",            ENCODING_REG)
+  ENCODING("VK64",            ENCODING_REG)
   ENCODING("VK1WM",           ENCODING_REG)
   ENCODING("VK8WM",           ENCODING_REG)
   ENCODING("VK16WM",          ENCODING_REG)
@@ -1113,6 +1117,8 @@ RecognizableInstr::vvvvRegisterEncodingFromString(const std::string &s,
   ENCODING("VK4",             ENCODING_VVVV)
   ENCODING("VK8",             ENCODING_VVVV)
   ENCODING("VK16",            ENCODING_VVVV)
+  ENCODING("VK32",            ENCODING_VVVV)
+  ENCODING("VK64",            ENCODING_VVVV)
   errs() << "Unhandled VEX.vvvv register encoding " << s << "\n";
   llvm_unreachable("Unhandled VEX.vvvv register encoding");
 }
