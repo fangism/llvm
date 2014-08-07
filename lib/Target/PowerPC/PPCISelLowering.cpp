@@ -987,7 +987,12 @@ bool PPC::isVMRGHShuffleMask(ShuffleVectorSDNode *N, unsigned UnitSize,
 
 /// isVSLDOIShuffleMask - If this is a vsldoi shuffle mask, return the shift
 /// amount, otherwise return -1.
-int PPC::isVSLDOIShuffleMask(SDNode *N, bool isUnary, SelectionDAG &DAG) {
+/// The ShuffleKind distinguishes between big-endian operations with two 
+/// different inputs (0), either-endian operations with two identical inputs
+/// (1), and little-endian operations with two different inputs (2).  For the
+/// latter, the input operands are swapped (see PPCInstrAltivec.td).
+int PPC::isVSLDOIShuffleMask(SDNode *N, unsigned ShuffleKind,
+                             SelectionDAG &DAG) {
   if (N->getValueType(0) != MVT::v16i8)
     return -1;
 
@@ -1006,18 +1011,23 @@ int PPC::isVSLDOIShuffleMask(SDNode *N, bool isUnary, SelectionDAG &DAG) {
   if (ShiftAmt < i) return -1;
 
   ShiftAmt -= i;
+  bool isLE = DAG.getTarget().getDataLayout()->isLittleEndian();
 
-  if (!isUnary) {
+  if ((ShuffleKind == 0 && !isLE) || (ShuffleKind == 2 && isLE)) {
     // Check the rest of the elements to see if they are consecutive.
     for (++i; i != 16; ++i)
       if (!isConstantOrUndef(SVOp->getMaskElt(i), ShiftAmt+i))
         return -1;
-  } else {
+  } else if (ShuffleKind == 1) {
     // Check the rest of the elements to see if they are consecutive.
     for (++i; i != 16; ++i)
       if (!isConstantOrUndef(SVOp->getMaskElt(i), (ShiftAmt+i) & 15))
         return -1;
-  }
+  } else
+    return -1;
+
+  if (ShuffleKind == 2 && isLE)
+    ShiftAmt = 16 - ShiftAmt;
 
   return ShiftAmt;
 }
@@ -6033,7 +6043,7 @@ SDValue PPCTargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
         PPC::isSplatShuffleMask(SVOp, 4) ||
         PPC::isVPKUWUMShuffleMask(SVOp, 1, DAG) ||
         PPC::isVPKUHUMShuffleMask(SVOp, 1, DAG) ||
-        PPC::isVSLDOIShuffleMask(SVOp, true, DAG) != -1 ||
+        PPC::isVSLDOIShuffleMask(SVOp, 1, DAG) != -1 ||
         PPC::isVMRGLShuffleMask(SVOp, 1, 1, DAG) ||
         PPC::isVMRGLShuffleMask(SVOp, 2, 1, DAG) ||
         PPC::isVMRGLShuffleMask(SVOp, 4, 1, DAG) ||
@@ -6050,7 +6060,7 @@ SDValue PPCTargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
   unsigned int ShuffleKind = isLittleEndian ? 2 : 0;
   if (PPC::isVPKUWUMShuffleMask(SVOp, ShuffleKind, DAG) ||
       PPC::isVPKUHUMShuffleMask(SVOp, ShuffleKind, DAG) ||
-      PPC::isVSLDOIShuffleMask(SVOp, false, DAG) != -1 ||
+      PPC::isVSLDOIShuffleMask(SVOp, ShuffleKind, DAG) != -1 ||
       PPC::isVMRGLShuffleMask(SVOp, 1, ShuffleKind, DAG) ||
       PPC::isVMRGLShuffleMask(SVOp, 2, ShuffleKind, DAG) ||
       PPC::isVMRGLShuffleMask(SVOp, 4, ShuffleKind, DAG) ||
@@ -8411,17 +8421,25 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
                             Intrinsic::ppc_altivec_lvsl);
       SDValue PermCntl = BuildIntrinsicOp(Intr, Ptr, DAG, dl, MVT::v16i8);
 
-      // Refine the alignment of the original load (a "new" load created here
-      // which was identical to the first except for the alignment would be
-      // merged with the existing node regardless).
+      // Create the new MMO for the new base load. It is like the original MMO,
+      // but represents an area in memory almost twice the vector size centered
+      // on the original address. If the address is unaligned, we might start
+      // reading up to (sizeof(vector)-1) bytes below the address of the
+      // original unaligned load.
       MachineFunction &MF = DAG.getMachineFunction();
-      MachineMemOperand *MMO =
-        MF.getMachineMemOperand(LD->getPointerInfo(),
-                                LD->getMemOperand()->getFlags(),
-                                LD->getMemoryVT().getStoreSize(),
-                                ABIAlignment);
-      LD->refineAlignment(MMO);
-      SDValue BaseLoad = SDValue(LD, 0);
+      MachineMemOperand *BaseMMO =
+        MF.getMachineMemOperand(LD->getMemOperand(),
+                                -LD->getMemoryVT().getStoreSize()+1,
+                                2*LD->getMemoryVT().getStoreSize()-1);
+
+      // Create the new base load.
+      SDValue LDXIntID = DAG.getTargetConstant(Intrinsic::ppc_altivec_lvx,
+                                               getPointerTy());
+      SDValue BaseLoadOps[] = { Chain, LDXIntID, Ptr };
+      SDValue BaseLoad =
+        DAG.getMemIntrinsicNode(ISD::INTRINSIC_W_CHAIN, dl,
+                                DAG.getVTList(MVT::v4i32, MVT::Other),
+                                BaseLoadOps, MVT::v4i32, BaseMMO);
 
       // Note that the value of IncOffset (which is provided to the next
       // load's pointer info offset value, and thus used to calculate the
@@ -8443,20 +8461,17 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       SDValue Increment = DAG.getConstant(IncValue, getPointerTy());
       Ptr = DAG.getNode(ISD::ADD, dl, Ptr.getValueType(), Ptr, Increment);
 
+      MachineMemOperand *ExtraMMO =
+        MF.getMachineMemOperand(LD->getMemOperand(),
+                                1, 2*LD->getMemoryVT().getStoreSize()-1);
+      SDValue ExtraLoadOps[] = { Chain, LDXIntID, Ptr };
       SDValue ExtraLoad =
-        DAG.getLoad(VT, dl, Chain, Ptr,
-                    LD->getPointerInfo().getWithOffset(IncOffset),
-                    LD->isVolatile(), LD->isNonTemporal(),
-                    LD->isInvariant(), ABIAlignment);
+        DAG.getMemIntrinsicNode(ISD::INTRINSIC_W_CHAIN, dl,
+                                DAG.getVTList(MVT::v4i32, MVT::Other),
+                                ExtraLoadOps, MVT::v4i32, ExtraMMO);
 
       SDValue TF = DAG.getNode(ISD::TokenFactor, dl, MVT::Other,
         BaseLoad.getValue(1), ExtraLoad.getValue(1));
-
-      if (BaseLoad.getValueType() != MVT::v4i32)
-        BaseLoad = DAG.getNode(ISD::BITCAST, dl, MVT::v4i32, BaseLoad);
-
-      if (ExtraLoad.getValueType() != MVT::v4i32)
-        ExtraLoad = DAG.getNode(ISD::BITCAST, dl, MVT::v4i32, ExtraLoad);
 
       // Because vperm has a big-endian bias, we must reverse the order
       // of the input vectors and complement the permute control vector
@@ -8474,36 +8489,9 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
       if (VT != MVT::v4i32)
         Perm = DAG.getNode(ISD::BITCAST, dl, VT, Perm);
 
-      // Now we need to be really careful about how we update the users of the
-      // original load. We cannot just call DCI.CombineTo (or
-      // DAG.ReplaceAllUsesWith for that matter), because the load still has
-      // uses created here (the permutation for example) that need to stay.
-      SDNode::use_iterator UI = N->use_begin(), UE = N->use_end();
-      while (UI != UE) {
-        SDUse &Use = UI.getUse();
-        SDNode *User = *UI;
-        // Note: BaseLoad is checked here because it might not be N, but a
-        // bitcast of N.
-        if (User == Perm.getNode() || User == BaseLoad.getNode() ||
-            User == TF.getNode() || Use.getResNo() > 1) {
-          ++UI;
-          continue;
-        }
-
-        SDValue To = Use.getResNo() ? TF : Perm;
-        ++UI;
-
-        SmallVector<SDValue, 8> Ops;
-        for (const SDUse &O : User->ops()) {
-          if (O == Use)
-            Ops.push_back(To);
-          else
-            Ops.push_back(O);
-        }
-
-        DAG.UpdateNodeOperands(User, Ops);
-      }
-
+      // The output of the permutation is our loaded result, the TokenFactor is
+      // our new chain.
+      DCI.CombineTo(N, Perm, TF);
       return SDValue(N, 0);
     }
     }
