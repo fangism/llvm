@@ -34,6 +34,7 @@
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetSubtargetInfo.h"
 using namespace llvm;
 
 #define DEBUG_TYPE "legalizedag"
@@ -51,14 +52,10 @@ using namespace llvm;
 /// will attempt merge setcc and brc instructions into brcc's.
 ///
 namespace {
-class SelectionDAGLegalize : public SelectionDAG::DAGUpdateListener {
+class SelectionDAGLegalize {
   const TargetMachine &TM;
   const TargetLowering &TLI;
   SelectionDAG &DAG;
-
-  /// \brief The iterator being used to walk the DAG. We hold a reference to it
-  /// in order to update it as necessary on node deletion.
-  SelectionDAG::allnodes_iterator &LegalizePosition;
 
   /// \brief The set of nodes which have already been legalized. We hold a
   /// reference to it in order to update as necessary on node deletion.
@@ -75,13 +72,10 @@ class SelectionDAGLegalize : public SelectionDAG::DAGUpdateListener {
 
 public:
   SelectionDAGLegalize(SelectionDAG &DAG,
-                       SelectionDAG::allnodes_iterator &LegalizePosition,
                        SmallPtrSetImpl<SDNode *> &LegalizedNodes,
                        SmallSetVector<SDNode *, 16> *UpdatedNodes = nullptr)
-      : SelectionDAG::DAGUpdateListener(DAG), TM(DAG.getTarget()),
-        TLI(DAG.getTargetLoweringInfo()), DAG(DAG),
-        LegalizePosition(LegalizePosition), LegalizedNodes(LegalizedNodes),
-        UpdatedNodes(UpdatedNodes) {}
+      : TM(DAG.getTarget()), TLI(DAG.getTargetLoweringInfo()), DAG(DAG),
+        LegalizedNodes(LegalizedNodes), UpdatedNodes(UpdatedNodes) {}
 
   /// \brief Legalizes the given operation.
   void LegalizeOp(SDNode *Node);
@@ -158,28 +152,10 @@ private:
   void ExpandNode(SDNode *Node);
   void PromoteNode(SDNode *Node);
 
-  void ForgetNode(SDNode *N) {
-    LegalizedNodes.erase(N);
-    if (LegalizePosition == SelectionDAG::allnodes_iterator(N))
-      ++LegalizePosition;
-    if (UpdatedNodes)
-      UpdatedNodes->remove(N);
-  }
-
 public:
-  // DAGUpdateListener implementation.
-  void NodeDeleted(SDNode *N, SDNode *E) override {
-    ForgetNode(N);
-  }
-  void NodeUpdated(SDNode *N) override {}
-
   // Node replacement helpers
   void ReplacedNode(SDNode *N) {
-    if (N->use_empty()) {
-      DAG.RemoveDeadNode(N);
-    } else {
-      ForgetNode(N);
-    }
+    LegalizedNodes.erase(N);
   }
   void ReplaceNode(SDNode *Old, SDNode *New) {
     DEBUG(dbgs() << " ... replacing: "; Old->dump(&DAG);
@@ -298,7 +274,7 @@ SelectionDAGLegalize::ExpandConstantFP(ConstantFPSDNode *CFP, bool UseCP) {
       DAG.getExtLoad(ISD::EXTLOAD, dl, OrigVT,
                      DAG.getEntryNode(),
                      CPIdx, MachinePointerInfo::getConstantPool(),
-                     VT, false, false, Alignment);
+                     VT, false, false, false, Alignment);
     return Result;
   }
   SDValue Result =
@@ -384,7 +360,7 @@ static void ExpandUnalignedStore(StoreSDNode *ST, SelectionDAG &DAG,
     // Load from the stack slot.
     SDValue Load = DAG.getExtLoad(ISD::EXTLOAD, dl, RegVT, Store, StackPtr,
                                   MachinePointerInfo(),
-                                  MemVT, false, false, 0);
+                                  MemVT, false, false, false, 0);
 
     Stores.push_back(DAG.getTruncStore(Load.getValue(1), dl, Load, Ptr,
                                        ST->getPointerInfo()
@@ -501,6 +477,7 @@ ExpandUnalignedLoad(LoadSDNode *LD, SelectionDAG &DAG,
                                   LD->getPointerInfo().getWithOffset(Offset),
                                   MemVT, LD->isVolatile(),
                                   LD->isNonTemporal(),
+                                  LD->isInvariant(),
                                   MinAlign(LD->getAlignment(), Offset),
                                   LD->getAAInfo());
     // Follow the load with a store to the stack slot.  Remember the store.
@@ -515,7 +492,8 @@ ExpandUnalignedLoad(LoadSDNode *LD, SelectionDAG &DAG,
 
     // Finally, perform the original load only redirected to the stack slot.
     Load = DAG.getExtLoad(LD->getExtensionType(), dl, VT, TF, StackBase,
-                          MachinePointerInfo(), LoadedVT, false, false, 0);
+                          MachinePointerInfo(), LoadedVT, false,false, false,
+                          0);
 
     // Callers expect a MERGE_VALUES node.
     ValResult = Load;
@@ -545,25 +523,27 @@ ExpandUnalignedLoad(LoadSDNode *LD, SelectionDAG &DAG,
   if (TLI.isLittleEndian()) {
     Lo = DAG.getExtLoad(ISD::ZEXTLOAD, dl, VT, Chain, Ptr, LD->getPointerInfo(),
                         NewLoadedVT, LD->isVolatile(),
-                        LD->isNonTemporal(), Alignment, LD->getAAInfo());
+                        LD->isNonTemporal(), LD->isInvariant(), Alignment,
+                        LD->getAAInfo());
     Ptr = DAG.getNode(ISD::ADD, dl, Ptr.getValueType(), Ptr,
                       DAG.getConstant(IncrementSize, Ptr.getValueType()));
     Hi = DAG.getExtLoad(HiExtType, dl, VT, Chain, Ptr,
                         LD->getPointerInfo().getWithOffset(IncrementSize),
                         NewLoadedVT, LD->isVolatile(),
-                        LD->isNonTemporal(), MinAlign(Alignment, IncrementSize),
-                        LD->getAAInfo());
+                        LD->isNonTemporal(),LD->isInvariant(),
+                        MinAlign(Alignment, IncrementSize), LD->getAAInfo());
   } else {
     Hi = DAG.getExtLoad(HiExtType, dl, VT, Chain, Ptr, LD->getPointerInfo(),
                         NewLoadedVT, LD->isVolatile(),
-                        LD->isNonTemporal(), Alignment, LD->getAAInfo());
+                        LD->isNonTemporal(), LD->isInvariant(), Alignment,
+                        LD->getAAInfo());
     Ptr = DAG.getNode(ISD::ADD, dl, Ptr.getValueType(), Ptr,
                       DAG.getConstant(IncrementSize, Ptr.getValueType()));
     Lo = DAG.getExtLoad(ISD::ZEXTLOAD, dl, VT, Chain, Ptr,
                         LD->getPointerInfo().getWithOffset(IncrementSize),
                         NewLoadedVT, LD->isVolatile(),
-                        LD->isNonTemporal(), MinAlign(Alignment, IncrementSize),
-                        LD->getAAInfo());
+                        LD->isNonTemporal(), LD->isInvariant(),
+                        MinAlign(Alignment, IncrementSize), LD->getAAInfo());
   }
 
   // aggregate the two parts
@@ -952,6 +932,7 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
   unsigned Alignment = LD->getAlignment();
   bool isVolatile = LD->isVolatile();
   bool isNonTemporal = LD->isNonTemporal();
+  bool isInvariant = LD->isInvariant();
   AAMDNodes AAInfo = LD->getAAInfo();
 
   if (SrcWidth != SrcVT.getStoreSizeInBits() &&
@@ -979,7 +960,8 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
     SDValue Result =
       DAG.getExtLoad(NewExtType, dl, Node->getValueType(0),
                      Chain, Ptr, LD->getPointerInfo(),
-                     NVT, isVolatile, isNonTemporal, Alignment, AAInfo);
+                     NVT, isVolatile, isNonTemporal, isInvariant, Alignment,
+                     AAInfo);
 
     Ch = Result.getValue(1); // The chain.
 
@@ -1016,7 +998,7 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
       Lo = DAG.getExtLoad(ISD::ZEXTLOAD, dl, Node->getValueType(0),
                           Chain, Ptr,
                           LD->getPointerInfo(), RoundVT, isVolatile,
-                          isNonTemporal, Alignment, AAInfo);
+                          isNonTemporal, isInvariant, Alignment, AAInfo);
 
       // Load the remaining ExtraWidth bits.
       IncrementSize = RoundWidth / 8;
@@ -1024,7 +1006,7 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
                          DAG.getConstant(IncrementSize, Ptr.getValueType()));
       Hi = DAG.getExtLoad(ExtType, dl, Node->getValueType(0), Chain, Ptr,
                           LD->getPointerInfo().getWithOffset(IncrementSize),
-                          ExtraVT, isVolatile, isNonTemporal,
+                          ExtraVT, isVolatile, isNonTemporal, isInvariant,
                           MinAlign(Alignment, IncrementSize), AAInfo);
 
       // Build a factor node to remember that this load is independent of
@@ -1045,7 +1027,7 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
       // Load the top RoundWidth bits.
       Hi = DAG.getExtLoad(ExtType, dl, Node->getValueType(0), Chain, Ptr,
                           LD->getPointerInfo(), RoundVT, isVolatile,
-                          isNonTemporal, Alignment, AAInfo);
+                          isNonTemporal, isInvariant, Alignment, AAInfo);
 
       // Load the remaining ExtraWidth bits.
       IncrementSize = RoundWidth / 8;
@@ -1054,7 +1036,7 @@ void SelectionDAGLegalize::LegalizeLoadOps(SDNode *Node) {
       Lo = DAG.getExtLoad(ISD::ZEXTLOAD,
                           dl, Node->getValueType(0), Chain, Ptr,
                           LD->getPointerInfo().getWithOffset(IncrementSize),
-                          ExtraVT, isVolatile, isNonTemporal,
+                          ExtraVT, isVolatile, isNonTemporal, isInvariant,
                           MinAlign(Alignment, IncrementSize), AAInfo);
 
       // Build a factor node to remember that this load is independent of
@@ -1467,7 +1449,7 @@ SDValue SelectionDAGLegalize::ExpandExtractFromVectorThroughStack(SDValue Op) {
   return DAG.getExtLoad(ISD::EXTLOAD, dl, Op.getValueType(), Ch, StackPtr,
                         MachinePointerInfo(),
                         Vec.getValueType().getVectorElementType(),
-                        false, false, 0);
+                        false, false, false, 0);
 }
 
 SDValue SelectionDAGLegalize::ExpandInsertToVectorThroughStack(SDValue Op) {
@@ -1642,7 +1624,8 @@ void SelectionDAGLegalize::ExpandDYNAMIC_STACKALLOC(SDNode* Node,
   SDValue SP = DAG.getCopyFromReg(Chain, dl, SPReg, VT);
   Chain = SP.getValue(1);
   unsigned Align = cast<ConstantSDNode>(Tmp3)->getZExtValue();
-  unsigned StackAlign = TM.getFrameLowering()->getStackAlignment();
+  unsigned StackAlign =
+      TM.getSubtargetImpl()->getFrameLowering()->getStackAlignment();
   Tmp1 = DAG.getNode(ISD::SUB, dl, VT, SP, Size);       // Value
   if (Align > StackAlign)
     Tmp1 = DAG.getNode(ISD::AND, dl, VT, Tmp1,
@@ -1816,7 +1799,7 @@ SDValue SelectionDAGLegalize::EmitStackConvert(SDValue SrcOp,
 
   assert(SlotSize < DestSize && "Unknown extension!");
   return DAG.getExtLoad(ISD::EXTLOAD, dl, DestVT, Store, FIPtr,
-                        PtrInfo, SlotVT, false, false, DestAlign);
+                        PtrInfo, SlotVT, false, false, false, DestAlign);
 }
 
 SDValue SelectionDAGLegalize::ExpandSCALAR_TO_VECTOR(SDNode *Node) {
@@ -2599,7 +2582,7 @@ SDValue SelectionDAGLegalize::ExpandLegalINT_TO_FP(bool isSigned,
     SDValue Load = DAG.getExtLoad(ISD::EXTLOAD, dl, DestVT,
                                   DAG.getEntryNode(), CPIdx,
                                   MachinePointerInfo::getConstantPool(),
-                                  MVT::f32, false, false, Alignment);
+                                  MVT::f32, false, false, false, Alignment);
     HandleSDNode Handle(Load);
     LegalizeOp(Load.getNode());
     FudgeInReg = Handle.getValue();
@@ -3824,9 +3807,11 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
       TopHalf = DAG.getNode(ISD::EXTRACT_ELEMENT, dl, VT, Ret,
                             DAG.getIntPtrConstant(1));
       // Ret is a node with an illegal type. Because such things are not
-      // generally permitted during this phase of legalization, delete the
-      // node. The above EXTRACT_ELEMENT nodes should have been folded.
-      DAG.DeleteNode(Ret.getNode());
+      // generally permitted during this phase of legalization, make sure the
+      // node has no more uses. The above EXTRACT_ELEMENT nodes should have been
+      // folded.
+      assert(Ret->use_empty() &&
+             "Unexpected uses of illegally type from expanded lib call.");
     }
 
     if (isSigned) {
@@ -3887,7 +3872,7 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node) {
     EVT MemVT = EVT::getIntegerVT(*DAG.getContext(), EntrySize * 8);
     SDValue LD = DAG.getExtLoad(ISD::SEXTLOAD, dl, PTy, Chain, Addr,
                                 MachinePointerInfo::getJumpTable(), MemVT,
-                                false, false, 0);
+                                false, false, false, 0);
     Addr = LD;
     if (TM.getRelocationModel() == Reloc::PIC_) {
       // For PIC, the sequence is:
@@ -4309,9 +4294,8 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
 void SelectionDAG::Legalize() {
   AssignTopologicalOrder();
 
-  allnodes_iterator LegalizePosition;
   SmallPtrSet<SDNode *, 16> LegalizedNodes;
-  SelectionDAGLegalize Legalizer(*this, LegalizePosition, LegalizedNodes);
+  SelectionDAGLegalize Legalizer(*this, LegalizedNodes);
 
   // Visit all the nodes. We start in topological order, so that we see
   // nodes with their original operands intact. Legalization can produce
@@ -4319,14 +4303,24 @@ void SelectionDAG::Legalize() {
   // nodes have been legalized.
   for (;;) {
     bool AnyLegalized = false;
-    for (LegalizePosition = allnodes_end();
-         LegalizePosition != allnodes_begin(); ) {
-      --LegalizePosition;
+    for (auto NI = allnodes_end(); NI != allnodes_begin();) {
+      --NI;
 
-      SDNode *N = LegalizePosition;
+      SDNode *N = NI;
+      if (N->use_empty() && N != getRoot().getNode()) {
+        ++NI;
+        DeleteNode(N);
+        continue;
+      }
+
       if (LegalizedNodes.insert(N)) {
         AnyLegalized = true;
         Legalizer.LegalizeOp(N);
+
+        if (N->use_empty() && N != getRoot().getNode()) {
+          ++NI;
+          DeleteNode(N);
+        }
       }
     }
     if (!AnyLegalized)
@@ -4340,10 +4334,8 @@ void SelectionDAG::Legalize() {
 
 bool SelectionDAG::LegalizeOp(SDNode *N,
                               SmallSetVector<SDNode *, 16> &UpdatedNodes) {
-  allnodes_iterator LegalizePosition(N);
   SmallPtrSet<SDNode *, 16> LegalizedNodes;
-  SelectionDAGLegalize Legalizer(*this, LegalizePosition, LegalizedNodes,
-                                 &UpdatedNodes);
+  SelectionDAGLegalize Legalizer(*this, LegalizedNodes, &UpdatedNodes);
 
   // Directly insert the node in question, and legalize it. This will recurse
   // as needed through operands.

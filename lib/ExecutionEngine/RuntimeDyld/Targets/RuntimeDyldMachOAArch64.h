@@ -28,11 +28,13 @@ public:
   unsigned getStubAlignment() override { return 8; }
 
   /// Extract the addend encoded in the instruction / memory location.
-  int64_t decodeAddend(uint8_t *LocalAddress, unsigned NumBytes,
-                       MachO::RelocationInfoType RelType) const {
+  int64_t decodeAddend(const RelocationEntry &RE) const {
+    const SectionEntry &Section = Sections[RE.SectionID];
+    uint8_t *LocalAddress = Section.Address + RE.Offset;
+    unsigned NumBytes = 1 << RE.Size;
     int64_t Addend = 0;
     // Verify that the relocation has the correct size and alignment.
-    switch (RelType) {
+    switch (RE.RelType) {
     default:
       llvm_unreachable("Unsupported relocation type!");
     case MachO::ARM64_RELOC_UNSIGNED:
@@ -49,7 +51,7 @@ public:
       break;
     }
 
-    switch (RelType) {
+    switch (RE.RelType) {
     default:
       llvm_unreachable("Unsupported relocation type!");
     case MachO::ARM64_RELOC_UNSIGNED:
@@ -263,7 +265,8 @@ public:
       RelInfo = Obj.getRelocation(RelI->getRawDataRefImpl());
     }
 
-    RelocationEntry RE(getBasicRelocationEntry(SectionID, ObjImg, RelI));
+    RelocationEntry RE(getRelocationEntry(SectionID, ObjImg, RelI));
+    RE.Addend = decodeAddend(RE);
     RelocationValueRef Value(
         getRelocationValueRef(ObjImg, RelI, RE, ObjSectionToID, Symbols));
 
@@ -362,9 +365,9 @@ private:
     assert(RE.Size == 2);
     SectionEntry &Section = Sections[RE.SectionID];
     StubMap::const_iterator i = Stubs.find(Value);
-    uint8_t *Addr;
+    uintptr_t Addr;
     if (i != Stubs.end())
-      Addr = Section.Address + i->second;
+      Addr = reinterpret_cast<uintptr_t>(Section.Address) + i->second;
     else {
       // FIXME: There must be a better way to do this then to check and fix the
       // alignment every time!!!
@@ -385,11 +388,11 @@ private:
       else
         addRelocationForSection(GOTRE, Value.SectionID);
       Section.StubOffset = StubOffset + getMaxStubSize();
-      Addr = (uint8_t *)StubAddress;
+      Addr = StubAddress;
     }
     RelocationEntry TargetRE(RE.SectionID, RE.Offset, RE.RelType, /*Addend=*/0,
                              RE.IsPCRel, RE.Size);
-    resolveRelocation(TargetRE, (uint64_t)Addr);
+    resolveRelocation(TargetRE, static_cast<uint64_t>(Addr));
   }
 };
 }

@@ -248,7 +248,7 @@ private:
   DenseMap<Pass *, SmallPtrSet<Pass *, 8> > InversedLastUser;
 
   /// Immutable passes are managed by top level manager.
-  SmallVector<ImmutablePass *, 8> ImmutablePasses;
+  SmallVector<ImmutablePass *, 16> ImmutablePasses;
 
   DenseMap<Pass *, AnalysisUsage *> AnUsageMap;
 };
@@ -393,7 +393,7 @@ private:
 
   // Collection of higher level analysis used by the pass managed by
   // this manager.
-  SmallVector<Pass *, 8> HigherLevelAnalysis;
+  SmallVector<Pass *, 16> HigherLevelAnalysis;
 
   unsigned Depth;
 };

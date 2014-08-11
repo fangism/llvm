@@ -192,7 +192,7 @@ MachineBasicBlock * R600TargetLowering::EmitInstrWithCustomInserter(
   MachineRegisterInfo &MRI = MF->getRegInfo();
   MachineBasicBlock::iterator I = *MI;
   const R600InstrInfo *TII =
-    static_cast<const R600InstrInfo*>(MF->getTarget().getInstrInfo());
+      static_cast<const R600InstrInfo *>(MF->getSubtarget().getInstrInfo());
 
   switch (MI->getOpcode()) {
   default:
@@ -645,8 +645,8 @@ SDValue R600TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const 
       MachineSDNode *interp;
       if (ijb < 0) {
         const MachineFunction &MF = DAG.getMachineFunction();
-        const R600InstrInfo *TII =
-          static_cast<const R600InstrInfo*>(MF.getTarget().getInstrInfo());
+        const R600InstrInfo *TII = static_cast<const R600InstrInfo *>(
+            MF.getSubtarget().getInstrInfo());
         interp = DAG.getMachineNode(AMDGPU::INTERP_VEC_LOAD, DL,
             MVT::v4f32, DAG.getTargetConstant(slot / 4 , MVT::i32));
         return DAG.getTargetExtractSubreg(
@@ -1430,8 +1430,8 @@ SDValue R600TargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
   // Lowering for indirect addressing
 
   const MachineFunction &MF = DAG.getMachineFunction();
-  const AMDGPUFrameLowering *TFL = static_cast<const AMDGPUFrameLowering*>(
-                                         getTargetMachine().getFrameLowering());
+  const AMDGPUFrameLowering *TFL = static_cast<const AMDGPUFrameLowering *>(
+      getTargetMachine().getSubtargetImpl()->getFrameLowering());
   unsigned StackWidth = TFL->getStackWidth(MF);
 
   Ptr = stackPtrToRegIndex(Ptr, StackWidth, DAG);
@@ -1613,6 +1613,7 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
                                   LoadNode->getPointerInfo(), MemVT,
                                   LoadNode->isVolatile(),
                                   LoadNode->isNonTemporal(),
+                                  LoadNode->isInvariant(),
                                   LoadNode->getAlignment());
     SDValue Shl = DAG.getNode(ISD::SHL, DL, VT, NewLoad, ShiftAmount);
     SDValue Sra = DAG.getNode(ISD::SRA, DL, VT, Shl, ShiftAmount);
@@ -1627,8 +1628,8 @@ SDValue R600TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const
 
   // Lowering for indirect addressing
   const MachineFunction &MF = DAG.getMachineFunction();
-  const AMDGPUFrameLowering *TFL = static_cast<const AMDGPUFrameLowering*>(
-                                         getTargetMachine().getFrameLowering());
+  const AMDGPUFrameLowering *TFL = static_cast<const AMDGPUFrameLowering *>(
+      getTargetMachine().getSubtargetImpl()->getFrameLowering());
   unsigned StackWidth = TFL->getStackWidth(MF);
 
   Ptr = stackPtrToRegIndex(Ptr, StackWidth, DAG);
@@ -1691,8 +1692,8 @@ SDValue R600TargetLowering::LowerFormalArguments(
                                       SDLoc DL, SelectionDAG &DAG,
                                       SmallVectorImpl<SDValue> &InVals) const {
   SmallVector<CCValAssign, 16> ArgLocs;
-  CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(),
-                 getTargetMachine(), ArgLocs, *DAG.getContext());
+  CCState CCInfo(CallConv, isVarArg, DAG.getMachineFunction(), ArgLocs,
+                 *DAG.getContext());
   MachineFunction &MF = DAG.getMachineFunction();
   unsigned ShaderType = MF.getInfo<R600MachineFunctionInfo>()->getShaderType();
 
@@ -1732,7 +1733,7 @@ SDValue R600TargetLowering::LowerFormalArguments(
     SDValue Arg = DAG.getExtLoad(Ext, DL, VT, Chain,
                                  DAG.getConstant(36 + VA.getLocMemOffset(), MVT::i32),
                                  MachinePointerInfo(UndefValue::get(PtrTy)),
-                                 MemVT, false, false, 4);
+                                 MemVT, false, false, false, 4);
 
     // 4 is the preferred alignment for the CONSTANT memory space.
     InVals.push_back(Arg);
@@ -2081,7 +2082,7 @@ static bool
 FoldOperand(SDNode *ParentNode, unsigned SrcIdx, SDValue &Src, SDValue &Neg,
             SDValue &Abs, SDValue &Sel, SDValue &Imm, SelectionDAG &DAG) {
   const R600InstrInfo *TII =
-      static_cast<const R600InstrInfo *>(DAG.getTarget().getInstrInfo());
+      static_cast<const R600InstrInfo *>(DAG.getSubtarget().getInstrInfo());
   if (!Src.isMachineOpcode())
     return false;
   switch (Src.getMachineOpcode()) {
@@ -2206,7 +2207,7 @@ FoldOperand(SDNode *ParentNode, unsigned SrcIdx, SDValue &Src, SDValue &Neg,
 SDNode *R600TargetLowering::PostISelFolding(MachineSDNode *Node,
                                             SelectionDAG &DAG) const {
   const R600InstrInfo *TII =
-      static_cast<const R600InstrInfo *>(DAG.getTarget().getInstrInfo());
+      static_cast<const R600InstrInfo *>(DAG.getSubtarget().getInstrInfo());
   if (!Node->isMachineOpcode())
     return Node;
   unsigned Opcode = Node->getMachineOpcode();

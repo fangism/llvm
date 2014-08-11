@@ -106,7 +106,7 @@ static void ComputePTXValueVTs(const TargetLowering &TLI, Type *Ty,
 }
 
 // NVPTXTargetLowering Constructor.
-NVPTXTargetLowering::NVPTXTargetLowering(NVPTXTargetMachine &TM)
+NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM)
     : TargetLowering(TM, new NVPTXTargetObjectFile()), nvTM(&TM),
       nvptxSubtarget(TM.getSubtarget<NVPTXSubtarget>()) {
 
@@ -1451,8 +1451,8 @@ SDValue NVPTXTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       EVT ObjectVT = getValueType(retTy);
       unsigned NumElts = ObjectVT.getVectorNumElements();
       EVT EltVT = ObjectVT.getVectorElementType();
-      assert(nvTM->getTargetLowering()->getNumRegisters(F->getContext(),
-                                                        ObjectVT) == NumElts &&
+      assert(nvTM->getSubtargetImpl()->getTargetLowering()->getNumRegisters(
+                 F->getContext(), ObjectVT) == NumElts &&
              "Vector was not scalarized");
       unsigned sz = EltVT.getSizeInBits();
       bool needTruncate = sz < 8 ? true : false;
@@ -2028,7 +2028,7 @@ SDValue NVPTXTargetLowering::LowerFormalArguments(
 
   const Function *F = MF.getFunction();
   const AttributeSet &PAL = F->getAttributes();
-  const TargetLowering *TLI = DAG.getTarget().getTargetLowering();
+  const TargetLowering *TLI = DAG.getSubtarget().getTargetLowering();
 
   SDValue Root = DAG.getRoot();
   std::vector<SDValue> OutChains;
@@ -2142,7 +2142,7 @@ SDValue NVPTXTargetLowering::LowerFormalArguments(
                                      ISD::SEXTLOAD : ISD::ZEXTLOAD;
             p = DAG.getExtLoad(ExtOp, dl, Ins[InsIdx].VT, Root, srcAddr,
                                MachinePointerInfo(srcValue), partVT, false,
-                               false, partAlign);
+                               false, false, partAlign);
           } else {
             p = DAG.getLoad(partVT, dl, Root, srcAddr,
                             MachinePointerInfo(srcValue), false, false, false,
@@ -2275,6 +2275,7 @@ SDValue NVPTXTargetLowering::LowerFormalArguments(
                                        ISD::SEXTLOAD : ISD::ZEXTLOAD;
         p = DAG.getExtLoad(ExtOp, dl, Ins[InsIdx].VT, Root, Arg,
                            MachinePointerInfo(srcValue), ObjectVT, false, false,
+                           false,
         TD->getABITypeAlignment(ObjectVT.getTypeForEVT(F->getContext())));
       } else {
         p = DAG.getLoad(Ins[InsIdx].VT, dl, Root, Arg,

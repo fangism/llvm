@@ -118,11 +118,6 @@ public:
   std::error_code getRelocationHidden(DataRefImpl Rel,
                                       bool &Result) const override;
 
-  std::error_code getLibraryNext(DataRefImpl LibData,
-                                 LibraryRef &Res) const override;
-  std::error_code getLibraryPath(DataRefImpl LibData,
-                                 StringRef &Res) const override;
-
   // MachO specific.
   std::error_code getLibraryShortNameByIndex(unsigned Index, StringRef &Res);
 
@@ -138,15 +133,10 @@ public:
   section_iterator section_begin() const override;
   section_iterator section_end() const override;
 
-  library_iterator needed_library_begin() const override;
-  library_iterator needed_library_end() const override;
-
   uint8_t getBytesInAddress() const override;
 
   StringRef getFileFormatName() const override;
   unsigned getArch() const override;
-
-  StringRef getLoadName() const override;
 
   relocation_iterator section_rel_begin(unsigned Index) const;
   relocation_iterator section_rel_end(unsigned Index) const;
@@ -226,7 +216,7 @@ public:
 
   static Triple::ArchType getArch(uint32_t CPUType);
   static Triple getArch(uint32_t CPUType, uint32_t CPUSubType);
-  static Triple getArch(StringRef ArchFlag);
+  static bool isValidArch(StringRef ArchFlag);
   static Triple getHostArch();
 
   static bool classof(const Binary *v) {

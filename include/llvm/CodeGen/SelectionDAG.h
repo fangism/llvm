@@ -20,6 +20,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/ilist.h"
 #include "llvm/CodeGen/DAGCombine.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/Support/RecyclingAllocator.h"
 #include "llvm/Target/TargetMachine.h"
@@ -276,6 +277,7 @@ public:
 
   MachineFunction &getMachineFunction() const { return *MF; }
   const TargetMachine &getTarget() const { return TM; }
+  const TargetSubtargetInfo &getSubtarget() const { return MF->getSubtarget(); }
   const TargetLowering &getTargetLoweringInfo() const { return *TLI; }
   const TargetSelectionDAGInfo &getSelectionDAGInfo() const { return TSI; }
   LLVMContext *getContext() const {return Context; }
@@ -822,7 +824,7 @@ public:
   SDValue getExtLoad(ISD::LoadExtType ExtType, SDLoc dl, EVT VT,
                      SDValue Chain, SDValue Ptr, MachinePointerInfo PtrInfo,
                      EVT MemVT, bool isVolatile,
-                     bool isNonTemporal, unsigned Alignment,
+                     bool isNonTemporal, bool isInvariant, unsigned Alignment,
                      const AAMDNodes &AAInfo = AAMDNodes());
   SDValue getExtLoad(ISD::LoadExtType ExtType, SDLoc dl, EVT VT,
                      SDValue Chain, SDValue Ptr, EVT MemVT,

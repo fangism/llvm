@@ -20,7 +20,7 @@
 #include "llvm/MC/MCDirectives.h"
 #include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCLinkerOptimizationHint.h"
-#include "llvm/MC/MCWin64EH.h"
+#include "llvm/MC/MCWinEH.h"
 #include "llvm/Support/DataTypes.h"
 #include <string>
 
@@ -181,8 +181,8 @@ class MCStreamer {
 
   MCSymbol *EmitCFICommon();
 
-  std::vector<MCWinFrameInfo *> WinFrameInfos;
-  MCWinFrameInfo *CurrentWinFrameInfo;
+  std::vector<WinEH::FrameInfo *> WinFrameInfos;
+  WinEH::FrameInfo *CurrentWinFrameInfo;
   void EnsureValidWinFrameInfo();
 
   // SymbolOrdering - Tracks an index to represent the order
@@ -204,11 +204,11 @@ protected:
   virtual void EmitCFIStartProcImpl(MCDwarfFrameInfo &Frame);
   virtual void EmitCFIEndProcImpl(MCDwarfFrameInfo &CurFrame);
 
-  MCWinFrameInfo *getCurrentWinFrameInfo() {
+  WinEH::FrameInfo *getCurrentWinFrameInfo() {
     return CurrentWinFrameInfo;
   }
 
-  void EmitWindowsUnwindTables();
+  virtual void EmitWindowsUnwindTables();
 
   virtual void EmitRawTextImpl(StringRef String);
 
@@ -238,7 +238,7 @@ public:
   }
 
   unsigned getNumWinFrameInfos() { return WinFrameInfos.size(); }
-  ArrayRef<MCWinFrameInfo *> getWinFrameInfos() const {
+  ArrayRef<WinEH::FrameInfo *> getWinFrameInfos() const {
     return WinFrameInfos;
   }
 

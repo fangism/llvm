@@ -44,7 +44,7 @@ static MCSymbol *GetSymbolFromOperand(const MachineOperand &MO, AsmPrinter &AP){
   STACKTRACE_VERBOSE;
   const TargetMachine &TM = AP.TM;
   Mangler *Mang = AP.Mang;
-  const DataLayout *DL = TM.getDataLayout();
+  const DataLayout *DL = TM.getSubtargetImpl()->getDataLayout();
   MCContext &Ctx = AP.OutContext;
   bool isDarwin = TM.getSubtarget<PPCSubtarget>().isDarwin();
 

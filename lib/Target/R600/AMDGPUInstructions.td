@@ -133,7 +133,7 @@ def COND_NE : PatLeaf <
 
 def COND_NULL : PatLeaf <
   (cond),
-  [{return false;}]
+  [{(void)N; return false;}]
 >;
 
 //===----------------------------------------------------------------------===//
@@ -323,6 +323,14 @@ def atomic_cmp_swap_64_local :
          AN->getAddressSpace() == AMDGPUAS::LOCAL_ADDRESS;
 }]>;
 
+//===----------------------------------------------------------------------===//
+// Misc Pattern Fragments
+//===----------------------------------------------------------------------===//
+
+def fmad : PatFrag <
+  (ops node:$src0, node:$src1, node:$src2),
+  (fadd (fmul node:$src0, node:$src1), node:$src2)
+>;
 
 class Constants {
 int TWO_PI = 0x40c90fdb;

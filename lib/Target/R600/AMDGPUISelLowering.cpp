@@ -376,6 +376,11 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setSchedulingPreference(Sched::RegPressure);
   setJumpIsExpensive(true);
 
+  // SI at least has hardware support for floating point exceptions, but no way
+  // of using or handling them is implemented. They are also optional in OpenCL
+  // (Section 7.3)
+  setHasFloatingPointExceptions(false);
+
   setSelectIsExpensive(false);
   PredictableSelectIsExpensive = false;
 
@@ -606,7 +611,7 @@ SDValue AMDGPUTargetLowering::LowerConstantInitializer(const Constant* Init,
                                                        const SDValue &InitPtr,
                                                        SDValue Chain,
                                                        SelectionDAG &DAG) const {
-  const DataLayout *TD = getTargetMachine().getDataLayout();
+  const DataLayout *TD = getTargetMachine().getSubtargetImpl()->getDataLayout();
   SDLoc DL(InitPtr);
   Type *InitTy = Init->getType();
 
@@ -683,7 +688,7 @@ SDValue AMDGPUTargetLowering::LowerGlobalAddress(AMDGPUMachineFunction* MFI,
                                                  SDValue Op,
                                                  SelectionDAG &DAG) const {
 
-  const DataLayout *TD = getTargetMachine().getDataLayout();
+  const DataLayout *TD = getTargetMachine().getSubtargetImpl()->getDataLayout();
   GlobalAddressSDNode *G = cast<GlobalAddressSDNode>(Op);
   const GlobalValue *GV = G->getGlobal();
 
@@ -706,7 +711,7 @@ SDValue AMDGPUTargetLowering::LowerGlobalAddress(AMDGPUMachineFunction* MFI,
       Offset = MFI->LocalMemoryObjects[GV];
     }
 
-    return DAG.getConstant(Offset, getPointerTy(G->getAddressSpace()));
+    return DAG.getConstant(Offset, getPointerTy(AMDGPUAS::LOCAL_ADDRESS));
   }
   case AMDGPUAS::CONSTANT_ADDRESS: {
     MachineFrameInfo *FrameInfo = DAG.getMachineFunction().getFrameInfo();
@@ -778,8 +783,8 @@ SDValue AMDGPUTargetLowering::LowerFrameIndex(SDValue Op,
                                               SelectionDAG &DAG) const {
 
   MachineFunction &MF = DAG.getMachineFunction();
-  const AMDGPUFrameLowering *TFL =
-   static_cast<const AMDGPUFrameLowering*>(getTargetMachine().getFrameLowering());
+  const AMDGPUFrameLowering *TFL = static_cast<const AMDGPUFrameLowering *>(
+      getTargetMachine().getSubtargetImpl()->getFrameLowering());
 
   FrameIndexSDNode *FIN = cast<FrameIndexSDNode>(Op);
 
@@ -1038,7 +1043,7 @@ SDValue AMDGPUTargetLowering::ScalarizeVectorLoad(const SDValue Op,
                        Load->getChain(), Ptr,
                        SrcValue.getWithOffset(i * MemEltSize),
                        MemEltVT, Load->isVolatile(), Load->isNonTemporal(),
-                       Load->getAlignment());
+                       Load->isInvariant(), Load->getAlignment());
     Loads.push_back(NewLoad.getValue(0));
     Chains.push_back(NewLoad.getValue(1));
   }
@@ -1079,7 +1084,7 @@ SDValue AMDGPUTargetLowering::SplitVectorLoad(const SDValue Op,
                      Load->getChain(), BasePtr,
                      SrcValue,
                      LoMemVT, Load->isVolatile(), Load->isNonTemporal(),
-                     Load->getAlignment());
+                     Load->isInvariant(), Load->getAlignment());
 
   SDValue HiPtr = DAG.getNode(ISD::ADD, SL, PtrVT, BasePtr,
                               DAG.getConstant(LoMemVT.getStoreSize(), PtrVT));
@@ -1089,7 +1094,7 @@ SDValue AMDGPUTargetLowering::SplitVectorLoad(const SDValue Op,
                      Load->getChain(), HiPtr,
                      SrcValue.getWithOffset(LoMemVT.getStoreSize()),
                      HiMemVT, Load->isVolatile(), Load->isNonTemporal(),
-                     Load->getAlignment());
+                     Load->isInvariant(), Load->getAlignment());
 
   SDValue Ops[] = {
     DAG.getNode(ISD::CONCAT_VECTORS, SL, VT, LoLoad, HiLoad),
@@ -1285,7 +1290,8 @@ SDValue AMDGPUTargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
     return DAG.getMergeValues(Ops, DL);
   }
 
-  if (Load->getAddressSpace() != AMDGPUAS::PRIVATE_ADDRESS ||
+  if (Subtarget->getGeneration() >= AMDGPUSubtarget::SOUTHERN_ISLANDS ||
+      Load->getAddressSpace() != AMDGPUAS::PRIVATE_ADDRESS ||
       ExtType == ISD::NON_EXTLOAD || Load->getMemoryVT().bitsGE(MVT::i32))
     return SDValue();
 

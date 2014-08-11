@@ -62,6 +62,10 @@ public:
     return RI;
   }
 
+  bool areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
+                               int64_t &Offset1,
+                               int64_t &Offset2) const override;
+
   bool getLdStBaseRegImmOfs(MachineInstr *LdSt,
                             unsigned &BaseReg, unsigned &Offset,
                             const TargetRegisterInfo *TRI) const final;
@@ -115,6 +119,13 @@ public:
   bool isImmOperandLegal(const MachineInstr *MI, unsigned OpNo,
                          const MachineOperand &MO) const;
 
+  /// \brief Return true if this 64-bit VALU instruction has a 32-bit encoding.
+  /// This function will return false if you pass it a 32-bit instruction.
+  bool hasVALU32BitEncoding(unsigned Opcode) const;
+
+  /// \brief Return true if this instruction has any modifiers.
+  ///  e.g. src[012]_mod, omod, clamp.
+  bool hasModifiers(unsigned Opcode) const;
   bool verifyInstruction(const MachineInstr *MI,
                          StringRef &ErrInfo) const override;
 
@@ -145,6 +156,11 @@ public:
   /// If the operand being legalized is a register, then a COPY will be used
   /// instead of MOV.
   void legalizeOpWithMove(MachineInstr *MI, unsigned OpIdx) const;
+
+  /// \brief Check if \p MO is a legal operand if it was the \p OpIdx Operand
+  /// for \p MI.
+  bool isOperandLegal(const MachineInstr *MI, unsigned OpIdx,
+                      const MachineOperand *MO = nullptr) const;
 
   /// \brief Legalize all operands in this instruction.  This function may
   /// create new instruction and insert them before \p MI.
@@ -183,8 +199,7 @@ public:
 
   /// \brief Returns the operand named \p Op.  If \p MI does not have an
   /// operand named \c Op, this function returns nullptr.
-  const MachineOperand *getNamedOperand(const MachineInstr& MI,
-                                        unsigned OperandName) const;
+  MachineOperand *getNamedOperand(MachineInstr &MI, unsigned OperandName) const;
 };
 
 namespace AMDGPU {
@@ -208,6 +223,13 @@ namespace SIInstrFlags {
     VM_CNT = 1 << 0,
     EXP_CNT = 1 << 1,
     LGKM_CNT = 1 << 2
+  };
+}
+
+namespace SISrcMods {
+  enum {
+   NEG = 1 << 0,
+   ABS = 1 << 1
   };
 }
 

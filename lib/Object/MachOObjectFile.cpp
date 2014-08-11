@@ -14,6 +14,7 @@
 
 #include "llvm/Object/MachO.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Support/DataExtractor.h"
 #include "llvm/Support/Format.h"
@@ -1008,16 +1009,6 @@ std::error_code MachOObjectFile::getRelocationHidden(DataRefImpl Rel,
   return object_error::success;
 }
 
-std::error_code MachOObjectFile::getLibraryNext(DataRefImpl LibData,
-                                                LibraryRef &Res) const {
-  report_fatal_error("Needed libraries unimplemented in MachOObjectFile");
-}
-
-std::error_code MachOObjectFile::getLibraryPath(DataRefImpl LibData,
-                                                StringRef &Res) const {
-  report_fatal_error("Needed libraries unimplemented in MachOObjectFile");
-}
-
 //
 // guessLibraryShortName() is passed a name of a dynamic library and returns a
 // guess on what the short name is.  Then name is returned as a substring of the
@@ -1245,16 +1236,6 @@ section_iterator MachOObjectFile::section_end() const {
   return section_iterator(SectionRef(DRI, this));
 }
 
-library_iterator MachOObjectFile::needed_library_begin() const {
-  // TODO: implement
-  report_fatal_error("Needed libraries unimplemented in MachOObjectFile");
-}
-
-library_iterator MachOObjectFile::needed_library_end() const {
-  // TODO: implement
-  report_fatal_error("Needed libraries unimplemented in MachOObjectFile");
-}
-
 uint8_t MachOObjectFile::getBytesInAddress() const {
   return is64Bit() ? 8 : 4;
 }
@@ -1336,10 +1317,14 @@ Triple MachOObjectFile::getArch(uint32_t CPUType, uint32_t CPUSubType) {
       return Triple("armv4t-apple-darwin");
     case MachO::CPU_SUBTYPE_ARM_V5TEJ:
       return Triple("armv5e-apple-darwin");
+    case MachO::CPU_SUBTYPE_ARM_XSCALE:
+      return Triple("xscale-apple-darwin");
     case MachO::CPU_SUBTYPE_ARM_V6:
       return Triple("armv6-apple-darwin");
     case MachO::CPU_SUBTYPE_ARM_V6M:
       return Triple("armv6m-apple-darwin");
+    case MachO::CPU_SUBTYPE_ARM_V7:
+      return Triple("armv7-apple-darwin");
     case MachO::CPU_SUBTYPE_ARM_V7EM:
       return Triple("armv7em-apple-darwin");
     case MachO::CPU_SUBTYPE_ARM_V7K:
@@ -1381,46 +1366,28 @@ Triple MachOObjectFile::getHostArch() {
   return Triple(sys::getDefaultTargetTriple());
 }
 
-Triple MachOObjectFile::getArch(StringRef ArchFlag) {
-  if (ArchFlag == "i386")
-    return Triple("i386-apple-darwin");
-  else if (ArchFlag == "x86_64")
-    return Triple("x86_64-apple-darwin");
-  else if (ArchFlag == "x86_64h")
-    return Triple("x86_64h-apple-darwin");
-  else if (ArchFlag == "armv4t" || ArchFlag == "arm")
-    return Triple("armv4t-apple-darwin");
-  else if (ArchFlag == "armv5e")
-    return Triple("armv5e-apple-darwin");
-  else if (ArchFlag == "armv6")
-    return Triple("armv6-apple-darwin");
-  else if (ArchFlag == "armv6m")
-    return Triple("armv6m-apple-darwin");
-  else if (ArchFlag == "armv7em")
-    return Triple("armv7em-apple-darwin");
-  else if (ArchFlag == "armv7k")
-    return Triple("armv7k-apple-darwin");
-  else if (ArchFlag == "armv7k")
-    return Triple("armv7m-apple-darwin");
-  else if (ArchFlag == "armv7s")
-    return Triple("armv7s-apple-darwin");
-  else if (ArchFlag == "arm64")
-    return Triple("arm64-apple-darwin");
-  else if (ArchFlag == "ppc")
-    return Triple("ppc-apple-darwin");
-  else if (ArchFlag == "ppc64")
-    return Triple("ppc64-apple-darwin");
-  else
-    return Triple();
+bool MachOObjectFile::isValidArch(StringRef ArchFlag) {
+  return StringSwitch<bool>(ArchFlag)
+      .Case("i386", true)
+      .Case("x86_64", true)
+      .Case("x86_64h", true)
+      .Case("armv4t", true)
+      .Case("arm", true)
+      .Case("armv5e", true)
+      .Case("armv6", true)
+      .Case("armv6m", true)
+      .Case("armv7em", true)
+      .Case("armv7k", true)
+      .Case("armv7m", true)
+      .Case("armv7s", true)
+      .Case("arm64", true)
+      .Case("ppc", true)
+      .Case("ppc64", true)
+      .Default(false);
 }
 
 unsigned MachOObjectFile::getArch() const {
   return getArch(getCPUType(this));
-}
-
-StringRef MachOObjectFile::getLoadName() const {
-  // TODO: Implement
-  report_fatal_error("get_load_name() unimplemented in MachOObjectFile");
 }
 
 relocation_iterator MachOObjectFile::section_rel_begin(unsigned Index) const {

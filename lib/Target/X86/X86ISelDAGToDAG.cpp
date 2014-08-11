@@ -297,7 +297,7 @@ namespace {
     /// getInstrInfo - Return a reference to the TargetInstrInfo, casted
     /// to the target-specific type.
     const X86InstrInfo *getInstrInfo() const {
-      return getTargetMachine().getInstrInfo();
+      return getTargetMachine().getSubtargetImpl()->getInstrInfo();
     }
   };
 }
@@ -544,7 +544,7 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
                                           false, false, 0);
     SDValue Result = CurDAG->getExtLoad(ISD::EXTLOAD, dl, DstVT, Store, MemTmp,
                                         MachinePointerInfo(),
-                                        MemVT, false, false, 0);
+                                        MemVT, false, false, false, 0);
 
     // We're about to replace all uses of the FP_ROUND/FP_EXTEND with the
     // extload we created.  This will cause general havok on the dag because
@@ -565,7 +565,7 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
 /// the main function.
 void X86DAGToDAGISel::EmitSpecialCodeForMain(MachineBasicBlock *BB,
                                              MachineFrameInfo *MFI) {
-  const TargetInstrInfo *TII = TM.getInstrInfo();
+  const TargetInstrInfo *TII = TM.getSubtargetImpl()->getInstrInfo();
   if (Subtarget->isTargetCygMing()) {
     unsigned CallOp =
       Subtarget->is64Bit() ? X86::CALL64pcrel32 : X86::CALLpcrel32;
