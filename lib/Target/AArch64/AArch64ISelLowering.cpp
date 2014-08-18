@@ -278,6 +278,15 @@ AArch64TargetLowering::AArch64TargetLowering(TargetMachine &TM)
   setOperationAction(ISD::FCOPYSIGN, MVT::f64, Custom);
   setOperationAction(ISD::FCOPYSIGN, MVT::f32, Custom);
 
+  // f16 is storage-only, so we promote operations to f32 if we know this is
+  // valid, and ignore them otherwise. The operations not mentioned here will
+  // fail to select, but this is not a major problem as no source language
+  // should be emitting native f16 operations yet.
+  setOperationAction(ISD::FADD, MVT::f16, Promote);
+  setOperationAction(ISD::FDIV, MVT::f16, Promote);
+  setOperationAction(ISD::FMUL, MVT::f16, Promote);
+  setOperationAction(ISD::FSUB, MVT::f16, Promote);
+
   // AArch64 has implementations of a lot of rounding-like FP operations.
   static MVT RoundingTypes[] = { MVT::f32, MVT::f64};
   for (unsigned I = 0; I < array_lengthof(RoundingTypes); ++I) {
@@ -1779,7 +1788,7 @@ SDValue AArch64TargetLowering::LowerFormalArguments(
     } else { // VA.isRegLoc()
       assert(VA.isMemLoc() && "CCValAssign is neither reg nor mem");
       unsigned ArgOffset = VA.getLocMemOffset();
-      unsigned ArgSize = VA.getLocVT().getSizeInBits() / 8;
+      unsigned ArgSize = VA.getValVT().getSizeInBits() / 8;
 
       uint32_t BEAlign = 0;
       if (ArgSize < 8 && !Subtarget->isLittleEndian())
@@ -2014,6 +2023,19 @@ bool AArch64TargetLowering::isEligibleForTailCallOptimization(
     if (IsTailCallConvention(CalleeCC) && CCMatch)
       return true;
     return false;
+  }
+
+  // Externally-defined functions with weak linkage should not be
+  // tail-called on AArch64 when the OS does not support dynamic
+  // pre-emption of symbols, as the AAELF spec requires normal calls
+  // to undefined weak functions to be replaced with a NOP or jump to the
+  // next instruction. The behaviour of branch instructions in this
+  // situation (as used for tail calls) is implementation-defined, so we
+  // cannot rely on the linker replacing the tail call with a return.
+  if (GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee)) {
+    const GlobalValue *GV = G->getGlobal();
+    if (GV->hasExternalWeakLinkage())
+      return false;
   }
 
   // Now we search for cases where we can use a tail call without changing the
@@ -2321,7 +2343,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
       // common case. It should also work for fundamental types too.
       uint32_t BEAlign = 0;
       unsigned OpSize = Flags.isByVal() ? Flags.getByValSize() * 8
-                                        : VA.getLocVT().getSizeInBits();
+                                        : VA.getValVT().getSizeInBits();
       OpSize = (OpSize + 7) / 8;
       if (!Subtarget->isLittleEndian() && !Flags.isByVal()) {
         if (OpSize < 8)
@@ -2355,8 +2377,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
             DAG.getConstant(Outs[i].Flags.getByValSize(), MVT::i64);
         SDValue Cpy = DAG.getMemcpy(
             Chain, DL, DstAddr, Arg, SizeNode, Outs[i].Flags.getByValAlign(),
-            /*isVolatile = */ false,
-            /*alwaysInline = */ false, DstInfo, MachinePointerInfo());
+            /*isVol = */ false,
+            /*AlwaysInline = */ false, DstInfo, MachinePointerInfo());
 
         MemOpChains.push_back(Cpy);
       } else {
@@ -8131,8 +8153,7 @@ Value *AArch64TargetLowering::emitLoadLinked(IRBuilder<> &Builder, Value *Addr,
                                              AtomicOrdering Ord) const {
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
   Type *ValTy = cast<PointerType>(Addr->getType())->getElementType();
-  bool IsAcquire =
-      Ord == Acquire || Ord == AcquireRelease || Ord == SequentiallyConsistent;
+  bool IsAcquire = isAtLeastAcquire(Ord);
 
   // Since i128 isn't legal and intrinsics don't get type-lowered, the ldrexd
   // intrinsic must return {i64, i64} and we have to recombine them into a
@@ -8167,8 +8188,7 @@ Value *AArch64TargetLowering::emitStoreConditional(IRBuilder<> &Builder,
                                                    Value *Val, Value *Addr,
                                                    AtomicOrdering Ord) const {
   Module *M = Builder.GetInsertBlock()->getParent()->getParent();
-  bool IsRelease =
-      Ord == Release || Ord == AcquireRelease || Ord == SequentiallyConsistent;
+  bool IsRelease = isAtLeastRelease(Ord);
 
   // Since the intrinsics must have legal type, the i128 intrinsics take two
   // parameters: "i64, i64". We must marshal Val into the appropriate form

@@ -136,3 +136,27 @@ define i32 @test13(i32 %x, i32 %y) {
 ; CHECK-NEXT: %and = and i32 %x, %y
 ; CHECK-NEXT: ret i32 %and
 }
+
+; ((x | y) ^ (x ^ y)) -> (x & y)
+define i32 @test15(i32 %x, i32 %y) {
+  %1 = xor i32 %y, %x
+  %2 = or i32 %y, %x
+  %3 = xor i32 %2, %1
+  ret i32 %3
+; CHECK-LABEL: @test15(
+; CHECK-NEXT: %1 = and i32 %y, %x
+; CHECK-NEXT: ret i32 %1
+}
+
+; ((x | ~y) ^ (~x | y)) -> x ^ y
+define i32 @test16(i32 %x, i32 %y) {
+  %noty = xor i32 %y, -1
+  %notx = xor i32 %x, -1
+  %or1 = or i32 %x, %noty
+  %or2 = or i32 %notx, %y
+  %xor = xor i32 %or1, %or2
+  ret i32 %xor
+; CHECK-LABEL: @test16(
+; CHECK-NEXT: %xor = xor i32 %x, %y
+; CHECK-NEXT: ret i32 %xor
+}

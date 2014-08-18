@@ -156,6 +156,8 @@ public:
   // Node replacement helpers
   void ReplacedNode(SDNode *N) {
     LegalizedNodes.erase(N);
+    if (UpdatedNodes)
+      UpdatedNodes->insert(N);
   }
   void ReplaceNode(SDNode *Old, SDNode *New) {
     DEBUG(dbgs() << " ... replacing: "; Old->dump(&DAG);
@@ -4262,6 +4264,9 @@ void SelectionDAGLegalize::PromoteNode(SDNode *Node) {
                                   Tmp1, Tmp2, Node->getOperand(2)));
     break;
   }
+  case ISD::FADD:
+  case ISD::FSUB:
+  case ISD::FMUL:
   case ISD::FDIV:
   case ISD::FREM:
   case ISD::FPOW: {

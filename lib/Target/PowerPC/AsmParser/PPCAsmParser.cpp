@@ -250,7 +250,7 @@ class PPCAsmParser : public MCTargetAsmParser {
 
   bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                OperandVector &Operands, MCStreamer &Out,
-                               unsigned &ErrorInfo,
+                               uint64_t &ErrorInfo,
                                bool MatchingInlineAsm) override;
 
   void ProcessInstruction(MCInst &Inst, const OperandVector &Ops);
@@ -662,9 +662,9 @@ public:
     // explicitly.
     void *Mem = ::operator new(sizeof(PPCOperand) + Str.size());
     std::unique_ptr<PPCOperand> Op(new (Mem) PPCOperand(Token));
-    Op->Tok.Data = (const char *)(Op.get() + 1);
+    Op->Tok.Data = reinterpret_cast<const char *>(Op.get() + 1);
     Op->Tok.Length = Str.size();
-    std::memcpy((void *)Op->Tok.Data, Str.data(), Str.size());
+    std::memcpy(const_cast<char *>(Op->Tok.Data), Str.data(), Str.size());
     Op->StartLoc = S;
     Op->EndLoc = S;
     Op->IsPPC64 = IsPPC64;
@@ -1053,7 +1053,7 @@ void PPCAsmParser::ProcessInstruction(MCInst &Inst,
 
 bool PPCAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                            OperandVector &Operands,
-                                           MCStreamer &Out, unsigned &ErrorInfo,
+                                           MCStreamer &Out, uint64_t &ErrorInfo,
                                            bool MatchingInlineAsm) {
   MCInst Inst;
 
@@ -1071,7 +1071,7 @@ bool PPCAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       return Error(IDLoc, "unrecognized instruction mnemonic");
   case Match_InvalidOperand: {
     SMLoc ErrorLoc = IDLoc;
-    if (ErrorInfo != ~0U) {
+    if (ErrorInfo != ~0ULL) {
       if (ErrorInfo >= Operands.size())
         return Error(IDLoc, "too few operands for instruction");
 
