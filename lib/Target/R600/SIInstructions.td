@@ -1729,14 +1729,14 @@ def V_SUB_F64 : InstSI <
 multiclass SI_SPILL_SGPR <RegisterClass sgpr_class> {
 
   def _SAVE : InstSI <
-    (outs VReg_32:$dst),
+    (outs),
     (ins sgpr_class:$src, i32imm:$frame_idx),
     "", []
   >;
 
   def _RESTORE : InstSI <
     (outs sgpr_class:$dst),
-    (ins VReg_32:$src, i32imm:$frame_idx),
+    (ins i32imm:$frame_idx),
     "", []
   >;
 
@@ -2520,41 +2520,49 @@ def : ROTRPattern <V_ALIGNBIT_B32>;
 /**********   Load/Store Patterns   **********/
 /********** ======================= **********/
 
-multiclass DSReadPat <DS inst, ValueType vt, PatFrag frag> {
-  def : Pat <
-    (vt (frag (add i32:$ptr, (i32 IMM16bit:$offset)))),
-    (inst (i1 0), $ptr, (as_i16imm $offset))
-  >;
+class DSReadPat <DS inst, ValueType vt, PatFrag frag> : Pat <
+  (vt (frag (DS1Addr1Offset i32:$ptr, i32:$offset))),
+  (inst (i1 0), $ptr, (as_i16imm $offset))
+>;
 
-  def : Pat <
-    (frag i32:$src0),
-    (vt (inst 0, $src0, 0))
-  >;
-}
+def : DSReadPat <DS_READ_I8,  i32, sextloadi8_local>;
+def : DSReadPat <DS_READ_U8,  i32, az_extloadi8_local>;
+def : DSReadPat <DS_READ_I16, i32, sextloadi16_local>;
+def : DSReadPat <DS_READ_U16, i32, az_extloadi16_local>;
+def : DSReadPat <DS_READ_B32, i32, local_load>;
 
-defm : DSReadPat <DS_READ_I8,  i32, sextloadi8_local>;
-defm : DSReadPat <DS_READ_U8,  i32, az_extloadi8_local>;
-defm : DSReadPat <DS_READ_I16, i32, sextloadi16_local>;
-defm : DSReadPat <DS_READ_U16, i32, az_extloadi16_local>;
-defm : DSReadPat <DS_READ_B32, i32, local_load>;
-defm : DSReadPat <DS_READ_B64, v2i32, local_load>;
+let AddedComplexity = 100 in {
 
-multiclass DSWritePat <DS inst, ValueType vt, PatFrag frag> {
-  def : Pat <
-    (frag vt:$value, (add i32:$ptr, (i32 IMM16bit:$offset))),
-    (inst (i1 0), $ptr, $value, (as_i16imm $offset))
-  >;
+def : DSReadPat <DS_READ_B64, v2i32, local_load_aligned8bytes>;
 
-  def : Pat <
-    (frag vt:$val, i32:$ptr),
-    (inst 0, $ptr, $val, 0)
-  >;
-}
+} // End AddedComplexity = 100
 
-defm : DSWritePat <DS_WRITE_B8, i32, truncstorei8_local>;
-defm : DSWritePat <DS_WRITE_B16, i32, truncstorei16_local>;
-defm : DSWritePat <DS_WRITE_B32, i32, local_store>;
-defm : DSWritePat <DS_WRITE_B64, v2i32, local_store>;
+def : Pat <
+  (v2i32 (local_load (DS64Bit4ByteAligned i32:$ptr, i8:$offset0,
+                                                    i8:$offset1))),
+  (DS_READ2_B32 (i1 0), $ptr, $offset0, $offset1)
+>;
+
+class DSWritePat <DS inst, ValueType vt, PatFrag frag> : Pat <
+  (frag vt:$value, (DS1Addr1Offset i32:$ptr, i32:$offset)),
+  (inst (i1 0), $ptr, $value, (as_i16imm $offset))
+>;
+
+def : DSWritePat <DS_WRITE_B8, i32, truncstorei8_local>;
+def : DSWritePat <DS_WRITE_B16, i32, truncstorei16_local>;
+def : DSWritePat <DS_WRITE_B32, i32, local_store>;
+
+let AddedComplexity = 100 in {
+
+def : DSWritePat <DS_WRITE_B64, v2i32, local_store_aligned8bytes>;
+} // End AddedComplexity = 100
+
+def : Pat <
+  (local_store v2i32:$value, (DS64Bit4ByteAligned i32:$ptr, i8:$offset0,
+                                                            i8:$offset1)),
+  (DS_WRITE2_B32 (i1 0), $ptr, (EXTRACT_SUBREG $value, sub0),
+                        (EXTRACT_SUBREG $value, sub1), $offset0, $offset1)
+>;
 
 multiclass DSAtomicRetPat<DS inst, ValueType vt, PatFrag frag> {
   def : Pat <

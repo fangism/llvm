@@ -1389,6 +1389,10 @@ let TargetPrefix = "x86" in {  // All intrinsics start with "llvm.x86.".
         GCCBuiltin<"__builtin_ia32_storeupd512_mask">,
         Intrinsic<[], [llvm_ptr_ty, llvm_v8f64_ty, llvm_i8_ty],
                   [IntrReadWriteArgMem]>;
+  def int_x86_avx512_mask_store_ss :
+        GCCBuiltin<"__builtin_ia32_storess_mask">,
+        Intrinsic<[], [llvm_ptr_ty, llvm_v4f32_ty, llvm_i8_ty],
+                  [IntrReadWriteArgMem]>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -2756,6 +2760,30 @@ let TargetPrefix = "x86" in {  // All intrinsics start with "llvm.x86.".
   def int_x86_rdseed_16 : Intrinsic<[llvm_i16_ty, llvm_i32_ty], [], []>;
   def int_x86_rdseed_32 : Intrinsic<[llvm_i32_ty, llvm_i32_ty], [], []>;
   def int_x86_rdseed_64 : Intrinsic<[llvm_i64_ty, llvm_i32_ty], [], []>;
+}
+
+//===----------------------------------------------------------------------===//
+// ADX
+
+let TargetPrefix = "x86" in {  // All intrinsics start with "llvm.x86.".
+  def int_x86_addcarryx_u32: GCCBuiltin<"__builtin_ia32_addcarryx_u32">,
+        Intrinsic<[llvm_i8_ty], [llvm_i8_ty, llvm_i32_ty, llvm_i32_ty,
+                                 llvm_ptr_ty], [IntrReadWriteArgMem]>;
+  def int_x86_addcarryx_u64: GCCBuiltin<"__builtin_ia32_addcarryx_u64">,
+        Intrinsic<[llvm_i8_ty], [llvm_i8_ty, llvm_i64_ty, llvm_i64_ty,
+                                 llvm_ptr_ty], [IntrReadWriteArgMem]>;
+  def int_x86_addcarry_u32: GCCBuiltin<"__builtin_ia32_addcarry_u32">,
+        Intrinsic<[llvm_i8_ty], [llvm_i8_ty, llvm_i32_ty, llvm_i32_ty,
+                                 llvm_ptr_ty], [IntrReadWriteArgMem]>;
+  def int_x86_addcarry_u64: GCCBuiltin<"__builtin_ia32_addcarry_u64">,
+        Intrinsic<[llvm_i8_ty], [llvm_i8_ty, llvm_i64_ty, llvm_i64_ty,
+                                 llvm_ptr_ty], [IntrReadWriteArgMem]>;
+  def int_x86_subborrow_u32: GCCBuiltin<"__builtin_ia32_subborrow_u32">,
+        Intrinsic<[llvm_i8_ty], [llvm_i8_ty, llvm_i32_ty, llvm_i32_ty,
+                                 llvm_ptr_ty], [IntrReadWriteArgMem]>;
+  def int_x86_subborrow_u64: GCCBuiltin<"__builtin_ia32_subborrow_u64">,
+        Intrinsic<[llvm_i8_ty], [llvm_i8_ty, llvm_i64_ty, llvm_i64_ty,
+                                 llvm_ptr_ty], [IntrReadWriteArgMem]>;
 }
 
 //===----------------------------------------------------------------------===//

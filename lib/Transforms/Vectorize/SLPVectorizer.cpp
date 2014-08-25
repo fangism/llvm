@@ -976,6 +976,14 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth) {
   Instruction *VL0 = cast<Instruction>(VL[0]);
   BasicBlock *BB = cast<Instruction>(VL0)->getParent();
 
+  if (!DT->isReachableFromEntry(BB)) {
+    // Don't go into unreachable blocks. They may contain instructions with
+    // dependency cycles which confuse the final scheduling.
+    DEBUG(dbgs() << "SLP: bundle in unreachable block.\n");
+    newTreeEntry(VL, false);
+    return;
+  }
+  
   // Check that every instructions appears once in this bundle.
   for (unsigned i = 0, e = VL.size(); i < e; ++i)
     for (unsigned j = i+1; j < e; ++j)
@@ -1417,6 +1425,10 @@ int BoUpSLP::getEntryCost(TreeEntry *E) {
             TargetTransformInfo::OK_AnyValue;
         TargetTransformInfo::OperandValueKind Op2VK =
             TargetTransformInfo::OK_UniformConstantValue;
+        TargetTransformInfo::OperandValueProperties Op1VP =
+            TargetTransformInfo::OP_None;
+        TargetTransformInfo::OperandValueProperties Op2VP =
+            TargetTransformInfo::OP_None;
 
         // If all operands are exactly the same ConstantInt then set the
         // operand kind to OK_UniformConstantValue.
@@ -1438,11 +1450,17 @@ int BoUpSLP::getEntryCost(TreeEntry *E) {
               CInt != cast<ConstantInt>(I->getOperand(1)))
             Op2VK = TargetTransformInfo::OK_NonUniformConstantValue;
         }
+        // FIXME: Currently cost of model modification for division by
+        // power of 2 is handled only for X86. Add support for other targets.
+        if (Op2VK == TargetTransformInfo::OK_UniformConstantValue && CInt &&
+            CInt->getValue().isPowerOf2())
+          Op2VP = TargetTransformInfo::OP_PowerOf2;
 
-        ScalarCost =
-            VecTy->getNumElements() *
-            TTI->getArithmeticInstrCost(Opcode, ScalarTy, Op1VK, Op2VK);
-        VecCost = TTI->getArithmeticInstrCost(Opcode, VecTy, Op1VK, Op2VK);
+        ScalarCost = VecTy->getNumElements() *
+                     TTI->getArithmeticInstrCost(Opcode, ScalarTy, Op1VK, Op2VK,
+                                                 Op1VP, Op2VP);
+        VecCost = TTI->getArithmeticInstrCost(Opcode, VecTy, Op1VK, Op2VK,
+                                              Op1VP, Op2VP);
       }
       return VecCost - ScalarCost;
     }

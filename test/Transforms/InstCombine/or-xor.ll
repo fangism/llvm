@@ -160,3 +160,24 @@ define i32 @test16(i32 %x, i32 %y) {
 ; CHECK-NEXT: %xor = xor i32 %x, %y
 ; CHECK-NEXT: ret i32 %xor
 }
+
+; ((x & ~y) ^ (~x & y)) -> x ^ y
+define i32 @test17(i32 %x, i32 %y) {
+  %noty = xor i32 %y, -1
+  %notx = xor i32 %x, -1
+  %and1 = and i32 %x, %noty
+  %and2 = and i32 %notx, %y
+  %xor = xor i32 %and1, %and2
+  ret i32 %xor
+; CHECK-LABEL: @test17(
+; CHECK-NEXT: %xor = xor i32 %x, %y
+; CHECK-NEXT: ret i32 %xor
+}
+
+define i32 @test18(i32 %a, i32 %b) {
+  %or = xor i32 %a, %b
+  %and1 = and i32 %or, 1
+  %and2 = and i32 %b, -2
+  %xor = or i32 %and1, %and2
+  ret i32 %xor
+}

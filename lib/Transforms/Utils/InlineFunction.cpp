@@ -98,7 +98,7 @@ namespace {
     /// split the landing pad block after the landingpad instruction and jump
     /// to there.
     void forwardResume(ResumeInst *RI,
-                       SmallPtrSet<LandingPadInst*, 16> &InlinedLPads);
+                       SmallPtrSetImpl<LandingPadInst*> &InlinedLPads);
 
     /// addIncomingPHIValuesFor - Add incoming-PHI values to the unwind
     /// destination block for the given basic block, using the values for the
@@ -157,7 +157,7 @@ BasicBlock *InvokeInliningInfo::getInnerResumeDest() {
 /// branch. When there is more than one predecessor, we need to split the
 /// landing pad block after the landingpad instruction and jump to there.
 void InvokeInliningInfo::forwardResume(ResumeInst *RI,
-                               SmallPtrSet<LandingPadInst*, 16> &InlinedLPads) {
+                               SmallPtrSetImpl<LandingPadInst*> &InlinedLPads) {
   BasicBlock *Dest = getInnerResumeDest();
   BasicBlock *Src = RI->getParent();
 
@@ -247,9 +247,7 @@ static void HandleInlinedInvoke(InvokeInst *II, BasicBlock *FirstNewBlock,
   // Append the clauses from the outer landing pad instruction into the inlined
   // landing pad instructions.
   LandingPadInst *OuterLPad = Invoke.getLandingPadInst();
-  for (SmallPtrSet<LandingPadInst*, 16>::iterator I = InlinedLPads.begin(),
-         E = InlinedLPads.end(); I != E; ++I) {
-    LandingPadInst *InlinedLPad = *I;
+  for (LandingPadInst *InlinedLPad : InlinedLPads) {
     unsigned OuterNum = OuterLPad->getNumClauses();
     InlinedLPad->reserveClauses(OuterNum);
     for (unsigned OuterIdx = 0; OuterIdx != OuterNum; ++OuterIdx)

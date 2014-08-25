@@ -202,10 +202,10 @@ static const Target *getTarget(const ObjectFile *Obj = nullptr) {
 static void emitDOTFile(const char *FileName, const MCFunction &f,
                         MCInstPrinter *IP) {
   // Start a new dot file.
-  std::string Error;
-  raw_fd_ostream Out(FileName, Error, sys::fs::F_Text);
-  if (!Error.empty()) {
-    errs() << "llvm-objdump: warning: " << Error << '\n';
+  std::error_code EC;
+  raw_fd_ostream Out(FileName, EC, sys::fs::F_Text);
+  if (EC) {
+    errs() << "llvm-objdump: warning: " << EC.message() << '\n';
     return;
   }
 
@@ -386,10 +386,10 @@ static void DisassembleObject(const ObjectFile *Obj, bool InlineRelocs) {
       }
     }
     if (!YAMLCFG.empty()) {
-      std::string Error;
-      raw_fd_ostream YAMLOut(YAMLCFG.c_str(), Error, sys::fs::F_Text);
-      if (!Error.empty()) {
-        errs() << ToolName << ": warning: " << Error << '\n';
+      std::error_code EC;
+      raw_fd_ostream YAMLOut(YAMLCFG, EC, sys::fs::F_Text);
+      if (EC) {
+        errs() << ToolName << ": warning: " << EC.message() << '\n';
         return;
       }
       mcmodule2yaml(YAMLOut, *Mod, *MII, *MRI);
@@ -834,6 +834,8 @@ static void printPrivateFileHeader(const ObjectFile *o) {
     printELFFileHeader(o);
   } else if (o->isCOFF()) {
     printCOFFFileHeader(o);
+  } else if (o->isMachO()) {
+    printMachOFileHeader(o);
   }
 }
 
@@ -892,12 +894,12 @@ static void DumpInput(StringRef file) {
   }
 
   // Attempt to open the binary.
-  ErrorOr<std::unique_ptr<Binary>> BinaryOrErr = createBinary(file);
+  ErrorOr<OwningBinary<Binary>> BinaryOrErr = createBinary(file);
   if (std::error_code EC = BinaryOrErr.getError()) {
     errs() << ToolName << ": '" << file << "': " << EC.message() << ".\n";
     return;
   }
-  Binary &Binary = *BinaryOrErr.get();
+  Binary &Binary = *BinaryOrErr.get().getBinary();
 
   if (Archive *a = dyn_cast<Archive>(&Binary))
     DumpArchive(a);

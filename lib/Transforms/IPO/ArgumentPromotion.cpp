@@ -81,8 +81,8 @@ namespace {
     CallGraphNode *PromoteArguments(CallGraphNode *CGN);
     bool isSafeToPromoteArgument(Argument *Arg, bool isByVal) const;
     CallGraphNode *DoPromotion(Function *F,
-                               SmallPtrSet<Argument*, 8> &ArgsToPromote,
-                               SmallPtrSet<Argument*, 8> &ByValArgsToTransform);
+                              SmallPtrSetImpl<Argument*> &ArgsToPromote,
+                              SmallPtrSetImpl<Argument*> &ByValArgsToTransform);
     
     using llvm::Pass::doInitialization;
     bool doInitialization(CallGraph &CG) override;
@@ -477,10 +477,8 @@ bool ArgPromotion::isSafeToPromoteArgument(Argument *Arg,
     // loading block.
     for (pred_iterator PI = pred_begin(BB), E = pred_end(BB); PI != E; ++PI) {
       BasicBlock *P = *PI;
-      for (idf_ext_iterator<BasicBlock*, SmallPtrSet<BasicBlock*, 16> >
-             I = idf_ext_begin(P, TranspBlocks),
-             E = idf_ext_end(P, TranspBlocks); I != E; ++I)
-        if (AA.canBasicBlockModify(**I, Loc))
+      for (BasicBlock *TranspBB : inverse_depth_first_ext(P, TranspBlocks))
+        if (AA.canBasicBlockModify(*TranspBB, Loc))
           return false;
     }
   }
@@ -495,8 +493,8 @@ bool ArgPromotion::isSafeToPromoteArgument(Argument *Arg,
 /// arguments, and returns the new function.  At this point, we know that it's
 /// safe to do so.
 CallGraphNode *ArgPromotion::DoPromotion(Function *F,
-                               SmallPtrSet<Argument*, 8> &ArgsToPromote,
-                              SmallPtrSet<Argument*, 8> &ByValArgsToTransform) {
+                             SmallPtrSetImpl<Argument*> &ArgsToPromote,
+                             SmallPtrSetImpl<Argument*> &ByValArgsToTransform) {
 
   // Start by computing a new prototype for the function, which is the same as
   // the old function, but has modified arguments.

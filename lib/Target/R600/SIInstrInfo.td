@@ -191,6 +191,9 @@ def tfe : Operand <i1> {
 // Complex patterns
 //===----------------------------------------------------------------------===//
 
+def DS1Addr1Offset : ComplexPattern<i32, 2, "SelectDS1Addr1Offset">;
+def DS64Bit4ByteAligned : ComplexPattern<i32, 3, "SelectDS64Bit4ByteAligned">;
+
 def MUBUFAddr32 : ComplexPattern<i64, 9, "SelectMUBUFAddr32">;
 def MUBUFAddr64 : ComplexPattern<i64, 3, "SelectMUBUFAddr64">;
 def MUBUFScratch : ComplexPattern<i64, 4, "SelectMUBUFScratch">;
@@ -842,7 +845,7 @@ class DS_Store_Helper <bits<8> op, string asm, RegisterClass regClass> : DS_1A <
   let vdst = 0;
 }
 
-class DS_Store2_Helper <bits<8> op, string asm, RegisterClass regClass> : DS_1A <
+class DS_Store2_Helper <bits<8> op, string asm, RegisterClass regClass> : DS <
   op,
   (outs),
   (ins i1imm:$gds, VReg_32:$addr, regClass:$data0, regClass:$data1,
