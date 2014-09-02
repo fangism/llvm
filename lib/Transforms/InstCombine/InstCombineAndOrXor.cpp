@@ -1101,7 +1101,6 @@ Value *InstCombiner::FoldAndOfFCmps(FCmpInst *LHS, FCmpInst *RHS) {
   return nullptr;
 }
 
-
 Instruction *InstCombiner::visitAnd(BinaryOperator &I) {
   bool Changed = SimplifyAssociativeOrCommutative(I);
   Value *Op0 = I.getOperand(0), *Op1 = I.getOperand(1);
@@ -1307,10 +1306,33 @@ Instruction *InstCombiner::visitAnd(BinaryOperator &I) {
       return BinaryOperator::CreateAnd(A, B);
   }
 
-  if (ICmpInst *RHS = dyn_cast<ICmpInst>(Op1))
-    if (ICmpInst *LHS = dyn_cast<ICmpInst>(Op0))
+  {
+    ICmpInst *LHS = dyn_cast<ICmpInst>(Op0);
+    ICmpInst *RHS = dyn_cast<ICmpInst>(Op1);
+    if (LHS && RHS)
       if (Value *Res = FoldAndOfICmps(LHS, RHS))
         return ReplaceInstUsesWith(I, Res);
+
+    // TODO: Make this recursive; it's a little tricky because an arbitrary
+    // number of 'and' instructions might have to be created.
+    Value *X, *Y;
+    if (LHS && match(Op1, m_OneUse(m_And(m_Value(X), m_Value(Y))))) {
+      if (auto *Cmp = dyn_cast<ICmpInst>(X))
+        if (Value *Res = FoldAndOfICmps(LHS, Cmp))
+          return ReplaceInstUsesWith(I, Builder->CreateAnd(Res, Y));
+      if (auto *Cmp = dyn_cast<ICmpInst>(Y))
+        if (Value *Res = FoldAndOfICmps(LHS, Cmp))
+          return ReplaceInstUsesWith(I, Builder->CreateAnd(Res, X));
+    }
+    if (RHS && match(Op0, m_OneUse(m_And(m_Value(X), m_Value(Y))))) {
+      if (auto *Cmp = dyn_cast<ICmpInst>(X))
+        if (Value *Res = FoldAndOfICmps(Cmp, RHS))
+          return ReplaceInstUsesWith(I, Builder->CreateAnd(Res, Y));
+      if (auto *Cmp = dyn_cast<ICmpInst>(Y))
+        if (Value *Res = FoldAndOfICmps(Cmp, RHS))
+          return ReplaceInstUsesWith(I, Builder->CreateAnd(Res, X));
+    }
+  }
 
   // If and'ing two fcmp, try combine them into one.
   if (FCmpInst *LHS = dyn_cast<FCmpInst>(I.getOperand(0)))
@@ -1350,20 +1372,6 @@ Instruction *InstCombiner::visitAnd(BinaryOperator &I) {
               return CastInst::Create(Op0C->getOpcode(), Res, I.getType());
       }
     }
-
-  // (X >> Z) & (Y >> Z)  -> (X&Y) >> Z  for all shifts.
-  if (BinaryOperator *SI1 = dyn_cast<BinaryOperator>(Op1)) {
-    if (BinaryOperator *SI0 = dyn_cast<BinaryOperator>(Op0))
-      if (SI0->isShift() && SI0->getOpcode() == SI1->getOpcode() &&
-          SI0->getOperand(1) == SI1->getOperand(1) &&
-          (SI0->hasOneUse() || SI1->hasOneUse())) {
-        Value *NewOp =
-          Builder->CreateAnd(SI0->getOperand(0), SI1->getOperand(0),
-                             SI0->getName());
-        return BinaryOperator::Create(SI1->getOpcode(), NewOp,
-                                      SI1->getOperand(1));
-      }
-  }
 
   {
     Value *X = nullptr;
@@ -2227,19 +2235,6 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
   if (match(Op0, m_And(m_Or(m_Specific(Op1), m_Value(C)), m_Value(A))))
     return BinaryOperator::CreateOr(Op1, Builder->CreateAnd(A, C));
 
-  // (X >> Z) | (Y >> Z)  -> (X|Y) >> Z  for all shifts.
-  if (BinaryOperator *SI1 = dyn_cast<BinaryOperator>(Op1)) {
-    if (BinaryOperator *SI0 = dyn_cast<BinaryOperator>(Op0))
-      if (SI0->isShift() && SI0->getOpcode() == SI1->getOpcode() &&
-          SI0->getOperand(1) == SI1->getOperand(1) &&
-          (SI0->hasOneUse() || SI1->hasOneUse())) {
-        Value *NewOp = Builder->CreateOr(SI0->getOperand(0), SI1->getOperand(0),
-                                         SI0->getName());
-        return BinaryOperator::Create(SI1->getOpcode(), NewOp,
-                                      SI1->getOperand(1));
-      }
-  }
-
   // (~A | ~B) == (~(A & B)) - De Morgan's Law
   if (Value *Op0NotVal = dyn_castNotVal(Op0))
     if (Value *Op1NotVal = dyn_castNotVal(Op1))
@@ -2583,18 +2578,6 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
         return BinaryOperator::CreateAnd(Builder->CreateNot(A), Op1);
       }
     }
-  }
-
-  // (X >> Z) ^ (Y >> Z)  -> (X^Y) >> Z  for all shifts.
-  if (Op0I && Op1I && Op0I->isShift() &&
-      Op0I->getOpcode() == Op1I->getOpcode() &&
-      Op0I->getOperand(1) == Op1I->getOperand(1) &&
-      (Op0I->hasOneUse() || Op1I->hasOneUse())) {
-    Value *NewOp =
-      Builder->CreateXor(Op0I->getOperand(0), Op1I->getOperand(0),
-                         Op0I->getName());
-    return BinaryOperator::Create(Op1I->getOpcode(), NewOp,
-                                  Op1I->getOperand(1));
   }
 
   if (Op0I && Op1I) {

@@ -294,8 +294,7 @@ public:
     // because the file has probably just been mmapped.  Instead we make
     // a copy.  The filed-based buffer will be released when it goes
     // out of scope.
-    return std::unique_ptr<MemoryBuffer>(
-        MemoryBuffer::getMemBufferCopy(IRObjectBuffer.get()->getBuffer()));
+    return MemoryBuffer::getMemBufferCopy(IRObjectBuffer.get()->getBuffer());
   }
 
 private:
@@ -399,7 +398,7 @@ int main(int argc, char **argv, char * const *envp) {
 
   // Load the bitcode...
   SMDiagnostic Err;
-  std::unique_ptr<Module> Owner(ParseIRFile(InputFile, Err, Context));
+  std::unique_ptr<Module> Owner = parseIRFile(InputFile, Err, Context);
   Module *Mod = Owner.get();
   if (!Mod) {
     Err.print(argv[0], errs());
@@ -513,7 +512,7 @@ int main(int argc, char **argv, char * const *envp) {
 
   // Load any additional modules specified on the command line.
   for (unsigned i = 0, e = ExtraModules.size(); i != e; ++i) {
-    std::unique_ptr<Module> XMod(ParseIRFile(ExtraModules[i], Err, Context));
+    std::unique_ptr<Module> XMod = parseIRFile(ExtraModules[i], Err, Context);
     if (!XMod) {
       Err.print(argv[0], errs());
       return 1;
@@ -529,7 +528,6 @@ int main(int argc, char **argv, char * const *envp) {
     EE->addModule(std::move(XMod));
   }
 
-  std::vector<std::unique_ptr<MemoryBuffer>> Buffers;
   for (unsigned i = 0, e = ExtraObjects.size(); i != e; ++i) {
     ErrorOr<object::OwningBinary<object::ObjectFile>> Obj =
         object::ObjectFile::createObjectFile(ExtraObjects[i]);
@@ -538,8 +536,7 @@ int main(int argc, char **argv, char * const *envp) {
       return 1;
     }
     object::OwningBinary<object::ObjectFile> &O = Obj.get();
-    EE->addObjectFile(std::move(O.getBinary()));
-    Buffers.push_back(std::move(O.getBuffer()));
+    EE->addObjectFile(std::move(O));
   }
 
   for (unsigned i = 0, e = ExtraArchives.size(); i != e; ++i) {

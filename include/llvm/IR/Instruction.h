@@ -185,7 +185,7 @@ public:
   /// convenience method for passes to do so.
   void dropUnknownMetadata(ArrayRef<unsigned> KnownIDs);
   void dropUnknownMetadata() {
-    return dropUnknownMetadata(ArrayRef<unsigned>());
+    return dropUnknownMetadata(None);
   }
   void dropUnknownMetadata(unsigned ID1) {
     return dropUnknownMetadata(makeArrayRef(ID1));
@@ -232,7 +232,7 @@ public:
 
   /// Convenience function for setting all the fast-math flags on this
   /// instruction, which must be an operator which supports these flags. See
-  /// LangRef.html for the meaning of these flats.
+  /// LangRef.html for the meaning of these flags.
   void setFastMathFlags(FastMathFlags FMF);
 
   /// Determine whether the unsafe-algebra flag is set.
@@ -252,7 +252,7 @@ public:
 
   /// Convenience function for getting all the fast-math flags, which must be an
   /// operator which supports these flags. See LangRef.html for the meaning of
-  /// these flats.
+  /// these flags.
   FastMathFlags getFastMathFlags() const;
 
   /// Copy I's fast-math flags

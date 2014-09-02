@@ -41,8 +41,11 @@ void RuntimeDyldImpl::registerEHFrames() {}
 
 void RuntimeDyldImpl::deregisterEHFrames() {}
 
-static void dumpSectionMemory(const SectionEntry &S) {
-  dbgs() << "----- Contents of section " << S.Name << " -----";
+#ifndef NDEBUG
+static void dumpSectionMemory(const SectionEntry &S, StringRef State) {
+  dbgs() << "----- Contents of section " << S.Name << " " << State << " -----";
+
+  const unsigned ColsPerRow = 16;
 
   uint8_t *DataAddr = S.Address;
   uint64_t LoadAddr = S.LoadAddress;
@@ -51,14 +54,14 @@ static void dumpSectionMemory(const SectionEntry &S) {
   unsigned BytesRemaining = S.Size;
 
   if (StartPadding) {
-    dbgs() << "\n" << format("0x%08x", LoadAddr & ~7) << ":";
+    dbgs() << "\n" << format("0x%08x", LoadAddr & ~(ColsPerRow - 1)) << ":";
     while (StartPadding--)
       dbgs() << "   ";
   }
 
   while (BytesRemaining > 0) {
-    if ((LoadAddr & 7) == 0)
-      dbgs() << "\n" << format("0x%08x", LoadAddr) << ":";
+    if ((LoadAddr & (ColsPerRow - 1)) == 0)
+      dbgs() << "\n" << format("0x%016" PRIx64, LoadAddr) << ":";
 
     dbgs() << " " << format("%02x", *DataAddr);
 
@@ -69,6 +72,7 @@ static void dumpSectionMemory(const SectionEntry &S) {
 
   dbgs() << "\n";
 }
+#endif
 
 // Resolve the relocations for all symbols we currently know about.
 void RuntimeDyldImpl::resolveRelocations() {
@@ -86,8 +90,9 @@ void RuntimeDyldImpl::resolveRelocations() {
     uint64_t Addr = Sections[i].LoadAddress;
     DEBUG(dbgs() << "Resolving relocations Section #" << i << "\t"
                  << format("0x%x", Addr) << "\n");
-    DEBUG(dumpSectionMemory(Sections[i]));
+    DEBUG(dumpSectionMemory(Sections[i], "before relocations"));
     resolveRelocationList(Relocations[i], Addr);
+    DEBUG(dumpSectionMemory(Sections[i], "after relocations"));
     Relocations.erase(i);
   }
 }
@@ -388,6 +393,38 @@ unsigned RuntimeDyldImpl::computeSectionStubBufSize(ObjectImage &Obj,
   if (StubAlignment > EndAlignment)
     StubBufSize += StubAlignment - EndAlignment;
   return StubBufSize;
+}
+
+uint64_t RuntimeDyldImpl::readBytesUnaligned(uint8_t *Src,
+                                             unsigned Size) const {
+  uint64_t Result = 0;
+  uint8_t *Dst = reinterpret_cast<uint8_t*>(&Result);
+
+  if (IsTargetLittleEndian == sys::IsLittleEndianHost) {
+    if (!sys::IsLittleEndianHost)
+      Dst += sizeof(Result) - Size;
+    memcpy(Dst, Src, Size);
+  } else {
+    Dst += Size - 1;
+    for (unsigned i = 0; i < Size; ++i)
+      *Dst-- = *Src++;
+  }
+
+  return Result;
+}
+
+void RuntimeDyldImpl::writeBytesUnaligned(uint64_t Value, uint8_t *Dst,
+                                          unsigned Size) const {
+  uint8_t *Src = reinterpret_cast<uint8_t*>(&Value);
+  if (IsTargetLittleEndian == sys::IsLittleEndianHost) {
+    if (!sys::IsLittleEndianHost)
+      Src += sizeof(Value) - Size;
+    memcpy(Dst, Src, Size);
+  } else {
+    Src += Size - 1;
+    for (unsigned i = 0; i < Size; ++i)
+      *Dst++ = *Src--;
+  }
 }
 
 void RuntimeDyldImpl::emitCommonSymbols(ObjectImage &Obj,

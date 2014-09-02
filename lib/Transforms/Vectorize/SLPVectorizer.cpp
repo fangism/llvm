@@ -1190,6 +1190,16 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth) {
         }
       }
 
+      // We combine only GEPs with a single use.
+      for (unsigned j = 0; j < VL.size(); ++j) {
+        if (cast<Instruction>(VL[j])->getNumUses() > 1) {
+          DEBUG(dbgs() << "SLP: not-vectorizable GEP (multiple uses).\n");
+          BS.cancelScheduling(VL);
+          newTreeEntry(VL, false);
+          return;
+        }
+      }
+
       // We can't combine several GEPs into one vector if they operate on
       // different types.
       Type *Ty0 = cast<Instruction>(VL0)->getOperand(0)->getType();
@@ -3102,11 +3112,9 @@ bool SLPVectorizer::tryToVectorize(BinaryOperator *V, BoUpSLP &R) {
     BinaryOperator *B0 = dyn_cast<BinaryOperator>(B->getOperand(0));
     BinaryOperator *B1 = dyn_cast<BinaryOperator>(B->getOperand(1));
     if (tryToVectorizePair(A, B0, R)) {
-      B->moveBefore(V);
       return true;
     }
     if (tryToVectorizePair(A, B1, R)) {
-      B->moveBefore(V);
       return true;
     }
   }
@@ -3116,11 +3124,9 @@ bool SLPVectorizer::tryToVectorize(BinaryOperator *V, BoUpSLP &R) {
     BinaryOperator *A0 = dyn_cast<BinaryOperator>(A->getOperand(0));
     BinaryOperator *A1 = dyn_cast<BinaryOperator>(A->getOperand(1));
     if (tryToVectorizePair(A0, B, R)) {
-      A->moveBefore(V);
       return true;
     }
     if (tryToVectorizePair(A1, B, R)) {
-      A->moveBefore(V);
       return true;
     }
   }
@@ -3316,8 +3322,7 @@ public:
     unsigned i = 0;
 
     for (; i < NumReducedVals - ReduxWidth + 1; i += ReduxWidth) {
-      ArrayRef<Value *> ValsToReduce(&ReducedVals[i], ReduxWidth);
-      V.buildTree(ValsToReduce, ReductionOps);
+      V.buildTree(makeArrayRef(&ReducedVals[i], ReduxWidth), ReductionOps);
 
       // Estimate cost.
       int Cost = V.getTreeCost() + getReductionCost(TTI, ReducedVals[i]);
@@ -3509,8 +3514,7 @@ bool SLPVectorizer::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
       // Try to vectorize them.
       unsigned NumElts = (SameTypeIt - IncIt);
       DEBUG(errs() << "SLP: Trying to vectorize starting at PHIs (" << NumElts << ")\n");
-      if (NumElts > 1 &&
-          tryToVectorizeList(ArrayRef<Value *>(IncIt, NumElts), R)) {
+      if (NumElts > 1 && tryToVectorizeList(makeArrayRef(IncIt, NumElts), R)) {
         // Success start over because instructions might have been changed.
         HaveVectorizedPhiNodes = true;
         Changed = true;
@@ -3652,8 +3656,8 @@ bool SLPVectorizer::vectorizeStoreChains(BoUpSLP &R) {
     // Process the stores in chunks of 16.
     for (unsigned CI = 0, CE = it->second.size(); CI < CE; CI+=16) {
       unsigned Len = std::min<unsigned>(CE - CI, 16);
-      ArrayRef<StoreInst *> Chunk(&it->second[CI], Len);
-      Changed |= vectorizeStores(Chunk, -SLPCostThreshold, R);
+      Changed |= vectorizeStores(makeArrayRef(&it->second[CI], Len),
+                                 -SLPCostThreshold, R);
     }
   }
   return Changed;
