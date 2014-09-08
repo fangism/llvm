@@ -19,6 +19,9 @@ namespace llvm {
 class RuntimeDyldMachOI386
     : public RuntimeDyldMachOCRTPBase<RuntimeDyldMachOI386> {
 public:
+
+  typedef uint32_t TargetPtrT;
+
   RuntimeDyldMachOI386(RTDyldMemoryManager *MM)
       : RuntimeDyldMachOCRTPBase(MM) {}
 
@@ -65,7 +68,7 @@ public:
     if (RE.IsPCRel)
       makeValueAddendPCRel(Value, ObjImg, RelI, 1 << RE.Size);
 
-    RE.Addend = Value.Addend;
+    RE.Addend = Value.Offset;
 
     if (Value.SymbolName)
       addRelocationForSymbol(RE, Value.SymbolName);
@@ -75,7 +78,7 @@ public:
     return ++RelI;
   }
 
-  void resolveRelocation(const RelocationEntry &RE, uint64_t Value) {
+  void resolveRelocation(const RelocationEntry &RE, uint64_t Value) override {
     DEBUG(dumpRelocationToResolve(RE, Value));
 
     const SectionEntry &Section = Sections[RE.SectionID];

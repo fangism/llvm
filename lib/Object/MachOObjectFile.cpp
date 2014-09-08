@@ -1542,15 +1542,15 @@ bool ExportEntry::operator==(const ExportEntry &Other) const {
   return true;  
 }
 
-uint64_t ExportEntry::readULEB128(const uint8_t *&p) {
-  unsigned count;
-  uint64_t result = decodeULEB128(p, &count);
-  p += count;
-  if (p > Trie.end()) {
-    p = Trie.end();
+uint64_t ExportEntry::readULEB128(const uint8_t *&Ptr) {
+  unsigned Count;
+  uint64_t Result = decodeULEB128(Ptr, &Count);
+  Ptr += Count;
+  if (Ptr > Trie.end()) {
+    Ptr = Trie.end();
     Malformed = true;
   }
-  return result;
+  return Result;
 }
 
 StringRef ExportEntry::name() const {
@@ -1616,8 +1616,8 @@ void ExportEntry::pushDownUntilBottom() {
     NodeState &Top = Stack.back();
     CumulativeString.resize(Top.ParentStringLength);
     for (;*Top.Current != 0; Top.Current++) {
-      char c = *Top.Current;
-      CumulativeString.push_back(c);
+      char C = *Top.Current;
+      CumulativeString.push_back(C);
     }
     Top.Current += 1;
     uint64_t childNodeIndex = readULEB128(Top.Current);
@@ -1859,6 +1859,31 @@ MachOObjectFile::getVersionMinLoadCommand(const LoadCommandInfo &L) const {
 MachO::dylib_command
 MachOObjectFile::getDylibIDLoadCommand(const LoadCommandInfo &L) const {
   return getStruct<MachO::dylib_command>(this, L.Ptr);
+}
+
+MachO::dyld_info_command
+MachOObjectFile::getDyldInfoLoadCommand(const LoadCommandInfo &L) const {
+  return getStruct<MachO::dyld_info_command>(this, L.Ptr);
+}
+
+MachO::dylinker_command
+MachOObjectFile::getDylinkerCommand(const LoadCommandInfo &L) const {
+  return getStruct<MachO::dylinker_command>(this, L.Ptr);
+}
+
+MachO::uuid_command
+MachOObjectFile::getUuidCommand(const LoadCommandInfo &L) const {
+  return getStruct<MachO::uuid_command>(this, L.Ptr);
+}
+
+MachO::source_version_command
+MachOObjectFile::getSourceVersionCommand(const LoadCommandInfo &L) const {
+  return getStruct<MachO::source_version_command>(this, L.Ptr);
+}
+
+MachO::entry_point_command
+MachOObjectFile::getEntryPointCommand(const LoadCommandInfo &L) const {
+  return getStruct<MachO::entry_point_command>(this, L.Ptr);
 }
 
 

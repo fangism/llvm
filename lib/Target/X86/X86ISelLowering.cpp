@@ -1673,7 +1673,7 @@ void X86TargetLowering::resetOperationActions() {
 
   setPrefFunctionAlignment(4); // 2^4 bytes.
 
-  InitIntrinsicTables();
+  verifyIntrinsicTables();
 }
 
 // This has so far only been implemented for 64-bit MachO.
@@ -2547,11 +2547,11 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
     for (MCPhysReg Reg : ArgGPRs.slice(NumIntRegs)) {
       unsigned GPR = MF.addLiveIn(Reg, &X86::GR64RegClass);
       LiveGPRs.push_back(
-          DAG.getCopyFromReg(DAG.getEntryNode(), dl, GPR, MVT::i64));
+          DAG.getCopyFromReg(Chain, dl, GPR, MVT::i64));
     }
     if (!ArgXMMs.empty()) {
       unsigned AL = MF.addLiveIn(X86::AL, &X86::GR8RegClass);
-      ALVal = DAG.getCopyFromReg(DAG.getEntryNode(), dl, AL, MVT::i8);
+      ALVal = DAG.getCopyFromReg(Chain, dl, AL, MVT::i8);
       for (MCPhysReg Reg : ArgXMMs.slice(NumXMMRegs)) {
         unsigned XMMReg = MF.addLiveIn(Reg, &X86::VR128RegClass);
         LiveXMMRegs.push_back(
@@ -6840,6 +6840,13 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
         // convert it to a vector with movd (S2V+shuffle to zero extend).
         Item = DAG.getNode(ISD::TRUNCATE, dl, MVT::i32, Item);
         Item = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VecVT, Item);
+
+        // If using the new shuffle lowering, just directly insert this.
+        if (ExperimentalVectorShuffleLowering)
+          return DAG.getNode(
+              ISD::BITCAST, dl, VT,
+              getShuffleVectorZeroOrUndef(Item, Idx * 2, true, Subtarget, DAG));
+
         Item = getShuffleVectorZeroOrUndef(Item, 0, true, Subtarget, DAG);
 
         // Now we have our 32-bit value zero extended in the low element of
@@ -6912,6 +6919,10 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
     // place.
     if (EVTBits == 32) {
       Item = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, Item);
+
+      // If using the new shuffle lowering, just directly insert this.
+      if (ExperimentalVectorShuffleLowering)
+        return getShuffleVectorZeroOrUndef(Item, Idx, NumZero > 0, Subtarget, DAG);
 
       // Turn it into a shuffle of zero and zero-extended scalar to vector.
       Item = getShuffleVectorZeroOrUndef(Item, 0, NumZero > 0, Subtarget, DAG);
@@ -7365,6 +7376,56 @@ static SDValue lowerV4F32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
     int V2Index =
         std::find_if(Mask.begin(), Mask.end(), [](int M) { return M >= 4; }) -
         Mask.begin();
+
+    // Check for whether we can use INSERTPS to perform the blend. We only use
+    // INSERTPS when the V1 elements are already in the correct locations
+    // because otherwise we can just always use two SHUFPS instructions which
+    // are much smaller to encode than a SHUFPS and an INSERTPS.
+    if (Subtarget->hasSSE41()) {
+      // When using INSERTPS we can zero any lane of the destination. Collect
+      // the zero inputs into a mask and drop them from the lanes of V1 which
+      // actually need to be present as inputs to the INSERTPS.
+      unsigned ZMask = 0;
+      if (ISD::isBuildVectorAllZeros(V1.getNode())) {
+        ZMask = 0xF ^ (1 << V2Index);
+      } else if (V1.getOpcode() == ISD::BUILD_VECTOR) {
+        for (int i = 0; i < 4; ++i) {
+          int M = Mask[i];
+          if (M >= 4)
+            continue;
+          if (M > -1) {
+            SDValue Input = V1.getOperand(M);
+            if (Input.getOpcode() != ISD::UNDEF &&
+                !X86::isZeroNode(Input)) {
+              // A non-zero input!
+              ZMask = 0;
+              break;
+            }
+          }
+          ZMask |= 1 << i;
+        }
+      }
+
+      // Synthesize a shuffle mask for the non-zero and non-v2 inputs.
+      int InsertShuffleMask[4] = {-1, -1, -1, -1};
+      for (int i = 0; i < 4; ++i)
+        if (i != V2Index && (ZMask & (1 << i)) == 0)
+          InsertShuffleMask[i] = Mask[i];
+
+      if (isNoopShuffleMask(InsertShuffleMask)) {
+        // Replace V1 with undef if nothing from V1 survives the INSERTPS.
+        if ((ZMask | 1 << V2Index) == 0xF)
+          V1 = DAG.getUNDEF(MVT::v4f32);
+
+        unsigned InsertPSMask = (Mask[V2Index] - 4) << 6 | V2Index << 4 | ZMask;
+        assert((InsertPSMask & ~0xFFu) == 0 && "Invalid mask!");
+
+        // Insert the V2 element into the desired position.
+        return DAG.getNode(X86ISD::INSERTPS, DL, MVT::v4f32, V1, V2,
+                           DAG.getConstant(InsertPSMask, MVT::i8));
+      }
+    }
+
     // Compute the index adjacent to V2Index and in the same half by toggling
     // the low bit.
     int V2AdjIndex = V2Index ^ 1;
@@ -7428,6 +7489,81 @@ static SDValue lowerV4F32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
                      getV4X86ShuffleImm8ForMask(NewMask, DAG));
 }
 
+static SDValue lowerIntegerElementInsertionVectorShuffle(
+    MVT VT, SDLoc DL, SDValue V1, SDValue V2, ArrayRef<int> Mask,
+    const X86Subtarget *Subtarget, SelectionDAG &DAG) {
+  int V2Index = std::find_if(Mask.begin(), Mask.end(),
+                             [&Mask](int M) { return M >= (int)Mask.size(); }) -
+                Mask.begin();
+
+  // Check for a single input from a SCALAR_TO_VECTOR node.
+  // FIXME: All of this should be canonicalized into INSERT_VECTOR_ELT and
+  // all the smarts here sunk into that routine. However, the current
+  // lowering of BUILD_VECTOR makes that nearly impossible until the old
+  // vector shuffle lowering is dead.
+  if ((Mask[V2Index] == (int)Mask.size() &&
+       V2.getOpcode() == ISD::SCALAR_TO_VECTOR) ||
+      V2.getOpcode() == ISD::BUILD_VECTOR) {
+    SDValue V2S = V2.getOperand(Mask[V2Index] - Mask.size());
+
+    bool V1IsAllZero = false;
+    if (ISD::isBuildVectorAllZeros(V1.getNode())) {
+      V1IsAllZero = true;
+    } else if (V1.getOpcode() == ISD::BUILD_VECTOR) {
+      V1IsAllZero = true;
+      for (int M : Mask) {
+        if (M < 0 || M >= (int)Mask.size())
+          continue;
+        SDValue Input = V1.getOperand(M);
+        if (Input.getOpcode() != ISD::UNDEF && !X86::isZeroNode(Input)) {
+          // A non-zero input!
+          V1IsAllZero = false;
+          break;
+        }
+      }
+    }
+    if (V1IsAllZero) {
+      // First, we need to zext the scalar if it is smaller than an i32.
+      MVT EltVT = VT.getVectorElementType();
+      assert(EltVT == V2S.getSimpleValueType() &&
+             "Different scalar and element types!");
+      MVT ExtVT = VT;
+      if (EltVT == MVT::i8 || EltVT == MVT::i16) {
+        // Zero-extend directly to i32.
+        ExtVT = MVT::v4i32;
+        V2S = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, V2S);
+      }
+
+      V2 = DAG.getNode(X86ISD::VZEXT_MOVL, DL, ExtVT,
+                       DAG.getNode(ISD::SCALAR_TO_VECTOR, DL, ExtVT, V2S));
+      if (ExtVT != VT)
+        V2 = DAG.getNode(ISD::BITCAST, DL, VT, V2);
+
+      if (V2Index != 0) {
+        // If we have 4 or fewer lanes we can cheaply shuffle the element into
+        // the desired position. Otherwise it is more efficient to do a vector
+        // shift left. We know that we can do a vector shift left because all
+        // the inputs are zero.
+        if (VT.getVectorNumElements() <= 4) {
+          SmallVector<int, 4> V2Shuffle(Mask.size(), 1);
+          V2Shuffle[V2Index] = 0;
+          V2 = DAG.getVectorShuffle(VT, DL, V2, DAG.getUNDEF(VT), V2Shuffle);
+        } else {
+          V2 = DAG.getNode(ISD::BITCAST, DL, MVT::v2i64, V2);
+          V2 = DAG.getNode(
+              X86ISD::VSHLDQ, DL, MVT::v2i64, V2,
+              DAG.getConstant(
+                  V2Index * EltVT.getSizeInBits(),
+                  DAG.getTargetLoweringInfo().getScalarShiftAmountTy(MVT::v2i64)));
+          V2 = DAG.getNode(ISD::BITCAST, DL, VT, V2);
+        }
+      }
+      return V2;
+    }
+  }
+  return SDValue();
+}
+
 /// \brief Lower 4-lane i32 vector shuffles.
 ///
 /// We try to handle these with integer-domain shuffles where we can, but for
@@ -7443,7 +7579,10 @@ static SDValue lowerV4I32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
   ArrayRef<int> Mask = SVOp->getMask();
   assert(Mask.size() == 4 && "Unexpected mask size for v4 shuffle!");
 
-  if (isSingleInputShuffleMask(Mask))
+  int NumV2Elements =
+      std::count_if(Mask.begin(), Mask.end(), [](int M) { return M >= 4; });
+
+  if (NumV2Elements == 0)
     // Straight shuffle of a single input vector. For everything from SSE2
     // onward this has a single fast instruction with no scary immediates.
     return DAG.getNode(X86ISD::PSHUFD, DL, MVT::v4i32, V1,
@@ -7454,6 +7593,12 @@ static SDValue lowerV4I32VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
     return DAG.getNode(X86ISD::UNPCKL, DL, MVT::v4i32, V1, V2);
   if (isShuffleEquivalent(Mask, 2, 6, 3, 7))
     return DAG.getNode(X86ISD::UNPCKH, DL, MVT::v4i32, V1, V2);
+
+  // There are special ways we can lower some single-element blends.
+  if (NumV2Elements == 1)
+    if (SDValue V = lowerIntegerElementInsertionVectorShuffle(
+            MVT::v4i32, DL, V1, V2, Mask, Subtarget, DAG))
+      return V;
 
   // We implement this with SHUFPS because it can blend from two vectors.
   // Because we're going to eventually use SHUFPS, we use SHUFPS even to build
@@ -8101,6 +8246,12 @@ static SDValue lowerV8I16VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
   assert(NumV1Inputs > 0 && "All single-input shuffles should be canonicalized "
                             "to be V1-input shuffles.");
 
+  // There are special ways we can lower some single-element blends.
+  if (NumV2Inputs == 1)
+    if (SDValue V = lowerIntegerElementInsertionVectorShuffle(
+            MVT::v8i16, DL, V1, V2, Mask, Subtarget, DAG))
+      return V;
+
   if (NumV1Inputs + NumV2Inputs <= 4)
     return lowerV8I16BasicBlendVectorShuffle(DL, V1, V2, Mask, Subtarget, DAG);
 
@@ -8238,8 +8389,11 @@ static SDValue lowerV16I8VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
   MutableArrayRef<int> LoMask = Mask.slice(0, 8);
   MutableArrayRef<int> HiMask = Mask.slice(8, 8);
 
+  int NumV2Elements =
+      std::count_if(Mask.begin(), Mask.end(), [](int M) { return M >= 16; });
+
   // For single-input shuffles, there are some nicer lowering tricks we can use.
-  if (isSingleInputShuffleMask(Mask)) {
+  if (NumV2Elements == 0) {
     // Check whether we can widen this to an i16 shuffle by duplicating bytes.
     // Notably, this handles splat and partial-splat shuffles more efficiently.
     // However, it only makes sense if the pre-duplication shuffle simplifies
@@ -8385,6 +8539,12 @@ static SDValue lowerV16I8VectorShuffle(SDValue Op, SDValue V1, SDValue V2,
                      DAG.getNode(ISD::BUILD_VECTOR, DL, MVT::v16i8, V2Mask));
     return DAG.getNode(ISD::OR, DL, MVT::v16i8, V1, V2);
   }
+
+  // There are special ways we can lower some single-element blends.
+  if (NumV2Elements == 1)
+    if (SDValue V = lowerIntegerElementInsertionVectorShuffle(
+            MVT::v16i8, DL, V1, V2, Mask, Subtarget, DAG))
+      return V;
 
   // Check whether a compaction lowering can be done. This handles shuffles
   // which take every Nth element for some even N. See the helper function for
@@ -12221,50 +12381,35 @@ static SDValue LowerFP_EXTEND(SDValue Op, SelectionDAG &DAG) {
                                  In, DAG.getUNDEF(SVT)));
 }
 
-static SDValue LowerFABS(SDValue Op, SelectionDAG &DAG) {
-  LLVMContext *Context = DAG.getContext();
+// The only differences between FABS and FNEG are the mask and the logic op.
+static SDValue LowerFABSorFNEG(SDValue Op, SelectionDAG &DAG) {
+  assert((Op.getOpcode() == ISD::FABS || Op.getOpcode() == ISD::FNEG) &&
+         "Wrong opcode for lowering FABS or FNEG.");
+
+  bool IsFABS = (Op.getOpcode() == ISD::FABS);
   SDLoc dl(Op);
   MVT VT = Op.getSimpleValueType();
+  // Assume scalar op for initialization; update for vector if needed.
+  // Note that there are no scalar bitwise logical SSE/AVX instructions, so we
+  // generate a 16-byte vector constant and logic op even for the scalar case.
+  // Using a 16-byte mask allows folding the load of the mask with
+  // the logic op, so it can save (~4 bytes) on code size.
   MVT EltVT = VT;
   unsigned NumElts = VT == MVT::f64 ? 2 : 4;
-  if (VT.isVector()) {
-    EltVT = VT.getVectorElementType();
-    NumElts = VT.getVectorNumElements();
-  }
-
-  unsigned EltBits = EltVT.getSizeInBits();
-  Constant *C = ConstantInt::get(*Context, APInt::getSignedMaxValue(EltBits));
-  C = ConstantVector::getSplat(NumElts, C);
-  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-  SDValue CPIdx = DAG.getConstantPool(C, TLI.getPointerTy());
-  unsigned Alignment = cast<ConstantPoolSDNode>(CPIdx)->getAlignment();
-  SDValue Mask = DAG.getLoad(VT, dl, DAG.getEntryNode(), CPIdx,
-                             MachinePointerInfo::getConstantPool(),
-                             false, false, false, Alignment);
-  if (VT.isVector()) {
-    MVT ANDVT = VT.is128BitVector() ? MVT::v2i64 : MVT::v4i64;
-    return DAG.getNode(ISD::BITCAST, dl, VT,
-                       DAG.getNode(ISD::AND, dl, ANDVT,
-                                   DAG.getNode(ISD::BITCAST, dl, ANDVT,
-                                               Op.getOperand(0)),
-                                   DAG.getNode(ISD::BITCAST, dl, ANDVT, Mask)));
-  }
-  return DAG.getNode(X86ISD::FAND, dl, VT, Op.getOperand(0), Mask);
-}
-
-static SDValue LowerFNEG(SDValue Op, SelectionDAG &DAG) {
-  LLVMContext *Context = DAG.getContext();
-  SDLoc dl(Op);
-  MVT VT = Op.getSimpleValueType();
-  MVT EltVT = VT;
-  unsigned NumElts = VT == MVT::f64 ? 2 : 4;
+  // FIXME: Use function attribute "OptimizeForSize" and/or CodeGenOpt::Level to
+  // decide if we should generate a 16-byte constant mask when we only need 4 or
+  // 8 bytes for the scalar case.
   if (VT.isVector()) {
     EltVT = VT.getVectorElementType();
     NumElts = VT.getVectorNumElements();
   }
   
   unsigned EltBits = EltVT.getSizeInBits();
-  Constant *C = ConstantInt::get(*Context, APInt::getSignBit(EltBits));
+  LLVMContext *Context = DAG.getContext();
+  // For FABS, mask is 0x7f...; for FNEG, mask is 0x80...
+  APInt MaskElt =
+    IsFABS ? APInt::getSignedMaxValue(EltBits) : APInt::getSignBit(EltBits);
+  Constant *C = ConstantInt::get(*Context, MaskElt);
   C = ConstantVector::getSplat(NumElts, C);
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   SDValue CPIdx = DAG.getConstantPool(C, TLI.getPointerTy());
@@ -12272,16 +12417,20 @@ static SDValue LowerFNEG(SDValue Op, SelectionDAG &DAG) {
   SDValue Mask = DAG.getLoad(VT, dl, DAG.getEntryNode(), CPIdx,
                              MachinePointerInfo::getConstantPool(),
                              false, false, false, Alignment);
-  if (VT.isVector()) {
-    MVT XORVT = MVT::getVectorVT(MVT::i64, VT.getSizeInBits()/64);
-    return DAG.getNode(ISD::BITCAST, dl, VT,
-                       DAG.getNode(ISD::XOR, dl, XORVT,
-                                   DAG.getNode(ISD::BITCAST, dl, XORVT,
-                                               Op.getOperand(0)),
-                                   DAG.getNode(ISD::BITCAST, dl, XORVT, Mask)));
-  }
 
-  return DAG.getNode(X86ISD::FXOR, dl, VT, Op.getOperand(0), Mask);
+  if (VT.isVector()) {
+    // For a vector, cast operands to a vector type, perform the logic op,
+    // and cast the result back to the original value type.
+    MVT VecVT = MVT::getVectorVT(MVT::i64, VT.getSizeInBits() / 64);
+    SDValue Op0Casted = DAG.getNode(ISD::BITCAST, dl, VecVT, Op.getOperand(0));
+    SDValue MaskCasted = DAG.getNode(ISD::BITCAST, dl, VecVT, Mask);
+    unsigned LogicOp = IsFABS ? ISD::AND : ISD::XOR;
+    return DAG.getNode(ISD::BITCAST, dl, VT,
+                       DAG.getNode(LogicOp, dl, VecVT, Op0Casted, MaskCasted));
+  }
+  // If not vector, then scalar.
+  unsigned LogicOp = IsFABS ? X86ISD::FAND : X86ISD::FXOR;
+  return DAG.getNode(LogicOp, dl, VT, Op.getOperand(0), Mask);
 }
 
 static SDValue LowerFCOPYSIGN(SDValue Op, SelectionDAG &DAG) {
@@ -14593,7 +14742,7 @@ static SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) {
   SDLoc dl(Op);
   unsigned IntNo = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
 
-  const IntrinsicData* IntrData = GetIntrinsicWithoutChain(IntNo);
+  const IntrinsicData* IntrData = getIntrinsicWithoutChain(IntNo);
   if (IntrData) {
     switch(IntrData->Type) {
     case INTR_TYPE_1OP:
@@ -15159,7 +15308,7 @@ static SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, const X86Subtarget *Subtarget,
                                       SelectionDAG &DAG) {
   unsigned IntNo = cast<ConstantSDNode>(Op.getOperand(1))->getZExtValue();
 
-  const IntrinsicData* IntrData = GetIntrinsicWithChain(IntNo);
+  const IntrinsicData* IntrData = getIntrinsicWithChain(IntNo);
   if (!IntrData)
     return SDValue();
 
@@ -16908,8 +17057,8 @@ SDValue X86TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::FP_TO_UINT:         return LowerFP_TO_UINT(Op, DAG);
   case ISD::FP_EXTEND:          return LowerFP_EXTEND(Op, DAG);
   case ISD::LOAD:               return LowerExtendedLoad(Op, Subtarget, DAG);
-  case ISD::FABS:               return LowerFABS(Op, DAG);
-  case ISD::FNEG:               return LowerFNEG(Op, DAG);
+  case ISD::FABS:
+  case ISD::FNEG:               return LowerFABSorFNEG(Op, DAG);
   case ISD::FCOPYSIGN:          return LowerFCOPYSIGN(Op, DAG);
   case ISD::FGETSIGN:           return LowerFGETSIGN(Op, DAG);
   case ISD::SETCC:              return LowerSETCC(Op, DAG);

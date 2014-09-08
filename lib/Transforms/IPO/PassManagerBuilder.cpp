@@ -62,10 +62,13 @@ static cl::opt<bool> RunLoadCombine("combine-loads", cl::init(false),
 
 static cl::opt<bool>
 RunSLPAfterLoopVectorization("run-slp-after-loop-vectorization",
-  cl::init(false), cl::Hidden,
+  cl::init(true), cl::Hidden,
   cl::desc("Run the SLP vectorizer (and BB vectorizer) after the Loop "
            "vectorizer instead of before"));
 
+static cl::opt<bool> UseCFLAA("use-cfl-aa",
+  cl::init(false), cl::Hidden,
+  cl::desc("Enable the new, experimental CFL alias analysis"));
 
 PassManagerBuilder::PassManagerBuilder() {
     OptLevel = 2;
@@ -120,6 +123,8 @@ PassManagerBuilder::addInitialAliasAnalysisPasses(PassManagerBase &PM) const {
   // Add TypeBasedAliasAnalysis before BasicAliasAnalysis so that
   // BasicAliasAnalysis wins if they disagree. This is intended to help
   // support "obvious" type-punning idioms.
+  if (UseCFLAA)
+    PM.add(createCFLAliasAnalysisPass());
   PM.add(createTypeBasedAliasAnalysisPass());
   PM.add(createScopedNoAliasAAPass());
   PM.add(createBasicAliasAnalysisPass());
@@ -305,6 +310,10 @@ void PassManagerBuilder::populateModulePassManager(PassManagerBase &MPM) {
   if (!DisableUnrollLoops)
     MPM.add(createLoopUnrollPass());    // Unroll small loops
 
+  // After vectorization and unrolling, assume intrinsics may tell us more
+  // about pointer alignments.
+  MPM.add(createAlignmentFromAssumptionsPass());
+
   if (!DisableUnitAtATime) {
     // FIXME: We shouldn't bother with this anymore.
     MPM.add(createStripDeadPrototypesPass()); // Get rid of dead prototypes
@@ -393,6 +402,10 @@ void PassManagerBuilder::addLTOOptimizationPasses(PassManagerBase &PM) {
 
   // More scalar chains could be vectorized due to more alias information
   PM.add(createSLPVectorizerPass()); // Vectorize parallel scalar chains.
+
+  // After vectorization, assume intrinsics may tell us more about pointer
+  // alignments.
+  PM.add(createAlignmentFromAssumptionsPass());
 
   if (LoadCombine)
     PM.add(createLoadCombinePass());

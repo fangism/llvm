@@ -18,6 +18,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/AssumptionTracker.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/PHITransAddr.h"
@@ -55,6 +56,7 @@ char MemoryDependenceAnalysis::ID = 0;
 // Register this pass...
 INITIALIZE_PASS_BEGIN(MemoryDependenceAnalysis, "memdep",
                 "Memory Dependence Analysis", false, true)
+INITIALIZE_PASS_DEPENDENCY(AssumptionTracker)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(MemoryDependenceAnalysis, "memdep",
                       "Memory Dependence Analysis", false, true)
@@ -83,11 +85,13 @@ void MemoryDependenceAnalysis::releaseMemory() {
 ///
 void MemoryDependenceAnalysis::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
+  AU.addRequired<AssumptionTracker>();
   AU.addRequiredTransitive<AliasAnalysis>();
 }
 
 bool MemoryDependenceAnalysis::runOnFunction(Function &) {
   AA = &getAnalysis<AliasAnalysis>();
+  AT = &getAnalysis<AssumptionTracker>();
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
   DL = DLP ? &DLP->getDataLayout() : nullptr;
   DominatorTreeWrapperPass *DTWP =
@@ -449,12 +453,16 @@ getPointerDependencyFrom(const AliasAnalysis::Location &MemLoc, bool isLoad,
       if (!LI->isUnordered()) {
         if (!QueryInst)
           return MemDepResult::getClobber(LI);
-        if (auto *QueryLI = dyn_cast<LoadInst>(QueryInst))
+        if (auto *QueryLI = dyn_cast<LoadInst>(QueryInst)) {
           if (!QueryLI->isSimple())
             return MemDepResult::getClobber(LI);
-        if (auto *QuerySI = dyn_cast<StoreInst>(QueryInst))
+        } else if (auto *QuerySI = dyn_cast<StoreInst>(QueryInst)) {
           if (!QuerySI->isSimple())
             return MemDepResult::getClobber(LI);
+        } else if (QueryInst->mayReadOrWriteMemory()) {
+          return MemDepResult::getClobber(LI);
+        }
+
         if (isAtLeastAcquire(LI->getOrdering()))
           HasSeenAcquire = true;
       }
@@ -529,12 +537,16 @@ getPointerDependencyFrom(const AliasAnalysis::Location &MemLoc, bool isLoad,
       if (!SI->isUnordered()) {
         if (!QueryInst)
           return MemDepResult::getClobber(SI);
-        if (auto *QueryLI = dyn_cast<LoadInst>(QueryInst))
+        if (auto *QueryLI = dyn_cast<LoadInst>(QueryInst)) {
           if (!QueryLI->isSimple())
             return MemDepResult::getClobber(SI);
-        if (auto *QuerySI = dyn_cast<StoreInst>(QueryInst))
+        } else if (auto *QuerySI = dyn_cast<StoreInst>(QueryInst)) {
           if (!QuerySI->isSimple())
             return MemDepResult::getClobber(SI);
+        } else if (QueryInst->mayReadOrWriteMemory()) {
+          return MemDepResult::getClobber(SI);
+        }
+
         if (HasSeenAcquire && isAtLeastRelease(SI->getOrdering()))
           return MemDepResult::getClobber(SI);
       }
@@ -851,7 +863,7 @@ getNonLocalPointerDependency(const AliasAnalysis::Location &Loc, bool isLoad,
          "Can't get pointer deps of a non-pointer!");
   Result.clear();
 
-  PHITransAddr Address(const_cast<Value *>(Loc.Ptr), DL);
+  PHITransAddr Address(const_cast<Value *>(Loc.Ptr), DL, AT);
 
   // This is the set of blocks we've inspected, and the pointer we consider in
   // each block.  Because of critical edges, we currently bail out if querying

@@ -688,7 +688,7 @@ public:
   }
 
   /// useMachineCombiner - return true when a target supports MachineCombiner
-  virtual bool useMachineCombiner(void) const { return false; }
+  virtual bool useMachineCombiner() const { return false; }
 
 protected:
   /// foldMemoryOperandImpl - Target-dependent implementation for
@@ -1190,6 +1190,20 @@ public:
   virtual DFAPacketizer*
     CreateTargetScheduleState(const TargetMachine*, const ScheduleDAG*) const {
     return nullptr;
+  }
+
+  // areMemAccessesTriviallyDisjoint - Sometimes, it is possible for the target
+  // to tell, even without aliasing information, that two MIs access different
+  // memory addresses. This function returns true if two MIs access different
+  // memory addresses, and false otherwise.
+  virtual bool
+  areMemAccessesTriviallyDisjoint(MachineInstr *MIa, MachineInstr *MIb,
+                                  AliasAnalysis *AA = nullptr) const {
+    assert(MIa && (MIa->mayLoad() || MIa->mayStore()) &&
+           "MIa must load from or modify a memory location");
+    assert(MIb && (MIb->mayLoad() || MIb->mayStore()) &&
+           "MIb must load from or modify a memory location");
+    return false;
   }
 
 private:
