@@ -82,6 +82,18 @@ static cl::opt<bool>
 ExportsTrie("exports-trie", cl::desc("Display mach-o exported symbols"));
 
 static cl::opt<bool>
+Rebase("rebase", cl::desc("Display mach-o rebasing info"));
+
+static cl::opt<bool>
+Bind("bind", cl::desc("Display mach-o binding info"));
+
+static cl::opt<bool>
+LazyBind("lazy-bind", cl::desc("Display mach-o lazy binding info"));
+
+static cl::opt<bool>
+WeakBind("weak-bind", cl::desc("Display mach-o weak binding info"));
+
+static cl::opt<bool>
 MachOOpt("macho", cl::desc("Use MachO specific object file parser"));
 static cl::alias
 MachOm("m", cl::desc("Alias for --macho"), cl::aliasopt(MachOOpt));
@@ -564,33 +576,31 @@ static void PrintSectionContents(const ObjectFile *Obj) {
 }
 
 static void PrintCOFFSymbolTable(const COFFObjectFile *coff) {
-  const coff_file_header *header;
-  if (error(coff->getHeader(header)))
-    return;
-
-  for (unsigned SI = 0, SE = header->NumberOfSymbols; SI != SE; ++SI) {
-    const coff_symbol *Symbol;
+  for (unsigned SI = 0, SE = coff->getNumberOfSymbols(); SI != SE; ++SI) {
+    ErrorOr<COFFSymbolRef> Symbol = coff->getSymbol(SI);
     StringRef Name;
-    if (error(coff->getSymbol(SI, Symbol)))
+    if (error(Symbol.getError()))
       return;
 
-    if (error(coff->getSymbolName(Symbol, Name)))
+    if (error(coff->getSymbolName(*Symbol, Name)))
       return;
 
     outs() << "[" << format("%2d", SI) << "]"
-           << "(sec " << format("%2d", int(Symbol->SectionNumber)) << ")"
+           << "(sec " << format("%2d", int(Symbol->getSectionNumber())) << ")"
            << "(fl 0x00)" // Flag bits, which COFF doesn't have.
-           << "(ty " << format("%3x", unsigned(Symbol->Type)) << ")"
-           << "(scl " << format("%3x", unsigned(Symbol->StorageClass)) << ") "
-           << "(nx " << unsigned(Symbol->NumberOfAuxSymbols) << ") "
-           << "0x" << format("%08x", unsigned(Symbol->Value)) << " "
+           << "(ty " << format("%3x", unsigned(Symbol->getType())) << ")"
+           << "(scl " << format("%3x", unsigned(Symbol->getStorageClass())) << ") "
+           << "(nx " << unsigned(Symbol->getNumberOfAuxSymbols()) << ") "
+           << "0x" << format("%08x", unsigned(Symbol->getValue())) << " "
            << Name << "\n";
 
-    for (unsigned AI = 0, AE = Symbol->NumberOfAuxSymbols; AI < AE; ++AI, ++SI) {
+    for (unsigned AI = 0, AE = Symbol->getNumberOfAuxSymbols(); AI < AE; ++AI, ++SI) {
       if (Symbol->isSectionDefinition()) {
         const coff_aux_section_definition *asd;
         if (error(coff->getAuxSymbol<coff_aux_section_definition>(SI + 1, asd)))
           return;
+
+        int32_t AuxNumber = asd->getNumber(Symbol->isBigObj());
 
         outs() << "AUX "
                << format("scnlen 0x%x nreloc %d nlnno %d checksum 0x%x "
@@ -599,18 +609,18 @@ static void PrintCOFFSymbolTable(const COFFObjectFile *coff) {
                          , unsigned(asd->NumberOfLinenumbers)
                          , unsigned(asd->CheckSum))
                << format("assoc %d comdat %d\n"
-                         , unsigned(asd->Number)
+                         , unsigned(AuxNumber)
                          , unsigned(asd->Selection));
       } else if (Symbol->isFileRecord()) {
-        const coff_aux_file *AF;
-        if (error(coff->getAuxSymbol<coff_aux_file>(SI + 1, AF)))
+        const char *FileName;
+        if (error(coff->getAuxSymbol<char>(SI + 1, FileName)))
           return;
 
-        StringRef Name(AF->FileName,
-                       Symbol->NumberOfAuxSymbols * COFF::SymbolSize);
+        StringRef Name(FileName, Symbol->getNumberOfAuxSymbols() *
+                                     coff->getSymbolTableEntrySize());
         outs() << "AUX " << Name.rtrim(StringRef("\0", 1))  << '\n';
 
-        SI = SI + Symbol->NumberOfAuxSymbols;
+        SI = SI + Symbol->getNumberOfAuxSymbols();
         break;
       } else {
         outs() << "AUX Unknown\n";
@@ -724,6 +734,50 @@ static void printExportsTrie(const ObjectFile *o) {
   }
 }
 
+static void printRebaseTable(const ObjectFile *o) {
+  outs() << "Rebase table:\n";
+  if (const MachOObjectFile *MachO = dyn_cast<MachOObjectFile>(o))
+    printMachORebaseTable(MachO);
+  else {
+    errs() << "This operation is only currently supported "
+              "for Mach-O executable files.\n";
+    return;
+  }
+}
+
+static void printBindTable(const ObjectFile *o) {
+  outs() << "Bind table:\n";
+  if (const MachOObjectFile *MachO = dyn_cast<MachOObjectFile>(o))
+    printMachOBindTable(MachO);
+  else {
+    errs() << "This operation is only currently supported "
+              "for Mach-O executable files.\n";
+    return;
+  }
+}
+
+static void printLazyBindTable(const ObjectFile *o) {
+  outs() << "Lazy bind table:\n";
+  if (const MachOObjectFile *MachO = dyn_cast<MachOObjectFile>(o))
+    printMachOLazyBindTable(MachO);
+  else {
+    errs() << "This operation is only currently supported "
+              "for Mach-O executable files.\n";
+    return;
+  }
+}
+
+static void printWeakBindTable(const ObjectFile *o) {
+  outs() << "Weak bind table:\n";
+  if (const MachOObjectFile *MachO = dyn_cast<MachOObjectFile>(o))
+    printMachOWeakBindTable(MachO);
+  else {
+    errs() << "This operation is only currently supported "
+              "for Mach-O executable files.\n";
+    return;
+  }
+}
+
 static void printPrivateFileHeader(const ObjectFile *o) {
   if (o->isELF()) {
     printELFFileHeader(o);
@@ -755,6 +809,14 @@ static void DumpObject(const ObjectFile *o) {
     printPrivateFileHeader(o);
   if (ExportsTrie)
     printExportsTrie(o);
+  if (Rebase)
+    printRebaseTable(o);
+  if (Bind)
+    printBindTable(o);
+  if (LazyBind)
+    printLazyBindTable(o);
+  if (WeakBind)
+    printWeakBindTable(o);
 }
 
 /// @brief Dump each object file in \a a;
@@ -837,7 +899,11 @@ int main(int argc, char **argv) {
       && !SymbolTable
       && !UnwindInfo
       && !PrivateHeaders
-      && !ExportsTrie) {
+      && !ExportsTrie
+      && !Rebase
+      && !Bind
+      && !LazyBind
+      && !WeakBind) {
     cl::PrintHelpMessage();
     return 2;
   }

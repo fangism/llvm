@@ -5370,56 +5370,34 @@ let Constraints = "$src1 = $dst", Predicates = [UseSSE3] in {
 
 // Patterns used to select 'addsub' instructions.
 let Predicates = [HasAVX] in {
-  // Constant 170 corresponds to the binary mask '10101010'.
-  // When used as a blend mask, it allows selecting eight elements from two
-  // input vectors as follow:
-  // - Even-numbered values in the destination are copied from
-  //   the corresponding elements in the first input vector;
-  // - Odd-numbered values in the destination are copied from
-  //   the corresponding elements in the second input vector.
-
-  def : Pat<(v8f32 (X86Blendi (v8f32 (fsub VR256:$lhs, VR256:$rhs)),
-                              (v8f32 (fadd VR256:$lhs, VR256:$rhs)), (i8 170))),
-            (VADDSUBPSYrr VR256:$lhs, VR256:$rhs)>;
-
-  // Constant 10 corresponds to the binary mask '1010'.
-  // In the two pattens below, constant 10 is used as a blend mask to select
-  // - the 1st and 3rd element from the first input vector (the 'fsub' node);
-  // - the 2nd and 4th element from the second input vector (the 'fadd' node).
-
-  def : Pat<(v4f64 (X86Blendi (v4f64 (fsub VR256:$lhs, VR256:$rhs)),
-                             (v4f64 (fadd VR256:$lhs, VR256:$rhs)), (i8 10))),
-            (VADDSUBPDYrr VR256:$lhs, VR256:$rhs)>;
-  def : Pat<(v4f64 (X86Blendi (v4f64 (fsub VR256:$lhs, VR256:$rhs)),
-                              (v4f64 (fadd VR256:$lhs, VR256:$rhs)), (i8 10))),
-            (VADDSUBPDYrr VR256:$lhs, VR256:$rhs)>;
-  def : Pat<(v4f32 (X86Blendi (v4f32 (fsub VR128:$lhs, VR128:$rhs)),
-                              (v4f32 (fadd VR128:$lhs, VR128:$rhs)), (i8 10))),
+  def : Pat<(v4f32 (X86Addsub (v4f32 VR128:$lhs), (v4f32 VR128:$rhs))),
             (VADDSUBPSrr VR128:$lhs, VR128:$rhs)>;
-  def : Pat<(v2f64 (X86Blendi (v2f64 (fsub VR128:$lhs, VR128:$rhs)),
-                              (v2f64 (fadd VR128:$lhs, VR128:$rhs)), (i8 2))), 
+  def : Pat<(v4f32 (X86Addsub (v4f32 VR128:$lhs), (v4f32 (memop addr:$rhs)))),
+            (VADDSUBPSrm VR128:$lhs, f128mem:$rhs)>;
+  def : Pat<(v2f64 (X86Addsub (v2f64 VR128:$lhs), (v2f64 VR128:$rhs))),
             (VADDSUBPDrr VR128:$lhs, VR128:$rhs)>;
-  def : Pat<(v2f64 (X86Movsd (v2f64 (fadd VR128:$lhs, VR128:$rhs)),
-                             (v2f64 (fsub VR128:$lhs, VR128:$rhs)))),
-            (VADDSUBPDrr VR128:$lhs, VR128:$rhs)>;
+  def : Pat<(v2f64 (X86Addsub (v2f64 VR128:$lhs), (v2f64 (memop addr:$rhs)))),
+            (VADDSUBPDrm VR128:$lhs, f128mem:$rhs)>;
+
+  def : Pat<(v8f32 (X86Addsub (v8f32 VR256:$lhs), (v8f32 VR256:$rhs))),
+            (VADDSUBPSYrr VR256:$lhs, VR256:$rhs)>;
+  def : Pat<(v8f32 (X86Addsub (v8f32 VR256:$lhs), (v8f32 (memop addr:$rhs)))),
+            (VADDSUBPSYrm VR256:$lhs, f256mem:$rhs)>;
+  def : Pat<(v4f64 (X86Addsub (v4f64 VR256:$lhs), (v4f64 VR256:$rhs))),
+            (VADDSUBPDYrr VR256:$lhs, VR256:$rhs)>;
+  def : Pat<(v4f64 (X86Addsub (v4f64 VR256:$lhs), (v4f64 (memop addr:$rhs)))),
+            (VADDSUBPDYrm VR256:$lhs, f256mem:$rhs)>;
 }
 
 let Predicates = [UseSSE3] in {
-  // Constant 10 corresponds to the binary mask '1010'.
-  // In the pattern below, it is used as a blend mask to select:
-  // - the 1st and 3rd element from the first input vector (the fsub node);
-  // - the 2nd and 4th element from the second input vector (the fadd node).
-
-  def : Pat<(v4f32 (X86Blendi (v4f32 (fsub VR128:$lhs, VR128:$rhs)),
-                              (v4f32 (fadd VR128:$lhs, VR128:$rhs)), (i8 10))),
+  def : Pat<(v4f32 (X86Addsub (v4f32 VR128:$lhs), (v4f32 VR128:$rhs))),
             (ADDSUBPSrr VR128:$lhs, VR128:$rhs)>;
-
-  def : Pat<(v2f64 (X86Blendi (v2f64 (fsub VR128:$lhs, VR128:$rhs)),
-                              (v2f64 (fadd VR128:$lhs, VR128:$rhs)), (i8 2))), 
+  def : Pat<(v4f32 (X86Addsub (v4f32 VR128:$lhs), (v4f32 (memop addr:$rhs)))),
+            (ADDSUBPSrm VR128:$lhs, f128mem:$rhs)>;
+  def : Pat<(v2f64 (X86Addsub (v2f64 VR128:$lhs), (v2f64 VR128:$rhs))),
             (ADDSUBPDrr VR128:$lhs, VR128:$rhs)>;
-  def : Pat<(v2f64 (X86Movsd (v2f64 (fadd VR128:$lhs, VR128:$rhs)),
-                             (v2f64 (fsub VR128:$lhs, VR128:$rhs)))),
-            (ADDSUBPDrr VR128:$lhs, VR128:$rhs)>;
+  def : Pat<(v2f64 (X86Addsub (v2f64 VR128:$lhs), (v2f64 (memop addr:$rhs)))),
+            (ADDSUBPDrm VR128:$lhs, f128mem:$rhs)>;
 }
 
 //===---------------------------------------------------------------------===//

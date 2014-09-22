@@ -63,6 +63,22 @@ void DecodeMOVLHPSMask(unsigned NElts, SmallVectorImpl<int> &ShuffleMask) {
     ShuffleMask.push_back(NElts+i);
 }
 
+void DecodeMOVSLDUPMask(MVT VT, SmallVectorImpl<int> &ShuffleMask) {
+  unsigned NumElts = VT.getVectorNumElements();
+  for (int i = 0, e = NumElts / 2; i < e; ++i) {
+    ShuffleMask.push_back(2 * i);
+    ShuffleMask.push_back(2 * i);
+  }
+}
+
+void DecodeMOVSHDUPMask(MVT VT, SmallVectorImpl<int> &ShuffleMask) {
+  unsigned NumElts = VT.getVectorNumElements();
+  for (int i = 0, e = NumElts / 2; i < e; ++i) {
+    ShuffleMask.push_back(2 * i + 1);
+    ShuffleMask.push_back(2 * i + 1);
+  }
+}
+
 void DecodePALIGNRMask(MVT VT, unsigned Imm,
                        SmallVectorImpl<int> &ShuffleMask) {
   unsigned NumElts = VT.getVectorNumElements();
@@ -231,9 +247,8 @@ void DecodePSHUFBMask(const ConstantDataSequential *C,
     if (Element & (1 << 7))
       ShuffleMask.push_back(SM_SentinelZero);
     else {
-      int Index = Base + Element;
-      assert((Index >= 0 && Index < NumElements) &&
-             "Out of bounds shuffle index for pshub instruction!");
+      // Only the least significant 4 bits of the byte are used.
+      int Index = Base + (Element & 0xf);
       ShuffleMask.push_back(Index);
     }
   }
@@ -250,9 +265,8 @@ void DecodePSHUFBMask(ArrayRef<uint64_t> RawMask,
     if (M & (1 << 7))
       ShuffleMask.push_back(SM_SentinelZero);
     else {
-      int Index = Base + M;
-      assert((Index >= 0 && (unsigned)Index < RawMask.size()) &&
-             "Out of bounds shuffle index for pshub instruction!");
+      // Only the least significant 4 bits of the byte are used.
+      int Index = Base + (M & 0xf);
       ShuffleMask.push_back(Index);
     }
   }

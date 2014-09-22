@@ -135,6 +135,8 @@ class ARMAsmParser : public MCTargetAsmParser {
   UnwindContext UC;
 
   ARMTargetStreamer &getTargetStreamer() {
+    assert(getParser().getStreamer().getTargetStreamer() &&
+           "do not have a target streamer");
     MCTargetStreamer &TS = *getParser().getStreamer().getTargetStreamer();
     return static_cast<ARMTargetStreamer &>(TS);
   }
@@ -8313,6 +8315,7 @@ bool ARMAsmParser::ParseDirective(AsmToken DirectiveID) {
   const MCObjectFileInfo::Environment Format =
     getContext().getObjectFileInfo()->getObjectFileType();
   bool IsMachO = Format == MCObjectFileInfo::IsMachO;
+  bool IsCOFF = Format == MCObjectFileInfo::IsCOFF;
 
   StringRef IDVal = DirectiveID.getIdentifier();
   if (IDVal == ".word")
@@ -8364,7 +8367,7 @@ bool ARMAsmParser::ParseDirective(AsmToken DirectiveID) {
   else if (IDVal == ".thumb_set")
     return parseDirectiveThumbSet(DirectiveID.getLoc());
 
-  if (!IsMachO) {
+  if (!IsMachO && !IsCOFF) {
     if (IDVal == ".arch")
       return parseDirectiveArch(DirectiveID.getLoc());
     else if (IDVal == ".cpu")
@@ -8473,12 +8476,12 @@ void ARMAsmParser::onLabelParsed(MCSymbol *Symbol) {
 /// parseDirectiveThumbFunc
 ///  ::= .thumbfunc symbol_name
 bool ARMAsmParser::parseDirectiveThumbFunc(SMLoc L) {
-  const MCAsmInfo *MAI = getParser().getStreamer().getContext().getAsmInfo();
-  bool isMachO = MAI->hasSubsectionsViaSymbols();
+  const auto Format = getContext().getObjectFileInfo()->getObjectFileType();
+  bool IsMachO = Format == MCObjectFileInfo::IsMachO;
 
   // Darwin asm has (optionally) function name after .thumb_func direction
   // ELF doesn't
-  if (isMachO) {
+  if (IsMachO) {
     const AsmToken &Tok = Parser.getTok();
     if (Tok.isNot(AsmToken::EndOfStatement)) {
       if (Tok.isNot(AsmToken::Identifier) && Tok.isNot(AsmToken::String)) {
@@ -8495,7 +8498,8 @@ bool ARMAsmParser::parseDirectiveThumbFunc(SMLoc L) {
   }
 
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
-    Error(L, "unexpected token in directive");
+    Error(Parser.getTok().getLoc(), "unexpected token in directive");
+    Parser.eatToEndOfStatement();
     return false;
   }
 

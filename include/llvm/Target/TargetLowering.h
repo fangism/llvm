@@ -268,6 +268,13 @@ public:
     return HasFloatingPointExceptions;
   }
 
+  /// Return true if target always beneficiates from combining into FMA for a
+  /// given value type. This must typically return false on targets where FMA
+  /// takes more cycles to execute than FADD.
+  virtual bool enableAggressiveFMAFusion(EVT VT) const {
+    return false;
+  }
+
   /// Return the ValueType of the result of SETCC operations.  Also used to
   /// obtain the target's preferred type for the condition operand of SELECT and
   /// BRCOND nodes.  In the case of BRCOND the argument passed is MVT::Other
@@ -935,6 +942,10 @@ public:
   //===--------------------------------------------------------------------===//
   /// \name Helpers for atomic expansion.
   /// @{
+
+  /// True if AtomicExpandPass should use emitLoadLinked/emitStoreConditional
+  /// and expand AtomicCmpXchgInst.
+  virtual bool hasLoadLinkedStoreConditional() const { return false; }
 
   /// Perform a load-linked operation on Addr, returning a "Value *" with the
   /// corresponding pointee type. This may entail some non-trivial operations to
@@ -2588,6 +2599,10 @@ public:
   virtual SDValue BuildSDIVPow2(SDNode *N, const APInt &Divisor,
                                 SelectionDAG &DAG,
                                 std::vector<SDNode *> *Created) const {
+    return SDValue();
+  }
+
+  virtual SDValue BuildRSQRTE(SDValue Op, DAGCombinerInfo &DCI) const {
     return SDValue();
   }
 

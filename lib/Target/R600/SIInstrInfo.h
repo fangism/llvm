@@ -70,6 +70,10 @@ public:
                             unsigned &BaseReg, unsigned &Offset,
                             const TargetRegisterInfo *TRI) const final;
 
+  bool shouldClusterLoads(MachineInstr *FirstLdSt,
+                          MachineInstr *SecondLdSt,
+                          unsigned NumLoads) const final;
+
   void copyPhysReg(MachineBasicBlock &MBB,
                    MachineBasicBlock::iterator MI, DebugLoc DL,
                    unsigned DestReg, unsigned SrcReg,
@@ -108,6 +112,7 @@ public:
   bool isSMRD(uint16_t Opcode) const;
   bool isMUBUF(uint16_t Opcode) const;
   bool isMTBUF(uint16_t Opcode) const;
+  bool isFLAT(uint16_t Opcode) const;
   bool isVOP1(uint16_t Opcode) const;
   bool isVOP2(uint16_t Opcode) const;
   bool isVOP3(uint16_t Opcode) const;
@@ -227,6 +232,25 @@ namespace AMDGPU {
   const uint64_t RSRC_TID_ENABLE = 1LL << 55;
 
 } // End namespace AMDGPU
+
+namespace SI {
+namespace KernelInputOffsets {
+
+/// Offsets in bytes from the start of the input buffer
+enum Offsets {
+  NGROUPS_X = 0,
+  NGROUPS_Y = 4,
+  NGROUPS_Z = 8,
+  GLOBAL_SIZE_X = 12,
+  GLOBAL_SIZE_Y = 16,
+  GLOBAL_SIZE_Z = 20,
+  LOCAL_SIZE_X = 24,
+  LOCAL_SIZE_Y = 28,
+  LOCAL_SIZE_Z = 32
+};
+
+} // End namespace KernelInputOffsets
+} // End namespace SI
 
 } // End namespace llvm
 

@@ -89,18 +89,19 @@ bool SIInstrInfo::areLoadsFromSameBasePtr(SDNode *Load0, SDNode *Load1,
   if (isDS(Opc0) && isDS(Opc1)) {
     assert(getNumOperandsNoGlue(Load0) == getNumOperandsNoGlue(Load1));
 
-    // TODO: Also shouldn't see read2st
-    assert(Opc0 != AMDGPU::DS_READ2_B32 &&
-           Opc0 != AMDGPU::DS_READ2_B64 &&
-           Opc1 != AMDGPU::DS_READ2_B32 &&
-           Opc1 != AMDGPU::DS_READ2_B64);
-
     // Check base reg.
     if (Load0->getOperand(1) != Load1->getOperand(1))
       return false;
 
     // Check chain.
     if (findChainOperand(Load0) != findChainOperand(Load1))
+      return false;
+
+    // Skip read2 / write2 variants for simplicity.
+    // TODO: We should report true if the used offsets are adjacent (excluded
+    // st64 versions).
+    if (AMDGPU::getNamedOperandIdx(Opc0, AMDGPU::OpName::data1) != -1 ||
+        AMDGPU::getNamedOperandIdx(Opc1, AMDGPU::OpName::data1) != -1)
       return false;
 
     Offset0 = cast<ConstantSDNode>(Load0->getOperand(2))->getZExtValue();
@@ -161,6 +162,18 @@ bool SIInstrInfo::areLoadsFromSameBasePtr(SDNode *Load0, SDNode *Load1,
   return false;
 }
 
+static bool isStride64(unsigned Opc) {
+  switch (Opc) {
+  case AMDGPU::DS_READ2ST64_B32:
+  case AMDGPU::DS_READ2ST64_B64:
+  case AMDGPU::DS_WRITE2ST64_B32:
+  case AMDGPU::DS_WRITE2ST64_B64:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool SIInstrInfo::getLdStBaseRegImmOfs(MachineInstr *LdSt,
                                        unsigned &BaseReg, unsigned &Offset,
                                        const TargetRegisterInfo *TRI) const {
@@ -203,6 +216,9 @@ bool SIInstrInfo::getLdStBaseRegImmOfs(MachineInstr *LdSt,
         EltSize = getOpRegClass(*LdSt, Data0Idx)->getSize();
       }
 
+      if (isStride64(Opc))
+        EltSize *= 64;
+
       const MachineOperand *AddrReg = getNamedOperand(*LdSt,
                                                       AMDGPU::OpName::addr);
       BaseReg = AddrReg->getReg();
@@ -241,6 +257,28 @@ bool SIInstrInfo::getLdStBaseRegImmOfs(MachineInstr *LdSt,
     Offset = OffsetImm->getImm();
     return true;
   }
+
+  return false;
+}
+
+bool SIInstrInfo::shouldClusterLoads(MachineInstr *FirstLdSt,
+                                     MachineInstr *SecondLdSt,
+                                     unsigned NumLoads) const {
+  unsigned Opc0 = FirstLdSt->getOpcode();
+  unsigned Opc1 = SecondLdSt->getOpcode();
+
+  // TODO: This needs finer tuning
+  if (NumLoads > 4)
+    return false;
+
+  if (isDS(Opc0) && isDS(Opc1))
+    return true;
+
+  if (isSMRD(Opc0) && isSMRD(Opc1))
+    return true;
+
+  if ((isMUBUF(Opc0) || isMTBUF(Opc0)) && (isMUBUF(Opc1) || isMTBUF(Opc1)))
+    return true;
 
   return false;
 }
@@ -623,6 +661,10 @@ bool SIInstrInfo::isMTBUF(uint16_t Opcode) const {
   return get(Opcode).TSFlags & SIInstrFlags::MTBUF;
 }
 
+bool SIInstrInfo::isFLAT(uint16_t Opcode) const {
+  return get(Opcode).TSFlags & SIInstrFlags::FLAT;
+}
+
 bool SIInstrInfo::isVOP1(uint16_t Opcode) const {
   return get(Opcode).TSFlags & SIInstrFlags::VOP1;
 }
@@ -826,6 +868,10 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr *MI,
 
         // EXEC register uses the constant bus.
         if (!MO.isImplicit() && MO.getReg() == AMDGPU::EXEC)
+          ++ConstantBusCount;
+
+        // FLAT_SCR is just an SGPR pair.
+        if (!MO.isImplicit() && (MO.getReg() == AMDGPU::FLAT_SCR))
           ++ConstantBusCount;
 
         // SGPRs use the constant bus

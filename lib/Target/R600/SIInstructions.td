@@ -31,6 +31,7 @@ def isSI : Predicate<"Subtarget.getGeneration() "
 
 def isCI : Predicate<"Subtarget.getGeneration() "
                       ">= AMDGPUSubtarget::SEA_ISLANDS">;
+def HasFlatAddressSpace : Predicate<"Subtarget.hasFlatAddressSpace()">;
 
 def isCFDepth0 : Predicate<"isCFDepth0()">;
 
@@ -1044,6 +1045,80 @@ defm IMAGE_SAMPLE_C_CD_CL_O : MIMG_Sampler <0x0000006f, "IMAGE_SAMPLE_C_CD_CL_O"
 //def IMAGE_SAMPLER : MIMG_NoPattern_ <"IMAGE_SAMPLER", 0x0000007f>;
 
 //===----------------------------------------------------------------------===//
+// Flat Instructions
+//===----------------------------------------------------------------------===//
+
+let Predicates = [HasFlatAddressSpace] in {
+def FLAT_LOAD_UBYTE : FLAT_Load_Helper <0x00000008, "FLAT_LOAD_UBYTE", VReg_32>;
+def FLAT_LOAD_SBYTE : FLAT_Load_Helper <0x00000009, "FLAT_LOAD_SBYTE", VReg_32>;
+def FLAT_LOAD_USHORT : FLAT_Load_Helper <0x0000000a, "FLAT_LOAD_USHORT", VReg_32>;
+def FLAT_LOAD_SSHORT : FLAT_Load_Helper <0x0000000b, "FLAT_LOAD_SSHORT", VReg_32>;
+def FLAT_LOAD_DWORD : FLAT_Load_Helper <0x0000000c, "FLAT_LOAD_DWORD", VReg_32>;
+def FLAT_LOAD_DWORDX2 : FLAT_Load_Helper <0x0000000d, "FLAT_LOAD_DWORDX2", VReg_64>;
+def FLAT_LOAD_DWORDX4 : FLAT_Load_Helper <0x0000000e, "FLAT_LOAD_DWORDX4", VReg_128>;
+def FLAT_LOAD_DWORDX3 : FLAT_Load_Helper <0x00000010, "FLAT_LOAD_DWORDX3", VReg_96>;
+
+def FLAT_STORE_BYTE : FLAT_Store_Helper <
+  0x00000018, "FLAT_STORE_BYTE", VReg_32
+>;
+
+def FLAT_STORE_SHORT : FLAT_Store_Helper <
+  0x0000001a, "FLAT_STORE_SHORT", VReg_32
+>;
+
+def FLAT_STORE_DWORD : FLAT_Store_Helper <
+  0x0000001c, "FLAT_STORE_DWORD", VReg_32
+>;
+
+def FLAT_STORE_DWORDX2 : FLAT_Store_Helper <
+  0x0000001d, "FLAT_STORE_DWORDX2", VReg_64
+>;
+
+def FLAT_STORE_DWORDX4 : FLAT_Store_Helper <
+  0x0000001e, "FLAT_STORE_DWORDX4", VReg_128
+>;
+
+def FLAT_STORE_DWORDX3 : FLAT_Store_Helper <
+  0x0000001e, "FLAT_STORE_DWORDX3", VReg_96
+>;
+
+//def FLAT_ATOMIC_SWAP : FLAT_ <0x00000030, "FLAT_ATOMIC_SWAP", []>;
+//def FLAT_ATOMIC_CMPSWAP : FLAT_ <0x00000031, "FLAT_ATOMIC_CMPSWAP", []>;
+//def FLAT_ATOMIC_ADD : FLAT_ <0x00000032, "FLAT_ATOMIC_ADD", []>;
+//def FLAT_ATOMIC_SUB : FLAT_ <0x00000033, "FLAT_ATOMIC_SUB", []>;
+//def FLAT_ATOMIC_RSUB : FLAT_ <0x00000034, "FLAT_ATOMIC_RSUB", []>;
+//def FLAT_ATOMIC_SMIN : FLAT_ <0x00000035, "FLAT_ATOMIC_SMIN", []>;
+//def FLAT_ATOMIC_UMIN : FLAT_ <0x00000036, "FLAT_ATOMIC_UMIN", []>;
+//def FLAT_ATOMIC_SMAX : FLAT_ <0x00000037, "FLAT_ATOMIC_SMAX", []>;
+//def FLAT_ATOMIC_UMAX : FLAT_ <0x00000038, "FLAT_ATOMIC_UMAX", []>;
+//def FLAT_ATOMIC_AND : FLAT_ <0x00000039, "FLAT_ATOMIC_AND", []>;
+//def FLAT_ATOMIC_OR : FLAT_ <0x0000003a, "FLAT_ATOMIC_OR", []>;
+//def FLAT_ATOMIC_XOR : FLAT_ <0x0000003b, "FLAT_ATOMIC_XOR", []>;
+//def FLAT_ATOMIC_INC : FLAT_ <0x0000003c, "FLAT_ATOMIC_INC", []>;
+//def FLAT_ATOMIC_DEC : FLAT_ <0x0000003d, "FLAT_ATOMIC_DEC", []>;
+//def FLAT_ATOMIC_FCMPSWAP : FLAT_ <0x0000003e, "FLAT_ATOMIC_FCMPSWAP", []>;
+//def FLAT_ATOMIC_FMIN : FLAT_ <0x0000003f, "FLAT_ATOMIC_FMIN", []>;
+//def FLAT_ATOMIC_FMAX : FLAT_ <0x00000040, "FLAT_ATOMIC_FMAX", []>;
+//def FLAT_ATOMIC_SWAP_X2 : FLAT_X2 <0x00000050, "FLAT_ATOMIC_SWAP_X2", []>;
+//def FLAT_ATOMIC_CMPSWAP_X2 : FLAT_X2 <0x00000051, "FLAT_ATOMIC_CMPSWAP_X2", []>;
+//def FLAT_ATOMIC_ADD_X2 : FLAT_X2 <0x00000052, "FLAT_ATOMIC_ADD_X2", []>;
+//def FLAT_ATOMIC_SUB_X2 : FLAT_X2 <0x00000053, "FLAT_ATOMIC_SUB_X2", []>;
+//def FLAT_ATOMIC_RSUB_X2 : FLAT_X2 <0x00000054, "FLAT_ATOMIC_RSUB_X2", []>;
+//def FLAT_ATOMIC_SMIN_X2 : FLAT_X2 <0x00000055, "FLAT_ATOMIC_SMIN_X2", []>;
+//def FLAT_ATOMIC_UMIN_X2 : FLAT_X2 <0x00000056, "FLAT_ATOMIC_UMIN_X2", []>;
+//def FLAT_ATOMIC_SMAX_X2 : FLAT_X2 <0x00000057, "FLAT_ATOMIC_SMAX_X2", []>;
+//def FLAT_ATOMIC_UMAX_X2 : FLAT_X2 <0x00000058, "FLAT_ATOMIC_UMAX_X2", []>;
+//def FLAT_ATOMIC_AND_X2 : FLAT_X2 <0x00000059, "FLAT_ATOMIC_AND_X2", []>;
+//def FLAT_ATOMIC_OR_X2 : FLAT_X2 <0x0000005a, "FLAT_ATOMIC_OR_X2", []>;
+//def FLAT_ATOMIC_XOR_X2 : FLAT_X2 <0x0000005b, "FLAT_ATOMIC_XOR_X2", []>;
+//def FLAT_ATOMIC_INC_X2 : FLAT_X2 <0x0000005c, "FLAT_ATOMIC_INC_X2", []>;
+//def FLAT_ATOMIC_DEC_X2 : FLAT_X2 <0x0000005d, "FLAT_ATOMIC_DEC_X2", []>;
+//def FLAT_ATOMIC_FCMPSWAP_X2 : FLAT_X2 <0x0000005e, "FLAT_ATOMIC_FCMPSWAP_X2", []>;
+//def FLAT_ATOMIC_FMIN_X2 : FLAT_X2 <0x0000005f, "FLAT_ATOMIC_FMIN_X2", []>;
+//def FLAT_ATOMIC_FMAX_X2 : FLAT_X2 <0x00000060, "FLAT_ATOMIC_FMAX_X2", []>;
+
+} // End HasFlatAddressSpace predicate
+//===----------------------------------------------------------------------===//
 // VOP1 Instructions
 //===----------------------------------------------------------------------===//
 
@@ -1242,9 +1317,8 @@ def V_CNDMASK_B32_e32 : VOP2 <0x00000000, (outs VReg_32:$dst),
 }
 
 def V_CNDMASK_B32_e64 : VOP3 <0x00000100, (outs VReg_32:$dst),
-  (ins VSrc_32:$src0, VSrc_32:$src1, SSrc_64:$src2,
-   InstFlag:$abs, InstFlag:$clamp, InstFlag:$omod, InstFlag:$neg),
-  "V_CNDMASK_B32_e64 $dst, $src0, $src1, $src2, $abs, $clamp, $omod, $neg",
+  (ins VSrc_32:$src0, VSrc_32:$src1, SSrc_64:$src2),
+  "V_CNDMASK_B32_e64 $dst, $src0, $src1, $src2",
   [(set i32:$dst, (select i1:$src2, i32:$src1, i32:$src0))]
 > {
   let src0_modifiers = 0;
@@ -1901,9 +1975,9 @@ class BinOp64Pat <SDNode node, Instruction inst> : Pat <
                   (EXTRACT_SUBREG i64:$src1, sub1)), sub1)
 >;
 
-def : BinOp64Pat <and, V_AND_B32_e32>;
-def : BinOp64Pat <or, V_OR_B32_e32>;
-def : BinOp64Pat <xor, V_XOR_B32_e32>;
+def : BinOp64Pat <and, V_AND_B32_e64>;
+def : BinOp64Pat <or, V_OR_B32_e64>;
+def : BinOp64Pat <xor, V_XOR_B32_e64>;
 
 class SextInReg <ValueType vt, int ShiftAmt> : Pat <
   (sext_inreg i32:$src0, vt),
@@ -1915,7 +1989,7 @@ def : SextInReg <i16, 16>;
 
 def : Pat <
   (i32 (add (i32 (ctpop i32:$popcnt)), i32:$val)),
-  (V_BCNT_U32_B32_e32 $popcnt, $val)
+  (V_BCNT_U32_B32_e64 $popcnt, $val)
 >;
 
 def : Pat <
@@ -1935,7 +2009,7 @@ def : Pat <
 
 def : Pat <
   (addc i32:$src0, i32:$src1),
-  (V_ADD_I32_e32 $src0, $src1)
+  (V_ADD_I32_e64 $src0, $src1)
 >;
 
 /********** ======================= **********/
@@ -2822,6 +2896,37 @@ defm V_MAD_I64_I32 : VOP3Inst <0x00000177, "V_MAD_I64_I32",
 
 } // End iSCI
 
+//===----------------------------------------------------------------------===//
+// Flat Patterns
+//===----------------------------------------------------------------------===//
+
+class FLATLoad_Pattern <FLAT Instr_ADDR64, ValueType vt,
+                             PatFrag flat_ld> :
+  Pat <(vt (flat_ld i64:$ptr)),
+       (Instr_ADDR64 $ptr)
+>;
+
+def : FLATLoad_Pattern <FLAT_LOAD_SBYTE, i32, sextloadi8_flat>;
+def : FLATLoad_Pattern <FLAT_LOAD_UBYTE, i32, az_extloadi8_flat>;
+def : FLATLoad_Pattern <FLAT_LOAD_SSHORT, i32, sextloadi16_flat>;
+def : FLATLoad_Pattern <FLAT_LOAD_USHORT, i32, az_extloadi16_flat>;
+def : FLATLoad_Pattern <FLAT_LOAD_DWORD, i32, flat_load>;
+def : FLATLoad_Pattern <FLAT_LOAD_DWORDX2, i64, flat_load>;
+def : FLATLoad_Pattern <FLAT_LOAD_DWORDX2, i64, az_extloadi32_flat>;
+def : FLATLoad_Pattern <FLAT_LOAD_DWORDX2, v2i32, flat_load>;
+def : FLATLoad_Pattern <FLAT_LOAD_DWORDX4, v4i32, flat_load>;
+
+class FLATStore_Pattern <FLAT Instr, ValueType vt, PatFrag st> :
+  Pat <(st vt:$value, i64:$ptr),
+        (Instr $value, $ptr)
+  >;
+
+def : FLATStore_Pattern <FLAT_STORE_BYTE, i32, truncstorei8_flat>;
+def : FLATStore_Pattern <FLAT_STORE_SHORT, i32, truncstorei16_flat>;
+def : FLATStore_Pattern <FLAT_STORE_DWORD, i32, flat_store>;
+def : FLATStore_Pattern <FLAT_STORE_DWORDX2, i64, flat_store>;
+def : FLATStore_Pattern <FLAT_STORE_DWORDX2, v2i32, flat_store>;
+def : FLATStore_Pattern <FLAT_STORE_DWORDX4, v4i32, flat_store>;
 
 /********** ====================== **********/
 /**********   Indirect adressing   **********/
@@ -2964,13 +3069,13 @@ def : Pat <
 
 def : Pat <
   (i1 (trunc i32:$a)),
-  (V_CMP_EQ_I32_e64 (V_AND_B32_e32 (i32 1), $a), 1)
+  (V_CMP_EQ_I32_e64 (V_AND_B32_e64 (i32 1), $a), 1)
 >;
 
 //============================================================================//
 // Miscellaneous Optimization Patterns
 //============================================================================//
 
-def : SHA256MaPattern <V_BFI_B32, V_XOR_B32_e32>;
+def : SHA256MaPattern <V_BFI_B32, V_XOR_B32_e64>;
 
 } // End isSI predicate
