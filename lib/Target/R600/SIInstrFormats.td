@@ -42,6 +42,10 @@ class InstSI <dag outs, dag ins, string asm, list<dag> pattern> :
   let TSFlags{10} = MUBUF;
   let TSFlags{11} = MTBUF;
   let TSFlags{12} = FLAT;
+
+  // Most instructions require adjustments after selection to satisfy
+  // operand requirements.
+  let hasPostISelHook = 1;
 }
 
 class Enc32 {
@@ -164,6 +168,8 @@ class SOP2 <bits<7> op, dag outs, dag ins, string asm, list<dag> pattern> :
   let mayStore = 0;
   let hasSideEffects = 0;
   let SALU = 1;
+
+  let UseNamedOperandTable = 1;
 }
 
 class SOPC <bits<7> op, dag outs, dag ins, string asm, list<dag> pattern> :
@@ -174,6 +180,8 @@ class SOPC <bits<7> op, dag outs, dag ins, string asm, list<dag> pattern> :
   let mayStore = 0;
   let hasSideEffects = 0;
   let SALU = 1;
+
+  let UseNamedOperandTable = 1;
 }
 
 class SOPK <bits<5> op, dag outs, dag ins, string asm, list<dag> pattern> :
@@ -183,6 +191,8 @@ class SOPK <bits<5> op, dag outs, dag ins, string asm, list<dag> pattern> :
   let mayStore = 0;
   let hasSideEffects = 0;
   let SALU = 1;
+
+  let UseNamedOperandTable = 1;
 }
 
 class SOPP <bits<7> op, dag ins, string asm, list<dag> pattern> :
@@ -192,10 +202,12 @@ class SOPP <bits<7> op, dag ins, string asm, list<dag> pattern> :
   let mayStore = 0;
   let hasSideEffects = 0;
   let SALU = 1;
+
+  let UseNamedOperandTable = 1;
 }
 
-class SMRD <bits<5> op, bits<1> imm, dag outs, dag ins, string asm,
-            list<dag> pattern> : InstSI<outs, ins, asm, pattern>, SMRDe<op, imm> {
+class SMRD <dag outs, dag ins, string asm, list<dag> pattern> :
+    InstSI<outs, ins, asm, pattern> {
 
   let LGKM_CNT = 1;
   let SMRD = 1;
@@ -543,8 +555,8 @@ class MUBUF <bits<7> op, dag outs, dag ins, string asm, list<dag> pattern> :
   let UseNamedOperandTable = 1;
 }
 
-class MTBUF <bits<3> op, dag outs, dag ins, string asm, list<dag> pattern> :
-    InstSI<outs, ins, asm, pattern>, MTBUFe <op> {
+class MTBUF <dag outs, dag ins, string asm, list<dag> pattern> :
+    InstSI<outs, ins, asm, pattern> {
 
   let VM_CNT = 1;
   let EXP_CNT = 1;
@@ -577,14 +589,6 @@ class MIMG <bits<7> op, dag outs, dag ins, string asm, list<dag> pattern> :
   let MIMG = 1;
 }
 
-def EXP : InstSI<
-  (outs),
-  (ins i32imm:$en, i32imm:$tgt, i32imm:$compr, i32imm:$done, i32imm:$vm,
-       VReg_32:$src0, VReg_32:$src1, VReg_32:$src2, VReg_32:$src3),
-  "EXP $en, $tgt, $compr, $done, $vm, $src0, $src1, $src2, $src3",
-  [] >, EXPe {
 
-  let EXP_CNT = 1;
-}
 
 } // End Uses = [EXEC]

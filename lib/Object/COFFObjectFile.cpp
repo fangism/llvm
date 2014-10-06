@@ -27,6 +27,7 @@ using namespace object;
 
 using support::ulittle16_t;
 using support::ulittle32_t;
+using support::ulittle64_t;
 using support::little16_t;
 
 // Returns false if size is greater than the buffer size. And sets ec.
@@ -491,8 +492,9 @@ std::error_code COFFObjectFile::initImportTablePtr() {
     return object_error::success;
 
   uint32_t ImportTableRva = DataEntry->RelativeVirtualAddress;
+  // -1 because the last entry is the null entry.
   NumberOfImportDirectory = DataEntry->Size /
-      sizeof(import_directory_table_entry);
+      sizeof(import_directory_table_entry) - 1;
 
   // Find the section that contains the RVA. This is needed because the RVA is
   // the import table's memory address which is different from its file offset.
@@ -501,6 +503,26 @@ std::error_code COFFObjectFile::initImportTablePtr() {
     return EC;
   ImportDirectory = reinterpret_cast<
       const import_directory_table_entry *>(IntPtr);
+  return object_error::success;
+}
+
+// Initializes DelayImportDirectory and NumberOfDelayImportDirectory.
+std::error_code COFFObjectFile::initDelayImportTablePtr() {
+  const data_directory *DataEntry;
+  if (getDataDirectory(COFF::DELAY_IMPORT_DESCRIPTOR, DataEntry))
+    return object_error::success;
+  if (DataEntry->RelativeVirtualAddress == 0)
+    return object_error::success;
+
+  uint32_t RVA = DataEntry->RelativeVirtualAddress;
+  NumberOfDelayImportDirectory = DataEntry->Size /
+      sizeof(delay_import_directory_table_entry) - 1;
+
+  uintptr_t IntPtr = 0;
+  if (std::error_code EC = getRvaPtr(RVA, IntPtr))
+    return EC;
+  DelayImportDirectory = reinterpret_cast<
+      const delay_import_directory_table_entry *>(IntPtr);
   return object_error::success;
 }
 
@@ -531,6 +553,7 @@ COFFObjectFile::COFFObjectFile(MemoryBufferRef Object, std::error_code &EC)
       DataDirectory(nullptr), SectionTable(nullptr), SymbolTable16(nullptr),
       SymbolTable32(nullptr), StringTable(nullptr), StringTableSize(0),
       ImportDirectory(nullptr), NumberOfImportDirectory(0),
+      DelayImportDirectory(nullptr), NumberOfDelayImportDirectory(0),
       ExportDirectory(nullptr) {
   // Check that we at least have enough room for a header.
   if (!checkSize(Data, EC, sizeof(coff_file_header)))
@@ -629,6 +652,8 @@ COFFObjectFile::COFFObjectFile(MemoryBufferRef Object, std::error_code &EC)
   // Initialize the pointer to the beginning of the import table.
   if ((EC = initImportTablePtr()))
     return;
+  if ((EC = initDelayImportTablePtr()))
+    return;
 
   // Initialize the pointer to the export table.
   if ((EC = initExportTablePtr()))
@@ -658,6 +683,19 @@ import_directory_iterator COFFObjectFile::import_directory_begin() const {
 import_directory_iterator COFFObjectFile::import_directory_end() const {
   return import_directory_iterator(
       ImportDirectoryEntryRef(ImportDirectory, NumberOfImportDirectory, this));
+}
+
+delay_import_directory_iterator
+COFFObjectFile::delay_import_directory_begin() const {
+  return delay_import_directory_iterator(
+      DelayImportDirectoryEntryRef(DelayImportDirectory, 0, this));
+}
+
+delay_import_directory_iterator
+COFFObjectFile::delay_import_directory_end() const {
+  return delay_import_directory_iterator(
+      DelayImportDirectoryEntryRef(
+          DelayImportDirectory, NumberOfDelayImportDirectory, this));
 }
 
 export_directory_iterator COFFObjectFile::export_directory_begin() const {
@@ -840,6 +878,10 @@ std::error_code COFFObjectFile::getSectionName(const coff_section *Sec,
 std::error_code
 COFFObjectFile::getSectionContents(const coff_section *Sec,
                                    ArrayRef<uint8_t> &Res) const {
+  // PointerToRawData and SizeOfRawData won't make sense for BSS sections, don't
+  // do anything interesting for them.
+  assert((Sec->Characteristics & COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0 &&
+         "BSS sections don't have contents!");
   // The only thing that we need to verify is that the contents is contained
   // within the file bounds. We don't need to make sure it doesn't cover other
   // data, as there's nothing that says that is not allowed.
@@ -1025,26 +1067,121 @@ void ImportDirectoryEntryRef::moveNext() {
 
 std::error_code ImportDirectoryEntryRef::getImportTableEntry(
     const import_directory_table_entry *&Result) const {
-  Result = ImportTable;
+  Result = ImportTable + Index;
   return object_error::success;
+}
+
+static imported_symbol_iterator
+makeImportedSymbolIterator(const COFFObjectFile *Object,
+                           uintptr_t Ptr, int Index) {
+  if (Object->getBytesInAddress() == 4) {
+    auto *P = reinterpret_cast<const import_lookup_table_entry32 *>(Ptr);
+    return imported_symbol_iterator(ImportedSymbolRef(P, Index, Object));
+  }
+  auto *P = reinterpret_cast<const import_lookup_table_entry64 *>(Ptr);
+  return imported_symbol_iterator(ImportedSymbolRef(P, Index, Object));
+}
+
+static imported_symbol_iterator
+importedSymbolBegin(uint32_t RVA, const COFFObjectFile *Object) {
+  uintptr_t IntPtr = 0;
+  Object->getRvaPtr(RVA, IntPtr);
+  return makeImportedSymbolIterator(Object, IntPtr, 0);
+}
+
+static imported_symbol_iterator
+importedSymbolEnd(uint32_t RVA, const COFFObjectFile *Object) {
+  uintptr_t IntPtr = 0;
+  Object->getRvaPtr(RVA, IntPtr);
+  // Forward the pointer to the last entry which is null.
+  int Index = 0;
+  if (Object->getBytesInAddress() == 4) {
+    auto *Entry = reinterpret_cast<ulittle32_t *>(IntPtr);
+    while (*Entry++)
+      ++Index;
+  } else {
+    auto *Entry = reinterpret_cast<ulittle64_t *>(IntPtr);
+    while (*Entry++)
+      ++Index;
+  }
+  return makeImportedSymbolIterator(Object, IntPtr, Index);
+}
+
+imported_symbol_iterator
+ImportDirectoryEntryRef::imported_symbol_begin() const {
+  return importedSymbolBegin(ImportTable[Index].ImportLookupTableRVA,
+                             OwningObject);
+}
+
+imported_symbol_iterator
+ImportDirectoryEntryRef::imported_symbol_end() const {
+  return importedSymbolEnd(ImportTable[Index].ImportLookupTableRVA,
+                           OwningObject);
 }
 
 std::error_code ImportDirectoryEntryRef::getName(StringRef &Result) const {
   uintptr_t IntPtr = 0;
   if (std::error_code EC =
-          OwningObject->getRvaPtr(ImportTable->NameRVA, IntPtr))
+          OwningObject->getRvaPtr(ImportTable[Index].NameRVA, IntPtr))
     return EC;
   Result = StringRef(reinterpret_cast<const char *>(IntPtr));
+  return object_error::success;
+}
+
+std::error_code
+ImportDirectoryEntryRef::getImportLookupTableRVA(uint32_t  &Result) const {
+  Result = ImportTable[Index].ImportLookupTableRVA;
+  return object_error::success;
+}
+
+std::error_code
+ImportDirectoryEntryRef::getImportAddressTableRVA(uint32_t &Result) const {
+  Result = ImportTable[Index].ImportAddressTableRVA;
   return object_error::success;
 }
 
 std::error_code ImportDirectoryEntryRef::getImportLookupEntry(
     const import_lookup_table_entry32 *&Result) const {
   uintptr_t IntPtr = 0;
-  if (std::error_code EC =
-          OwningObject->getRvaPtr(ImportTable->ImportLookupTableRVA, IntPtr))
+  uint32_t RVA = ImportTable[Index].ImportLookupTableRVA;
+  if (std::error_code EC = OwningObject->getRvaPtr(RVA, IntPtr))
     return EC;
   Result = reinterpret_cast<const import_lookup_table_entry32 *>(IntPtr);
+  return object_error::success;
+}
+
+bool DelayImportDirectoryEntryRef::
+operator==(const DelayImportDirectoryEntryRef &Other) const {
+  return Table == Other.Table && Index == Other.Index;
+}
+
+void DelayImportDirectoryEntryRef::moveNext() {
+  ++Index;
+}
+
+imported_symbol_iterator
+DelayImportDirectoryEntryRef::imported_symbol_begin() const {
+  return importedSymbolBegin(Table[Index].DelayImportNameTable,
+                             OwningObject);
+}
+
+imported_symbol_iterator
+DelayImportDirectoryEntryRef::imported_symbol_end() const {
+  return importedSymbolEnd(Table[Index].DelayImportNameTable,
+                           OwningObject);
+}
+
+std::error_code DelayImportDirectoryEntryRef::getName(StringRef &Result) const {
+  uintptr_t IntPtr = 0;
+  if (std::error_code EC = OwningObject->getRvaPtr(Table[Index].Name, IntPtr))
+    return EC;
+  Result = StringRef(reinterpret_cast<const char *>(IntPtr));
+  return object_error::success;
+}
+
+std::error_code DelayImportDirectoryEntryRef::
+getDelayImportTable(const delay_import_directory_table_entry *&Result) const {
+  Result = Table;
   return object_error::success;
 }
 
@@ -1119,6 +1256,59 @@ ExportDirectoryEntryRef::getSymbolName(StringRef &Result) const {
     return object_error::success;
   }
   Result = "";
+  return object_error::success;
+}
+
+bool ImportedSymbolRef::
+operator==(const ImportedSymbolRef &Other) const {
+  return Entry32 == Other.Entry32 && Entry64 == Other.Entry64
+      && Index == Other.Index;
+}
+
+void ImportedSymbolRef::moveNext() {
+  ++Index;
+}
+
+std::error_code
+ImportedSymbolRef::getSymbolName(StringRef &Result) const {
+  uint32_t RVA;
+  if (Entry32) {
+    // If a symbol is imported only by ordinal, it has no name.
+    if (Entry32[Index].isOrdinal())
+      return object_error::success;
+    RVA = Entry32[Index].getHintNameRVA();
+  } else {
+    if (Entry64[Index].isOrdinal())
+      return object_error::success;
+    RVA = Entry64[Index].getHintNameRVA();
+  }
+  uintptr_t IntPtr = 0;
+  if (std::error_code EC = OwningObject->getRvaPtr(RVA, IntPtr))
+    return EC;
+  // +2 because the first two bytes is hint.
+  Result = StringRef(reinterpret_cast<const char *>(IntPtr + 2));
+  return object_error::success;
+}
+
+std::error_code ImportedSymbolRef::getOrdinal(uint16_t &Result) const {
+  uint32_t RVA;
+  if (Entry32) {
+    if (Entry32[Index].isOrdinal()) {
+      Result = Entry32[Index].getOrdinal();
+      return object_error::success;
+    }
+    RVA = Entry32[Index].getHintNameRVA();
+  } else {
+    if (Entry64[Index].isOrdinal()) {
+      Result = Entry64[Index].getOrdinal();
+      return object_error::success;
+    }
+    RVA = Entry64[Index].getHintNameRVA();
+  }
+  uintptr_t IntPtr = 0;
+  if (std::error_code EC = OwningObject->getRvaPtr(RVA, IntPtr))
+    return EC;
+  Result = *reinterpret_cast<const ulittle16_t *>(IntPtr);
   return object_error::success;
 }
 

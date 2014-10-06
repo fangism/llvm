@@ -70,6 +70,7 @@ public:
 /// \brief This class is used to track local variable information.
 class DbgVariable {
   DIVariable Var;             // Variable Descriptor.
+  DIExpression Expr;          // Complex address location expression.
   DIE *TheDIE;                // Variable DIE.
   unsigned DotDebugLocOffset; // Offset in DotDebugLocEntries.
   const MachineInstr *MInsn;  // DBG_VALUE instruction of the variable.
@@ -78,18 +79,22 @@ class DbgVariable {
 
 public:
   /// Construct a DbgVariable from a DIVariable.
-  DbgVariable(DIVariable V, DwarfDebug *DD)
-      : Var(V), TheDIE(nullptr), DotDebugLocOffset(~0U), MInsn(nullptr),
-        FrameIndex(~0), DD(DD) {}
+  DbgVariable(DIVariable V, DIExpression E, DwarfDebug *DD)
+      : Var(V), Expr(E), TheDIE(nullptr), DotDebugLocOffset(~0U),
+        MInsn(nullptr), FrameIndex(~0), DD(DD) {
+    assert(Var.Verify() && Expr.Verify());
+  }
 
   /// Construct a DbgVariable from a DEBUG_VALUE.
   /// AbstractVar may be NULL.
   DbgVariable(const MachineInstr *DbgValue, DwarfDebug *DD)
-      : Var(DbgValue->getDebugVariable()), TheDIE(nullptr),
-        DotDebugLocOffset(~0U), MInsn(DbgValue), FrameIndex(~0), DD(DD) {}
+      : Var(DbgValue->getDebugVariable()), Expr(DbgValue->getDebugExpression()),
+        TheDIE(nullptr), DotDebugLocOffset(~0U), MInsn(DbgValue),
+        FrameIndex(~0), DD(DD) {}
 
   // Accessors.
   DIVariable getVariable() const { return Var; }
+  DIExpression getExpression() const { return Expr; }
   void setDIE(DIE &D) { TheDIE = &D; }
   DIE *getDIE() const { return TheDIE; }
   void setDotDebugLocOffset(unsigned O) { DotDebugLocOffset = O; }
@@ -124,14 +129,14 @@ public:
 
   bool variableHasComplexAddress() const {
     assert(Var.isVariable() && "Invalid complex DbgVariable!");
-    return Var.hasComplexAddress();
+    return Expr.getNumElements() > 0;
   }
   bool isBlockByrefVariable() const;
   unsigned getNumAddrElements() const {
     assert(Var.isVariable() && "Invalid complex DbgVariable!");
-    return Var.getNumAddrElements();
+    return Expr.getNumElements();
   }
-  uint64_t getAddrElement(unsigned i) const { return Var.getAddrElement(i); }
+  uint64_t getAddrElement(unsigned i) const { return Expr.getElement(i); }
   DIType getType() const;
 
 private:
@@ -209,10 +214,6 @@ class DwarfDebug : public AsmPrinterHandler {
   // Collection of DebugLocEntry. Stored in a linked list so that DIELocLists
   // can refer to them in spite of insertions into this list.
   SmallVector<DebugLocList, 4> DotDebugLocEntries;
-
-  // Collection of subprogram DIEs that are marked (at the end of the module)
-  // as DW_AT_inline.
-  SmallPtrSet<DIE *, 4> InlinedSubprogramDIEs;
 
   // This is a collection of subprogram MDNodes that are processed to
   // create DIEs.
@@ -319,6 +320,7 @@ class DwarfDebug : public AsmPrinterHandler {
 
   // True iff there are multiple CUs in this module.
   bool SingleCU;
+  bool IsDarwin;
 
   AddressPool AddrPool;
 
@@ -346,12 +348,6 @@ class DwarfDebug : public AsmPrinterHandler {
                                        const MDNode *Scope);
   void ensureAbstractVariableIsCreatedIfScoped(const DIVariable &Var,
                                                const MDNode *Scope);
-
-  /// \brief Find DIE for the given subprogram and attach appropriate
-  /// DW_AT_low_pc and DW_AT_high_pc attributes. If there are global
-  /// variables in this scope then create and insert DIEs for these
-  /// variables.
-  DIE &updateSubprogramScopeDIE(DwarfCompileUnit &SPCU, DISubprogram SP);
 
   /// \brief A helper function to check whether the DIE for a given Scope is
   /// going to be null.
@@ -381,7 +377,7 @@ class DwarfDebug : public AsmPrinterHandler {
   void constructAbstractSubprogramScopeDIE(DwarfCompileUnit &TheCU,
                                            LexicalScope *Scope);
   /// \brief Construct a DIE for this subprogram scope.
-  DIE &constructSubprogramScopeDIE(DwarfCompileUnit &TheCU,
+  void constructSubprogramScopeDIE(DwarfCompileUnit &TheCU,
                                    LexicalScope *Scope);
   /// A helper function to create children of a Scope DIE.
   DIE *createScopeChildrenDIE(DwarfCompileUnit &TheCU, LexicalScope *Scope,
@@ -512,11 +508,6 @@ class DwarfDebug : public AsmPrinterHandler {
   void constructAndAddImportedEntityDIE(DwarfCompileUnit &TheCU,
                                         const MDNode *N);
 
-  /// \brief Construct import_module DIE.
-  std::unique_ptr<DIE>
-  constructImportedEntityDIE(DwarfCompileUnit &TheCU,
-                             const DIImportedEntity &Module);
-
   /// \brief Register a source line with debug info. Returns the unique
   /// label that was emitted and which provides correspondence to the
   /// source line list.
@@ -561,8 +552,6 @@ class DwarfDebug : public AsmPrinterHandler {
 
   void attachRangesOrLowHighPC(DwarfCompileUnit &Unit, DIE &D,
                                const SmallVectorImpl<InsnRange> &Ranges);
-  void attachLowHighPC(DwarfCompileUnit &Unit, DIE &D, const MCSymbol *Begin,
-                       const MCSymbol *End);
 
 public:
   //===--------------------------------------------------------------------===//
@@ -687,6 +676,10 @@ public:
   void addAccelNamespace(StringRef Name, const DIE &Die);
 
   void addAccelType(StringRef Name, const DIE &Die, char Flags);
+
+  const MachineFunction *getCurrentFunction() const { return CurFn; }
+  const MCSymbol *getFunctionBeginSym() const { return FunctionBeginSym; }
+  const MCSymbol *getFunctionEndSym() const { return FunctionEndSym; }
 };
 } // End of namespace llvm
 

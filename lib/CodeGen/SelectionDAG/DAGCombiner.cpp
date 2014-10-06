@@ -17,6 +17,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/Statistic.h"
@@ -276,6 +277,7 @@ namespace {
     SDValue visitFMA(SDNode *N);
     SDValue visitFDIV(SDNode *N);
     SDValue visitFREM(SDNode *N);
+    SDValue visitFSQRT(SDNode *N);
     SDValue visitFCOPYSIGN(SDNode *N);
     SDValue visitSINT_TO_FP(SDNode *N);
     SDValue visitUINT_TO_FP(SDNode *N);
@@ -326,7 +328,8 @@ namespace {
     SDValue BuildSDIV(SDNode *N);
     SDValue BuildSDIVPow2(SDNode *N);
     SDValue BuildUDIV(SDNode *N);
-    SDValue BuildRSQRTE(SDNode *N);
+    SDValue BuildReciprocalEstimate(SDValue Op);
+    SDValue BuildRsqrtEstimate(SDValue Op);
     SDValue MatchBSwapHWordLow(SDNode *N, SDValue N0, SDValue N1,
                                bool DemandHighBits = true);
     SDValue MatchBSwapHWord(SDNode *N, SDValue N0, SDValue N1);
@@ -1307,6 +1310,7 @@ SDValue DAGCombiner::visit(SDNode *N) {
   case ISD::FMA:                return visitFMA(N);
   case ISD::FDIV:               return visitFDIV(N);
   case ISD::FREM:               return visitFREM(N);
+  case ISD::FSQRT:              return visitFSQRT(N);
   case ISD::FCOPYSIGN:          return visitFCOPYSIGN(N);
   case ISD::SINT_TO_FP:         return visitSINT_TO_FP(N);
   case ISD::UINT_TO_FP:         return visitUINT_TO_FP(N);
@@ -6976,6 +6980,7 @@ SDValue DAGCombiner::visitFDIV(SDNode *N) {
   ConstantFPSDNode *N0CFP = dyn_cast<ConstantFPSDNode>(N0);
   ConstantFPSDNode *N1CFP = dyn_cast<ConstantFPSDNode>(N1);
   EVT VT = N->getValueType(0);
+  SDLoc DL(N);
   const TargetOptions &Options = DAG.getTarget().Options;
 
   // fold vector ops
@@ -7007,10 +7012,37 @@ SDValue DAGCombiner::visitFDIV(SDNode *N) {
         return DAG.getNode(ISD::FMUL, SDLoc(N), VT, N0,
                            DAG.getConstantFP(Recip, VT));
     }
+    
     // If this FDIV is part of a reciprocal square root, it may be folded
     // into a target-specific square root estimate instruction.
-    if (SDValue SqrtOp = BuildRSQRTE(N))
-      return SqrtOp;
+    if (N1.getOpcode() == ISD::FSQRT) {
+      if (SDValue RV = BuildRsqrtEstimate(N1.getOperand(0))) {
+        AddToWorklist(RV.getNode());
+        return DAG.getNode(ISD::FMUL, DL, VT, N0, RV);
+      }
+    } else if (N1.getOpcode() == ISD::FP_EXTEND &&
+               N1.getOperand(0).getOpcode() == ISD::FSQRT) {
+      if (SDValue RV = BuildRsqrtEstimate(N1.getOperand(0).getOperand(0))) {
+        AddToWorklist(RV.getNode());
+        RV = DAG.getNode(ISD::FP_EXTEND, SDLoc(N1), VT, RV);
+        AddToWorklist(RV.getNode());
+        return DAG.getNode(ISD::FMUL, DL, VT, N0, RV);
+      }
+    } else if (N1.getOpcode() == ISD::FP_ROUND &&
+               N1.getOperand(0).getOpcode() == ISD::FSQRT) {
+      if (SDValue RV = BuildRsqrtEstimate(N1.getOperand(0).getOperand(0))) {
+        AddToWorklist(RV.getNode());
+        RV = DAG.getNode(ISD::FP_ROUND, SDLoc(N1), VT, RV, N1.getOperand(1));
+        AddToWorklist(RV.getNode());
+        return DAG.getNode(ISD::FMUL, DL, VT, N0, RV);
+      }
+    }
+    
+    // Fold into a reciprocal estimate and multiply instead of a real divide.
+    if (SDValue RV = BuildReciprocalEstimate(N1)) {
+      AddToWorklist(RV.getNode());
+      return DAG.getNode(ISD::FMUL, DL, VT, N0, RV);
+    }
   }
 
   // (fdiv (fneg X), (fneg Y)) -> (fdiv X, Y)
@@ -7039,6 +7071,33 @@ SDValue DAGCombiner::visitFREM(SDNode *N) {
   if (N0CFP && N1CFP)
     return DAG.getNode(ISD::FREM, SDLoc(N), VT, N0, N1);
 
+  return SDValue();
+}
+
+SDValue DAGCombiner::visitFSQRT(SDNode *N) {
+  if (DAG.getTarget().Options.UnsafeFPMath) {
+    // Compute this as 1/(1/sqrt(X)): the reciprocal of the reciprocal sqrt.
+    if (SDValue RV = BuildRsqrtEstimate(N->getOperand(0))) {
+      AddToWorklist(RV.getNode());
+      RV = BuildReciprocalEstimate(RV);
+      if (RV.getNode()) {
+        // Unfortunately, RV is now NaN if the input was exactly 0.
+        // Select out this case and force the answer to 0.
+        EVT VT = RV.getValueType();
+      
+        SDValue Zero = DAG.getConstantFP(0.0, VT);
+        SDValue ZeroCmp =
+          DAG.getSetCC(SDLoc(N), TLI.getSetCCResultType(*DAG.getContext(), VT),
+                       N->getOperand(0), Zero, ISD::SETEQ);
+        AddToWorklist(ZeroCmp.getNode());
+        AddToWorklist(RV.getNode());
+
+        RV = DAG.getNode(VT.isVector() ? ISD::VSELECT : ISD::SELECT,
+                         SDLoc(N), VT, ZeroCmp, Zero, RV);
+        return RV;
+      }
+    }
+  }
   return SDValue();
 }
 
@@ -9800,6 +9859,17 @@ SDValue DAGCombiner::visitSTORE(SDNode *N) {
     }
   }
 
+  // If this is a store followed by a store with the same value to the same
+  // location, then the store is dead/noop.
+  if (StoreSDNode *ST1 = dyn_cast<StoreSDNode>(Chain)) {
+    if (ST1->getBasePtr() == Ptr && ST->getMemoryVT() == ST1->getMemoryVT() &&
+        ST1->getValue() == Value && ST->isUnindexed() && !ST->isVolatile() &&
+        ST1->isUnindexed() && !ST1->isVolatile()) {
+      // The store is dead, remove it.
+      return Chain;
+    }
+  }
+
   // If this is an FP_ROUND or TRUNC followed by a store, fold this into a
   // truncating store.  We can do this even if this is already a truncstore.
   if ((Value.getOpcode() == ISD::FP_ROUND || Value.getOpcode() == ISD::TRUNCATE)
@@ -10354,6 +10424,10 @@ SDValue DAGCombiner::visitBUILD_VECTOR(SDNode *N) {
   // operations.  If so, and if the EXTRACT_VECTOR_ELT vector inputs come from
   // at most two distinct vectors, turn this into a shuffle node.
 
+  // Only type-legal BUILD_VECTOR nodes are converted to shuffle nodes.
+  if (!isTypeLegal(VT))
+    return SDValue();
+
   // May only combine to shuffle after legalize if shuffle is legal.
   if (LegalOperations && !TLI.isOperationLegal(ISD::VECTOR_SHUFFLE, VT))
     return SDValue();
@@ -10444,10 +10518,6 @@ SDValue DAGCombiner::visitBUILD_VECTOR(SDNode *N) {
     if (VecIn2.getValueType() != VecIn1.getValueType() ||
         VecIn1.getValueType() != VT)
           return SDValue();
-
-    // Only type-legal BUILD_VECTOR nodes are converted to shuffle nodes.
-    if (!isTypeLegal(VT))
-      return SDValue();
 
     // Return the new VECTOR_SHUFFLE node.
     SDValue Ops[2];
@@ -10639,6 +10709,92 @@ SDValue DAGCombiner::visitEXTRACT_SUBVECTOR(SDNode* N) {
   return SDValue();
 }
 
+static SDValue simplifyShuffleOperandRecursively(SmallBitVector &UsedElements,
+                                                 SDValue V, SelectionDAG &DAG) {
+  SDLoc DL(V);
+  EVT VT = V.getValueType();
+
+  switch (V.getOpcode()) {
+  default:
+    return V;
+
+  case ISD::CONCAT_VECTORS: {
+    EVT OpVT = V->getOperand(0).getValueType();
+    int OpSize = OpVT.getVectorNumElements();
+    SmallBitVector OpUsedElements(OpSize, false);
+    bool FoundSimplification = false;
+    SmallVector<SDValue, 4> NewOps;
+    NewOps.reserve(V->getNumOperands());
+    for (int i = 0, NumOps = V->getNumOperands(); i < NumOps; ++i) {
+      SDValue Op = V->getOperand(i);
+      bool OpUsed = false;
+      for (int j = 0; j < OpSize; ++j)
+        if (UsedElements[i * OpSize + j]) {
+          OpUsedElements[j] = true;
+          OpUsed = true;
+        }
+      NewOps.push_back(
+          OpUsed ? simplifyShuffleOperandRecursively(OpUsedElements, Op, DAG)
+                 : DAG.getUNDEF(OpVT));
+      FoundSimplification |= Op == NewOps.back();
+      OpUsedElements.reset();
+    }
+    if (FoundSimplification)
+      V = DAG.getNode(ISD::CONCAT_VECTORS, DL, VT, NewOps);
+    return V;
+  }
+
+  case ISD::INSERT_SUBVECTOR: {
+    SDValue BaseV = V->getOperand(0);
+    SDValue SubV = V->getOperand(1);
+    auto *IdxN = dyn_cast<ConstantSDNode>(V->getOperand(2));
+    if (!IdxN)
+      return V;
+
+    int SubSize = SubV.getValueType().getVectorNumElements();
+    int Idx = IdxN->getZExtValue();
+    bool SubVectorUsed = false;
+    SmallBitVector SubUsedElements(SubSize, false);
+    for (int i = 0; i < SubSize; ++i)
+      if (UsedElements[i + Idx]) {
+        SubVectorUsed = true;
+        SubUsedElements[i] = true;
+        UsedElements[i + Idx] = false;
+      }
+
+    // Now recurse on both the base and sub vectors.
+    SDValue SimplifiedSubV =
+        SubVectorUsed
+            ? simplifyShuffleOperandRecursively(SubUsedElements, SubV, DAG)
+            : DAG.getUNDEF(SubV.getValueType());
+    SDValue SimplifiedBaseV = simplifyShuffleOperandRecursively(UsedElements, BaseV, DAG);
+    if (SimplifiedSubV != SubV || SimplifiedBaseV != BaseV)
+      V = DAG.getNode(ISD::INSERT_SUBVECTOR, DL, VT,
+                      SimplifiedBaseV, SimplifiedSubV, V->getOperand(2));
+    return V;
+  }
+  }
+}
+
+static SDValue simplifyShuffleOperands(ShuffleVectorSDNode *SVN, SDValue N0,
+                                       SDValue N1, SelectionDAG &DAG) {
+  EVT VT = SVN->getValueType(0);
+  int NumElts = VT.getVectorNumElements();
+  SmallBitVector N0UsedElements(NumElts, false), N1UsedElements(NumElts, false);
+  for (int M : SVN->getMask())
+    if (M >= 0 && M < NumElts)
+      N0UsedElements[M] = true;
+    else if (M >= NumElts)
+      N1UsedElements[M - NumElts] = true;
+
+  SDValue S0 = simplifyShuffleOperandRecursively(N0UsedElements, N0, DAG);
+  SDValue S1 = simplifyShuffleOperandRecursively(N1UsedElements, N1, DAG);
+  if (S0 == N0 && S1 == N1)
+    return SDValue();
+
+  return DAG.getVectorShuffle(VT, SDLoc(SVN), S0, S1, SVN->getMask());
+}
+
 // Tries to turn a shuffle of two CONCAT_VECTORS into a single concat.
 static SDValue partitionShuffleOfConcats(SDNode *N, SelectionDAG &DAG) {
   EVT VT = N->getValueType(0);
@@ -10790,6 +10946,12 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
         return N0;
     }
   }
+
+  // There are various patterns used to build up a vector from smaller vectors,
+  // subvectors, or elements. Scan chains of these and replace unused insertions
+  // or components with undef.
+  if (SDValue S = simplifyShuffleOperands(SVN, N0, N1, DAG))
+    return S;
 
   if (N0.getOpcode() == ISD::CONCAT_VECTORS &&
       Level < AfterLegalizeVectorOps &&
@@ -11702,39 +11864,94 @@ SDValue DAGCombiner::BuildUDIV(SDNode *N) {
   return S;
 }
 
-/// Given an ISD::FDIV node with either a direct or indirect ISD::FSQRT operand,
-/// generate a DAG expression using a reciprocal square root estimate op.
-SDValue DAGCombiner::BuildRSQRTE(SDNode *N) {
+SDValue DAGCombiner::BuildReciprocalEstimate(SDValue Op) {
+  if (Level >= AfterLegalizeDAG)
+    return SDValue();
+
   // Expose the DAG combiner to the target combiner implementations.
   TargetLowering::DAGCombinerInfo DCI(DAG, Level, false, this);
-  SDLoc DL(N);
-  EVT VT = N->getValueType(0);
-  SDValue N1 = N->getOperand(1);
 
-  if (N1.getOpcode() == ISD::FSQRT) {
-    SDValue RV = TLI.BuildRSQRTE(N1.getOperand(0), DCI);
-    if (RV.getNode()) {
-      DCI.AddToWorklist(RV.getNode());
-      return DAG.getNode(ISD::FMUL, DL, VT, N->getOperand(0), RV);
+  unsigned Iterations = 0;
+  if (SDValue Est = TLI.getRecipEstimate(Op, DCI, Iterations)) {
+    if (Iterations) {
+      // Newton iteration for a function: F(X) is X_{i+1} = X_i - F(X_i)/F'(X_i)
+      // For the reciprocal, we need to find the zero of the function:
+      //   F(X) = A X - 1 [which has a zero at X = 1/A]
+      //     =>
+      //   X_{i+1} = X_i (2 - A X_i) = X_i + X_i (1 - A X_i) [this second form
+      //     does not require additional intermediate precision]
+      EVT VT = Op.getValueType();
+      SDLoc DL(Op);
+      SDValue FPOne = DAG.getConstantFP(1.0, VT);
+
+      AddToWorklist(Est.getNode());
+
+      // Newton iterations: Est = Est + Est (1 - Arg * Est)
+      for (unsigned i = 0; i < Iterations; ++i) {
+        SDValue NewEst = DAG.getNode(ISD::FMUL, DL, VT, Op, Est);
+        AddToWorklist(NewEst.getNode());
+
+        NewEst = DAG.getNode(ISD::FSUB, DL, VT, FPOne, NewEst);
+        AddToWorklist(NewEst.getNode());
+
+        NewEst = DAG.getNode(ISD::FMUL, DL, VT, Est, NewEst);
+        AddToWorklist(NewEst.getNode());
+
+        Est = DAG.getNode(ISD::FADD, DL, VT, Est, NewEst);
+        AddToWorklist(Est.getNode());
+      }
     }
-  } else if (N1.getOpcode() == ISD::FP_EXTEND &&
-             N1.getOperand(0).getOpcode() == ISD::FSQRT) {
-    SDValue RV = TLI.BuildRSQRTE(N1.getOperand(0).getOperand(0), DCI);
-    if (RV.getNode()) {
-      DCI.AddToWorklist(RV.getNode());
-      RV = DAG.getNode(ISD::FP_EXTEND, SDLoc(N1), VT, RV);
-      DCI.AddToWorklist(RV.getNode());
-      return DAG.getNode(ISD::FMUL, DL, VT, N->getOperand(0), RV);
+    return Est;
+  }
+
+  return SDValue();
+}
+
+SDValue DAGCombiner::BuildRsqrtEstimate(SDValue Op) {
+  if (Level >= AfterLegalizeDAG)
+    return SDValue();
+
+  // Expose the DAG combiner to the target combiner implementations.
+  TargetLowering::DAGCombinerInfo DCI(DAG, Level, false, this);
+  unsigned Iterations = 0;
+  if (SDValue Est = TLI.getRsqrtEstimate(Op, DCI, Iterations)) {
+    if (Iterations) {
+      // Newton iteration for a function: F(X) is X_{i+1} = X_i - F(X_i)/F'(X_i)
+      // For the reciprocal sqrt, we need to find the zero of the function:
+      //   F(X) = 1/X^2 - A [which has a zero at X = 1/sqrt(A)]
+      //     =>
+      //   X_{i+1} = X_i (1.5 - A X_i^2 / 2)
+      // As a result, we precompute A/2 prior to the iteration loop.
+      EVT VT = Op.getValueType();
+      SDLoc DL(Op);
+      SDValue FPThreeHalves = DAG.getConstantFP(1.5, VT);
+
+      AddToWorklist(Est.getNode());
+
+      // We now need 0.5 * Arg which we can write as (1.5 * Arg - Arg) so that
+      // this entire sequence requires only one FP constant.
+      SDValue HalfArg = DAG.getNode(ISD::FMUL, DL, VT, FPThreeHalves, Op);
+      AddToWorklist(HalfArg.getNode());
+
+      HalfArg = DAG.getNode(ISD::FSUB, DL, VT, HalfArg, Op);
+      AddToWorklist(HalfArg.getNode());
+
+      // Newton iterations: Est = Est * (1.5 - HalfArg * Est * Est)
+      for (unsigned i = 0; i < Iterations; ++i) {
+        SDValue NewEst = DAG.getNode(ISD::FMUL, DL, VT, Est, Est);
+        AddToWorklist(NewEst.getNode());
+
+        NewEst = DAG.getNode(ISD::FMUL, DL, VT, HalfArg, NewEst);
+        AddToWorklist(NewEst.getNode());
+
+        NewEst = DAG.getNode(ISD::FSUB, DL, VT, FPThreeHalves, NewEst);
+        AddToWorklist(NewEst.getNode());
+
+        Est = DAG.getNode(ISD::FMUL, DL, VT, Est, NewEst);
+        AddToWorklist(Est.getNode());
+      }
     }
-  } else if (N1.getOpcode() == ISD::FP_ROUND &&
-             N1.getOperand(0).getOpcode() == ISD::FSQRT) {
-    SDValue RV = TLI.BuildRSQRTE(N1.getOperand(0).getOperand(0), DCI);
-    if (RV.getNode()) {
-      DCI.AddToWorklist(RV.getNode());
-      RV = DAG.getNode(ISD::FP_ROUND, SDLoc(N1), VT, RV, N1.getOperand(1));
-      DCI.AddToWorklist(RV.getNode());
-      return DAG.getNode(ISD::FMUL, DL, VT, N->getOperand(0), RV);
-    }
+    return Est;
   }
 
   return SDValue();

@@ -36,7 +36,15 @@ public:
   /// same section this Unit originated from.
   virtual DWARFUnit *getUnitForOffset(uint32_t Offset) const = 0;
 
+  void parse(DWARFContext &C, StringRef SectionData, const RelocAddrMap &Map);
+  void parseDWO(DWARFContext &C, StringRef SectionData, const RelocAddrMap &Map);
+
 protected:
+  virtual void parseImpl(DWARFContext &Context, const DWARFDebugAbbrev *DA,
+                         StringRef Section, StringRef RS, StringRef SS,
+                         StringRef SOS, StringRef AOS, const RelocAddrMap &M,
+                         bool isLittleEndian) = 0;
+
   ~DWARFUnitSectionBase() {}
 };
 
@@ -52,7 +60,13 @@ class DWARFUnitSection final : public SmallVector<std::unique_ptr<UnitType>, 1>,
     }
   };
 
+  bool Parsed;
+
 public:
+  DWARFUnitSection() : Parsed(false) {}
+  DWARFUnitSection(DWARFUnitSection &&DUS) :
+    SmallVector<std::unique_ptr<UnitType>, 1>(std::move(DUS)), Parsed(DUS.Parsed) {}
+
   typedef llvm::SmallVectorImpl<std::unique_ptr<UnitType>> UnitVector;
   typedef typename UnitVector::iterator iterator;
   typedef llvm::iterator_range<typename UnitVector::iterator> iterator_range;
@@ -63,6 +77,26 @@ public:
     if (CU != this->end())
       return CU->get();
     return nullptr;
+  }
+
+ private:
+  void parseImpl(DWARFContext &Context, const DWARFDebugAbbrev *DA,
+                 StringRef Section, StringRef RS, StringRef SS, StringRef SOS,
+                 StringRef AOS, const RelocAddrMap &M, bool LE) override {
+    if (Parsed)
+      return;
+    DataExtractor Data(Section, LE, 0);
+    uint32_t Offset = 0;
+    while (Data.isValidOffset(Offset)) {
+      auto U =
+          llvm::make_unique<UnitType>(Context, DA, Section, RS, SS, SOS, AOS,
+                                      &M, Data.isLittleEndian(), *this);
+      if (!U->extract(Data, &Offset))
+        break;
+      this->push_back(std::move(U));
+      Offset = this->back()->getNextUnitOffset();
+    }
+    Parsed = true;
   }
 };
 

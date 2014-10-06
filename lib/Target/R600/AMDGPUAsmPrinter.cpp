@@ -97,9 +97,13 @@ void AMDGPUAsmPrinter::EmitEndOfAsmFile(Module &M) {
 }
 
 bool AMDGPUAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
+
+  // The starting address of all shader programs must be 256 bytes aligned.
+  MF.setAlignment(8);
+
   SetupMachineFunction(MF);
 
-  OutStreamer.emitRawComment(Twine('@') + MF.getName() + Twine(':'));
+  EmitFunctionHeader();
 
   MCContext &Context = getObjFileLowering().getContext();
   const MCSectionELF *ConfigSection = Context.getELFSection(".AMDGPU.config",
@@ -377,8 +381,12 @@ void AMDGPUAsmPrinter::EmitProgramInfoSI(const MachineFunction &MF,
     LDSAlignShift = 9;
   }
 
+  unsigned LDSSpillSize = MFI->LDSWaveSpillSize *
+                          MFI->getMaximumWorkGroupSize(MF);
+
   unsigned LDSBlocks =
-    RoundUpToAlignment(MFI->LDSSize, 1 << LDSAlignShift) >> LDSAlignShift;
+     RoundUpToAlignment(MFI->LDSSize + LDSSpillSize,
+	                      1 << LDSAlignShift) >> LDSAlignShift;
 
   // Scratch is allocated in 256 dword blocks.
   unsigned ScratchAlignShift = 10;

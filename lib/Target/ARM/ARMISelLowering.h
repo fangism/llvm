@@ -232,7 +232,7 @@ namespace llvm {
 
   class ARMTargetLowering : public TargetLowering {
   public:
-    explicit ARMTargetLowering(TargetMachine &TM);
+    explicit ARMTargetLowering(const TargetMachine &TM);
 
     unsigned getJumpTableEncoding() const override;
 
@@ -399,9 +399,9 @@ namespace llvm {
     Value *emitStoreConditional(IRBuilder<> &Builder, Value *Val,
                                 Value *Addr, AtomicOrdering Ord) const override;
 
-    void emitLeadingFence(IRBuilder<> &Builder, AtomicOrdering Ord,
+    Instruction* emitLeadingFence(IRBuilder<> &Builder, AtomicOrdering Ord,
                           bool IsStore, bool IsLoad) const override;
-    void emitTrailingFence(IRBuilder<> &Builder, AtomicOrdering Ord,
+    Instruction* emitTrailingFence(IRBuilder<> &Builder, AtomicOrdering Ord,
                            bool IsStore, bool IsLoad) const override;
 
     bool shouldExpandAtomicLoadInIR(LoadInst *LI) const override;

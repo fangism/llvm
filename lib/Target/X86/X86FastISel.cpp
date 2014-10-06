@@ -2249,8 +2249,10 @@ bool X86FastISel::fastLowerIntrinsicCall(const IntrinsicInst *II) {
     const MCInstrDesc &II = TII.get(TargetOpcode::DBG_VALUE);
     // FIXME may need to add RegState::Debug to any registers produced,
     // although ESP/EBP should be the only ones at the moment.
-    addFullAddress(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, II), AM).
-      addImm(0).addMetadata(DI->getVariable());
+    addFullAddress(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, II), AM)
+        .addImm(0)
+        .addMetadata(DI->getVariable())
+        .addMetadata(DI->getExpression());
     return true;
   }
   case Intrinsic::trap: {
@@ -2801,6 +2803,9 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
       // VExt has not been implemented, so this should be impossible to reach
       // for now.  However, fallback to Selection DAG isel once implemented.
       return false;
+    case CCValAssign::AExtUpper:
+    case CCValAssign::SExtUpper:
+    case CCValAssign::ZExtUpper:
     case CCValAssign::FPExt:
       llvm_unreachable("Unexpected loc info!");
     case CCValAssign::Indirect:

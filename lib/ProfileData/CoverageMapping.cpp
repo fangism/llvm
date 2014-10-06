@@ -19,68 +19,91 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ProfileData/CoverageMappingReader.h"
 #include "llvm/ProfileData/InstrProfReader.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
 using namespace coverage;
 
-CounterExpressionBuilder::CounterExpressionBuilder(unsigned NumCounterValues) {
-  Terms.resize(NumCounterValues);
-}
+#define DEBUG_TYPE "coverage-mapping"
 
 Counter CounterExpressionBuilder::get(const CounterExpression &E) {
-  for (unsigned I = 0, S = Expressions.size(); I < S; ++I) {
-    if (Expressions[I] == E)
-      return Counter::getExpression(I);
-  }
+  auto It = ExpressionIndices.find(E);
+  if (It != ExpressionIndices.end())
+    return Counter::getExpression(It->second);
+  unsigned I = Expressions.size();
   Expressions.push_back(E);
-  return Counter::getExpression(Expressions.size() - 1);
+  ExpressionIndices[E] = I;
+  return Counter::getExpression(I);
 }
 
-void CounterExpressionBuilder::extractTerms(Counter C, int Sign) {
+void CounterExpressionBuilder::extractTerms(
+    Counter C, int Sign, SmallVectorImpl<std::pair<unsigned, int>> &Terms) {
   switch (C.getKind()) {
   case Counter::Zero:
     break;
   case Counter::CounterValueReference:
-    Terms[C.getCounterID()] += Sign;
+    Terms.push_back(std::make_pair(C.getCounterID(), Sign));
     break;
   case Counter::Expression:
     const auto &E = Expressions[C.getExpressionID()];
-    extractTerms(E.LHS, Sign);
-    extractTerms(E.RHS, E.Kind == CounterExpression::Subtract ? -Sign : Sign);
+    extractTerms(E.LHS, Sign, Terms);
+    extractTerms(E.RHS, E.Kind == CounterExpression::Subtract ? -Sign : Sign,
+                 Terms);
     break;
   }
 }
 
 Counter CounterExpressionBuilder::simplify(Counter ExpressionTree) {
   // Gather constant terms.
-  for (auto &I : Terms)
-    I = 0;
-  extractTerms(ExpressionTree);
+  llvm::SmallVector<std::pair<unsigned, int>, 32> Terms;
+  extractTerms(ExpressionTree, +1, Terms);
+
+  // If there are no terms, this is just a zero. The algorithm below assumes at
+  // least one term.
+  if (Terms.size() == 0)
+    return Counter::getZero();
+
+  // Group the terms by counter ID.
+  std::sort(Terms.begin(), Terms.end(),
+            [](const std::pair<unsigned, int> &LHS,
+               const std::pair<unsigned, int> &RHS) {
+    return LHS.first < RHS.first;
+  });
+
+  // Combine terms by counter ID to eliminate counters that sum to zero.
+  auto Prev = Terms.begin();
+  for (auto I = Prev + 1, E = Terms.end(); I != E; ++I) {
+    if (I->first == Prev->first) {
+      Prev->second += I->second;
+      continue;
+    }
+    ++Prev;
+    *Prev = *I;
+  }
+  Terms.erase(++Prev, Terms.end());
 
   Counter C;
-  // Create additions.
-  // Note: the additions are created first
-  // to avoid creation of a tree like ((0 - X) + Y) instead of (Y - X).
-  for (unsigned I = 0, S = Terms.size(); I < S; ++I) {
-    if (Terms[I] <= 0)
+  // Create additions. We do this before subtractions to avoid constructs like
+  // ((0 - X) + Y), as opposed to (Y - X).
+  for (auto Term : Terms) {
+    if (Term.second <= 0)
       continue;
-    for (int J = 0; J < Terms[I]; ++J) {
+    for (int I = 0; I < Term.second; ++I)
       if (C.isZero())
-        C = Counter::getCounter(I);
+        C = Counter::getCounter(Term.first);
       else
         C = get(CounterExpression(CounterExpression::Add, C,
-                                  Counter::getCounter(I)));
-    }
+                                  Counter::getCounter(Term.first)));
   }
 
   // Create subtractions.
-  for (unsigned I = 0, S = Terms.size(); I < S; ++I) {
-    if (Terms[I] >= 0)
+  for (auto Term : Terms) {
+    if (Term.second >= 0)
       continue;
-    for (int J = 0; J < (-Terms[I]); ++J)
+    for (int I = 0; I < -Term.second; ++I)
       C = get(CounterExpression(CounterExpression::Subtract, C,
-                                Counter::getCounter(I)));
+                                Counter::getCounter(Term.first)));
   }
   return C;
 }
@@ -164,7 +187,9 @@ CoverageMapping::load(ObjectFileCoverageMappingReader &CoverageReader,
       continue;
     }
 
-    FunctionRecord Function(Record.FunctionName, Record.Filenames);
+    assert(Counts.size() != 0 && "Function's counts are empty");
+    FunctionRecord Function(Record.FunctionName, Record.Filenames,
+                            Counts.front());
     CounterMappingContext Ctx(Record.Expressions, Counts);
     for (const auto &Region : Record.MappingRegions) {
       ErrorOr<int64_t> ExecutionCount = Ctx.evaluate(Region.Count);
@@ -177,7 +202,7 @@ CoverageMapping::load(ObjectFileCoverageMappingReader &CoverageReader,
       continue;
     }
 
-    Coverage->Functions.push_back(Function);
+    Coverage->Functions.push_back(std::move(Function));
   }
 
   return std::move(Coverage);
@@ -228,6 +253,7 @@ class SegmentBuilder {
 
   /// Start a segment with no count specified.
   void startSegment(unsigned Line, unsigned Col) {
+    DEBUG(dbgs() << "Top level segment at " << Line << ":" << Col << "\n");
     Segments.emplace_back(Line, Col, /*IsRegionEntry=*/false);
   }
 
@@ -242,9 +268,13 @@ class SegmentBuilder {
       Segments.emplace_back(Line, Col, IsRegionEntry);
       S = Segments.back();
     }
+    DEBUG(dbgs() << "Segment at " << Line << ":" << Col);
     // Set this region's count.
-    if (Region.Kind != coverage::CounterMappingRegion::SkippedRegion)
+    if (Region.Kind != coverage::CounterMappingRegion::SkippedRegion) {
+      DEBUG(dbgs() << " with count " << Region.ExecutionCount);
       Segments.back().setCount(Region.ExecutionCount);
+    }
+    DEBUG(dbgs() << "\n");
   }
 
   /// Start a segment for the given region.
@@ -272,9 +302,15 @@ public:
       while (!ActiveRegions.empty() &&
              ActiveRegions.back()->endLoc() <= Region.startLoc())
         popRegion();
-      // Add this region to the stack.
-      ActiveRegions.push_back(&Region);
-      startSegment(Region);
+      if (Segments.size() && Segments.back().Line == Region.LineStart &&
+          Segments.back().Col == Region.ColumnStart) {
+        if (Region.Kind != coverage::CounterMappingRegion::SkippedRegion)
+          Segments.back().addCount(Region.ExecutionCount);
+      } else {
+        // Add this region to the stack.
+        ActiveRegions.push_back(&Region);
+        startSegment(Region);
+      }
     }
     // Pop any regions that are left in the stack.
     while (!ActiveRegions.empty())

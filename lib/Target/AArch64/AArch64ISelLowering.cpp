@@ -76,7 +76,7 @@ static TargetLoweringObjectFile *createTLOF(const Triple &TT) {
   return new AArch64_ELFTargetObjectFile();
 }
 
-AArch64TargetLowering::AArch64TargetLowering(TargetMachine &TM)
+AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM)
     : TargetLowering(TM, createTLOF(Triple(TM.getTargetTriple()))) {
   Subtarget = &TM.getSubtarget<AArch64Subtarget>();
 
@@ -823,6 +823,7 @@ const char *AArch64TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case AArch64ISD::TC_RETURN:         return "AArch64ISD::TC_RETURN";
   case AArch64ISD::SITOF:             return "AArch64ISD::SITOF";
   case AArch64ISD::UITOF:             return "AArch64ISD::UITOF";
+  case AArch64ISD::NVCAST:            return "AArch64ISD::NVCAST";
   case AArch64ISD::SQSHL_I:           return "AArch64ISD::SQSHL_I";
   case AArch64ISD::UQSHL_I:           return "AArch64ISD::UQSHL_I";
   case AArch64ISD::SRSHR_I:           return "AArch64ISD::SRSHR_I";
@@ -1946,7 +1947,7 @@ SDValue AArch64TargetLowering::LowerFormalArguments(
 
       ArgValue = DAG.getExtLoad(ExtType, DL, VA.getLocVT(), Chain, FIN,
                                 MachinePointerInfo::getFixedStack(FI),
-                                MemVT, false, false, false, 0, nullptr);
+                                MemVT, false, false, false, 0);
 
       InVals.push_back(ArgValue);
     }

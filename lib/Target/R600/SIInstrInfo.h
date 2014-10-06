@@ -55,6 +55,8 @@ private:
 
   void addDescImplicitUseDef(const MCInstrDesc &Desc, MachineInstr *MI) const;
 
+  unsigned findUsedSGPR(const MachineInstr *MI, int OpIndices[3]) const;
+
 public:
   explicit SIInstrInfo(const AMDGPUSubtarget &st);
 
@@ -79,6 +81,13 @@ public:
                    unsigned DestReg, unsigned SrcReg,
                    bool KillSrc) const override;
 
+  unsigned calculateLDSSpillAddress(MachineBasicBlock &MBB,
+                                    MachineBasicBlock::iterator MI,
+                                    RegScavenger *RS,
+                                    unsigned TmpReg,
+                                    unsigned Offset,
+                                    unsigned Size) const;
+
   void storeRegToStackSlot(MachineBasicBlock &MBB,
                            MachineBasicBlock::iterator MI,
                            unsigned SrcReg, bool isKill, int FrameIndex,
@@ -96,7 +105,10 @@ public:
   unsigned commuteOpcode(unsigned Opcode) const;
 
   MachineInstr *commuteInstruction(MachineInstr *MI,
-                                   bool NewMI=false) const override;
+                                   bool NewMI = false) const override;
+  bool findCommutedOpIndices(MachineInstr *MI,
+                             unsigned &SrcOpIdx1,
+                             unsigned &SrcOpIdx2) const override;
 
   bool isTriviallyReMaterializable(const MachineInstr *MI,
                                    AliasAnalysis *AA = nullptr) const;
@@ -131,6 +143,10 @@ public:
   /// \brief Return true if this 64-bit VALU instruction has a 32-bit encoding.
   /// This function will return false if you pass it a 32-bit instruction.
   bool hasVALU32BitEncoding(unsigned Opcode) const;
+
+  /// \brief Returns true if this operand uses the constant bus.
+  bool usesConstantBus(const MachineRegisterInfo &MRI,
+                       const MachineOperand &MO) const;
 
   /// \brief Return true if this instruction has any modifiers.
   ///  e.g. src[012]_mod, omod, clamp.
@@ -253,21 +269,5 @@ enum Offsets {
 } // End namespace SI
 
 } // End namespace llvm
-
-namespace SIInstrFlags {
-  enum Flags {
-    // First 4 bits are the instruction encoding
-    VM_CNT = 1 << 0,
-    EXP_CNT = 1 << 1,
-    LGKM_CNT = 1 << 2
-  };
-}
-
-namespace SISrcMods {
-  enum {
-   NEG = 1 << 0,
-   ABS = 1 << 1
-  };
-}
 
 #endif

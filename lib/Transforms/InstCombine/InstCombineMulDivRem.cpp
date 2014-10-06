@@ -531,10 +531,15 @@ Instruction *InstCombiner::visitFMul(BinaryOperator &I) {
     }
   }
 
+  // sqrt(X) * sqrt(X) -> X
+  if (AllowReassociate && (Op0 == Op1))
+    if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(Op0))
+      if (II->getIntrinsicID() == Intrinsic::sqrt)
+        return ReplaceInstUsesWith(I, II->getOperand(0));
 
   // Under unsafe algebra do:
   // X * log2(0.5*Y) = X*log2(Y) - X
-  if (I.hasUnsafeAlgebra()) {
+  if (AllowReassociate) {
     Value *OpX = nullptr;
     Value *OpY = nullptr;
     IntrinsicInst *Log2;

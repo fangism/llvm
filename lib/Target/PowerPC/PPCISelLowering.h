@@ -349,7 +349,7 @@ namespace llvm {
     const PPCSubtarget &Subtarget;
 
   public:
-    explicit PPCTargetLowering(PPCTargetMachine &TM);
+    explicit PPCTargetLowering(const PPCTargetMachine &TM);
 
     /// getTargetNodeName() - This method returns the name of a target specific
     /// DAG node.
@@ -412,6 +412,11 @@ namespace llvm {
                                        APInt &KnownOne,
                                        const SelectionDAG &DAG,
                                        unsigned Depth = 0) const override;
+
+    Instruction* emitLeadingFence(IRBuilder<> &Builder, AtomicOrdering Ord,
+                                  bool IsStore, bool IsLoad) const override;
+    Instruction* emitTrailingFence(IRBuilder<> &Builder, AtomicOrdering Ord,
+                                   bool IsStore, bool IsLoad) const override;
 
     MachineBasicBlock *
       EmitInstrWithCustomInserter(MachineInstr *MI,
@@ -695,8 +700,11 @@ namespace llvm {
 
     SDValue DAGCombineExtBoolTrunc(SDNode *N, DAGCombinerInfo &DCI) const;
     SDValue DAGCombineTruncBoolExt(SDNode *N, DAGCombinerInfo &DCI) const;
-    SDValue DAGCombineFastRecip(SDValue Op, DAGCombinerInfo &DCI) const;
-    SDValue BuildRSQRTE(SDValue Op, DAGCombinerInfo &DCI) const;
+
+    SDValue getRsqrtEstimate(SDValue Operand, DAGCombinerInfo &DCI,
+                             unsigned &RefinementSteps) const override;
+    SDValue getRecipEstimate(SDValue Operand, DAGCombinerInfo &DCI,
+                             unsigned &RefinementSteps) const override;
 
     CCAssignFn *useFastISelCCs(unsigned Flag) const;
   };

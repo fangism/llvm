@@ -46,7 +46,20 @@ struct SIRegisterInfo : public AMDGPURegisterInfo {
   const TargetRegisterClass *getPhysRegClass(unsigned Reg) const;
 
   /// \returns true if this class contains only SGPR registers
-  bool isSGPRClass(const TargetRegisterClass *RC) const;
+  bool isSGPRClass(const TargetRegisterClass *RC) const {
+    if (!RC)
+      return false;
+
+    return !hasVGPRs(RC);
+  }
+
+  /// \returns true if this class ID contains only SGPR registers
+  bool isSGPRClassID(unsigned RCID) const {
+    if (static_cast<int>(RCID) == -1)
+      return false;
+
+    return isSGPRClass(getRegClass(RCID));
+  }
 
   /// \returns true if this class contains VGPR registers.
   bool hasVGPRs(const TargetRegisterClass *RC) const;
@@ -68,12 +81,21 @@ struct SIRegisterInfo : public AMDGPURegisterInfo {
                             unsigned Channel) const;
 
   /// \returns True if operands defined with this register class can accept
-  /// inline immediates.
-  bool regClassCanUseImmediate(int RCID) const;
+  /// a literal constant (i.e. any 32-bit immediate).
+  bool regClassCanUseLiteralConstant(int RCID) const;
 
   /// \returns True if operands defined with this register class can accept
-  /// inline immediates.
-  bool regClassCanUseImmediate(const TargetRegisterClass *RC) const;
+  /// a literal constant (i.e. any 32-bit immediate).
+  bool regClassCanUseLiteralConstant(const TargetRegisterClass *RC) const;
+
+  /// \returns True if operands defined with this register class can accept
+  /// an inline constant. i.e. An integer value in the range (-16, 64) or
+  /// -4.0f, -2.0f, -1.0f, -0.5f, 0.0f, 0.5f, 1.0f, 2.0f, 4.0f. 
+  bool regClassCanUseInlineConstant(int RCID) const;
+
+  /// \returns True if operands defined with this register class can accept
+  /// a literal constant. i.e. A value in the range (-16, 64).
+  bool regClassCanUseInlineConstant(const TargetRegisterClass *RC) const;
 
   enum PreloadedValue {
     TGID_X,
@@ -91,6 +113,7 @@ struct SIRegisterInfo : public AMDGPURegisterInfo {
   unsigned getPreloadedValue(const MachineFunction &MF,
                              enum PreloadedValue Value) const;
 
+  unsigned findUnusedVGPR(const MachineRegisterInfo &MRI) const;
 };
 
 } // End namespace llvm
