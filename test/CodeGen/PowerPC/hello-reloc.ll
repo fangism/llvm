@@ -222,10 +222,10 @@ attributes #1 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "n
 ; DARWIN-G4-DUMP: ('nsyms', 3)
 ; DARWIN-G4-DUMP: ('stroff', 784)
 ; DARWIN-G4-DUMP: ('strsize', 40)
-; DARWIN-G4-DUMP: ('_string_data', '\x00_main\x00dyld_stub_binding_helper\x00_puts\x00\x00\x00')
+; DARWIN-G4-DUMP: ('_string_data', '\x00_puts\x00dyld_stub_binding_helper\x00_main\x00\x00\x00')
 ; DARWIN-G4-DUMP: ('_symbols', [
 ; DARWIN-G4-DUMP: # Symbol 0
-; DARWIN-G4-DUMP: (('n_strx', 1)
+; DARWIN-G4-DUMP: (('n_strx', 32)
 ; DARWIN-G4-DUMP: ('n_type', 0xf)
 ; DARWIN-G4-DUMP: ('n_sect', 1)
 ; DARWIN-G4-DUMP: ('n_desc', 0)
@@ -233,7 +233,7 @@ attributes #1 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "n
 ; DARWIN-G4-DUMP: ('_string', '_main')
 ; DARWIN-G4-DUMP: ),
 ; DARWIN-G4-DUMP: # Symbol 1
-; DARWIN-G4-DUMP: (('n_strx', 32)
+; DARWIN-G4-DUMP: (('n_strx', 1)
 ; DARWIN-G4-DUMP: ('n_type', 0x1)
 ; DARWIN-G4-DUMP: ('n_sect', 0)
 ; DARWIN-G4-DUMP: ('n_desc', 1)
