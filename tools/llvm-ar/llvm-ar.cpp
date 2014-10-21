@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Object/Archive.h"
@@ -20,6 +21,7 @@
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/LineIterator.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/PrettyStackTrace.h"
@@ -45,7 +47,7 @@ static StringRef ToolName;
 static const char *TemporaryOutput;
 static int TmpArchiveFD = -1;
 
-// fail - Show the error message and exit.
+// Show the error message and exit.
 LLVM_ATTRIBUTE_NORETURN static void fail(Twine Error) {
   outs() << ToolName << ": " << Error << ".\n";
   if (TmpArchiveFD != -1)
@@ -67,14 +69,16 @@ static void failIfError(std::error_code EC, Twine Context = "") {
 
 // llvm-ar/llvm-ranlib remaining positional arguments.
 static cl::list<std::string>
-RestOfArgs(cl::Positional, cl::OneOrMore,
-    cl::desc("[relpos] [count] <archive-file> [members]..."));
+    RestOfArgs(cl::Positional, cl::ZeroOrMore,
+               cl::desc("[relpos] [count] <archive-file> [members]..."));
+
+static cl::opt<bool> MRI("M", cl::desc(""));
 
 std::string Options;
 
-// MoreHelp - Provide additional help output explaining the operations and
-// modifiers of llvm-ar. This object instructs the CommandLine library
-// to print the text of the constructor when the --help option is given.
+// Provide additional help output explaining the operations and modifiers of
+// llvm-ar. This object instructs the CommandLine library to print the text of
+// the constructor when the --help option is given.
 static cl::extrahelp MoreHelp(
   "\nOPERATIONS:\n"
   "  d[NsS]       - delete file(s) from the archive\n"
@@ -134,7 +138,7 @@ static std::string ArchiveName;
 // on the command line.
 static std::vector<std::string> Members;
 
-// show_help - Show the error message, the help message and exit.
+// Show the error message, the help message and exit.
 LLVM_ATTRIBUTE_NORETURN static void
 show_help(const std::string &msg) {
   errs() << ToolName << ": " << msg << "\n\n";
@@ -142,8 +146,8 @@ show_help(const std::string &msg) {
   std::exit(1);
 }
 
-// getRelPos - Extract the member filename from the command line for
-// the [relpos] argument associated with a, b, and i modifiers
+// Extract the member filename from the command line for the [relpos] argument
+// associated with a, b, and i modifiers
 static void getRelPos() {
   if(RestOfArgs.size() == 0)
     show_help("Expected [relpos] for a, b, or i modifier");
@@ -158,7 +162,7 @@ static void getOptions() {
   RestOfArgs.erase(RestOfArgs.begin());
 }
 
-// getArchive - Get the archive file name from the command line
+// Get the archive file name from the command line
 static void getArchive() {
   if(RestOfArgs.size() == 0)
     show_help("An archive name must be specified");
@@ -166,17 +170,71 @@ static void getArchive() {
   RestOfArgs.erase(RestOfArgs.begin());
 }
 
-// getMembers - Copy over remaining items in RestOfArgs to our Members vector
-// This is just for clarity.
+// Copy over remaining items in RestOfArgs to our Members vector
 static void getMembers() {
   if(RestOfArgs.size() > 0)
     Members = std::vector<std::string>(RestOfArgs);
 }
 
-// parseCommandLine - Parse the command line options as presented and return the
-// operation specified. Process all modifiers and check to make sure that
-// constraints on modifier/operation pairs have not been violated.
+namespace {
+enum class MRICommand { AddMod, Create, Save, End, Invalid };
+}
+
+static ArchiveOperation parseMRIScript() {
+  ErrorOr<std::unique_ptr<MemoryBuffer>> Buf = MemoryBuffer::getSTDIN();
+  failIfError(Buf.getError());
+  const MemoryBuffer &Ref = *Buf.get();
+  bool Saved = false;
+
+  for (line_iterator I(Ref, /*SkipBlanks*/ true, ';'), E; I != E; ++I) {
+    StringRef Line = *I;
+    StringRef CommandStr, Rest;
+    std::tie(CommandStr, Rest) = Line.split(' ');
+    auto Command = StringSwitch<MRICommand>(CommandStr.lower())
+                       .Case("addmod", MRICommand::AddMod)
+                       .Case("create", MRICommand::Create)
+                       .Case("save", MRICommand::Save)
+                       .Case("end", MRICommand::End)
+                       .Default(MRICommand::Invalid);
+
+    switch (Command) {
+    case MRICommand::AddMod:
+      Members.push_back(Rest);
+      break;
+    case MRICommand::Create:
+      Create = true;
+      if (!ArchiveName.empty())
+        fail("Editing multiple archives not supported");
+      if (Saved)
+        fail("File already saved");
+      ArchiveName = Rest;
+      break;
+    case MRICommand::Save:
+      Saved = true;
+      break;
+    case MRICommand::End:
+      break;
+    case MRICommand::Invalid:
+      fail("Unknown command: " + CommandStr);
+    }
+  }
+
+  // Nothing to do if not saved.
+  if (!Saved)
+    exit(0);
+  return ReplaceOrInsert;
+}
+
+// Parse the command line options as presented and return the operation
+// specified. Process all modifiers and check to make sure that constraints on
+// modifier/operation pairs have not been violated.
 static ArchiveOperation parseCommandLine() {
+  if (MRI) {
+    if (!RestOfArgs.empty())
+      fail("Cannot mix -M and other options");
+    return parseMRIScript();
+  }
+
   getOptions();
 
   // Keep track of number of operations. We can only specify one
@@ -279,8 +337,8 @@ static void doPrint(StringRef Name, object::Archive::child_iterator I) {
   outs().write(Data.data(), Data.size());
 }
 
-// putMode - utility function for printing out the file mode when the 't'
-// operation is in verbose mode.
+// Utility function for printing out the file mode when the 't' operation is in
+// verbose mode.
 static void printMode(unsigned mode) {
   if (mode & 004)
     outs() << "r";
@@ -889,7 +947,6 @@ static void performOperation(ArchiveOperation Operation,
 static int ar_main(char **argv);
 static int ranlib_main();
 
-// main - main program for llvm-ar .. see comments in the code
 int main(int argc, char **argv) {
   ToolName = argv[0];
   // Print a stack trace if we signal out.

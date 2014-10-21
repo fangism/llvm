@@ -34,7 +34,6 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetLowering.h"
-#include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
@@ -1681,6 +1680,17 @@ SDValue DAGCombiner::visitADD(SDNode *N) {
     return DAG.getNode(ISD::SUB, DL, VT, N1, ZExt);
   }
 
+  // add X, (sextinreg Y i1) -> sub X, (and Y 1)
+  if (N1.getOpcode() == ISD::SIGN_EXTEND_INREG) {
+    VTSDNode *TN = cast<VTSDNode>(N1.getOperand(1));
+    if (TN->getVT() == MVT::i1) {
+      SDLoc DL(N);
+      SDValue ZExt = DAG.getNode(ISD::AND, DL, VT, N1.getOperand(0),
+                                 DAG.getConstant(1, VT));
+      return DAG.getNode(ISD::SUB, DL, VT, N0, ZExt);
+    }
+  }
+
   return SDValue();
 }
 
@@ -1845,6 +1855,17 @@ SDValue DAGCombiner::visitSUB(SDNode *N) {
           return DAG.getConstant((uint64_t)GA->getOffset() - GB->getOffset(),
                                  VT);
     }
+
+  // sub X, (sextinreg Y i1) -> add X, (and Y 1)
+  if (N1.getOpcode() == ISD::SIGN_EXTEND_INREG) {
+    VTSDNode *TN = cast<VTSDNode>(N1.getOperand(1));
+    if (TN->getVT() == MVT::i1) {
+      SDLoc DL(N);
+      SDValue ZExt = DAG.getNode(ISD::AND, DL, VT, N1.getOperand(0),
+                                 DAG.getConstant(1, VT));
+      return DAG.getNode(ISD::ADD, DL, VT, N0, ZExt);
+    }
+  }
 
   return SDValue();
 }
@@ -5208,14 +5229,10 @@ SDValue DAGCombiner::visitSIGN_EXTEND(SDNode *N) {
       if (!LegalOperations || TLI.isOperationLegal(ISD::SETCC, SetCCVT)) {
         SDLoc DL(N);
         ISD::CondCode CC = cast<CondCodeSDNode>(N0.getOperand(2))->get();
-        SDValue SetCC = DAG.getSetCC(DL,
-                                     SetCCVT,
+        SDValue SetCC = DAG.getSetCC(DL, SetCCVT,
                                      N0.getOperand(0), N0.getOperand(1), CC);
-        EVT SelectVT = getSetCCResultType(VT);
-        return DAG.getSelect(DL, VT,
-                             DAG.getSExtOrTrunc(SetCC, DL, SelectVT),
+        return DAG.getSelect(DL, VT, SetCC,
                              NegOne, DAG.getConstant(0, VT));
-
       }
     }
   }
@@ -6682,10 +6699,7 @@ SDValue DAGCombiner::visitFADD(SDNode *N) {
   
   // FADD -> FMA combines:
   if ((Options.AllowFPOpFusion == FPOpFusion::Fast || Options.UnsafeFPMath) &&
-      DAG.getTarget()
-          .getSubtargetImpl()
-          ->getTargetLowering()
-          ->isFMAFasterThanFMulAndFAdd(VT) &&
+      TLI.isFMAFasterThanFMulAndFAdd(VT) &&
       (!LegalOperations || TLI.isOperationLegalOrCustom(ISD::FMA, VT))) {
 
     // fold (fadd (fmul x, y), z) -> (fma x, y, z)
@@ -6763,9 +6777,7 @@ SDValue DAGCombiner::visitFSUB(SDNode *N) {
 
   // FSUB -> FMA combines:
   if ((Options.AllowFPOpFusion == FPOpFusion::Fast || Options.UnsafeFPMath) &&
-      DAG.getTarget().getSubtargetImpl()
-          ->getTargetLowering()
-          ->isFMAFasterThanFMulAndFAdd(VT) &&
+      TLI.isFMAFasterThanFMulAndFAdd(VT) &&
       (!LegalOperations || TLI.isOperationLegalOrCustom(ISD::FMA, VT))) {
 
     // fold (fsub (fmul x, y), z) -> (fma x, y, (fneg z))
@@ -7036,6 +7048,28 @@ SDValue DAGCombiner::visitFDIV(SDNode *N) {
         AddToWorklist(RV.getNode());
         return DAG.getNode(ISD::FMUL, DL, VT, N0, RV);
       }
+    } else if (N1.getOpcode() == ISD::FMUL) {
+      // Look through an FMUL. Even though this won't remove the FDIV directly,
+      // it's still worthwhile to get rid of the FSQRT if possible.
+      SDValue SqrtOp;
+      SDValue OtherOp;
+      if (N1.getOperand(0).getOpcode() == ISD::FSQRT) {
+        SqrtOp = N1.getOperand(0);
+        OtherOp = N1.getOperand(1);
+      } else if (N1.getOperand(1).getOpcode() == ISD::FSQRT) {
+        SqrtOp = N1.getOperand(1);
+        OtherOp = N1.getOperand(0);
+      }
+      if (SqrtOp.getNode()) {
+        // We found a FSQRT, so try to make this fold:
+        // x / (y * sqrt(z)) -> x * (rsqrt(z) / y)
+        if (SDValue RV = BuildRsqrtEstimate(SqrtOp.getOperand(0))) {
+          AddToWorklist(RV.getNode());
+          RV = DAG.getNode(ISD::FDIV, SDLoc(N1), VT, RV, OtherOp);
+          AddToWorklist(RV.getNode());
+          return DAG.getNode(ISD::FMUL, DL, VT, N0, RV);
+        }
+      }
     }
     
     // Fold into a reciprocal estimate and multiply instead of a real divide.
@@ -7076,26 +7110,25 @@ SDValue DAGCombiner::visitFREM(SDNode *N) {
 
 SDValue DAGCombiner::visitFSQRT(SDNode *N) {
   if (DAG.getTarget().Options.UnsafeFPMath) {
-    // Compute this as 1/(1/sqrt(X)): the reciprocal of the reciprocal sqrt.
+    // Compute this as X * (1/sqrt(X)) = X * (X ** -0.5)
     if (SDValue RV = BuildRsqrtEstimate(N->getOperand(0))) {
       AddToWorklist(RV.getNode());
-      RV = BuildReciprocalEstimate(RV);
-      if (RV.getNode()) {
-        // Unfortunately, RV is now NaN if the input was exactly 0.
-        // Select out this case and force the answer to 0.
-        EVT VT = RV.getValueType();
-      
-        SDValue Zero = DAG.getConstantFP(0.0, VT);
-        SDValue ZeroCmp =
-          DAG.getSetCC(SDLoc(N), TLI.getSetCCResultType(*DAG.getContext(), VT),
-                       N->getOperand(0), Zero, ISD::SETEQ);
-        AddToWorklist(ZeroCmp.getNode());
-        AddToWorklist(RV.getNode());
+      EVT VT = RV.getValueType();
+      RV = DAG.getNode(ISD::FMUL, SDLoc(N), VT, N->getOperand(0), RV);
+      AddToWorklist(RV.getNode());
 
-        RV = DAG.getNode(VT.isVector() ? ISD::VSELECT : ISD::SELECT,
-                         SDLoc(N), VT, ZeroCmp, Zero, RV);
-        return RV;
-      }
+      // Unfortunately, RV is now NaN if the input was exactly 0.
+      // Select out this case and force the answer to 0.
+      SDValue Zero = DAG.getConstantFP(0.0, VT);
+      SDValue ZeroCmp =
+        DAG.getSetCC(SDLoc(N), TLI.getSetCCResultType(*DAG.getContext(), VT),
+                     N->getOperand(0), Zero, ISD::SETEQ);
+      AddToWorklist(ZeroCmp.getNode());
+      AddToWorklist(RV.getNode());
+
+      RV = DAG.getNode(VT.isVector() ? ISD::VSELECT : ISD::SELECT,
+                       SDLoc(N), VT, ZeroCmp, Zero, RV);
+      return RV;
     }
   }
   return SDValue();
@@ -8191,8 +8224,8 @@ SDValue DAGCombiner::visitLOAD(SDNode *N) {
     }
   }
 
-  bool UseAA = CombinerAA.getNumOccurrences() > 0 ? CombinerAA :
-    TLI.getTargetMachine().getSubtarget<TargetSubtargetInfo>().useAA();
+  bool UseAA = CombinerAA.getNumOccurrences() > 0 ? CombinerAA
+                                                  : DAG.getSubtarget().useAA();
 #ifndef NDEBUG
   if (CombinerAAOnlyFunc.getNumOccurrences() &&
       CombinerAAOnlyFunc != DAG.getMachineFunction().getName())
@@ -8522,8 +8555,7 @@ struct LoadedSlice {
 
     // At this point, we know that we perform a cross-register-bank copy.
     // Check if it is expensive.
-    const TargetRegisterInfo *TRI =
-        TLI.getTargetMachine().getSubtargetImpl()->getRegisterInfo();
+    const TargetRegisterInfo *TRI = DAG->getSubtarget().getRegisterInfo();
     // Assume bitcasts are cheap, unless both register classes do not
     // explicitly share a common sub class.
     if (!TRI || TRI->getCommonSubClass(ArgRC, ResRC))
@@ -9781,8 +9813,8 @@ SDValue DAGCombiner::visitSTORE(SDNode *N) {
   if (NewST.getNode())
     return NewST;
 
-  bool UseAA = CombinerAA.getNumOccurrences() > 0 ? CombinerAA :
-    TLI.getTargetMachine().getSubtarget<TargetSubtargetInfo>().useAA();
+  bool UseAA = CombinerAA.getNumOccurrences() > 0 ? CombinerAA
+                                                  : DAG.getSubtarget().useAA();
 #ifndef NDEBUG
   if (CombinerAAOnlyFunc.getNumOccurrences() &&
       CombinerAAOnlyFunc != DAG.getMachineFunction().getName())
@@ -12053,8 +12085,9 @@ bool DAGCombiner::isAlias(LSBaseSDNode *Op0, LSBaseSDNode *Op1) const {
       return false;
   }
 
-  bool UseAA = CombinerGlobalAA.getNumOccurrences() > 0 ? CombinerGlobalAA :
-    TLI.getTargetMachine().getSubtarget<TargetSubtargetInfo>().useAA();
+  bool UseAA = CombinerGlobalAA.getNumOccurrences() > 0
+                   ? CombinerGlobalAA
+                   : DAG.getSubtarget().useAA();
 #ifndef NDEBUG
   if (CombinerAAOnlyFunc.getNumOccurrences() &&
       CombinerAAOnlyFunc != DAG.getMachineFunction().getName())

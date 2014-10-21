@@ -62,6 +62,9 @@ class SITargetLowering : public AMDGPUTargetLowering {
 public:
   SITargetLowering(TargetMachine &tm);
 
+  bool isShuffleMaskLegal(const SmallVectorImpl<int> &/*Mask*/,
+                          EVT /*VT*/) const override;
+
   bool isLegalAddressingMode(const AddrMode &AM,
                              Type *Ty) const override;
 
@@ -101,6 +104,7 @@ public:
   int32_t analyzeImmediate(const SDNode *N) const;
   SDValue CreateLiveInRegister(SelectionDAG &DAG, const TargetRegisterClass *RC,
                                unsigned Reg, EVT VT) const override;
+  void legalizeTargetIndependentNode(SDNode *Node, SelectionDAG &DAG) const;
 };
 
 } // End namespace llvm

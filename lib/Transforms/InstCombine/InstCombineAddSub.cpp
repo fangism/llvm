@@ -1522,7 +1522,6 @@ Value *InstCombiner::OptimizePointerDifference(Value *LHS, Value *RHS,
   return Builder->CreateIntCast(Result, Ty, true);
 }
 
-
 Instruction *InstCombiner::visitSub(BinaryOperator &I) {
   Value *Op0 = I.getOperand(0), *Op1 = I.getOperand(1);
 
@@ -1595,21 +1594,23 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
     // -(X >>u 31) -> (X >>s 31)
     // -(X >>s 31) -> (X >>u 31)
     if (C->isZero()) {
-      Value *X; ConstantInt *CI;
+      Value *X; 
+      ConstantInt *CI;
       if (match(Op1, m_LShr(m_Value(X), m_ConstantInt(CI))) &&
           // Verify we are shifting out everything but the sign bit.
-          CI->getValue() == I.getType()->getPrimitiveSizeInBits()-1)
+          CI->getValue() == I.getType()->getPrimitiveSizeInBits() - 1)
         return BinaryOperator::CreateAShr(X, CI);
 
       if (match(Op1, m_AShr(m_Value(X), m_ConstantInt(CI))) &&
           // Verify we are shifting out everything but the sign bit.
-          CI->getValue() == I.getType()->getPrimitiveSizeInBits()-1)
+          CI->getValue() == I.getType()->getPrimitiveSizeInBits() - 1)
         return BinaryOperator::CreateLShr(X, CI);
     }
   }
 
 
-  { Value *Y;
+  { 
+    Value *Y;
     // X-(X+Y) == -Y    X-(Y+X) == -Y
     if (match(Op1, m_Add(m_Specific(Op0), m_Value(Y))) ||
         match(Op1, m_Add(m_Value(Y), m_Specific(Op0))))
@@ -1618,6 +1619,15 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
     // (X-Y)-X == -Y
     if (match(Op0, m_Sub(m_Specific(Op1), m_Value(Y))))
       return BinaryOperator::CreateNeg(Y);
+  }
+
+  // (sub (or A, B) (xor A, B)) --> (and A, B)
+  {
+    Value *A = nullptr, *B = nullptr;
+    if (match(Op1, m_Xor(m_Value(A), m_Value(B))) &&
+        (match(Op0, m_Or(m_Specific(A), m_Specific(B))) ||
+         match(Op0, m_Or(m_Specific(B), m_Specific(A)))))
+      return BinaryOperator::CreateAnd(A, B);
   }
 
   if (Op1->hasOneUse()) {

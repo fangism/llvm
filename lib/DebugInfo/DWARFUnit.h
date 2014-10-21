@@ -14,6 +14,7 @@
 #include "DWARFDebugInfoEntry.h"
 #include "DWARFDebugRangeList.h"
 #include "DWARFRelocMap.h"
+#include "DWARFSection.h"
 #include <vector>
 
 namespace llvm {
@@ -24,9 +25,9 @@ class ObjectFile;
 
 class DWARFContext;
 class DWARFDebugAbbrev;
+class DWARFUnit;
 class StringRef;
 class raw_ostream;
-class DWARFUnit;
 
 /// Base class for all DWARFUnitSection classes. This provides the
 /// functionality common to all unit types.
@@ -36,14 +37,13 @@ public:
   /// same section this Unit originated from.
   virtual DWARFUnit *getUnitForOffset(uint32_t Offset) const = 0;
 
-  void parse(DWARFContext &C, StringRef SectionData, const RelocAddrMap &Map);
-  void parseDWO(DWARFContext &C, StringRef SectionData, const RelocAddrMap &Map);
+  void parse(DWARFContext &C, const DWARFSection &Section);
+  void parseDWO(DWARFContext &C, const DWARFSection &DWOSection);
 
 protected:
-  virtual void parseImpl(DWARFContext &Context, const DWARFDebugAbbrev *DA,
-                         StringRef Section, StringRef RS, StringRef SS,
-                         StringRef SOS, StringRef AOS, const RelocAddrMap &M,
-                         bool isLittleEndian) = 0;
+  virtual void parseImpl(DWARFContext &Context, const DWARFSection &Section,
+                         const DWARFDebugAbbrev *DA, StringRef RS, StringRef SS,
+                         StringRef SOS, StringRef AOS, bool isLittleEndian) = 0;
 
   ~DWARFUnitSectionBase() {}
 };
@@ -71,7 +71,7 @@ public:
   typedef typename UnitVector::iterator iterator;
   typedef llvm::iterator_range<typename UnitVector::iterator> iterator_range;
 
-  UnitType *getUnitForOffset(uint32_t Offset) const {
+  UnitType *getUnitForOffset(uint32_t Offset) const override {
     auto *CU = std::upper_bound(this->begin(), this->end(), Offset,
                                 UnitOffsetComparator());
     if (CU != this->end())
@@ -79,18 +79,17 @@ public:
     return nullptr;
   }
 
- private:
-  void parseImpl(DWARFContext &Context, const DWARFDebugAbbrev *DA,
-                 StringRef Section, StringRef RS, StringRef SS, StringRef SOS,
-                 StringRef AOS, const RelocAddrMap &M, bool LE) override {
+private:
+  void parseImpl(DWARFContext &Context, const DWARFSection &Section,
+                 const DWARFDebugAbbrev *DA, StringRef RS, StringRef SS,
+                 StringRef SOS, StringRef AOS, bool LE) override {
     if (Parsed)
       return;
-    DataExtractor Data(Section, LE, 0);
+    DataExtractor Data(Section.Data, LE, 0);
     uint32_t Offset = 0;
     while (Data.isValidOffset(Offset)) {
-      auto U =
-          llvm::make_unique<UnitType>(Context, DA, Section, RS, SS, SOS, AOS,
-                                      &M, Data.isLittleEndian(), *this);
+      auto U = llvm::make_unique<UnitType>(Context, Section, DA, RS, SS, SOS,
+                                           AOS, LE, *this);
       if (!U->extract(Data, &Offset))
         break;
       this->push_back(std::move(U));
@@ -102,16 +101,16 @@ public:
 
 class DWARFUnit {
   DWARFContext &Context;
+  // Section containing this DWARFUnit.
+  const DWARFSection &InfoSection;
 
   const DWARFDebugAbbrev *Abbrev;
-  StringRef InfoSection;
   StringRef RangeSection;
   uint32_t RangeSectionBase;
   StringRef StringSection;
   StringRef StringOffsetSection;
   StringRef AddrOffsetSection;
   uint32_t AddrOffsetSectionBase;
-  const RelocAddrMap *RelocMap;
   bool isLittleEndian;
   const DWARFUnitSectionBase &UnitSection;
 
@@ -140,9 +139,10 @@ protected:
   virtual uint32_t getHeaderSize() const { return 11; }
 
 public:
-  DWARFUnit(DWARFContext& Context, const DWARFDebugAbbrev *DA, StringRef IS,
-            StringRef RS, StringRef SS, StringRef SOS, StringRef AOS,
-            const RelocAddrMap *M, bool LE, const DWARFUnitSectionBase &UnitSection);
+  DWARFUnit(DWARFContext &Context, const DWARFSection &Section,
+            const DWARFDebugAbbrev *DA, StringRef RS, StringRef SS,
+            StringRef SOS, StringRef AOS, bool LE,
+            const DWARFUnitSectionBase &UnitSection);
 
   virtual ~DWARFUnit();
 
@@ -164,13 +164,13 @@ public:
   bool getStringOffsetSectionItem(uint32_t Index, uint32_t &Result) const;
 
   DataExtractor getDebugInfoExtractor() const {
-    return DataExtractor(InfoSection, isLittleEndian, AddrSize);
+    return DataExtractor(InfoSection.Data, isLittleEndian, AddrSize);
   }
   DataExtractor getStringExtractor() const {
     return DataExtractor(StringSection, false, 0);
   }
 
-  const RelocAddrMap *getRelocMap() const { return RelocMap; }
+  const RelocAddrMap *getRelocMap() const { return &InfoSection.Relocs; }
 
   bool extract(DataExtractor debug_info, uint32_t* offset_ptr);
 

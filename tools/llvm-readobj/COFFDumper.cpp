@@ -56,6 +56,7 @@ public:
   void printDynamicSymbols() override;
   void printUnwindInfo() override;
   void printCOFFImports() override;
+  void printCOFFDirectives() override;
 
 private:
   void printSymbol(const SymbolRef &Sym);
@@ -74,9 +75,7 @@ private:
                                 SymbolRef &Sym);
   std::error_code resolveSymbolName(const coff_section *Section,
                                     uint64_t Offset, StringRef &Name);
-
-  void printImportedSymbols(imported_symbol_iterator I,
-                            imported_symbol_iterator E);
+  void printImportedSymbols(iterator_range<imported_symbol_iterator> Range);
 
   typedef DenseMap<const coff_section*, std::vector<RelocationRef> > RelocMapTy;
 
@@ -628,8 +627,7 @@ void COFFDumper::printSections() {
     if (opts::SectionSymbols) {
       ListScope D(W, "Symbols");
       for (const SymbolRef &Symbol : Obj->symbols()) {
-        bool Contained = false;
-        if (Sec.containsSymbol(Symbol, Contained) || !Contained)
+        if (!Sec.containsSymbol(Symbol))
           continue;
 
         printSymbol(Symbol);
@@ -886,49 +884,63 @@ void COFFDumper::printUnwindInfo() {
   }
 }
 
-void COFFDumper::printImportedSymbols(imported_symbol_iterator I,
-                                      imported_symbol_iterator E) {
-  for (; I != E; ++I) {
+void COFFDumper::printImportedSymbols(
+    iterator_range<imported_symbol_iterator> Range) {
+  for (const ImportedSymbolRef &I : Range) {
     StringRef Sym;
-    if (error(I->getSymbolName(Sym))) return;
+    if (error(I.getSymbolName(Sym))) return;
     uint16_t Ordinal;
-    if (error(I->getOrdinal(Ordinal))) return;
+    if (error(I.getOrdinal(Ordinal))) return;
     W.printNumber("Symbol", Sym, Ordinal);
   }
 }
 
 void COFFDumper::printCOFFImports() {
   // Regular imports
-  for (auto I = Obj->import_directory_begin(), E = Obj->import_directory_end();
-       I != E; ++I) {
+  for (const ImportDirectoryEntryRef &I : Obj->import_directories()) {
     DictScope Import(W, "Import");
     StringRef Name;
-    if (error(I->getName(Name))) return;
+    if (error(I.getName(Name))) return;
     W.printString("Name", Name);
     uint32_t Addr;
-    if (error(I->getImportLookupTableRVA(Addr))) return;
+    if (error(I.getImportLookupTableRVA(Addr))) return;
     W.printHex("ImportLookupTableRVA", Addr);
-    if (error(I->getImportAddressTableRVA(Addr))) return;
+    if (error(I.getImportAddressTableRVA(Addr))) return;
     W.printHex("ImportAddressTableRVA", Addr);
-    printImportedSymbols(I->imported_symbol_begin(), I->imported_symbol_end());
+    printImportedSymbols(I.imported_symbols());
   }
 
   // Delay imports
-  for (auto I = Obj->delay_import_directory_begin(),
-            E = Obj->delay_import_directory_end();
-       I != E; ++I) {
+  for (const DelayImportDirectoryEntryRef &I : Obj->delay_import_directories()) {
     DictScope Import(W, "DelayImport");
     StringRef Name;
-    if (error(I->getName(Name))) return;
+    if (error(I.getName(Name))) return;
     W.printString("Name", Name);
     const delay_import_directory_table_entry *Table;
-    if (error(I->getDelayImportTable(Table))) return;
+    if (error(I.getDelayImportTable(Table))) return;
     W.printHex("Attributes", Table->Attributes);
     W.printHex("ModuleHandle", Table->ModuleHandle);
     W.printHex("ImportAddressTable", Table->DelayImportAddressTable);
     W.printHex("ImportNameTable", Table->DelayImportNameTable);
     W.printHex("BoundDelayImportTable", Table->BoundDelayImportTable);
     W.printHex("UnloadDelayImportTable", Table->UnloadDelayImportTable);
-    printImportedSymbols(I->imported_symbol_begin(), I->imported_symbol_end());
+    printImportedSymbols(I.imported_symbols());
+  }
+}
+
+void COFFDumper::printCOFFDirectives() {
+  for (const SectionRef &Section : Obj->sections()) {
+    StringRef Contents;
+    StringRef Name;
+
+    if (error(Section.getName(Name)))
+      continue;
+    if (Name != ".drectve")
+      continue;
+
+    if (error(Section.getContents(Contents)))
+      return;
+
+    W.printString("Directive(s)", Contents);
   }
 }

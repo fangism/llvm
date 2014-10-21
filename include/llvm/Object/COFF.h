@@ -328,8 +328,7 @@ public:
     bool isAppdomainGlobal =
         getStorageClass() == COFF::IMAGE_SYM_CLASS_EXTERNAL &&
         getSectionNumber() == COFF::IMAGE_SYM_ABSOLUTE;
-    bool isOrdinarySection =
-        getStorageClass() == COFF::IMAGE_SYM_CLASS_STATIC && getValue() == 0;
+    bool isOrdinarySection = getStorageClass() == COFF::IMAGE_SYM_CLASS_STATIC;
     return isAppdomainGlobal || isOrdinarySection;
   }
 
@@ -546,24 +545,19 @@ protected:
   void moveSectionNext(DataRefImpl &Sec) const override;
   std::error_code getSectionName(DataRefImpl Sec,
                                  StringRef &Res) const override;
-  std::error_code getSectionAddress(DataRefImpl Sec,
-                                    uint64_t &Res) const override;
-  std::error_code getSectionSize(DataRefImpl Sec, uint64_t &Res) const override;
+  uint64_t getSectionAddress(DataRefImpl Sec) const override;
+  uint64_t getSectionSize(DataRefImpl Sec) const override;
   std::error_code getSectionContents(DataRefImpl Sec,
                                      StringRef &Res) const override;
-  std::error_code getSectionAlignment(DataRefImpl Sec,
-                                      uint64_t &Res) const override;
-  std::error_code isSectionText(DataRefImpl Sec, bool &Res) const override;
-  std::error_code isSectionData(DataRefImpl Sec, bool &Res) const override;
-  std::error_code isSectionBSS(DataRefImpl Sec, bool &Res) const override;
-  std::error_code isSectionVirtual(DataRefImpl Sec, bool &Res) const override;
-  std::error_code isSectionZeroInit(DataRefImpl Sec, bool &Res) const override;
-  std::error_code isSectionReadOnlyData(DataRefImpl Sec,
-                                        bool &Res) const override;
-  std::error_code isSectionRequiredForExecution(DataRefImpl Sec,
-                                                bool &Res) const override;
-  std::error_code sectionContainsSymbol(DataRefImpl Sec, DataRefImpl Symb,
-                                        bool &Result) const override;
+  uint64_t getSectionAlignment(DataRefImpl Sec) const override;
+  bool isSectionText(DataRefImpl Sec) const override;
+  bool isSectionData(DataRefImpl Sec) const override;
+  bool isSectionBSS(DataRefImpl Sec) const override;
+  bool isSectionVirtual(DataRefImpl Sec) const override;
+  bool isSectionZeroInit(DataRefImpl Sec) const override;
+  bool isSectionReadOnlyData(DataRefImpl Sec) const override;
+  bool isSectionRequiredForExecution(DataRefImpl Sec) const override;
+  bool sectionContainsSymbol(DataRefImpl Sec, DataRefImpl Symb) const override;
   relocation_iterator section_rel_begin(DataRefImpl Sec) const override;
   relocation_iterator section_rel_end(DataRefImpl Sec) const override;
 
@@ -604,6 +598,11 @@ public:
   delay_import_directory_iterator delay_import_directory_end() const;
   export_directory_iterator export_directory_begin() const;
   export_directory_iterator export_directory_end() const;
+
+  iterator_range<import_directory_iterator> import_directories() const;
+  iterator_range<delay_import_directory_iterator>
+      delay_import_directories() const;
+  iterator_range<export_directory_iterator> export_directories() const;
 
   std::error_code getPE32Header(const pe32_header *&Res) const;
   std::error_code getPE32PlusHeader(const pe32plus_header *&Res) const;
@@ -655,6 +654,7 @@ public:
   }
 
   std::error_code getSectionName(const coff_section *Sec, StringRef &Res) const;
+  uint64_t getSectionSize(const coff_section *Sec) const;
   std::error_code getSectionContents(const coff_section *Sec,
                                      ArrayRef<uint8_t> &Res) const;
 
@@ -681,6 +681,7 @@ public:
 
   imported_symbol_iterator imported_symbol_begin() const;
   imported_symbol_iterator imported_symbol_end() const;
+  iterator_range<imported_symbol_iterator> imported_symbols() const;
 
   std::error_code getName(StringRef &Result) const;
   std::error_code getImportLookupTableRVA(uint32_t &Result) const;
@@ -710,6 +711,7 @@ public:
 
   imported_symbol_iterator imported_symbol_begin() const;
   imported_symbol_iterator imported_symbol_end() const;
+  iterator_range<imported_symbol_iterator> imported_symbols() const;
 
   std::error_code getName(StringRef &Result) const;
   std::error_code getDelayImportTable(

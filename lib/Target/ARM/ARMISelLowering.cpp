@@ -898,7 +898,7 @@ ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM)
   if (Subtarget->hasSinCos()) {
     setLibcallName(RTLIB::SINCOS_F32, "sincosf");
     setLibcallName(RTLIB::SINCOS_F64, "sincos");
-    if (Subtarget->getTargetTriple().getOS() == Triple::IOS) {
+    if (Subtarget->getTargetTriple().isiOS()) {
       // For iOS, we don't want to the normal expansion of a libcall to
       // sincos. We want to issue a libcall to __sincos_stret.
       setOperationAction(ISD::FSINCOS, MVT::f64, Custom);
@@ -6571,9 +6571,9 @@ SetupEntryBlockForSjLj(MachineInstr *MI, MachineBasicBlock *MBB,
                    .addReg(NewVReg2, RegState::Kill)
                    .addReg(NewVReg3, RegState::Kill));
     unsigned NewVReg5 = MRI->createVirtualRegister(TRC);
-    AddDefaultPred(BuildMI(*MBB, MI, dl, TII->get(ARM::tADDrSPi), NewVReg5)
-                   .addFrameIndex(FI)
-                   .addImm(36)); // &jbuf[1] :: pc
+    BuildMI(*MBB, MI, dl, TII->get(ARM::tADDframe), NewVReg5)
+            .addFrameIndex(FI)
+            .addImm(36); // &jbuf[1] :: pc
     AddDefaultPred(BuildMI(*MBB, MI, dl, TII->get(ARM::tSTRi))
                    .addReg(NewVReg4, RegState::Kill)
                    .addReg(NewVReg5, RegState::Kill)

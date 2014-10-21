@@ -222,12 +222,17 @@ std::error_code COFFObjectFile::getSymbolSize(DataRefImpl Ref,
   if (std::error_code EC = getSection(Symb.getSectionNumber(), Section))
     return EC;
 
-  if (Symb.getSectionNumber() == COFF::IMAGE_SYM_UNDEFINED)
-    Result = UnknownAddressOrSize;
-  else if (Section)
+  if (Symb.getSectionNumber() == COFF::IMAGE_SYM_UNDEFINED) {
+    if (Symb.getValue() == 0)
+      Result = UnknownAddressOrSize;
+    else
+      Result = Symb.getValue();
+  } else if (Section) {
     Result = Section->SizeOfRawData - Symb.getValue();
-  else
+  } else {
     Result = 0;
+  }
+
   return object_error::success;
 }
 
@@ -260,18 +265,13 @@ std::error_code COFFObjectFile::getSectionName(DataRefImpl Ref,
   return getSectionName(Sec, Result);
 }
 
-std::error_code COFFObjectFile::getSectionAddress(DataRefImpl Ref,
-                                                  uint64_t &Result) const {
+uint64_t COFFObjectFile::getSectionAddress(DataRefImpl Ref) const {
   const coff_section *Sec = toSec(Ref);
-  Result = Sec->VirtualAddress;
-  return object_error::success;
+  return Sec->VirtualAddress;
 }
 
-std::error_code COFFObjectFile::getSectionSize(DataRefImpl Ref,
-                                               uint64_t &Result) const {
-  const coff_section *Sec = toSec(Ref);
-  Result = Sec->SizeOfRawData;
-  return object_error::success;
+uint64_t COFFObjectFile::getSectionSize(DataRefImpl Ref) const {
+  return getSectionSize(toSec(Ref));
 }
 
 std::error_code COFFObjectFile::getSectionContents(DataRefImpl Ref,
@@ -283,78 +283,52 @@ std::error_code COFFObjectFile::getSectionContents(DataRefImpl Ref,
   return EC;
 }
 
-std::error_code COFFObjectFile::getSectionAlignment(DataRefImpl Ref,
-                                                    uint64_t &Res) const {
+uint64_t COFFObjectFile::getSectionAlignment(DataRefImpl Ref) const {
   const coff_section *Sec = toSec(Ref);
-  if (!Sec)
-    return object_error::parse_failed;
-  Res = uint64_t(1) << (((Sec->Characteristics & 0x00F00000) >> 20) - 1);
-  return object_error::success;
+  return uint64_t(1) << (((Sec->Characteristics & 0x00F00000) >> 20) - 1);
 }
 
-std::error_code COFFObjectFile::isSectionText(DataRefImpl Ref,
-                                              bool &Result) const {
+bool COFFObjectFile::isSectionText(DataRefImpl Ref) const {
   const coff_section *Sec = toSec(Ref);
-  Result = Sec->Characteristics & COFF::IMAGE_SCN_CNT_CODE;
-  return object_error::success;
+  return Sec->Characteristics & COFF::IMAGE_SCN_CNT_CODE;
 }
 
-std::error_code COFFObjectFile::isSectionData(DataRefImpl Ref,
-                                              bool &Result) const {
+bool COFFObjectFile::isSectionData(DataRefImpl Ref) const {
   const coff_section *Sec = toSec(Ref);
-  Result = Sec->Characteristics & COFF::IMAGE_SCN_CNT_INITIALIZED_DATA;
-  return object_error::success;
+  return Sec->Characteristics & COFF::IMAGE_SCN_CNT_INITIALIZED_DATA;
 }
 
-std::error_code COFFObjectFile::isSectionBSS(DataRefImpl Ref,
-                                             bool &Result) const {
+bool COFFObjectFile::isSectionBSS(DataRefImpl Ref) const {
   const coff_section *Sec = toSec(Ref);
-  Result = Sec->Characteristics & COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA;
-  return object_error::success;
+  return Sec->Characteristics & COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA;
 }
 
-std::error_code
-COFFObjectFile::isSectionRequiredForExecution(DataRefImpl Ref,
-                                              bool &Result) const {
+bool COFFObjectFile::isSectionRequiredForExecution(DataRefImpl Ref) const {
   // FIXME: Unimplemented
-  Result = true;
-  return object_error::success;
+  return true;
 }
 
-std::error_code COFFObjectFile::isSectionVirtual(DataRefImpl Ref,
-                                                 bool &Result) const {
+bool COFFObjectFile::isSectionVirtual(DataRefImpl Ref) const {
   const coff_section *Sec = toSec(Ref);
-  Result = Sec->Characteristics & COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA;
-  return object_error::success;
+  return Sec->Characteristics & COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA;
 }
 
-std::error_code COFFObjectFile::isSectionZeroInit(DataRefImpl Ref,
-                                                  bool &Result) const {
+bool COFFObjectFile::isSectionZeroInit(DataRefImpl Ref) const {
   // FIXME: Unimplemented.
-  Result = false;
-  return object_error::success;
+  return false;
 }
 
-std::error_code COFFObjectFile::isSectionReadOnlyData(DataRefImpl Ref,
-                                                      bool &Result) const {
+bool COFFObjectFile::isSectionReadOnlyData(DataRefImpl Ref) const {
   // FIXME: Unimplemented.
-  Result = false;
-  return object_error::success;
+  return false;
 }
 
-std::error_code COFFObjectFile::sectionContainsSymbol(DataRefImpl SecRef,
-                                                      DataRefImpl SymbRef,
-                                                      bool &Result) const {
+bool COFFObjectFile::sectionContainsSymbol(DataRefImpl SecRef,
+                                           DataRefImpl SymbRef) const {
   const coff_section *Sec = toSec(SecRef);
   COFFSymbolRef Symb = getCOFFSymbol(SymbRef);
-  const coff_section *SymbSec = nullptr;
-  if (std::error_code EC = getSection(Symb.getSectionNumber(), SymbSec))
-    return EC;
-  if (SymbSec == Sec)
-    Result = true;
-  else
-    Result = false;
-  return object_error::success;
+  int32_t SecNumber = (Sec - SectionTable) + 1;
+  return SecNumber == Symb.getSectionNumber();
 }
 
 relocation_iterator COFFObjectFile::section_rel_begin(DataRefImpl Ref) const {
@@ -755,6 +729,22 @@ unsigned COFFObjectFile::getArch() const {
   }
 }
 
+iterator_range<import_directory_iterator>
+COFFObjectFile::import_directories() const {
+  return make_range(import_directory_begin(), import_directory_end());
+}
+
+iterator_range<delay_import_directory_iterator>
+COFFObjectFile::delay_import_directories() const {
+  return make_range(delay_import_directory_begin(),
+                    delay_import_directory_end());
+}
+
+iterator_range<export_directory_iterator>
+COFFObjectFile::export_directories() const {
+  return make_range(export_directory_begin(), export_directory_end());
+}
+
 std::error_code COFFObjectFile::getPE32Header(const pe32_header *&Res) const {
   Res = PE32Header;
   return object_error::success;
@@ -875,22 +865,42 @@ std::error_code COFFObjectFile::getSectionName(const coff_section *Sec,
   return object_error::success;
 }
 
+uint64_t COFFObjectFile::getSectionSize(const coff_section *Sec) const {
+  // SizeOfRawData and VirtualSize change what they represent depending on
+  // whether or not we have an executable image.
+  //
+  // For object files, SizeOfRawData contains the size of section's data;
+  // VirtualSize is always zero.
+  //
+  // For executables, SizeOfRawData *must* be a multiple of FileAlignment; the
+  // actual section size is in VirtualSize.  It is possible for VirtualSize to
+  // be greater than SizeOfRawData; the contents past that point should be
+  // considered to be zero.
+  uint32_t SectionSize;
+  if (Sec->VirtualSize)
+    SectionSize = std::min(Sec->VirtualSize, Sec->SizeOfRawData);
+  else
+    SectionSize = Sec->SizeOfRawData;
+
+  return SectionSize;
+}
+
 std::error_code
 COFFObjectFile::getSectionContents(const coff_section *Sec,
                                    ArrayRef<uint8_t> &Res) const {
-  // PointerToRawData and SizeOfRawData won't make sense for BSS sections, don't
-  // do anything interesting for them.
+  // PointerToRawData and SizeOfRawData won't make sense for BSS sections,
+  // don't do anything interesting for them.
   assert((Sec->Characteristics & COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0 &&
          "BSS sections don't have contents!");
   // The only thing that we need to verify is that the contents is contained
   // within the file bounds. We don't need to make sure it doesn't cover other
   // data, as there's nothing that says that is not allowed.
   uintptr_t ConStart = uintptr_t(base()) + Sec->PointerToRawData;
-  uintptr_t ConEnd = ConStart + Sec->SizeOfRawData;
+  uint32_t SectionSize = getSectionSize(Sec);
+  uintptr_t ConEnd = ConStart + SectionSize;
   if (ConEnd > uintptr_t(Data.getBufferEnd()))
     return object_error::parse_failed;
-  Res = makeArrayRef(reinterpret_cast<const uint8_t*>(ConStart),
-                     Sec->SizeOfRawData);
+  Res = makeArrayRef(reinterpret_cast<const uint8_t *>(ConStart), SectionSize);
   return object_error::success;
 }
 
@@ -1119,6 +1129,11 @@ ImportDirectoryEntryRef::imported_symbol_end() const {
                            OwningObject);
 }
 
+iterator_range<imported_symbol_iterator>
+ImportDirectoryEntryRef::imported_symbols() const {
+  return make_range(imported_symbol_begin(), imported_symbol_end());
+}
+
 std::error_code ImportDirectoryEntryRef::getName(StringRef &Result) const {
   uintptr_t IntPtr = 0;
   if (std::error_code EC =
@@ -1169,6 +1184,11 @@ imported_symbol_iterator
 DelayImportDirectoryEntryRef::imported_symbol_end() const {
   return importedSymbolEnd(Table[Index].DelayImportNameTable,
                            OwningObject);
+}
+
+iterator_range<imported_symbol_iterator>
+DelayImportDirectoryEntryRef::imported_symbols() const {
+  return make_range(imported_symbol_begin(), imported_symbol_end());
 }
 
 std::error_code DelayImportDirectoryEntryRef::getName(StringRef &Result) const {
