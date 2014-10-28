@@ -20,9 +20,10 @@
 
 /**
 	Mach-O needs indirect symbols grouped by section.
-	Goal: 1
+	Goal: 1?
+	Update: this doesn't seem necessary anymore
  */
-#define ORDER_INDIRECT_SYMBOLS_BY_SECTION       1
+#define ORDER_INDIRECT_SYMBOLS_BY_SECTION       0
 #if ORDER_INDIRECT_SYMBOLS_BY_SECTION
 #include "llvm/ADT/SetVector.h"
 #endif
