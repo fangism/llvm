@@ -28,7 +28,7 @@
 #include "llvm/Support/CBindingWrapping.h"
 
 namespace llvm {
-  class MDNode;
+class MDNode;
 
 /// \brief This provides the default implementation of the IRBuilder
 /// 'InsertHelper' method that is called whenever an instruction is created by
@@ -1245,18 +1245,6 @@ public:
     if (Constant *VC = dyn_cast<Constant>(V))
       return Insert(Folder.CreateIntCast(VC, DestTy, isSigned), Name);
     return Insert(CastInst::CreateIntegerCast(V, DestTy, isSigned), Name);
-  }
-
-  Value *CreateBitOrPointerCast(Value *V, Type *DestTy,
-                                const Twine &Name = "") {
-    if (V->getType() == DestTy)
-      return V;
-    if (V->getType()->isPointerTy() && DestTy->isIntegerTy())
-      return CreatePtrToInt(V, DestTy, Name);
-    if (V->getType()->isIntegerTy() && DestTy->isPointerTy())
-      return CreateIntToPtr(V, DestTy, Name);
-
-    return CreateBitCast(V, DestTy, Name);
   }
 private:
   // \brief Provided to resolve 'CreateIntCast(Ptr, Ptr, "...")', giving a

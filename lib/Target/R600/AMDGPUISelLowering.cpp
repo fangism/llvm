@@ -347,6 +347,8 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
 
   for (MVT VT : FloatVectorTypes) {
     setOperationAction(ISD::FABS, VT, Expand);
+    setOperationAction(ISD::FMINNUM, VT, Expand);
+    setOperationAction(ISD::FMAXNUM, VT, Expand);
     setOperationAction(ISD::FADD, VT, Expand);
     setOperationAction(ISD::FCEIL, VT, Expand);
     setOperationAction(ISD::FCOS, VT, Expand);
@@ -844,6 +846,8 @@ SDValue AMDGPUTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     }
 
     case Intrinsic::AMDGPU_div_fmas:
+      // FIXME: Dropping bool parameter. Work is needed to support the implicit
+      // read from VCC.
       return DAG.getNode(AMDGPUISD::DIV_FMAS, DL, VT,
                          Op.getOperand(1), Op.getOperand(2), Op.getOperand(3));
 

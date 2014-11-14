@@ -63,11 +63,16 @@ private:
   void printRelocation(const SectionRef &Section, const RelocationRef &Reloc);
   void printDataDirectory(uint32_t Index, const std::string &FieldName);
 
+  void printDOSHeader(const dos_header *DH);
   template <class PEHeader> void printPEHeader(const PEHeader *Hdr);
   void printBaseOfDataField(const pe32_header *Hdr);
   void printBaseOfDataField(const pe32plus_header *Hdr);
 
   void printCodeViewLineTables(const SectionRef &Section);
+
+  void printCodeViewSymbolsSubsection(StringRef Subsection,
+                                      const SectionRef &Section,
+                                      uint32_t Offset);
 
   void cacheRelocations();
 
@@ -378,6 +383,30 @@ void COFFDumper::printFileHeaders() {
     return;
   if (PEPlusHeader)
     printPEHeader<pe32plus_header>(PEPlusHeader);
+
+  if (const dos_header *DH = Obj->getDOSHeader())
+    printDOSHeader(DH);
+}
+
+void COFFDumper::printDOSHeader(const dos_header *DH) {
+  DictScope D(W, "DOSHeader");
+  W.printString("Magic", StringRef(DH->Magic, sizeof(DH->Magic)));
+  W.printNumber("UsedBytesInTheLastPage", DH->UsedBytesInTheLastPage);
+  W.printNumber("FileSizeInPages", DH->FileSizeInPages);
+  W.printNumber("NumberOfRelocationItems", DH->NumberOfRelocationItems);
+  W.printNumber("HeaderSizeInParagraphs", DH->HeaderSizeInParagraphs);
+  W.printNumber("MinimumExtraParagraphs", DH->MinimumExtraParagraphs);
+  W.printNumber("MaximumExtraParagraphs", DH->MaximumExtraParagraphs);
+  W.printNumber("InitialRelativeSS", DH->InitialRelativeSS);
+  W.printNumber("InitialSP", DH->InitialSP);
+  W.printNumber("Checksum", DH->Checksum);
+  W.printNumber("InitialIP", DH->InitialIP);
+  W.printNumber("InitialRelativeCS", DH->InitialRelativeCS);
+  W.printNumber("AddressOfRelocationTable", DH->AddressOfRelocationTable);
+  W.printNumber("OverlayNumber", DH->OverlayNumber);
+  W.printNumber("OEMid", DH->OEMid);
+  W.printNumber("OEMinfo", DH->OEMinfo);
+  W.printNumber("AddressOfNewExeHeader", DH->AddressOfNewExeHeader);
 }
 
 template <class PEHeader>
@@ -444,6 +473,7 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
 
   ListScope D(W, "CodeViewLineTables");
   {
+    // FIXME: Add more offset correctness checks.
     DataExtractor DE(Data, true, 4);
     uint32_t Offset = 0,
              Magic = DE.getU32(&Offset);
@@ -473,6 +503,9 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
       W.printBinaryBlock("Contents", Contents);
 
       switch (SubSectionType) {
+      case COFF::DEBUG_SYMBOL_SUBSECTION:
+        printCodeViewSymbolsSubsection(Contents, Section, Offset);
+        break;
       case COFF::DEBUG_LINE_TABLE_SUBSECTION: {
         // Holds a PC to file:line table.  Some data to parse this subsection is
         // stored in the other subsections, so just check sanity and store the
@@ -590,6 +623,80 @@ void COFFDumper::printCodeViewLineTables(const SectionRef &Section) {
       }
     }
   }
+}
+
+void COFFDumper::printCodeViewSymbolsSubsection(StringRef Subsection,
+                                                const SectionRef &Section,
+                                                uint32_t OffsetInSection) {
+  if (Subsection.size() == 0) {
+    error(object_error::parse_failed);
+    return;
+  }
+  DataExtractor DE(Subsection, true, 4);
+  uint32_t Offset = 0;
+
+  // Function-level subsections have "procedure start" and "procedure end"
+  // commands that should come in pairs and surround relevant info.
+  bool InFunctionScope = false;
+  while (DE.isValidOffset(Offset)) {
+    // Read subsection segments one by one.
+    uint16_t Size = DE.getU16(&Offset);
+    // The section size includes the size of the type identifier.
+    if (Size < 2 || !DE.isValidOffsetForDataOfSize(Offset, Size)) {
+      error(object_error::parse_failed);
+      return;
+    }
+    Size -= 2;
+    uint16_t Type = DE.getU16(&Offset);
+    switch (Type) {
+    case COFF::DEBUG_SYMBOL_TYPE_PROC_START: {
+      DictScope S(W, "ProcStart");
+      if (InFunctionScope || Size < 36) {
+        error(object_error::parse_failed);
+        return;
+      }
+      InFunctionScope = true;
+
+      // We're currently interested in a limited subset of fields in this
+      // segment, just ignore the rest of the fields for now.
+      uint8_t Unused[12];
+      DE.getU8(&Offset, Unused, 12);
+      uint32_t CodeSize = DE.getU32(&Offset);
+      DE.getU8(&Offset, Unused, 12);
+      StringRef SectionName;
+      if (error(resolveSymbolName(Obj->getCOFFSection(Section),
+                                  OffsetInSection + Offset, SectionName)))
+        return;
+      Offset += 4;
+      DE.getU8(&Offset, Unused, 3);
+      StringRef FunctionName = DE.getCStr(&Offset);
+      if (!DE.isValidOffset(Offset)) {
+        error(object_error::parse_failed);
+        return;
+      }
+      W.printString("FunctionName", FunctionName);
+      W.printString("Section", SectionName);
+      W.printHex("CodeSize", CodeSize);
+
+      break;
+    }
+    case COFF::DEBUG_SYMBOL_TYPE_PROC_END: {
+      W.startLine() << "ProcEnd\n";
+      if (!InFunctionScope || Size > 0) {
+        error(object_error::parse_failed);
+        return;
+      }
+      InFunctionScope = false;
+      break;
+    }
+    default:
+      Offset += Size;
+      break;
+    }
+  }
+
+  if (InFunctionScope)
+    error(object_error::parse_failed);
 }
 
 void COFFDumper::printSections() {
@@ -775,7 +882,7 @@ void COFFDumper::printSymbol(const SymbolRef &Sym) {
       W.printHex("PointerToLineNumber", Aux->PointerToLinenumber);
       W.printHex("PointerToNextFunction", Aux->PointerToNextFunction);
 
-    } else if (Symbol.isWeakExternal()) {
+    } else if (Symbol.isAnyUndefined()) {
       const coff_aux_weak_external *Aux;
       if (error(getSymbolAuxData(Obj, Symbol, I, Aux)))
         break;

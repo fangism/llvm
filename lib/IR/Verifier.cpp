@@ -377,8 +377,8 @@ void Verifier::visit(Instruction &I) {
 
 
 void Verifier::visitGlobalValue(const GlobalValue &GV) {
-  Assert1(!GV.isDeclaration() || GV.isMaterializable() ||
-              GV.hasExternalLinkage() || GV.hasExternalWeakLinkage(),
+  Assert1(!GV.isDeclaration() || GV.hasExternalLinkage() ||
+              GV.hasExternalWeakLinkage(),
           "Global is external, but doesn't have external or weak linkage!",
           &GV);
 
@@ -2287,6 +2287,14 @@ void Verifier::visitInstruction(Instruction &I) {
     visitRangeMetadata(I, Range, I.getType());
   }
 
+  if (I.getMetadata(LLVMContext::MD_nonnull)) {
+    Assert1(I.getType()->isPointerTy(),
+            "nonnull applies only to pointer types", &I);
+    Assert1(isa<LoadInst>(I),
+            "nonnull applies only to load instructions, use attributes"
+            " for calls or invokes", &I);
+  }
+
   InstsInThisBlock.insert(&I);
 }
 
@@ -2624,7 +2632,7 @@ bool llvm::verifyModule(const Module &M, raw_ostream *OS) {
 
   bool Broken = false;
   for (Module::const_iterator I = M.begin(), E = M.end(); I != E; ++I)
-    if (!I->isDeclaration())
+    if (!I->isDeclaration() && !I->isMaterializable())
       Broken |= !V.verify(*I);
 
   // Note that this function's return value is inverted from what you would

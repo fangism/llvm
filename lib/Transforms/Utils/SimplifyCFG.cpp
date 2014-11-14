@@ -643,7 +643,7 @@ SimplifyEqualityComparisonWithOnlyPredecessor(TerminatorInst *TI,
 
     // Collect branch weights into a vector.
     SmallVector<uint32_t, 8> Weights;
-    MDNode* MD = SI->getMetadata(LLVMContext::MD_prof);
+    MDNode *MD = SI->getMetadata(LLVMContext::MD_prof);
     bool HasWeight = MD && (MD->getNumOperands() == 2 + SI->getNumCases());
     if (HasWeight)
       for (unsigned MD_i = 1, MD_e = MD->getNumOperands(); MD_i < MD_e;
@@ -738,7 +738,7 @@ static int ConstantIntSortPredicate(ConstantInt *const *P1,
 }
 
 static inline bool HasBranchWeights(const Instruction* I) {
-  MDNode* ProfMD = I->getMetadata(LLVMContext::MD_prof);
+  MDNode *ProfMD = I->getMetadata(LLVMContext::MD_prof);
   if (ProfMD && ProfMD->getOperand(0))
     if (MDString* MDS = dyn_cast<MDString>(ProfMD->getOperand(0)))
       return MDS->getString().equals("branch_weights");
@@ -751,7 +751,7 @@ static inline bool HasBranchWeights(const Instruction* I) {
 /// metadata.
 static void GetBranchWeights(TerminatorInst *TI,
                              SmallVectorImpl<uint64_t> &Weights) {
-  MDNode* MD = TI->getMetadata(LLVMContext::MD_prof);
+  MDNode *MD = TI->getMetadata(LLVMContext::MD_prof);
   assert(MD);
   for (unsigned i = 1, e = MD->getNumOperands(); i < e; ++i) {
     ConstantInt *CI = cast<ConstantInt>(MD->getOperand(i));
@@ -1061,7 +1061,8 @@ static bool HoistThenElseCodeToIf(BranchInst *BI, const DataLayout *DL) {
       LLVMContext::MD_tbaa,
       LLVMContext::MD_range,
       LLVMContext::MD_fpmath,
-      LLVMContext::MD_invariant_load
+      LLVMContext::MD_invariant_load,
+      LLVMContext::MD_nonnull
     };
     combineMetadata(I1, I2, KnownIDs);
     I2->eraseFromParent();
@@ -1311,6 +1312,8 @@ static bool SinkThenElseCodeToEnd(BranchInst *BI1) {
     if (!I2->use_empty())
       I2->replaceAllUsesWith(I1);
     I1->intersectOptionalDataWith(I2);
+    // TODO: Use combineMetadata here to preserve what metadata we can
+    // (analogous to the hoisting case above).
     I2->eraseFromParent();
 
     if (UpdateRE1)

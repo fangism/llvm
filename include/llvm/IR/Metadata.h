@@ -315,11 +315,11 @@ public:
   // ---------------------------------------------------------------------------
   // Operand Iterator interface...
   //
-  typedef op_iterator_impl<MDNode*, MDNode> op_iterator;
+  typedef op_iterator_impl<MDNode *, MDNode> op_iterator;
   op_iterator op_begin() { return op_iterator(this, 0); }
   op_iterator op_end()   { return op_iterator(this, getNumOperands()); }
 
-  typedef op_iterator_impl<const MDNode*, MDNode> const_op_iterator;
+  typedef op_iterator_impl<const MDNode *, MDNode> const_op_iterator;
   const_op_iterator op_begin() const { return const_op_iterator(this, 0); }
   const_op_iterator op_end()   const { return const_op_iterator(this, getNumOperands()); }
 

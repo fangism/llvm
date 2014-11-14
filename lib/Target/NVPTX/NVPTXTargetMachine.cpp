@@ -50,6 +50,7 @@ void initializeNVVMReflectPass(PassRegistry&);
 void initializeGenericToNVVMPass(PassRegistry&);
 void initializeNVPTXAssignValidGlobalNamesPass(PassRegistry&);
 void initializeNVPTXFavorNonGenericAddrSpacesPass(PassRegistry &);
+void initializeNVPTXLowerStructArgsPass(PassRegistry &);
 }
 
 extern "C" void LLVMInitializeNVPTXTarget() {
@@ -64,6 +65,7 @@ extern "C" void LLVMInitializeNVPTXTarget() {
   initializeNVPTXAssignValidGlobalNamesPass(*PassRegistry::getPassRegistry());
   initializeNVPTXFavorNonGenericAddrSpacesPass(
     *PassRegistry::getPassRegistry());
+  initializeNVPTXLowerStructArgsPass(*PassRegistry::getPassRegistry());
 }
 
 NVPTXTargetMachine::NVPTXTargetMachine(const Target &T, StringRef TT,
@@ -117,6 +119,14 @@ public:
 TargetPassConfig *NVPTXTargetMachine::createPassConfig(PassManagerBase &PM) {
   NVPTXPassConfig *PassConfig = new NVPTXPassConfig(this, PM);
   return PassConfig;
+}
+
+void NVPTXTargetMachine::addAnalysisPasses(PassManagerBase &PM) {
+  // Add first the target-independent BasicTTI pass, then our NVPTX pass. This
+  // allows the NVPTX pass to delegate to the target independent layer when
+  // appropriate.
+  PM.add(createBasicTargetTransformInfoPass(this));
+  PM.add(createNVPTXTargetTransformInfoPass(this));
 }
 
 void NVPTXPassConfig::addIRPasses() {

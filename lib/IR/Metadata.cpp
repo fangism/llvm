@@ -556,13 +556,12 @@ MDNode *MDNode::getMostGenericRange(MDNode *A, MDNode *B) {
 //
 
 static SmallVector<TrackingVH<MDNode>, 4> &getNMDOps(void *Operands) {
-  return *(SmallVector<TrackingVH<MDNode>, 4>*)Operands;
+  return *(SmallVector<TrackingVH<MDNode>, 4> *)Operands;
 }
 
 NamedMDNode::NamedMDNode(const Twine &N)
-  : Name(N.str()), Parent(nullptr),
-    Operands(new SmallVector<TrackingVH<MDNode>, 4>()) {
-}
+    : Name(N.str()), Parent(nullptr),
+      Operands(new SmallVector<TrackingVH<MDNode>, 4>()) {}
 
 NamedMDNode::~NamedMDNode() {
   dropAllReferences();
@@ -575,7 +574,7 @@ unsigned NamedMDNode::getNumOperands() const {
 
 MDNode *NamedMDNode::getOperand(unsigned i) const {
   assert(i < getNumOperands() && "Invalid Operand number!");
-  return dyn_cast<MDNode>(&*getNMDOps(Operands)[i]);
+  return &*getNMDOps(Operands)[i];
 }
 
 void NamedMDNode::addOperand(MDNode *M) {
@@ -601,7 +600,8 @@ StringRef NamedMDNode::getName() const {
 //
 
 void Instruction::setMetadata(StringRef Kind, MDNode *Node) {
-  if (!Node && !hasMetadata()) return;
+  if (!Node && !hasMetadata())
+    return;
   setMetadata(getContext().getMDKindID(Kind), Node);
 }
 
@@ -657,7 +657,8 @@ void Instruction::dropUnknownMetadata(ArrayRef<unsigned> KnownIDs) {
 /// node.  This updates/replaces metadata if already present, or removes it if
 /// Node is null.
 void Instruction::setMetadata(unsigned KindID, MDNode *Node) {
-  if (!Node && !hasMetadata()) return;
+  if (!Node && !hasMetadata())
+    return;
 
   // Handle 'dbg' as a special case since it is not stored in the hash table.
   if (KindID == LLVMContext::MD_dbg) {
@@ -734,8 +735,8 @@ MDNode *Instruction::getMetadataImpl(unsigned KindID) const {
   return nullptr;
 }
 
-void Instruction::getAllMetadataImpl(SmallVectorImpl<std::pair<unsigned,
-                                       MDNode*> > &Result) const {
+void Instruction::getAllMetadataImpl(
+    SmallVectorImpl<std::pair<unsigned, MDNode *>> &Result) const {
   Result.clear();
   
   // Handle 'dbg' as a special case since it is not stored in the hash table.
@@ -759,9 +760,8 @@ void Instruction::getAllMetadataImpl(SmallVectorImpl<std::pair<unsigned,
     array_pod_sort(Result.begin(), Result.end());
 }
 
-void Instruction::
-getAllMetadataOtherThanDebugLocImpl(SmallVectorImpl<std::pair<unsigned,
-                                    MDNode*> > &Result) const {
+void Instruction::getAllMetadataOtherThanDebugLocImpl(
+    SmallVectorImpl<std::pair<unsigned, MDNode *>> &Result) const {
   Result.clear();
   assert(hasMetadataHashEntry() &&
          getContext().pImpl->MetadataStore.count(this) &&

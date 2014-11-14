@@ -40,6 +40,13 @@ static cl::opt<bool>
     ColdErrorCalls("error-reporting-is-cold", cl::init(true), cl::Hidden,
                    cl::desc("Treat error-reporting calls as cold"));
 
+static cl::opt<bool>
+    EnableUnsafeFPShrink("enable-double-float-shrink", cl::Hidden,
+                         cl::init(false),
+                         cl::desc("Enable unsafe double to float "
+                                  "shrinking for math lib calls"));
+
+
 //===----------------------------------------------------------------------===//
 // Helper Functions
 //===----------------------------------------------------------------------===//
@@ -1051,7 +1058,16 @@ Value *LibCallSimplifier::optimizeUnaryDoubleFP(CallInst *CI, IRBuilder<> &B,
 
   // floor((double)floatval) -> (double)floorf(floatval)
   Value *V = Cast->getOperand(0);
-  V = EmitUnaryFloatFnCall(V, Callee->getName(), B, Callee->getAttributes());
+  if (Callee->isIntrinsic()) {
+    Module *M = CI->getParent()->getParent()->getParent();
+    Intrinsic::ID IID = (Intrinsic::ID) Callee->getIntrinsicID();
+    Function *F = Intrinsic::getDeclaration(M, IID, B.getFloatTy());
+    V = B.CreateCall(F, V);
+  } else {
+    // The call is a library call rather than an intrinsic.
+    V = EmitUnaryFloatFnCall(V, Callee->getName(), B, Callee->getAttributes());
+  }
+
   return B.CreateFPExt(V, B.getDoubleTy());
 }
 
@@ -1079,6 +1095,7 @@ Value *LibCallSimplifier::optimizeBinaryDoubleFP(CallInst *CI, IRBuilder<> &B) {
   Value *V = nullptr;
   Value *V1 = Cast1->getOperand(0);
   Value *V2 = Cast2->getOperand(0);
+  // TODO: Handle intrinsics in the same way as in optimizeUnaryDoubleFP().
   V = EmitBinaryFloatFnCall(V1, V2, Callee->getName(), B,
                             Callee->getAttributes());
   return B.CreateFPExt(V, B.getDoubleTy());
@@ -1260,10 +1277,9 @@ Value *LibCallSimplifier::optimizeSqrt(CallInst *CI, IRBuilder<> &B) {
   Function *Callee = CI->getCalledFunction();
   
   Value *Ret = nullptr;
-  if (UnsafeFPShrink && Callee->getName() == "sqrt" &&
-      TLI->has(LibFunc::sqrtf)) {
+  if (TLI->has(LibFunc::sqrtf) && (Callee->getName() == "sqrt" ||
+                                   Callee->getIntrinsicID() == Intrinsic::sqrt))
     Ret = optimizeUnaryDoubleFP(CI, B, true);
-  }
 
   // FIXME: For finer-grain optimization, we need intrinsics to have the same
   // fast-math flag decorations that are applied to FP instructions. For now,
@@ -1989,7 +2005,21 @@ Value *LibCallSimplifier::optimizeCall(CallInst *CI) {
   IRBuilder<> Builder(CI);
   bool isCallingConvC = CI->getCallingConv() == llvm::CallingConv::C;
 
-  // Next check for intrinsics.
+  // Command-line parameter overrides function attribute.
+  if (EnableUnsafeFPShrink.getNumOccurrences() > 0)
+    UnsafeFPShrink = EnableUnsafeFPShrink;
+  else if (Callee->hasFnAttribute("unsafe-fp-math")) {
+    // FIXME: This is the same problem as described in optimizeSqrt().
+    // If calls gain access to IR-level FMF, then use that instead of a
+    // function attribute.
+
+    // Check for unsafe-fp-math = true.
+    Attribute Attr = Callee->getFnAttribute("unsafe-fp-math");
+    if (Attr.getValueAsString() == "true")
+      UnsafeFPShrink = true;
+  }
+
+  // First, check for intrinsics.
   if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(CI)) {
     if (!isCallingConvC)
       return nullptr;
@@ -2182,11 +2212,10 @@ Value *LibCallSimplifier::optimizeCall(CallInst *CI) {
 }
 
 LibCallSimplifier::LibCallSimplifier(const DataLayout *DL,
-                                     const TargetLibraryInfo *TLI,
-                                     bool UnsafeFPShrink) :
+                                     const TargetLibraryInfo *TLI) :
                                      DL(DL),
                                      TLI(TLI),
-                                     UnsafeFPShrink(UnsafeFPShrink) {
+                                     UnsafeFPShrink(false) {
 }
 
 void LibCallSimplifier::replaceAllUsesWith(Instruction *I, Value *With) const {

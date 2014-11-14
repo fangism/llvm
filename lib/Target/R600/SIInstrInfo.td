@@ -298,7 +298,7 @@ class EXPCommon : InstSI<
   (outs),
   (ins i32imm:$en, i32imm:$tgt, i32imm:$compr, i32imm:$done, i32imm:$vm,
        VReg_32:$src0, VReg_32:$src1, VReg_32:$src2, VReg_32:$src3),
-  "EXP $en, $tgt, $compr, $done, $vm, $src0, $src1, $src2, $src3",
+  "exp $en, $tgt, $compr, $done, $vm, $src0, $src1, $src2, $src3",
   [] > {
 
   let EXP_CNT = 1;
@@ -308,10 +308,10 @@ class EXPCommon : InstSI<
 multiclass EXP_m {
 
   let isPseudo = 1 in {
-    def "" : EXPCommon, SIMCInstr <"EXP", SISubtarget.NONE> ;
+    def "" : EXPCommon, SIMCInstr <"exp", SISubtarget.NONE> ;
   }
 
-  def _si : EXPCommon, SIMCInstr <"EXP", SISubtarget.SI>, EXPe;
+  def _si : EXPCommon, SIMCInstr <"exp", SISubtarget.SI>, EXPe;
 }
 
 //===----------------------------------------------------------------------===//
@@ -893,12 +893,12 @@ multiclass VOP3Inst <vop3 op, string opName, VOPProfile P,
 multiclass VOP3b_Helper <vop op, RegisterClass vrc, RegisterClass arc,
                     string opName, list<dag> pattern> :
   VOP3b_2_m <
-  op, (outs vrc:$dst0, SReg_64:$dst1),
+  op, (outs vrc:$vdst, SReg_64:$sdst),
       (ins InputModsNoDefault:$src0_modifiers, arc:$src0,
            InputModsNoDefault:$src1_modifiers, arc:$src1,
            InputModsNoDefault:$src2_modifiers, arc:$src2,
-           ClampMod:$clamp, i32imm:$omod),
-  opName#" $dst0, $dst1, $src0_modifiers, $src1_modifiers, $src2_modifiers"#"$clamp"#"$omod", pattern,
+           ClampMod:$clamp, omod:$omod),
+  opName#" $vdst, $sdst, $src0_modifiers, $src1_modifiers, $src2_modifiers"#"$clamp"#"$omod", pattern,
   opName, opName, 1, 1
 >;
 
