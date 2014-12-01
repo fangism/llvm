@@ -55,17 +55,8 @@ cl::desc("disable unaligned load/store generation on PPC"), cl::Hidden);
 // FIXME: Remove this once the bug has been fixed!
 extern cl::opt<bool> ANDIGlueBug;
 
-static TargetLoweringObjectFile *createTLOF(const Triple &TT) {
-  // If it isn't a Mach-O file then it's going to be a linux ELF
-  // object file.
-  if (TT.isOSDarwin())
-    return new TargetLoweringObjectFileMachO();
-
-  return new PPC64LinuxTargetObjectFile();
-}
-
 PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM)
-    : TargetLowering(TM, createTLOF(Triple(TM.getTargetTriple()))),
+    : TargetLowering(TM),
       Subtarget(*TM.getSubtargetImpl()) {
   setPow2SDivIsCheap();
 
@@ -6631,9 +6622,8 @@ PPCTargetLowering::EmitAtomicBinary(MachineInstr *MI, MachineBasicBlock *BB,
 
   MachineRegisterInfo &RegInfo = F->getRegInfo();
   unsigned TmpReg = (!BinOpcode) ? incr :
-    RegInfo.createVirtualRegister(
-       is64bit ? (const TargetRegisterClass *) &PPC::G8RCRegClass :
-                 (const TargetRegisterClass *) &PPC::GPRCRegClass);
+    RegInfo.createVirtualRegister( is64bit ? &PPC::G8RCRegClass
+                                           : &PPC::GPRCRegClass);
 
   //  thisMBB:
   //   ...
@@ -6699,9 +6689,8 @@ PPCTargetLowering::EmitPartwordAtomicBinary(MachineInstr *MI,
   exitMBB->transferSuccessorsAndUpdatePHIs(BB);
 
   MachineRegisterInfo &RegInfo = F->getRegInfo();
-  const TargetRegisterClass *RC =
-    is64bit ? (const TargetRegisterClass *) &PPC::G8RCRegClass :
-              (const TargetRegisterClass *) &PPC::GPRCRegClass;
+  const TargetRegisterClass *RC = is64bit ? &PPC::G8RCRegClass
+                                          : &PPC::GPRCRegClass;
   unsigned PtrReg = RegInfo.createVirtualRegister(RC);
   unsigned Shift1Reg = RegInfo.createVirtualRegister(RC);
   unsigned ShiftReg = RegInfo.createVirtualRegister(RC);
@@ -7319,9 +7308,8 @@ PPCTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     exitMBB->transferSuccessorsAndUpdatePHIs(BB);
 
     MachineRegisterInfo &RegInfo = F->getRegInfo();
-    const TargetRegisterClass *RC =
-      is64bit ? (const TargetRegisterClass *) &PPC::G8RCRegClass :
-                (const TargetRegisterClass *) &PPC::GPRCRegClass;
+    const TargetRegisterClass *RC = is64bit ? &PPC::G8RCRegClass
+                                            : &PPC::GPRCRegClass;
     unsigned PtrReg = RegInfo.createVirtualRegister(RC);
     unsigned Shift1Reg = RegInfo.createVirtualRegister(RC);
     unsigned ShiftReg = RegInfo.createVirtualRegister(RC);
@@ -7539,6 +7527,28 @@ SDValue PPCTargetLowering::getRecipEstimate(SDValue Operand,
   return SDValue();
 }
 
+bool PPCTargetLowering::combineRepeatedFPDivisors(unsigned NumUsers) const {
+  // Note: This functionality is used only when unsafe-fp-math is enabled, and
+  // on cores with reciprocal estimates (which are used when unsafe-fp-math is
+  // enabled for division), this functionality is redundant with the default
+  // combiner logic (once the division -> reciprocal/multiply transformation
+  // has taken place). As a result, this matters more for older cores than for
+  // newer ones.
+
+  // Combine multiple FDIVs with the same divisor into multiple FMULs by the
+  // reciprocal if there are two or more FDIVs (for embedded cores with only
+  // one FP pipeline) for three or more FDIVs (for generic OOO cores).
+  switch (Subtarget.getDarwinDirective()) {
+  default:
+    return NumUsers > 2;
+  case PPC::DIR_440:
+  case PPC::DIR_A2:
+  case PPC::DIR_E500mc:
+  case PPC::DIR_E5500:
+    return NumUsers > 1;
+  }
+}
+
 static bool isConsecutiveLSLoc(SDValue Loc, EVT VT, LSBaseSDNode *Base,
                             unsigned Bytes, int Dist,
                             SelectionDAG &DAG) {
@@ -7659,7 +7669,7 @@ static bool findConsecutiveLoad(LoadSDNode *LD, SelectionDAG &DAG) {
   // nodes just above the top-level loads and token factors.
   while (!Queue.empty()) {
     SDNode *ChainNext = Queue.pop_back_val();
-    if (!Visited.insert(ChainNext))
+    if (!Visited.insert(ChainNext).second)
       continue;
 
     if (MemSDNode *ChainLD = dyn_cast<MemSDNode>(ChainNext)) {
@@ -7690,7 +7700,7 @@ static bool findConsecutiveLoad(LoadSDNode *LD, SelectionDAG &DAG) {
        
     while (!Queue.empty()) {
       SDNode *LoadRoot = Queue.pop_back_val();
-      if (!Visited.insert(LoadRoot))
+      if (!Visited.insert(LoadRoot).second)
         continue;
 
       if (MemSDNode *ChainLD = dyn_cast<MemSDNode>(LoadRoot))
@@ -7820,7 +7830,7 @@ SDValue PPCTargetLowering::DAGCombineTruncBoolExt(SDNode *N,
     SDValue BinOp = BinOps.back();
     BinOps.pop_back();
 
-    if (!Visited.insert(BinOp.getNode()))
+    if (!Visited.insert(BinOp.getNode()).second)
       continue;
 
     PromOps.push_back(BinOp);
@@ -8034,7 +8044,7 @@ SDValue PPCTargetLowering::DAGCombineExtBoolTrunc(SDNode *N,
     SDValue BinOp = BinOps.back();
     BinOps.pop_back();
 
-    if (!Visited.insert(BinOp.getNode()))
+    if (!Visited.insert(BinOp.getNode()).second)
       continue;
 
     PromOps.push_back(BinOp);

@@ -42,7 +42,7 @@ multiclass XX3Form_Rcr<bits<6> opcode, bits<7> xo, dag OOL, dag IOL,
 def HasVSX : Predicate<"PPCSubTarget->hasVSX()">;
 let Predicates = [HasVSX] in {
 let AddedComplexity = 400 in { // Prefer VSX patterns over non-VSX patterns.
-let neverHasSideEffects = 1 in { // VSX instructions don't have side effects.
+let hasSideEffects = 0 in { // VSX instructions don't have side effects.
 let Uses = [RM] in {
 
   // Load indexed instructions
@@ -728,7 +728,7 @@ let Uses = [RM] in {
   def XXSPLTW : XX2Form_2<60, 164,
                        (outs vsrc:$XT), (ins vsrc:$XB, u2imm:$UIM),
                        "xxspltw $XT, $XB, $UIM", IIC_VecPerm, []>;
-} // neverHasSideEffects
+} // hasSideEffects
 
 // SELECT_CC_* - Used to implement the SELECT_CC DAG operation.  Expanded after
 // instruction selection into a branch sequence.
@@ -886,6 +886,12 @@ def : Pat<(f64 (selectcc i1:$lhs, i1:$rhs, f64:$tval, f64:$fval, SETGT)),
           (SELECT_VSFRC (CRANDC $lhs, $rhs), $tval, $fval)>;
 def : Pat<(f64 (selectcc i1:$lhs, i1:$rhs, f64:$tval, f64:$fval, SETNE)),
           (SELECT_VSFRC (CRXOR $lhs, $rhs), $tval, $fval)>;
+
+// Divides.
+def : Pat<(int_ppc_vsx_xvdivsp v4f32:$A, v4f32:$B),
+          (XVDIVSP $A, $B)>;
+def : Pat<(int_ppc_vsx_xvdivdp v2f64:$A, v2f64:$B),
+          (XVDIVDP $A, $B)>;
 
 } // AddedComplexity
 } // HasVSX

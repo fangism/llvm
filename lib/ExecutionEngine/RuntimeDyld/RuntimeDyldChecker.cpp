@@ -668,7 +668,7 @@ private:
     MCDisassembler *Dis = Checker.Disassembler;
     StringRef SectionMem = Checker.getSubsectionStartingAt(Symbol);
     ArrayRef<uint8_t> SectionBytes(
-        reinterpret_cast<const uint8_t *>(SectionMem.begin()),
+        reinterpret_cast<const uint8_t *>(SectionMem.data()),
         SectionMem.size());
 
     MCDisassembler::DecodeStatus S =
@@ -740,7 +740,9 @@ uint64_t RuntimeDyldCheckerImpl::getSymbolLinkerAddr(StringRef Symbol) const {
 }
 
 uint64_t RuntimeDyldCheckerImpl::getSymbolRemoteAddr(StringRef Symbol) const {
-  return getRTDyld().getAnySymbolRemoteAddress(Symbol);
+  if (uint64_t InternalSymbolAddr = getRTDyld().getSymbolLoadAddress(Symbol))
+      return InternalSymbolAddr;
+  return getRTDyld().MemMgr->getSymbolAddress(Symbol);
 }
 
 uint64_t RuntimeDyldCheckerImpl::readMemoryAtAddr(uint64_t SrcAddr,

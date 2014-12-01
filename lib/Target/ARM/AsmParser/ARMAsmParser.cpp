@@ -318,7 +318,7 @@ class ARMAsmParser : public MCTargetAsmParser {
   void cvtThumbBranches(MCInst &Inst, const OperandVector &);
 
   bool validateInstruction(MCInst &Inst, const OperandVector &Ops);
-  bool processInstruction(MCInst &Inst, const OperandVector &Ops);
+  bool processInstruction(MCInst &Inst, const OperandVector &Ops, MCStreamer &Out);
   bool shouldOmitCCOutOperand(StringRef Mnemonic, OperandVector &Operands);
   bool shouldOmitPredicateOperand(StringRef Mnemonic, OperandVector &Operands);
 
@@ -5139,7 +5139,8 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
       Mnemonic == "fmuls" || Mnemonic == "vmaxnm" || Mnemonic == "vminnm" ||
       Mnemonic == "vcvta" || Mnemonic == "vcvtn"  || Mnemonic == "vcvtp" ||
       Mnemonic == "vcvtm" || Mnemonic == "vrinta" || Mnemonic == "vrintn" ||
-      Mnemonic == "vrintp" || Mnemonic == "vrintm" || Mnemonic.startswith("vsel"))
+      Mnemonic == "vrintp" || Mnemonic == "vrintm" || Mnemonic == "hvc" ||
+      Mnemonic.startswith("vsel"))
     return Mnemonic;
 
   // First, split out any predication code. Ignore mnemonics we know aren't
@@ -5244,7 +5245,7 @@ getMnemonicAcceptInfo(StringRef Mnemonic, StringRef FullInst,
       Mnemonic == "vmaxnm" || Mnemonic == "vminnm" || Mnemonic == "vcvta" ||
       Mnemonic == "vcvtn" || Mnemonic == "vcvtp" || Mnemonic == "vcvtm" ||
       Mnemonic == "vrinta" || Mnemonic == "vrintn" || Mnemonic == "vrintp" ||
-      Mnemonic == "vrintm" || Mnemonic.startswith("aes") ||
+      Mnemonic == "vrintm" || Mnemonic.startswith("aes") || Mnemonic == "hvc" ||
       Mnemonic.startswith("sha1") || Mnemonic.startswith("sha256") ||
       (FullInst.startswith("vmull") && FullInst.endswith(".p64"))) {
     // These mnemonics are never predicable
@@ -6434,7 +6435,8 @@ static unsigned getRealVLDOpcode(unsigned Opc, unsigned &Spacing) {
 }
 
 bool ARMAsmParser::processInstruction(MCInst &Inst,
-                                      const OperandVector &Operands) {
+                                      const OperandVector &Operands,
+                                      MCStreamer &Out) {
   switch (Inst.getOpcode()) {
   // Alias for alternate form of 'ldr{,b}t Rt, [Rn], #imm' instruction.
   case ARM::LDRT_POST:
@@ -6475,12 +6477,31 @@ bool ARMAsmParser::processInstruction(MCInst &Inst,
   // Alias for alternate form of 'ADR Rd, #imm' instruction.
   case ARM::ADDri: {
     if (Inst.getOperand(1).getReg() != ARM::PC ||
-        Inst.getOperand(5).getReg() != 0)
+        Inst.getOperand(5).getReg() != 0 ||
+        !(Inst.getOperand(2).isExpr() || Inst.getOperand(2).isImm()))
       return false;
     MCInst TmpInst;
     TmpInst.setOpcode(ARM::ADR);
     TmpInst.addOperand(Inst.getOperand(0));
-    TmpInst.addOperand(Inst.getOperand(2));
+    if (Inst.getOperand(2).isImm()) {
+      TmpInst.addOperand(Inst.getOperand(2));
+    } else {
+      // Turn PC-relative expression into absolute expression.
+      // Reading PC provides the start of the current instruction + 8 and
+      // the transform to adr is biased by that.
+      MCSymbol *Dot = getContext().CreateTempSymbol();
+      Out.EmitLabel(Dot);
+      const MCExpr *OpExpr = Inst.getOperand(2).getExpr();
+      const MCExpr *InstPC = MCSymbolRefExpr::Create(Dot,
+                                                     MCSymbolRefExpr::VK_None,
+                                                     getContext());
+      const MCExpr *Const8 = MCConstantExpr::Create(8, getContext());
+      const MCExpr *ReadPC = MCBinaryExpr::CreateAdd(InstPC, Const8,
+                                                     getContext());
+      const MCExpr *FixupAddr = MCBinaryExpr::CreateAdd(ReadPC, OpExpr,
+                                                        getContext());
+      TmpInst.addOperand(MCOperand::CreateExpr(FixupAddr));
+    }
     TmpInst.addOperand(Inst.getOperand(3));
     TmpInst.addOperand(Inst.getOperand(4));
     Inst = TmpInst;
@@ -8320,7 +8341,7 @@ bool ARMAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       // encoding is selected. Loop on it while changes happen so the
       // individual transformations can chain off each other. E.g.,
       // tPOP(r8)->t2LDMIA_UPD(sp,r8)->t2STR_POST(sp,r8)
-      while (processInstruction(Inst, Operands))
+      while (processInstruction(Inst, Operands, Out))
         ;
 
       // Only after the instruction is fully processed, we can validate it
@@ -8732,7 +8753,7 @@ bool ARMAsmParser::parseDirectiveReq(StringRef Name, SMLoc L) {
 
   Parser.Lex(); // Consume the EndOfStatement
 
-  if (RegisterReqs.GetOrCreateValue(Name, Reg).getValue() != Reg) {
+  if (!RegisterReqs.insert(std::make_pair(Name, Reg)).second) {
     Error(SRegLoc, "redefinition of '" + Name + "' does not match original.");
     return false;
   }

@@ -2514,15 +2514,14 @@ bool SelectionDAGBuilder::handleBitTestsSwitchCase(CaseRec& CR,
     return false;
 
   size_t numCmps = 0;
-  for (CaseItr I = CR.Range.first, E = CR.Range.second;
-       I!=E; ++I) {
+  for (CaseItr I = CR.Range.first, E = CR.Range.second; I != E; ++I) {
     // Single case counts one, case range - two.
     numCmps += (I->Low == I->High ? 1 : 2);
   }
 
   // Count unique destinations
   SmallSet<MachineBasicBlock*, 4> Dests;
-  for (CaseItr I = CR.Range.first, E = CR.Range.second; I!=E; ++I) {
+  for (CaseItr I = CR.Range.first, E = CR.Range.second; I != E; ++I) {
     Dests.insert(I->BB);
     if (Dests.size() > 3)
       // Don't bother the code below, if there are too much unique destinations
@@ -2629,9 +2628,8 @@ bool SelectionDAGBuilder::handleBitTestsSwitchCase(CaseRec& CR,
 void SelectionDAGBuilder::Clusterify(CaseVector& Cases,
                                      const SwitchInst& SI) {
   BranchProbabilityInfo *BPI = FuncInfo.BPI;
-  // Start with "simple" cases
-  for (SwitchInst::ConstCaseIt i = SI.case_begin(), e = SI.case_end();
-       i != e; ++i) {
+  // Start with "simple" cases.
+  for (SwitchInst::ConstCaseIt i : SI.cases()) {
     const BasicBlock *SuccBB = i.getCaseSuccessor();
     MachineBasicBlock *SMBB = FuncInfo.MBBMap[SuccBB];
 
@@ -2694,15 +2692,18 @@ void SelectionDAGBuilder::visitSwitch(const SwitchInst &SI) {
 
   // Figure out which block is immediately after the current one.
   MachineBasicBlock *NextBlock = nullptr;
+  if (SwitchMBB + 1 != FuncInfo.MF->end())
+    NextBlock = SwitchMBB + 1;
+
   MachineBasicBlock *Default = FuncInfo.MBBMap[SI.getDefaultDest()];
 
   // If there is only the default destination, branch to it if it is not the
   // next basic block.  Otherwise, just fall through.
   if (!SI.getNumCases()) {
     // Update machine-CFG edges.
+    SwitchMBB->addSuccessor(Default);
 
     // If this is not a fall-through branch, emit the branch.
-    SwitchMBB->addSuccessor(Default);
     if (Default != NextBlock)
       DAG.setRoot(DAG.getNode(ISD::BR, getCurSDLoc(),
                               MVT::Other, getControlRoot(),
@@ -2760,7 +2761,7 @@ void SelectionDAGBuilder::visitIndirectBr(const IndirectBrInst &I) {
   SmallSet<BasicBlock*, 32> Done;
   for (unsigned i = 0, e = I.getNumSuccessors(); i != e; ++i) {
     BasicBlock *BB = I.getSuccessor(i);
-    bool Inserted = Done.insert(BB);
+    bool Inserted = Done.insert(BB).second;
     if (!Inserted)
         continue;
 
@@ -4847,7 +4848,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
 
   case Intrinsic::eh_typeid_for: {
     // Find the type id for the given typeinfo.
-    GlobalVariable *GV = ExtractTypeInfo(I.getArgOperand(0));
+    GlobalValue *GV = ExtractTypeInfo(I.getArgOperand(0));
     unsigned TypeID = DAG.getMachineFunction().getMMI().getTypeIDFor(GV);
     Res = DAG.getConstant(TypeID, MVT::i32);
     setValue(&I, Res);
@@ -7697,7 +7698,8 @@ SelectionDAGBuilder::HandlePHINodesInSuccessorBlocks(const BasicBlock *LLVMBB) {
 
     // If this terminator has multiple identical successors (common for
     // switches), only handle each succ once.
-    if (!SuccsHandled.insert(SuccMBB)) continue;
+    if (!SuccsHandled.insert(SuccMBB).second)
+      continue;
 
     MachineBasicBlock::iterator MBBI = SuccMBB->begin();
 
@@ -7761,6 +7763,7 @@ MachineBasicBlock *
 SelectionDAGBuilder::StackProtectorDescriptor::
 AddSuccessorMBB(const BasicBlock *BB,
                 MachineBasicBlock *ParentMBB,
+                bool IsLikely,
                 MachineBasicBlock *SuccMBB) {
   // If SuccBB has not been created yet, create it.
   if (!SuccMBB) {
@@ -7770,6 +7773,7 @@ AddSuccessorMBB(const BasicBlock *BB,
     MF->insert(++BBI, SuccMBB);
   }
   // Add it as a successor of ParentMBB.
-  ParentMBB->addSuccessor(SuccMBB);
+  ParentMBB->addSuccessor(
+      SuccMBB, BranchProbabilityInfo::getBranchWeightStackProtector(IsLikely));
   return SuccMBB;
 }

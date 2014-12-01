@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AArch64ISelLowering.h"
+#include "AArch64CallingConvention.h"
 #include "AArch64MachineFunctionInfo.h"
 #include "AArch64PerfectShuffle.h"
 #include "AArch64Subtarget.h"
@@ -66,18 +67,9 @@ EnableAArch64SlrGeneration("aarch64-shift-insert-generation", cl::Hidden,
                          cl::desc("Allow AArch64 SLI/SRI formation"),
                          cl::init(false));
 
-//===----------------------------------------------------------------------===//
-// AArch64 Lowering public interface.
-//===----------------------------------------------------------------------===//
-static TargetLoweringObjectFile *createTLOF(const Triple &TT) {
-  if (TT.isOSBinFormatMachO())
-    return new AArch64_MachoTargetObjectFile();
-
-  return new AArch64_ELFTargetObjectFile();
-}
 
 AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM)
-    : TargetLowering(TM, createTLOF(Triple(TM.getTargetTriple()))) {
+    : TargetLowering(TM) {
   Subtarget = &TM.getSubtarget<AArch64Subtarget>();
 
   // AArch64 doesn't have comparisons which set GPRs or setcc instructions, so
@@ -1651,7 +1643,7 @@ SDValue AArch64TargetLowering::LowerFSINCOS(SDValue Op,
       (ArgVT == MVT::f64) ? "__sincos_stret" : "__sincosf_stret";
   SDValue Callee = DAG.getExternalSymbol(LibcallName, getPointerTy());
 
-  StructType *RetTy = StructType::get(ArgTy, ArgTy, NULL);
+  StructType *RetTy = StructType::get(ArgTy, ArgTy, nullptr);
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(dl).setChain(DAG.getEntryNode())
     .setCallee(CallingConv::Fast, RetTy, Callee, std::move(Args), 0);
@@ -3440,6 +3432,9 @@ SDValue AArch64TargetLowering::LowerFCOPYSIGN(SDValue Op,
 SDValue AArch64TargetLowering::LowerCTPOP(SDValue Op, SelectionDAG &DAG) const {
   if (DAG.getMachineFunction().getFunction()->getAttributes().hasAttribute(
           AttributeSet::FunctionIndex, Attribute::NoImplicitFloat))
+    return SDValue();
+
+  if (!Subtarget->hasNEON())
     return SDValue();
 
   // While there is no integer popcount instruction, it can
@@ -8738,6 +8733,12 @@ bool AArch64TargetLowering::useLoadStackGuardNode() const {
   return true;
 }
 
+bool AArch64TargetLowering::combineRepeatedFPDivisors(unsigned NumUsers) const {
+  // Combine multiple FDIVs with the same divisor into multiple FMULs by the
+  // reciprocal if there are three or more FDIVs.
+  return NumUsers > 2;
+}
+
 TargetLoweringBase::LegalizeTypeAction
 AArch64TargetLowering::getPreferredVectorAction(EVT VT) const {
   MVT SVT = VT.getSimpleVT();
@@ -8841,4 +8842,9 @@ Value *AArch64TargetLowering::emitStoreConditional(IRBuilder<> &Builder,
       Stxr, Builder.CreateZExtOrBitCast(
                 Val, Stxr->getFunctionType()->getParamType(0)),
       Addr);
+}
+
+bool AArch64TargetLowering::functionArgumentNeedsConsecutiveRegisters(
+    Type *Ty, CallingConv::ID CallConv, bool isVarArg) const {
+  return Ty->isArrayTy();
 }

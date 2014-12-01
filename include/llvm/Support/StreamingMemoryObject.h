@@ -38,7 +38,6 @@ public:
     return nullptr;
   }
   bool isValidAddress(uint64_t address) const override;
-  bool isObjectEnd(uint64_t address) const override;
 
   /// Drop s bytes from the front of the stream, pushing the positions of the
   /// remaining bytes down by s. This is used to skip past the bitcode header,
@@ -66,23 +65,20 @@ private:
   // Most of the requests will be small, but we fetch at kChunkSize bytes
   // at a time to avoid making too many potentially expensive GetBytes calls
   bool fetchToPos(size_t Pos) const {
-    if (EOFReached) return Pos < ObjectSize;
+    if (EOFReached)
+      return Pos < ObjectSize;
     while (Pos >= BytesRead) {
       Bytes.resize(BytesRead + BytesSkipped + kChunkSize);
       size_t bytes = Streamer->GetBytes(&Bytes[BytesRead + BytesSkipped],
                                         kChunkSize);
       BytesRead += bytes;
-      if (bytes < kChunkSize) {
-        assert((!ObjectSize || BytesRead >= Pos) &&
-               "Unexpected short read fetching bitcode");
-        if (BytesRead <= Pos) { // reached EOF/ran out of bytes
-          ObjectSize = BytesRead;
-          EOFReached = true;
-          return false;
-        }
+      if (bytes != kChunkSize) { // reached EOF/ran out of bytes
+        ObjectSize = BytesRead;
+        EOFReached = true;
+        break;
       }
     }
-    return true;
+    return Pos < BytesRead;
   }
 
   StreamingMemoryObject(const StreamingMemoryObject&) LLVM_DELETED_FUNCTION;

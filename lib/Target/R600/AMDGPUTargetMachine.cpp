@@ -22,6 +22,7 @@
 #include "SIInstrInfo.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/CodeGen/MachineFunctionAnalysis.h"
+#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/IR/Verifier.h"
@@ -54,12 +55,14 @@ AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, StringRef TT,
                                          CodeModel::Model CM,
                                          CodeGenOpt::Level OptLevel)
     : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OptLevel),
+      TLOF(new TargetLoweringObjectFileELF()),
       Subtarget(TT, CPU, FS, *this), IntrinsicInfo() {
   setRequiresStructuredCFG(true);
   initAsmInfo();
 }
 
 AMDGPUTargetMachine::~AMDGPUTargetMachine() {
+  delete TLOF;
 }
 
 namespace {
@@ -147,8 +150,17 @@ AMDGPUPassConfig::addPreISel() {
 }
 
 bool AMDGPUPassConfig::addInstSelector() {
+  const AMDGPUSubtarget &ST = TM->getSubtarget<AMDGPUSubtarget>();
+
   addPass(createAMDGPUISelDag(getAMDGPUTargetMachine()));
+
+  if (ST.getGeneration() >= AMDGPUSubtarget::SOUTHERN_ISLANDS) {
+    addPass(createSILowerI1CopiesPass());
+    addPass(createSIFixSGPRCopiesPass(*TM));
+  }
+
   addPass(createSILowerI1CopiesPass());
+  addPass(createSIFoldOperandsPass());
   return false;
 }
 
@@ -158,12 +170,7 @@ bool AMDGPUPassConfig::addPreRegAlloc() {
   if (ST.getGeneration() <= AMDGPUSubtarget::NORTHERN_ISLANDS) {
     addPass(createR600VectorRegMerger(*TM));
   } else {
-    addPass(createSIFixSGPRCopiesPass(*TM));
-    // SIFixSGPRCopies can generate a lot of duplicate instructions,
-    // so we need to run MachineCSE afterwards.
-    addPass(&MachineCSEID);
-
-    if (getOptLevel() > CodeGenOpt::None && ST.loadStoreOptEnabled()) {
+     if (getOptLevel() > CodeGenOpt::None && ST.loadStoreOptEnabled()) {
       // Don't do this with no optimizations since it throws away debug info by
       // merging nonadjacent loads.
 

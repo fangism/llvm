@@ -156,16 +156,8 @@ void ARMTargetLowering::addQRTypeForNEON(MVT VT) {
   addTypeForNEON(VT, MVT::v2f64, MVT::v4i32);
 }
 
-static TargetLoweringObjectFile *createTLOF(const Triple &TT) {
-  if (TT.isOSBinFormatMachO())
-    return new TargetLoweringObjectFileMachO();
-  if (TT.isOSWindows())
-    return new TargetLoweringObjectFileCOFF();
-  return new ARMElfTargetObjectFile();
-}
-
 ARMTargetLowering::ARMTargetLowering(const TargetMachine &TM)
-    : TargetLowering(TM, createTLOF(Triple(TM.getTargetTriple()))) {
+    : TargetLowering(TM) {
   Subtarget = &TM.getSubtarget<ARMSubtarget>();
   RegInfo = TM.getSubtargetImpl()->getRegisterInfo();
   Itins = TM.getSubtargetImpl()->getInstrItineraryData();
@@ -3137,9 +3129,8 @@ ARMTargetLowering::LowerFormalArguments(SDValue Chain,
         else if (RegVT == MVT::v2f64)
           RC = &ARM::QPRRegClass;
         else if (RegVT == MVT::i32)
-          RC = AFI->isThumb1OnlyFunction() ?
-            (const TargetRegisterClass*)&ARM::tGPRRegClass :
-            (const TargetRegisterClass*)&ARM::GPRRegClass;
+          RC = AFI->isThumb1OnlyFunction() ? &ARM::tGPRRegClass
+                                           : &ARM::GPRRegClass;
         else
           llvm_unreachable("RegVT not supported by FORMAL_ARGUMENTS Lowering");
 
@@ -6297,7 +6288,7 @@ SDValue ARMTargetLowering::LowerFSINCOS(SDValue Op, SelectionDAG &DAG) const {
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
 
   // Pair of floats / doubles used to pass the result.
-  StructType *RetTy = StructType::get(ArgTy, ArgTy, NULL);
+  StructType *RetTy = StructType::get(ArgTy, ArgTy, nullptr);
 
   // Create stack object for sret.
   const uint64_t ByteSize = TLI.getDataLayout()->getTypeAllocSize(RetTy);
@@ -6523,9 +6514,8 @@ SetupEntryBlockForSjLj(MachineInstr *MI, MachineBasicBlock *MBB,
     ARMConstantPoolMBB::Create(F->getContext(), DispatchBB, PCLabelId, PCAdj);
   unsigned CPI = MCP->getConstantPoolIndex(CPV, 4);
 
-  const TargetRegisterClass *TRC = isThumb ?
-    (const TargetRegisterClass*)&ARM::tGPRRegClass :
-    (const TargetRegisterClass*)&ARM::GPRRegClass;
+  const TargetRegisterClass *TRC = isThumb ? &ARM::tGPRRegClass
+                                           : &ARM::GPRRegClass;
 
   // Grab constant pool and fixed stack memory operands.
   MachineMemOperand *CPMMO =
@@ -6630,9 +6620,8 @@ EmitSjLjDispatchBlock(MachineInstr *MI, MachineBasicBlock *MBB) const {
   MachineFrameInfo *MFI = MF->getFrameInfo();
   int FI = MFI->getFunctionContextIndex();
 
-  const TargetRegisterClass *TRC = Subtarget->isThumb() ?
-    (const TargetRegisterClass*)&ARM::tGPRRegClass :
-    (const TargetRegisterClass*)&ARM::GPRnopcRegClass;
+  const TargetRegisterClass *TRC = Subtarget->isThumb() ? &ARM::tGPRRegClass
+                                                        : &ARM::GPRnopcRegClass;
 
   // Get a mapping of the call site numbers to all of the landing pads they're
   // associated with.
@@ -6951,7 +6940,7 @@ EmitSjLjDispatchBlock(MachineInstr *MI, MachineBasicBlock *MBB) const {
   for (std::vector<MachineBasicBlock*>::iterator
          I = LPadList.begin(), E = LPadList.end(); I != E; ++I) {
     MachineBasicBlock *CurMBB = *I;
-    if (SeenMBBs.insert(CurMBB))
+    if (SeenMBBs.insert(CurMBB).second)
       DispContBB->addSuccessor(CurMBB);
   }
 
@@ -7180,14 +7169,11 @@ ARMTargetLowering::EmitStructByval(MachineInstr *MI,
 
   // Select the correct opcode and register class for unit size load/store
   bool IsNeon = UnitSize >= 8;
-  TRC = (IsThumb1 || IsThumb2) ? (const TargetRegisterClass *)&ARM::tGPRRegClass
-                               : (const TargetRegisterClass *)&ARM::GPRRegClass;
+  TRC = (IsThumb1 || IsThumb2) ? &ARM::tGPRRegClass : &ARM::GPRRegClass;
   if (IsNeon)
-    VecTRC = UnitSize == 16
-                 ? (const TargetRegisterClass *)&ARM::DPairRegClass
-                 : UnitSize == 8
-                       ? (const TargetRegisterClass *)&ARM::DPRRegClass
-                       : nullptr;
+    VecTRC = UnitSize == 16 ? &ARM::DPairRegClass
+                            : UnitSize == 8 ? &ARM::DPRRegClass
+                                            : nullptr;
 
   unsigned BytesLeft = SizeVal % UnitSize;
   unsigned LoopSize = SizeVal - BytesLeft;
@@ -7635,9 +7621,8 @@ ARMTargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     MachineRegisterInfo &MRI = Fn->getRegInfo();
     // In Thumb mode S must not be specified if source register is the SP or
     // PC and if destination register is the SP, so restrict register class
-    unsigned NewRsbDstReg = MRI.createVirtualRegister(isThumb2 ?
-      (const TargetRegisterClass*)&ARM::rGPRRegClass :
-      (const TargetRegisterClass*)&ARM::GPRRegClass);
+    unsigned NewRsbDstReg =
+      MRI.createVirtualRegister(isThumb2 ? &ARM::rGPRRegClass : &ARM::GPRRegClass);
 
     // Transfer the remainder of BB and its successor edges to sinkMBB.
     SinkBB->splice(SinkBB->begin(), BB,
@@ -10794,7 +10779,7 @@ SDValue ARMTargetLowering::LowerDivRem(SDValue Op, SelectionDAG &DAG) const {
   SDValue Callee = DAG.getExternalSymbol(getLibcallName(LC),
                                          getPointerTy());
 
-  Type *RetTy = (Type*)StructType::get(Ty, Ty, NULL);
+  Type *RetTy = (Type*)StructType::get(Ty, Ty, nullptr);
 
   SDLoc dl(Op);
   TargetLowering::CallLoweringInfo CLI(DAG);

@@ -8,8 +8,8 @@
 
 declare i32 @llvm.r600.read.tidig.x() #1
 
-@lds0 = addrspace(3) global [512 x float] zeroinitializer, align 4
-@lds1 = addrspace(3) global [512 x float] zeroinitializer, align 4
+@lds0 = addrspace(3) global [512 x float] undef, align 4
+@lds1 = addrspace(3) global [512 x float] undef, align 4
 
 
 ; Make sure the (add tid, 2) << 2 gets folded into the ds's offset as (tid << 2) + 8
@@ -49,7 +49,7 @@ define void @load_shl_base_lds_1(float addrspace(1)* %out, i32 addrspace(1)* %ad
   ret void
 }
 
-@maxlds = addrspace(3) global [65536 x i8] zeroinitializer, align 4
+@maxlds = addrspace(3) global [65536 x i8] undef, align 4
 
 ; SI-LABEL: {{^}}load_shl_base_lds_max_offset
 ; SI: ds_read_u8 v{{[0-9]+}}, v{{[0-9]+}} offset:65535
@@ -68,7 +68,8 @@ define void @load_shl_base_lds_max_offset(i8 addrspace(1)* %out, i8 addrspace(3)
 ; pointer can be used with an offset into the second one.
 
 ; SI-LABEL: {{^}}load_shl_base_lds_2:
-; SI: v_lshlrev_b32_e32 [[PTR:v[0-9]+]], 2, {{v[0-9]+}}
+; SI: s_mov_b32 m0, -1
+; SI-NEXT: v_lshlrev_b32_e32 [[PTR:v[0-9]+]], 2, {{v[0-9]+}}
 ; SI-NEXT: ds_read2st64_b32 {{v\[[0-9]+:[0-9]+\]}}, [[PTR]] offset0:1 offset1:9 [M0]
 ; SI: s_endpgm
 define void @load_shl_base_lds_2(float addrspace(1)* %out) #0 {
@@ -100,7 +101,7 @@ define void @store_shl_base_lds_0(float addrspace(1)* %out, i32 addrspace(1)* %a
 ; --------------------------------------------------------------------------------
 ; Atomics.
 
-@lds2 = addrspace(3) global [512 x i32] zeroinitializer, align 4
+@lds2 = addrspace(3) global [512 x i32] undef, align 4
 
 ; define void @atomic_load_shl_base_lds_0(i32 addrspace(1)* %out, i32 addrspace(1)* %add_use) #0 {
 ;   %tid.x = tail call i32 @llvm.r600.read.tidig.x() #1

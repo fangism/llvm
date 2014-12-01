@@ -34,9 +34,6 @@ public:
   bool isValidAddress(uint64_t address) const override {
     return validAddress(address);
   }
-  bool isObjectEnd(uint64_t address) const override {
-    return objectEnd(address);
-  }
 
 private:
   const uint8_t* const FirstChar;
@@ -46,9 +43,6 @@ private:
   // calls per public function
   bool validAddress(uint64_t address) const {
     return static_cast<std::ptrdiff_t>(address) < LastChar - FirstChar;
-  }
-  bool objectEnd(uint64_t address) const {
-    return static_cast<std::ptrdiff_t>(address) == LastChar - FirstChar;
   }
 
   RawMemoryObject(const RawMemoryObject&) LLVM_DELETED_FUNCTION;
@@ -65,9 +59,9 @@ uint64_t RawMemoryObject::readBytes(uint8_t *Buf, uint64_t Size,
   if (End > BufferSize)
     End = BufferSize;
 
+  assert(static_cast<int64_t>(End - Address) >= 0);
   Size = End - Address;
-  assert(Size >= 0);
-  memcpy(Buf, (uint8_t *)(Address + FirstChar), Size);
+  memcpy(Buf, Address + FirstChar, Size);
   return Size;
 }
 
@@ -85,12 +79,6 @@ bool StreamingMemoryObject::isValidAddress(uint64_t address) const {
     return fetchToPos(address);
 }
 
-bool StreamingMemoryObject::isObjectEnd(uint64_t address) const {
-  if (ObjectSize) return address == ObjectSize;
-  fetchToPos(address);
-  return address == ObjectSize && address != 0;
-}
-
 uint64_t StreamingMemoryObject::getExtent() const {
   if (ObjectSize) return ObjectSize;
   size_t pos = BytesRead + kChunkSize;
@@ -102,15 +90,14 @@ uint64_t StreamingMemoryObject::getExtent() const {
 uint64_t StreamingMemoryObject::readBytes(uint8_t *Buf, uint64_t Size,
                                           uint64_t Address) const {
   fetchToPos(Address + Size - 1);
-  uint64_t BufferSize = Bytes.size() - BytesSkipped;
-  if (Address >= BufferSize)
+  if (Address >= BytesRead)
     return 0;
 
   uint64_t End = Address + Size;
-  if (End > BufferSize)
-    End = BufferSize;
+  if (End > BytesRead)
+    End = BytesRead;
+  assert(static_cast<int64_t>(End - Address) >= 0);
   Size = End - Address;
-  assert(Size >= 0);
   memcpy(Buf, &Bytes[Address + BytesSkipped], Size);
   return Size;
 }

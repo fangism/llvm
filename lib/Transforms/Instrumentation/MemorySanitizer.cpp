@@ -187,18 +187,6 @@ static cl::opt<int> ClInstrumentationWithCallThreshold(
         "inline checks (-1 means never use callbacks)."),
     cl::Hidden, cl::init(3500));
 
-// Experimental. Wraps all indirect calls in the instrumented code with
-// a call to the given function. This is needed to assist the dynamic
-// helper tool (MSanDR) to regain control on transition between instrumented and
-// non-instrumented code.
-static cl::opt<std::string> ClWrapIndirectCalls("msan-wrap-indirect-calls",
-       cl::desc("Wrap indirect calls with a given function"),
-       cl::Hidden);
-
-static cl::opt<bool> ClWrapIndirectCallsFast("msan-wrap-indirect-calls-fast",
-       cl::desc("Do not wrap indirect calls with target in the same module"),
-       cl::Hidden, cl::init(true));
-
 // This is an experiment to enable handling of cases where shadow is a non-zero
 // compile-time constant. For some unexplainable reason they were silently
 // ignored in the instrumentation.
@@ -219,8 +207,7 @@ class MemorySanitizer : public FunctionPass {
       : FunctionPass(ID),
         TrackOrigins(std::max(TrackOrigins, (int)ClTrackOrigins)),
         DL(nullptr),
-        WarningFn(nullptr),
-        WrapIndirectCalls(!ClWrapIndirectCalls.empty()) {}
+        WarningFn(nullptr) {}
   const char *getPassName() const override { return "MemorySanitizer"; }
   bool runOnFunction(Function &F) override;
   bool doInitialization(Module &M) override;
@@ -254,9 +241,6 @@ class MemorySanitizer : public FunctionPass {
   /// function.
   GlobalVariable *OriginTLS;
 
-  GlobalVariable *MsandrModuleStart;
-  GlobalVariable *MsandrModuleEnd;
-
   /// \brief The run-time callback to print a warning.
   Value *WarningFn;
   // These arrays are indexed by log2(AccessSize).
@@ -286,12 +270,6 @@ class MemorySanitizer : public FunctionPass {
   MDNode *OriginStoreWeights;
   /// \brief An empty volatile inline asm that prevents callback merge.
   InlineAsm *EmptyAsm;
-
-  bool WrapIndirectCalls;
-  /// \brief Run-time wrapper for indirect calls.
-  Value *IndirectCallWrapperFn;
-  // Argument and return type of IndirectCallWrapperFn: void (*f)(void).
-  Type *AnyFunctionPtrTy;
 
   friend struct MemorySanitizerVisitor;
   friend struct VarArgAMD64Helper;
@@ -332,7 +310,7 @@ void MemorySanitizer::initializeCallbacks(Module &M) {
   // which is not yet implemented.
   StringRef WarningFnName = ClKeepGoing ? "__msan_warning"
                                         : "__msan_warning_noreturn";
-  WarningFn = M.getOrInsertFunction(WarningFnName, IRB.getVoidTy(), NULL);
+  WarningFn = M.getOrInsertFunction(WarningFnName, IRB.getVoidTy(), nullptr);
 
   for (size_t AccessSizeIndex = 0; AccessSizeIndex < kNumberOfAccessSizes;
        AccessSizeIndex++) {
@@ -340,30 +318,31 @@ void MemorySanitizer::initializeCallbacks(Module &M) {
     std::string FunctionName = "__msan_maybe_warning_" + itostr(AccessSize);
     MaybeWarningFn[AccessSizeIndex] = M.getOrInsertFunction(
         FunctionName, IRB.getVoidTy(), IRB.getIntNTy(AccessSize * 8),
-        IRB.getInt32Ty(), NULL);
+        IRB.getInt32Ty(), nullptr);
 
     FunctionName = "__msan_maybe_store_origin_" + itostr(AccessSize);
     MaybeStoreOriginFn[AccessSizeIndex] = M.getOrInsertFunction(
         FunctionName, IRB.getVoidTy(), IRB.getIntNTy(AccessSize * 8),
-        IRB.getInt8PtrTy(), IRB.getInt32Ty(), NULL);
+        IRB.getInt8PtrTy(), IRB.getInt32Ty(), nullptr);
   }
 
   MsanSetAllocaOrigin4Fn = M.getOrInsertFunction(
     "__msan_set_alloca_origin4", IRB.getVoidTy(), IRB.getInt8PtrTy(), IntptrTy,
-    IRB.getInt8PtrTy(), IntptrTy, NULL);
-  MsanPoisonStackFn = M.getOrInsertFunction(
-    "__msan_poison_stack", IRB.getVoidTy(), IRB.getInt8PtrTy(), IntptrTy, NULL);
+    IRB.getInt8PtrTy(), IntptrTy, nullptr);
+  MsanPoisonStackFn =
+      M.getOrInsertFunction("__msan_poison_stack", IRB.getVoidTy(),
+                            IRB.getInt8PtrTy(), IntptrTy, nullptr);
   MsanChainOriginFn = M.getOrInsertFunction(
-    "__msan_chain_origin", IRB.getInt32Ty(), IRB.getInt32Ty(), NULL);
+    "__msan_chain_origin", IRB.getInt32Ty(), IRB.getInt32Ty(), nullptr);
   MemmoveFn = M.getOrInsertFunction(
     "__msan_memmove", IRB.getInt8PtrTy(), IRB.getInt8PtrTy(),
-    IRB.getInt8PtrTy(), IntptrTy, NULL);
+    IRB.getInt8PtrTy(), IntptrTy, nullptr);
   MemcpyFn = M.getOrInsertFunction(
     "__msan_memcpy", IRB.getInt8PtrTy(), IRB.getInt8PtrTy(), IRB.getInt8PtrTy(),
-    IntptrTy, NULL);
+    IntptrTy, nullptr);
   MemsetFn = M.getOrInsertFunction(
     "__msan_memset", IRB.getInt8PtrTy(), IRB.getInt8PtrTy(), IRB.getInt32Ty(),
-    IntptrTy, NULL);
+    IntptrTy, nullptr);
 
   // Create globals.
   RetvalTLS = new GlobalVariable(
@@ -399,24 +378,6 @@ void MemorySanitizer::initializeCallbacks(Module &M) {
   EmptyAsm = InlineAsm::get(FunctionType::get(IRB.getVoidTy(), false),
                             StringRef(""), StringRef(""),
                             /*hasSideEffects=*/true);
-
-  if (WrapIndirectCalls) {
-    AnyFunctionPtrTy =
-        PointerType::getUnqual(FunctionType::get(IRB.getVoidTy(), false));
-    IndirectCallWrapperFn = M.getOrInsertFunction(
-        ClWrapIndirectCalls, AnyFunctionPtrTy, AnyFunctionPtrTy, NULL);
-  }
-
-  if (WrapIndirectCalls && ClWrapIndirectCallsFast) {
-    MsandrModuleStart = new GlobalVariable(
-        M, IRB.getInt32Ty(), false, GlobalValue::ExternalLinkage,
-        nullptr, "__executable_start");
-    MsandrModuleStart->setVisibility(GlobalVariable::HiddenVisibility);
-    MsandrModuleEnd = new GlobalVariable(
-        M, IRB.getInt32Ty(), false, GlobalValue::ExternalLinkage,
-        nullptr, "_end");
-    MsandrModuleEnd->setVisibility(GlobalVariable::HiddenVisibility);
-  }
 }
 
 /// \brief Module-level initialization.
@@ -453,7 +414,7 @@ bool MemorySanitizer::doInitialization(Module &M) {
 
   // Insert a call to __msan_init/__msan_track_origins into the module's CTORs.
   appendToGlobalCtors(M, cast<Function>(M.getOrInsertFunction(
-                      "__msan_init", IRB.getVoidTy(), NULL)), 0);
+                      "__msan_init", IRB.getVoidTy(), nullptr)), 0);
 
   if (TrackOrigins)
     new GlobalVariable(M, IRB.getInt32Ty(), true, GlobalValue::WeakODRLinkage,
@@ -536,7 +497,6 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
   };
   SmallVector<ShadowOriginAndInsertPoint, 16> InstrumentationList;
   SmallVector<Instruction*, 16> StoreList;
-  SmallVector<CallSite, 16> IndirectCallList;
 
   MemorySanitizerVisitor(Function &F, MemorySanitizer &MS)
       : F(F), MS(MS), VAHelper(CreateVarArgHelper(F, MS, *this)) {
@@ -668,47 +628,6 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
     DEBUG(dbgs() << "DONE:\n" << F);
   }
 
-  void materializeIndirectCalls() {
-    for (auto &CS : IndirectCallList) {
-      Instruction *I = CS.getInstruction();
-      BasicBlock *B = I->getParent();
-      IRBuilder<> IRB(I);
-      Value *Fn0 = CS.getCalledValue();
-      Value *Fn = IRB.CreateBitCast(Fn0, MS.AnyFunctionPtrTy);
-
-      if (ClWrapIndirectCallsFast) {
-        // Check that call target is inside this module limits.
-        Value *Start =
-            IRB.CreateBitCast(MS.MsandrModuleStart, MS.AnyFunctionPtrTy);
-        Value *End = IRB.CreateBitCast(MS.MsandrModuleEnd, MS.AnyFunctionPtrTy);
-
-        Value *NotInThisModule = IRB.CreateOr(IRB.CreateICmpULT(Fn, Start),
-                                              IRB.CreateICmpUGE(Fn, End));
-
-        PHINode *NewFnPhi =
-            IRB.CreatePHI(Fn0->getType(), 2, "msandr.indirect_target");
-
-        Instruction *CheckTerm = SplitBlockAndInsertIfThen(
-            NotInThisModule, NewFnPhi,
-            /* Unreachable */ false, MS.ColdCallWeights);
-
-        IRB.SetInsertPoint(CheckTerm);
-        // Slow path: call wrapper function to possibly transform the call
-        // target.
-        Value *NewFn = IRB.CreateBitCast(
-            IRB.CreateCall(MS.IndirectCallWrapperFn, Fn), Fn0->getType());
-
-        NewFnPhi->addIncoming(Fn0, B);
-        NewFnPhi->addIncoming(NewFn, dyn_cast<Instruction>(NewFn)->getParent());
-        CS.setCalledFunction(NewFnPhi);
-      } else {
-        Value *NewFn = IRB.CreateBitCast(
-            IRB.CreateCall(MS.IndirectCallWrapperFn, Fn), Fn0->getType());
-        CS.setCalledFunction(NewFn);
-      }
-    }
-  }
-
   /// \brief Add MemorySanitizer instrumentation to a function.
   bool runOnFunction() {
     MS.initializeCallbacks(*F.getParent());
@@ -750,9 +669,6 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
 
     // Insert shadow value checks.
     materializeChecks(InstrumentWithCalls);
-
-    // Wrap indirect calls.
-    materializeIndirectCalls();
 
     return true;
   }
@@ -1005,6 +921,8 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
             Value *OriginPtr =
                 getOriginPtrForArgument(&FArg, EntryIRB, ArgOffset);
             setOrigin(A, EntryIRB.CreateLoad(OriginPtr));
+          } else {
+            setOrigin(A, getCleanOrigin());
           }
         }
         ArgOffset += RoundUpToAlignment(Size, kShadowTLSAlignment);
@@ -1024,15 +942,13 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
   /// \brief Get the origin for a value.
   Value *getOrigin(Value *V) {
     if (!MS.TrackOrigins) return nullptr;
-    if (isa<Instruction>(V) || isa<Argument>(V)) {
-      Value *Origin = OriginMap[V];
-      if (!Origin) {
-        DEBUG(dbgs() << "NO ORIGIN: " << *V << "\n");
-        Origin = getCleanOrigin();
-      }
-      return Origin;
-    }
-    return getCleanOrigin();
+    if (!PropagateShadow) return getCleanOrigin();
+    if (isa<Constant>(V)) return getCleanOrigin();
+    assert((isa<Instruction>(V) || isa<Argument>(V)) &&
+           "Unexpected value type in getOrigin()");
+    Value *Origin = OriginMap[V];
+    assert(Origin && "Missing origin");
+    return Origin;
   }
 
   /// \brief Get the origin for i-th argument of the instruction I.
@@ -1172,6 +1088,7 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
     IRB.CreateStore(getCleanShadow(&I), ShadowPtr);
 
     setShadow(&I, getCleanShadow(&I));
+    setOrigin(&I, getCleanOrigin());
   }
 
   void visitAtomicRMWInst(AtomicRMWInst &I) {
@@ -2336,9 +2253,6 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
     }
     IRBuilder<> IRB(&I);
 
-    if (MS.WrapIndirectCalls && !CS.getCalledFunction())
-      IndirectCallList.push_back(CS);
-
     unsigned ArgOffset = 0;
     DEBUG(dbgs() << "  CallSite: " << I << "\n");
     for (CallSite::arg_iterator ArgIt = CS.arg_begin(), End = CS.arg_end();
@@ -2539,9 +2453,10 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
       }
       // a = select b, c, d
       // Oa = Sb ? Ob : (b ? Oc : Od)
-      setOrigin(&I, IRB.CreateSelect(
-                        Sb, getOrigin(I.getCondition()),
-                        IRB.CreateSelect(B, getOrigin(C), getOrigin(D))));
+      setOrigin(
+          &I, IRB.CreateSelect(Sb, getOrigin(I.getCondition()),
+                               IRB.CreateSelect(B, getOrigin(I.getTrueValue()),
+                                                getOrigin(I.getFalseValue()))));
     }
   }
 

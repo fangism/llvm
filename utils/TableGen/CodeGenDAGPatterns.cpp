@@ -2263,13 +2263,6 @@ CodeGenDAGPatterns::CodeGenDAGPatterns(RecordKeeper &R) :
   VerifyInstructionFlags();
 }
 
-CodeGenDAGPatterns::~CodeGenDAGPatterns() {
-  for (pf_iterator I = PatternFragments.begin(),
-       E = PatternFragments.end(); I != E; ++I)
-    delete I->second;
-}
-
-
 Record *CodeGenDAGPatterns::getSDNodeNamed(const std::string &Name) const {
   Record *N = Records.getDef(Name);
   if (!N || !N->isSubClassOf("SDNode")) {
@@ -2331,9 +2324,9 @@ void CodeGenDAGPatterns::ParsePatternFragments(bool OutFrags) {
 
     DagInit *Tree = Fragments[i]->getValueAsDag("Fragment");
     TreePattern *P =
-      new TreePattern(Fragments[i], Tree,
-                      !Fragments[i]->isSubClassOf("OutPatFrag"), *this);
-    PatternFragments[Fragments[i]] = P;
+        (PatternFragments[Fragments[i]] = llvm::make_unique<TreePattern>(
+             Fragments[i], Tree, !Fragments[i]->isSubClassOf("OutPatFrag"),
+             *this)).get();
 
     // Validate the argument list, converting it to set, to discard duplicates.
     std::vector<std::string> &Args = P->getArgList();
@@ -2391,16 +2384,16 @@ void CodeGenDAGPatterns::ParsePatternFragments(bool OutFrags) {
     if (OutFrags != Fragments[i]->isSubClassOf("OutPatFrag"))
       continue;
 
-    TreePattern *ThePat = PatternFragments[Fragments[i]];
-    ThePat->InlinePatternFragments();
+    TreePattern &ThePat = *PatternFragments[Fragments[i]];
+    ThePat.InlinePatternFragments();
 
     // Infer as many types as possible.  Don't worry about it if we don't infer
     // all of them, some may depend on the inputs of the pattern.
-    ThePat->InferAllTypes();
-    ThePat->resetError();
+    ThePat.InferAllTypes();
+    ThePat.resetError();
 
     // If debugging, print out the pattern fragment result.
-    DEBUG(ThePat->dump());
+    DEBUG(ThePat.dump());
   }
 }
 
@@ -3118,13 +3111,6 @@ void CodeGenDAGPatterns::InferInstructionFlags() {
     CodeGenInstruction &InstInfo =
       const_cast<CodeGenInstruction &>(*Instructions[i]);
 
-    // Treat neverHasSideEffects = 1 as the equivalent of hasSideEffects = 0.
-    // This flag is obsolete and will be removed.
-    if (InstInfo.neverHasSideEffects) {
-      assert(!InstInfo.hasSideEffects);
-      InstInfo.hasSideEffects_Unset = false;
-    }
-
     // Get the primary instruction pattern.
     const TreePattern *Pattern = getInstruction(InstInfo.TheDef).getPattern();
     if (!Pattern) {
@@ -3311,14 +3297,14 @@ void CodeGenDAGPatterns::ParsePatterns() {
     if (LI->getSize() == 0) continue;  // no pattern.
 
     // Parse the instruction.
-    TreePattern *Result = new TreePattern(CurPattern, LI, false, *this);
+    TreePattern Result(CurPattern, LI, false, *this);
 
     // Inline pattern fragments into it.
-    Result->InlinePatternFragments();
+    Result.InlinePatternFragments();
 
-    if (Result->getNumTrees() != 1)
-      Result->error("Cannot handle instructions producing instructions "
-                    "with temporaries yet!");
+    if (Result.getNumTrees() != 1)
+      Result.error("Cannot handle instructions producing instructions "
+                   "with temporaries yet!");
 
     bool IterateInference;
     bool InferredAllPatternTypes, InferredAllResultTypes;
@@ -3331,7 +3317,7 @@ void CodeGenDAGPatterns::ParsePatterns() {
       // Infer as many types as possible.  If we cannot infer all of them, we
       // can never do anything with this pattern: report it to the user.
       InferredAllResultTypes =
-        Result->InferAllTypes(&Pattern->getNamedNodesMap());
+          Result.InferAllTypes(&Pattern->getNamedNodesMap());
 
       IterateInference = false;
 
@@ -3339,13 +3325,13 @@ void CodeGenDAGPatterns::ParsePatterns() {
       // resolve cases where the input type is known to be a pointer type (which
       // is considered resolved), but the result knows it needs to be 32- or
       // 64-bits.  Infer the other way for good measure.
-      for (unsigned i = 0, e = std::min(Result->getTree(0)->getNumTypes(),
+      for (unsigned i = 0, e = std::min(Result.getTree(0)->getNumTypes(),
                                         Pattern->getTree(0)->getNumTypes());
            i != e; ++i) {
-        IterateInference = Pattern->getTree(0)->
-          UpdateNodeType(i, Result->getTree(0)->getExtType(i), *Result);
-        IterateInference |= Result->getTree(0)->
-          UpdateNodeType(i, Pattern->getTree(0)->getExtType(i), *Result);
+        IterateInference = Pattern->getTree(0)->UpdateNodeType(
+            i, Result.getTree(0)->getExtType(i), Result);
+        IterateInference |= Result.getTree(0)->UpdateNodeType(
+            i, Pattern->getTree(0)->getExtType(i), Result);
       }
 
       // If our iteration has converged and the input pattern's types are fully
@@ -3359,8 +3345,8 @@ void CodeGenDAGPatterns::ParsePatterns() {
       // arbitrary types to the result pattern's nodes.
       if (!IterateInference && InferredAllPatternTypes &&
           !InferredAllResultTypes)
-        IterateInference = ForceArbitraryInstResultType(Result->getTree(0),
-                                                        *Result);
+        IterateInference =
+            ForceArbitraryInstResultType(Result.getTree(0), Result);
     } while (IterateInference);
 
     // Verify that we inferred enough types that we can do something with the
@@ -3369,7 +3355,7 @@ void CodeGenDAGPatterns::ParsePatterns() {
       Pattern->error("Could not infer all types in pattern!");
     if (!InferredAllResultTypes) {
       Pattern->dump();
-      Result->error("Could not infer all types in pattern result!");
+      Result.error("Could not infer all types in pattern result!");
     }
 
     // Validate that the input pattern is correct.
@@ -3382,7 +3368,7 @@ void CodeGenDAGPatterns::ParsePatterns() {
                                   InstImpResults);
 
     // Promote the xform function to be an explicit node if set.
-    TreePatternNode *DstPattern = Result->getOnlyTree();
+    TreePatternNode *DstPattern = Result.getOnlyTree();
     std::vector<TreePatternNode*> ResultNodeOperands;
     for (unsigned ii = 0, ee = DstPattern->getNumChildren(); ii != ee; ++ii) {
       TreePatternNode *OpNode = DstPattern->getChild(ii);
@@ -3394,16 +3380,16 @@ void CodeGenDAGPatterns::ParsePatterns() {
       }
       ResultNodeOperands.push_back(OpNode);
     }
-    DstPattern = Result->getOnlyTree();
+    DstPattern = Result.getOnlyTree();
     if (!DstPattern->isLeaf())
       DstPattern = new TreePatternNode(DstPattern->getOperator(),
                                        ResultNodeOperands,
                                        DstPattern->getNumTypes());
 
-    for (unsigned i = 0, e = Result->getOnlyTree()->getNumTypes(); i != e; ++i)
-      DstPattern->setType(i, Result->getOnlyTree()->getExtType(i));
+    for (unsigned i = 0, e = Result.getOnlyTree()->getNumTypes(); i != e; ++i)
+      DstPattern->setType(i, Result.getOnlyTree()->getExtType(i));
 
-    TreePattern Temp(Result->getRecord(), DstPattern, false, *this);
+    TreePattern Temp(Result.getRecord(), DstPattern, false, *this);
     Temp.InferAllTypes();
 
 

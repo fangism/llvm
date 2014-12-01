@@ -96,7 +96,7 @@ bool ConstantFPSDNode::isValueValidForType(EVT VT,
 /// BUILD_VECTOR where all of the elements are ~0 or undef.
 bool ISD::isBuildVectorAllOnes(const SDNode *N) {
   // Look through a bit convert.
-  if (N->getOpcode() == ISD::BITCAST)
+  while (N->getOpcode() == ISD::BITCAST)
     N = N->getOperand(0).getNode();
 
   if (N->getOpcode() != ISD::BUILD_VECTOR) return false;
@@ -144,7 +144,7 @@ bool ISD::isBuildVectorAllOnes(const SDNode *N) {
 /// BUILD_VECTOR where all of the elements are 0 or undef.
 bool ISD::isBuildVectorAllZeros(const SDNode *N) {
   // Look through a bit convert.
-  if (N->getOpcode() == ISD::BITCAST)
+  while (N->getOpcode() == ISD::BITCAST)
     N = N->getOperand(0).getNode();
 
   if (N->getOpcode() != ISD::BUILD_VECTOR) return false;
@@ -6152,9 +6152,11 @@ unsigned SelectionDAG::AssignTopologicalOrder() {
 /// AddDbgValue - Add a dbg_value SDNode. If SD is non-null that means the
 /// value is produced by SD.
 void SelectionDAG::AddDbgValue(SDDbgValue *DB, SDNode *SD, bool isParameter) {
-  DbgInfo->add(DB, SD, isParameter);
-  if (SD)
+  if (SD) {
+    assert(DbgInfo->getSDDbgValues(SD).empty() || SD->getHasDebugValue());
     SD->setHasDebugValue(true);
+  }
+  DbgInfo->add(DB, SD, isParameter);
 }
 
 /// TransferDbgValues - Transfer SDDbgValues.
@@ -6383,7 +6385,7 @@ SDNode::hasPredecessorHelper(const SDNode *N,
     const SDNode *M = Worklist.pop_back_val();
     for (unsigned i = 0, e = M->getNumOperands(); i != e; ++i) {
       SDNode *Op = M->getOperand(i).getNode();
-      if (Visited.insert(Op))
+      if (Visited.insert(Op).second)
         Worklist.push_back(Op);
       if (Op == N)
         return true;
@@ -6751,7 +6753,7 @@ static void checkForCyclesHelper(const SDNode *N,
 
   // If a node has already been visited on this depth-first walk, reject it as
   // a cycle.
-  if (!Visited.insert(N)) {
+  if (!Visited.insert(N).second) {
     errs() << "Detected cycle in SelectionDAG\n";
     dbgs() << "Offending node:\n";
     N->dumprFull(DAG); dbgs() << "\n";

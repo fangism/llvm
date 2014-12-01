@@ -12,6 +12,7 @@
 
 #include "AArch64.h"
 #include "AArch64TargetMachine.h"
+#include "AArch64TargetObjectFile.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/RegAllocRegistry.h"
 #include "llvm/IR/Function.h"
@@ -80,11 +81,26 @@ EnableA53Fix835769("aarch64-fix-cortex-a53-835769", cl::Hidden,
                 cl::desc("Work around Cortex-A53 erratum 835769"),
                 cl::init(false));
 
+static cl::opt<bool>
+EnableGEPOpt("aarch64-gep-opt", cl::Hidden,
+             cl::desc("Enable optimizations on complex GEPs"),
+             cl::init(true));
+
 extern "C" void LLVMInitializeAArch64Target() {
   // Register the target.
   RegisterTargetMachine<AArch64leTargetMachine> X(TheAArch64leTarget);
   RegisterTargetMachine<AArch64beTargetMachine> Y(TheAArch64beTarget);
   RegisterTargetMachine<AArch64leTargetMachine> Z(TheARM64Target);
+}
+
+//===----------------------------------------------------------------------===//
+// AArch64 Lowering public interface.
+//===----------------------------------------------------------------------===//
+static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
+  if (TT.isOSBinFormatMachO())
+    return make_unique<AArch64_MachoTargetObjectFile>();
+
+  return make_unique<AArch64_ELFTargetObjectFile>();
 }
 
 /// TargetMachine ctor - Create an AArch64 architecture model.
@@ -96,9 +112,12 @@ AArch64TargetMachine::AArch64TargetMachine(const Target &T, StringRef TT,
                                            CodeGenOpt::Level OL,
                                            bool LittleEndian)
     : LLVMTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL),
+      TLOF(createTLOF(Triple(getTargetTriple()))),
       Subtarget(TT, CPU, FS, *this, LittleEndian), isLittle(LittleEndian) {
   initAsmInfo();
 }
+
+AArch64TargetMachine::~AArch64TargetMachine() {}
 
 const AArch64Subtarget *
 AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
@@ -193,6 +212,19 @@ void AArch64PassConfig::addIRPasses() {
     addPass(createCFGSimplificationPass());
 
   TargetPassConfig::addIRPasses();
+
+  if (TM->getOptLevel() == CodeGenOpt::Aggressive && EnableGEPOpt) {
+    // Call SeparateConstOffsetFromGEP pass to extract constants within indices
+    // and lower a GEP with multiple indices to either arithmetic operations or
+    // multiple GEPs with single index.
+    addPass(createSeparateConstOffsetFromGEPPass(TM, true));
+    // Call EarlyCSE pass to find and remove subexpressions in the lowered
+    // result.
+    addPass(createEarlyCSEPass());
+    // Do loop invariant code motion in case part of the lowered result is
+    // invariant.
+    addPass(createLICMPass());
+  }
 }
 
 // Pass Pipeline Configuration
