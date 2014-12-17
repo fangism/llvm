@@ -1081,8 +1081,7 @@ struct LessRegisterSet {
 void AsmMatcherInfo::
 buildRegisterClasses(SmallPtrSetImpl<Record*> &SingletonRegisters) {
   const auto &Registers = Target.getRegBank().getRegisters();
-  ArrayRef<CodeGenRegisterClass*> RegClassList =
-    Target.getRegBank().getRegClasses();
+  auto &RegClassList = Target.getRegBank().getRegClasses();
 
   typedef std::set<RegisterSet, LessRegisterSet> RegisterSetSet;
 
@@ -1090,9 +1089,9 @@ buildRegisterClasses(SmallPtrSetImpl<Record*> &SingletonRegisters) {
   RegisterSetSet RegisterSets;
 
   // Gather the defined sets.
-  for (const CodeGenRegisterClass *RC : RegClassList)
-    RegisterSets.insert(RegisterSet(RC->getOrder().begin(),
-                                    RC->getOrder().end()));
+  for (const CodeGenRegisterClass &RC : RegClassList)
+    RegisterSets.insert(
+        RegisterSet(RC.getOrder().begin(), RC.getOrder().end()));
 
   // Add any required singleton sets.
   for (Record *Rec : SingletonRegisters) {
@@ -1161,19 +1160,19 @@ buildRegisterClasses(SmallPtrSetImpl<Record*> &SingletonRegisters) {
   }
 
   // Name the register classes which correspond to a user defined RegisterClass.
-  for (const CodeGenRegisterClass *RC : RegClassList) {
+  for (const CodeGenRegisterClass &RC : RegClassList) {
     // Def will be NULL for non-user defined register classes.
-    Record *Def = RC->getDef();
+    Record *Def = RC.getDef();
     if (!Def)
       continue;
-    ClassInfo *CI = RegisterSetClasses[RegisterSet(RC->getOrder().begin(),
-                                                   RC->getOrder().end())];
+    ClassInfo *CI = RegisterSetClasses[RegisterSet(RC.getOrder().begin(),
+                                                   RC.getOrder().end())];
     if (CI->ValueName.empty()) {
-      CI->ClassName = RC->getName();
-      CI->Name = "MCK_" + RC->getName();
-      CI->ValueName = RC->getName();
+      CI->ClassName = RC.getName();
+      CI->Name = "MCK_" + RC.getName();
+      CI->ValueName = RC.getName();
     } else
-      CI->ValueName = CI->ValueName + "," + RC->getName();
+      CI->ValueName = CI->ValueName + "," + RC.getName();
 
     RegisterClassClasses.insert(std::make_pair(Def, CI));
   }
@@ -2966,6 +2965,7 @@ void AsmMatcherEmitter::run(raw_ostream &OS) {
   OS << "      continue;\n";
   OS << "    }\n";
   OS << "\n";
+  OS << "    Inst.clear();\n\n";
   OS << "    if (matchingInlineAsm) {\n";
   OS << "      Inst.setOpcode(it->Opcode);\n";
   OS << "      convertToMapAndConstraints(it->ConvertFn, Operands);\n";

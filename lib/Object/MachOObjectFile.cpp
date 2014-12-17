@@ -316,6 +316,12 @@ std::error_code MachOObjectFile::getSymbolName(DataRefImpl Symb,
   return object_error::success;
 }
 
+unsigned MachOObjectFile::getSectionType(SectionRef Sec) const {
+  DataRefImpl DRI = Sec.getRawDataRefImpl();
+  uint32_t Flags = getSectionFlags(this, DRI);
+  return Flags & MachO::SECTION_TYPE;
+}
+
 // getIndirectName() returns the name of the alias'ed symbol who's string table
 // index is in the n_value field.
 std::error_code MachOObjectFile::getIndirectName(DataRefImpl Symb,
@@ -575,28 +581,7 @@ bool MachOObjectFile::isSectionBSS(DataRefImpl Sec) const {
           SectionType == MachO::S_GB_ZEROFILL);
 }
 
-bool MachOObjectFile::isSectionRequiredForExecution(DataRefImpl Sect) const {
-  // FIXME: Unimplemented.
-  return true;
-}
-
 bool MachOObjectFile::isSectionVirtual(DataRefImpl Sec) const {
-  // FIXME: Unimplemented.
-  return false;
-}
-
-bool MachOObjectFile::isSectionZeroInit(DataRefImpl Sec) const {
-  uint32_t Flags = getSectionFlags(this, Sec);
-  unsigned SectionType = Flags & MachO::SECTION_TYPE;
-  return SectionType == MachO::S_ZEROFILL ||
-         SectionType == MachO::S_GB_ZEROFILL;
-}
-
-bool MachOObjectFile::isSectionReadOnlyData(DataRefImpl Sec) const {
-  // Consider using the code from isSectionText to look for __const sections.
-  // Alternately, emit S_ATTR_PURE_INSTRUCTIONS and/or S_ATTR_SOME_INSTRUCTIONS
-  // to use section attributes to distinguish code from data.
-
   // FIXME: Unimplemented.
   return false;
 }
@@ -2299,6 +2284,11 @@ MachOObjectFile::getUuidCommand(const LoadCommandInfo &L) const {
   return getStruct<MachO::uuid_command>(this, L.Ptr);
 }
 
+MachO::rpath_command
+MachOObjectFile::getRpathCommand(const LoadCommandInfo &L) const {
+  return getStruct<MachO::rpath_command>(this, L.Ptr);
+}
+
 MachO::source_version_command
 MachOObjectFile::getSourceVersionCommand(const LoadCommandInfo &L) const {
   return getStruct<MachO::source_version_command>(this, L.Ptr);
@@ -2307,6 +2297,16 @@ MachOObjectFile::getSourceVersionCommand(const LoadCommandInfo &L) const {
 MachO::entry_point_command
 MachOObjectFile::getEntryPointCommand(const LoadCommandInfo &L) const {
   return getStruct<MachO::entry_point_command>(this, L.Ptr);
+}
+
+MachO::encryption_info_command
+MachOObjectFile::getEncryptionInfoCommand(const LoadCommandInfo &L) const {
+  return getStruct<MachO::encryption_info_command>(this, L.Ptr);
+}
+
+MachO::encryption_info_command_64
+MachOObjectFile::getEncryptionInfoCommand64(const LoadCommandInfo &L) const {
+  return getStruct<MachO::encryption_info_command_64>(this, L.Ptr);
 }
 
 
