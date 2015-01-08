@@ -39,6 +39,10 @@ PPCMCAsmInfoDarwin::PPCMCAsmInfoDarwin(bool is64Bit, const Triple& T) {
   if (T.isMacOSX() && T.isMacOSXVersionLT(10, 6))
     HasWeakDefCanBeHiddenDirective = false;
 
+  // for older ld64
+  DwarfFDESymbolsUseAbsDiff = (T.isMacOSX() && !T.isMacOSXVersionLT(10, 6))
+    || T.isiOS(); 
+
   UseIntegratedAssembler = true;
 }
 
