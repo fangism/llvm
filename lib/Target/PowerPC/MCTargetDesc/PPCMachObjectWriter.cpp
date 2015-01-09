@@ -193,6 +193,7 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(
     MachObjectWriter *Writer, const MCAssembler &Asm, const MCAsmLayout &Layout,
     const MCFragment *Fragment, const MCFixup &Fixup, MCValue Target,
     unsigned Log2Size, uint64_t &FixedValue) {
+  uint64_t OriginalFixedValue = FixedValue;
   // caller already computes these, can we just pass and reuse?
   const uint32_t FixupOffset = getFixupOffset(Layout, Fragment, Fixup);
   const MCFixupKind FK = Fixup.getKind();
@@ -291,8 +292,10 @@ bool PPCMachObjectWriter::RecordScatteredRelocation(
     // symbol, things can go badly.
     //
     // Required for 'as' compatibility.
-    if (FixupOffset > 0xffffff)
+    if (FixupOffset > 0xffffff) {
+      FixedValue = OriginalFixedValue;
       return false;
+    }
   }
   MachO::any_relocation_info MRE;
   makeScatteredRelocationInfo(MRE, FixupOffset, Type, Log2Size, IsPCRel, Value);
