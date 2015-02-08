@@ -273,7 +273,7 @@ bool MachineModuleInfo::doInitialization(Module &M) {
   CurCallSite = 0;
   CallsEHReturn = 0;
   CallsUnwindInit = 0;
-  DbgInfoAvailable = UsesVAFloatArgument = false; 
+  DbgInfoAvailable = UsesVAFloatArgument = UsesMorestackAddr = false;
   // Always emit some info, by default "no personality" info.
   Personalities.push_back(nullptr);
   AddrLabelSymbols = nullptr;
@@ -450,6 +450,14 @@ addFilterTypeInfo(MachineBasicBlock *LandingPad,
 void MachineModuleInfo::addCleanup(MachineBasicBlock *LandingPad) {
   LandingPadInfo &LP = getOrCreateLandingPadInfo(LandingPad);
   LP.TypeIds.push_back(0);
+}
+
+MCSymbol *
+MachineModuleInfo::addClauseForLandingPad(MachineBasicBlock *LandingPad) {
+  MCSymbol *ClauseLabel = Context.CreateTempSymbol();
+  LandingPadInfo &LP = getOrCreateLandingPadInfo(LandingPad);
+  LP.ClauseLabels.push_back(ClauseLabel);
+  return ClauseLabel;
 }
 
 /// TidyLandingPads - Remap landing pad labels and remove any deleted landing

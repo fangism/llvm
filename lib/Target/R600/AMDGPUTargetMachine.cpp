@@ -39,6 +39,7 @@ using namespace llvm;
 extern "C" void LLVMInitializeR600Target() {
   // Register the target
   RegisterTargetMachine<AMDGPUTargetMachine> X(TheAMDGPUTarget);
+  RegisterTargetMachine<GCNTargetMachine> Y(TheGCNTarget);
 }
 
 static ScheduleDAGInstrs *createR600MachineScheduler(MachineSchedContext *C) {
@@ -188,6 +189,7 @@ void AMDGPUPassConfig::addPostRegAlloc() {
   const AMDGPUSubtarget &ST = TM->getSubtarget<AMDGPUSubtarget>();
 
   if (ST.getGeneration() > AMDGPUSubtarget::NORTHERN_ISLANDS) {
+    addPass(createSIPrepareScratchRegs(), false);
     addPass(createSIShrinkInstructionsPass(), false);
   }
 }
@@ -218,3 +220,13 @@ void AMDGPUPassConfig::addPreEmitPass() {
     addPass(createSILowerControlFlowPass(*TM), false);
   }
 }
+
+
+//===----------------------------------------------------------------------===//
+// GCN Target Machine (SI+)
+//===----------------------------------------------------------------------===//
+
+GCNTargetMachine::GCNTargetMachine(const Target &T, StringRef TT, StringRef FS,
+                    StringRef CPU, TargetOptions Options, Reloc::Model RM,
+                    CodeModel::Model CM, CodeGenOpt::Level OL) :
+    AMDGPUTargetMachine(T, TT, FS, CPU, Options, RM, CM, OL) { }

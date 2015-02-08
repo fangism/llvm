@@ -282,7 +282,8 @@ static bool isIntOrIntVectorValue(const std::pair<const Value*, unsigned> &V) {
   return V.first->getType()->isIntOrIntVectorTy();
 }
 
-ValueEnumerator::ValueEnumerator(const Module &M) {
+ValueEnumerator::ValueEnumerator(const Module &M)
+    : HasMDString(false), HasMDLocation(false) {
   if (shouldPreserveBitcodeUseListOrder())
     UseListOrders = predictUseListOrder(M);
 
@@ -459,7 +460,7 @@ void ValueEnumerator::print(raw_ostream &OS, const MetadataMapType &Map,
   for (auto I = Map.begin(), E = Map.end(); I != E; ++I) {
     const Metadata *MD = I->first;
     OS << "Metadata: slot = " << I->second << "\n";
-    MD->dump();
+    MD->print(OS);
   }
 }
 
@@ -545,6 +546,9 @@ void ValueEnumerator::EnumerateMetadata(const Metadata *MD) {
     EnumerateMDNodeOperands(N);
   else if (auto *C = dyn_cast<ConstantAsMetadata>(MD))
     EnumerateValue(C->getValue());
+
+  HasMDString |= isa<MDString>(MD);
+  HasMDLocation |= isa<MDLocation>(MD);
 
   // Replace the dummy ID inserted above with the correct one.  MDValueMap may
   // have changed by inserting operands, so we need a fresh lookup here.
@@ -803,4 +807,3 @@ unsigned ValueEnumerator::getGlobalBasicBlockID(const BasicBlock *BB) const {
   IncorporateFunctionInfoGlobalBBIDs(BB->getParent(), GlobalBasicBlockIDs);
   return getGlobalBasicBlockID(BB);
 }
-

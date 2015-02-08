@@ -300,7 +300,19 @@ private:
     StringRef StringValue;
 
     static bool LessTag(const AttributeItem &LHS, const AttributeItem &RHS) {
-      return (LHS.Tag < RHS.Tag);
+      // The conformance tag must be emitted first when serialised
+      // into an object file. Specifically, the addenda to the ARM ABI
+      // states that (2.3.7.4):
+      //
+      // "To simplify recognition by consumers in the common case of
+      // claiming conformity for the whole file, this tag should be
+      // emitted first in a file-scope sub-subsection of the first
+      // public subsection of the attributes section."
+      //
+      // So it is special-cased in this comparison predicate when the
+      // attributes are sorted in finishAttributeSection().
+      return (RHS.Tag != ARMBuildAttrs::conformance) &&
+             ((LHS.Tag == ARMBuildAttrs::conformance) || (LHS.Tag < RHS.Tag));
     }
   };
 
@@ -541,6 +553,10 @@ public:
   /// necessary.
   void EmitValueImpl(const MCExpr *Value, unsigned Size,
                      const SMLoc &Loc) override {
+    if (const MCSymbolRefExpr *SRE = dyn_cast_or_null<MCSymbolRefExpr>(Value))
+      if (SRE->getKind() == MCSymbolRefExpr::VK_ARM_SBREL && !(Size == 4))
+        getContext().FatalError(Loc, "relocated expression must be 32-bit");
+
     EmitDataMappingSymbol();
     MCELFStreamer::EmitValueImpl(Value, Size);
   }

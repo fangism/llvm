@@ -28,8 +28,8 @@ Example cmake parameters (using fink's clang-3.4, libc++):
 Low Level Virtual Machine (LLVM)
 ================================
 
-This directory and its subdirectories contain source code for the Low Level
-Virtual Machine, a toolkit for the construction of highly optimized compilers,
+This directory and its subdirectories contain source code for LLVM,
+a toolkit for the construction of highly optimized compilers,
 optimizers, and runtime environments.
 
 LLVM is open source software. You may freely distribute it under the terms of

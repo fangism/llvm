@@ -133,6 +133,7 @@ public:
   virtual ~AsmPrinter();
 
   DwarfDebug *getDwarfDebug() { return DD; }
+  DwarfDebug *getDwarfDebug() const { return DD; }
 
   /// Return true if assembly output should contain comments.
   ///
@@ -203,6 +204,8 @@ public:
   void EmitFunctionBody();
 
   void emitCFIInstruction(const MachineInstr &MI);
+
+  void emitFrameAlloc(const MachineInstr &MI);
 
   enum CFIMoveType { CFI_M_None, CFI_M_EH, CFI_M_Debug };
   CFIMoveType needsCFIMoves();
@@ -468,6 +471,10 @@ public:
   virtual bool PrintAsmMemoryOperand(const MachineInstr *MI, unsigned OpNo,
                                      unsigned AsmVariant, const char *ExtraCode,
                                      raw_ostream &OS);
+
+  /// Let the target do anything it needs to do before emitting inlineasm.
+  /// \p StartInfo - the subtarget info before parsing inline asm
+  virtual void emitInlineAsmStart(const MCSubtargetInfo &StartInfo) const;
 
   /// Let the target do anything it needs to do after emitting inlineasm.
   /// This callback can be used restore the original mode in case the

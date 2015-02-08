@@ -164,7 +164,10 @@ class ARMAsmParser : public MCTargetAsmParser {
                               // according to count of instructions in block.
                               // ~0U if no active IT block.
   } ITState;
-  bool inITBlock() { return ITState.CurPosition != ~0U;}
+  bool inITBlock() { return ITState.CurPosition != ~0U; }
+  bool lastInITBlock() {
+    return ITState.CurPosition == 4 - countTrailingZeros(ITState.Mask);
+  }
   void forwardITPosition() {
     if (!inITBlock()) return;
     // Move to the next instruction in the IT block, if there is one. If not,
@@ -185,6 +188,11 @@ class ARMAsmParser : public MCTargetAsmParser {
              ArrayRef<SMRange> Ranges = None) {
     return getParser().Error(L, Msg, Ranges);
   }
+
+  bool validatetLDMRegList(MCInst Inst, const OperandVector &Operands,
+                           unsigned ListNo, bool IsARPop = false);
+  bool validatetSTMRegList(MCInst Inst, const OperandVector &Operands,
+                           unsigned ListNo);
 
   int tryParseRegister();
   bool tryParseRegisterWithWriteBack(OperandVector &);
@@ -1031,33 +1039,17 @@ public:
   }
   bool isAdrLabel() const {
     // If we have an immediate that's not a constant, treat it as a label
-    // reference needing a fixup. If it is a constant, but it can't fit 
-    // into shift immediate encoding, we reject it.
-    if (isImm() && !isa<MCConstantExpr>(getImm())) return true;
-    else return (isARMSOImm() || isARMSOImmNeg());
-  }
-  bool isARMSOImm() const {
+    // reference needing a fixup.
+    if (isImm() && !isa<MCConstantExpr>(getImm()))
+      return true;
+
+    // If it is a constant, it must fit into a modified immediate encoding.
     if (!isImm()) return false;
     const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
     if (!CE) return false;
     int64_t Value = CE->getValue();
-    return ARM_AM::getSOImmVal(Value) != -1;
-  }
-  bool isARMSOImmNot() const {
-    if (!isImm()) return false;
-    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
-    if (!CE) return false;
-    int64_t Value = CE->getValue();
-    return ARM_AM::getSOImmVal(~Value) != -1;
-  }
-  bool isARMSOImmNeg() const {
-    if (!isImm()) return false;
-    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
-    if (!CE) return false;
-    int64_t Value = CE->getValue();
-    // Only use this when not representable as a plain so_imm.
-    return ARM_AM::getSOImmVal(Value) == -1 &&
-      ARM_AM::getSOImmVal(-Value) != -1;
+    return (ARM_AM::getSOImmVal(Value) != -1 ||
+            ARM_AM::getSOImmVal(-Value) != -1);;
   }
   bool isT2SOImm() const {
     if (!isImm()) return false;
@@ -2031,22 +2023,6 @@ public:
     assert(isMem()  && "Unknown value type!");
     assert(isa<MCConstantExpr>(Memory.OffsetImm) && "Unknown value type!");
     Inst.addOperand(MCOperand::CreateImm(Memory.OffsetImm->getValue()));
-  }
-
-  void addARMSOImmNotOperands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    // The operand is actually a so_imm, but we have its bitwise
-    // negation in the assembly source, so twiddle it here.
-    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
-    Inst.addOperand(MCOperand::CreateImm(~CE->getValue()));
-  }
-
-  void addARMSOImmNegOperands(MCInst &Inst, unsigned N) const {
-    assert(N == 1 && "Invalid number of operands!");
-    // The operand is actually a so_imm, but we have its
-    // negation in the assembly source, so twiddle it here.
-    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
-    Inst.addOperand(MCOperand::CreateImm(-CE->getValue()));
   }
 
   void addMemBarrierOptOperands(MCInst &Inst, unsigned N) const {
@@ -5278,15 +5254,52 @@ bool ARMAsmParser::parsePrefix(ARMMCExpr::VariantKind &RefKind) {
     return true;
   }
 
+  enum {
+    COFF = (1 << MCObjectFileInfo::IsCOFF),
+    ELF = (1 << MCObjectFileInfo::IsELF),
+    MACHO = (1 << MCObjectFileInfo::IsMachO)
+  };
+  static const struct PrefixEntry {
+    const char *Spelling;
+    ARMMCExpr::VariantKind VariantKind;
+    uint8_t SupportedFormats;
+  } PrefixEntries[] = {
+    { "lower16", ARMMCExpr::VK_ARM_LO16, COFF | ELF | MACHO },
+    { "upper16", ARMMCExpr::VK_ARM_HI16, COFF | ELF | MACHO },
+  };
+
   StringRef IDVal = Parser.getTok().getIdentifier();
-  if (IDVal == "lower16") {
-    RefKind = ARMMCExpr::VK_ARM_LO16;
-  } else if (IDVal == "upper16") {
-    RefKind = ARMMCExpr::VK_ARM_HI16;
-  } else {
+
+  const auto &Prefix =
+      std::find_if(std::begin(PrefixEntries), std::end(PrefixEntries),
+                   [&IDVal](const PrefixEntry &PE) {
+                      return PE.Spelling == IDVal;
+                   });
+  if (Prefix == std::end(PrefixEntries)) {
     Error(Parser.getTok().getLoc(), "unexpected prefix in operand");
     return true;
   }
+
+  uint8_t CurrentFormat;
+  switch (getContext().getObjectFileInfo()->getObjectFileType()) {
+  case MCObjectFileInfo::IsMachO:
+    CurrentFormat = MACHO;
+    break;
+  case MCObjectFileInfo::IsELF:
+    CurrentFormat = ELF;
+    break;
+  case MCObjectFileInfo::IsCOFF:
+    CurrentFormat = COFF;
+    break;
+  }
+
+  if (~Prefix->SupportedFormats & CurrentFormat) {
+    Error(Parser.getTok().getLoc(),
+          "cannot represent relocation in the current file format");
+    return true;
+  }
+
+  RefKind = Prefix->VariantKind;
   Parser.Lex();
 
   if (getLexer().isNot(AsmToken::Colon)) {
@@ -5294,6 +5307,7 @@ bool ARMAsmParser::parsePrefix(ARMMCExpr::VariantKind &RefKind) {
     return true;
   }
   Parser.Lex(); // Eat the last ':'
+
   return false;
 }
 
@@ -5470,7 +5484,7 @@ bool ARMAsmParser::shouldOmitCCOutOperand(StringRef Mnemonic,
   // conditionally adding the cc_out in the first place because we need
   // to check the type of the parsed immediate operand.
   if (Mnemonic == "mov" && Operands.size() > 4 && !isThumb() &&
-      !static_cast<ARMOperand &>(*Operands[4]).isARMSOImm() &&
+      !static_cast<ARMOperand &>(*Operands[4]).isModImm() &&
       static_cast<ARMOperand &>(*Operands[4]).isImm0_65535Expr() &&
       static_cast<ARMOperand &>(*Operands[1]).getReg() == 0)
     return true;
@@ -6011,6 +6025,50 @@ static bool instIsBreakpoint(const MCInst &Inst) {
 
 }
 
+bool ARMAsmParser::validatetLDMRegList(MCInst Inst,
+                                       const OperandVector &Operands,
+                                       unsigned ListNo, bool IsARPop) {
+  const ARMOperand &Op = static_cast<const ARMOperand &>(*Operands[ListNo]);
+  bool HasWritebackToken = Op.isToken() && Op.getToken() == "!";
+
+  bool ListContainsSP = listContainsReg(Inst, ListNo, ARM::SP);
+  bool ListContainsLR = listContainsReg(Inst, ListNo, ARM::LR);
+  bool ListContainsPC = listContainsReg(Inst, ListNo, ARM::PC);
+
+  if (!IsARPop && ListContainsSP)
+    return Error(Operands[ListNo + HasWritebackToken]->getStartLoc(),
+                 "SP may not be in the register list");
+  else if (ListContainsPC && ListContainsLR)
+    return Error(Operands[ListNo + HasWritebackToken]->getStartLoc(),
+                 "PC and LR may not be in the register list simultaneously");
+  else if (inITBlock() && !lastInITBlock() && ListContainsPC)
+    return Error(Operands[ListNo + HasWritebackToken]->getStartLoc(),
+                 "instruction must be outside of IT block or the last "
+                 "instruction in an IT block");
+  return false;
+}
+
+bool ARMAsmParser::validatetSTMRegList(MCInst Inst,
+                                       const OperandVector &Operands,
+                                       unsigned ListNo) {
+  const ARMOperand &Op = static_cast<const ARMOperand &>(*Operands[ListNo]);
+  bool HasWritebackToken = Op.isToken() && Op.getToken() == "!";
+
+  bool ListContainsSP = listContainsReg(Inst, ListNo, ARM::SP);
+  bool ListContainsPC = listContainsReg(Inst, ListNo, ARM::PC);
+
+  if (ListContainsSP && ListContainsPC)
+    return Error(Operands[ListNo + HasWritebackToken]->getStartLoc(),
+                 "SP and PC may not be in the register list");
+  else if (ListContainsSP)
+    return Error(Operands[ListNo + HasWritebackToken]->getStartLoc(),
+                 "SP may not be in the register list");
+  else if (ListContainsPC)
+    return Error(Operands[ListNo + HasWritebackToken]->getStartLoc(),
+                 "PC may not be in the register list");
+  return false;
+}
+
 // FIXME: We would really like to be able to tablegen'erate this.
 bool ARMAsmParser::validateInstruction(MCInst &Inst,
                                        const OperandVector &Operands) {
@@ -6194,9 +6252,9 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
       return Error(Operands[3]->getStartLoc(),
                    "writeback operator '!' not allowed when base register "
                    "in register list");
-    if (listContainsReg(Inst, 3 + HasWritebackToken, ARM::SP))
-      return Error(Operands[3 + HasWritebackToken]->getStartLoc(),
-                   "SP not allowed in register list");
+
+    if (validatetLDMRegList(Inst, Operands, 3))
+      return true;
     break;
   }
   case ARM::LDMIA_UPD:
@@ -6213,13 +6271,14 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
     break;
   case ARM::t2LDMIA:
   case ARM::t2LDMDB:
-  case ARM::t2STMIA:
-  case ARM::t2STMDB: {
-    if (listContainsReg(Inst, 3, ARM::SP))
-      return Error(Operands.back()->getStartLoc(),
-                   "SP not allowed in register list");
+    if (validatetLDMRegList(Inst, Operands, 3))
+      return true;
     break;
-  }
+  case ARM::t2STMIA:
+  case ARM::t2STMDB:
+    if (validatetSTMRegList(Inst, Operands, 3))
+      return true;
+    break;
   case ARM::t2LDMIA_UPD:
   case ARM::t2LDMDB_UPD:
   case ARM::t2STMIA_UPD:
@@ -6228,9 +6287,13 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
       return Error(Operands.back()->getStartLoc(),
                    "writeback register not allowed in register list");
 
-    if (listContainsReg(Inst, 4, ARM::SP))
-      return Error(Operands.back()->getStartLoc(),
-                   "SP not allowed in register list");
+    if (Opcode == ARM::t2LDMIA_UPD || Opcode == ARM::t2LDMDB_UPD) {
+      if (validatetLDMRegList(Inst, Operands, 3))
+        return true;
+    } else {
+      if (validatetSTMRegList(Inst, Operands, 3))
+        return true;
+    }
     break;
   }
   case ARM::sysLDMIA_UPD:
@@ -6275,6 +6338,8 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
         !isThumbTwo())
       return Error(Operands[2]->getStartLoc(),
                    "registers must be in range r0-r7 or pc");
+    if (validatetLDMRegList(Inst, Operands, 2, !isMClass()))
+      return true;
     break;
   }
   case ARM::tPUSH: {
@@ -6283,6 +6348,8 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
         !isThumbTwo())
       return Error(Operands[2]->getStartLoc(),
                    "registers must be in range r0-r7 or lr");
+    if (validatetSTMRegList(Inst, Operands, 2))
+      return true;
     break;
   }
   case ARM::tSTMIA_UPD: {
@@ -6299,9 +6366,9 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
       return Error(Operands[4]->getStartLoc(),
                    "writeback operator '!' not allowed when base register "
                    "in register list");
-    if (listContainsReg(Inst, 4, ARM::SP) && !inITBlock())
-      return Error(Operands.back()->getStartLoc(),
-                   "SP not allowed in register list");
+
+    if (validatetSTMRegList(Inst, Operands, 4))
+      return true;
     break;
   }
   case ARM::tADDrSP: {
@@ -8514,7 +8581,6 @@ bool ARMAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   MatchResult = MatchInstructionImpl(Operands, Inst, ErrorInfo,
                                      MatchingInlineAsm);
   switch (MatchResult) {
-  default: break;
   case Match_Success:
     // Context sensitive operand constraints aren't handled by the matcher,
     // so check them here.
@@ -9070,8 +9136,13 @@ bool ARMAsmParser::parseDirectiveEabiAttr(SMLoc L) {
   if (Tag == ARMBuildAttrs::compatibility) {
     if (Parser.getTok().isNot(AsmToken::Comma))
       IsStringValue = false;
-    else
-      Parser.Lex();
+    if (Parser.getTok().isNot(AsmToken::Comma)) {
+      Error(Parser.getTok().getLoc(), "comma expected");
+      Parser.eatToEndOfStatement();
+      return false;
+    } else {
+       Parser.Lex();
+    }
   }
 
   if (IsStringValue) {
@@ -9993,7 +10064,6 @@ unsigned ARMAsmParser::validateTargetOperandClass(MCParsedAsmOperand &AsmOp,
           return Match_Success;
     break;
   case MCK_ModImm:
-  case MCK_ARMSOImm:
     if (Op.isImm()) {
       const MCExpr *SOExpr = Op.getImm();
       int64_t Value;

@@ -47,6 +47,7 @@ FunctionPass *createSIFixSGPRCopiesPass(TargetMachine &tm);
 FunctionPass *createSIFixSGPRLiveRangesPass();
 FunctionPass *createSICodeEmitterPass(formatted_raw_ostream &OS);
 FunctionPass *createSIInsertWaits(TargetMachine &tm);
+FunctionPass *createSIPrepareScratchRegs();
 
 void initializeSIFoldOperandsPass(PassRegistry &);
 extern char &SIFoldOperandsID;
@@ -72,6 +73,7 @@ extern char &SIFixSGPRLiveRangesID;
 
 
 extern Target TheAMDGPUTarget;
+extern Target TheGCNTarget;
 
 namespace AMDGPU {
 enum TargetIndex {

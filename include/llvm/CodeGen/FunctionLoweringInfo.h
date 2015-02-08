@@ -20,8 +20,8 @@
 #include "llvm/ADT/IndexedMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Target/TargetRegisterInfo.h"
@@ -206,6 +206,9 @@ public:
       return;
 
     unsigned Reg = It->second;
+    if (Reg == 0)
+      return;
+
     LiveOutRegInfo.grow(Reg);
     LiveOutRegInfo[Reg].IsValid = false;
   }

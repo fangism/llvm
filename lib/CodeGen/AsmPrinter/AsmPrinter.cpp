@@ -225,12 +225,25 @@ bool AsmPrinter::doInitialization(Module &M) {
   }
 
   if (MAI->doesSupportDebugInformation()) {
-    if (Triple(TM.getTargetTriple()).isKnownWindowsMSVCEnvironment())
+    bool skip_dwarf = false;
+    if (Triple(TM.getTargetTriple()).isKnownWindowsMSVCEnvironment()) {
       Handlers.push_back(HandlerInfo(new WinCodeViewLineTables(this),
                                      DbgTimerName,
                                      CodeViewLineTablesGroupName));
-    DD = new DwarfDebug(this, &M);
-    Handlers.push_back(HandlerInfo(DD, DbgTimerName, DWARFGroupName));
+      // FIXME: Don't emit DWARF debug info if there's at least one function
+      // with AddressSanitizer instrumentation.
+      // This is a band-aid fix for PR22032.
+      for (auto &F : M.functions()) {
+        if (F.hasFnAttribute(Attribute::SanitizeAddress)) {
+          skip_dwarf = true;
+          break;
+        }
+      }
+    }
+    if (!skip_dwarf) {
+      DD = new DwarfDebug(this, &M);
+      Handlers.push_back(HandlerInfo(DD, DbgTimerName, DWARFGroupName));
+    }
   }
 
   EHStreamer *ES = nullptr;
@@ -245,6 +258,7 @@ bool AsmPrinter::doInitialization(Module &M) {
     ES = new ARMException(this);
     break;
   case ExceptionHandling::ItaniumWinEH:
+  case ExceptionHandling::MSVC:
     switch (MAI->getWinEHEncodingType()) {
     default: llvm_unreachable("unsupported unwinding information encoding");
     case WinEH::EncodingType::Itanium:
@@ -338,6 +352,11 @@ void AsmPrinter::EmitGlobalVariable(const GlobalVariable *GV) {
 
   if (!GV->hasInitializer())   // External globals require no extra code.
     return;
+
+  GVSym->redefineIfPossible();
+  if (GVSym->isDefined() || GVSym->isVariable())
+    report_fatal_error("symbol '" + Twine(GVSym->getName()) +
+                       "' is already defined");
 
   if (MAI->hasDotTypeDotSizeDirective())
     OutStreamer.EmitSymbolAttribute(GVSym, MCSA_ELF_TypeObject);
@@ -543,13 +562,18 @@ void AsmPrinter::EmitFunctionHeader() {
 /// EmitFunctionEntryLabel - Emit the label that is the entrypoint for the
 /// function.  This can be overridden by targets as required to do custom stuff.
 void AsmPrinter::EmitFunctionEntryLabel() {
+  CurrentFnSym->redefineIfPossible();
+
   // The function label could have already been emitted if two symbols end up
   // conflicting due to asm renaming.  Detect this and emit an error.
-  if (CurrentFnSym->isUndefined())
-    return OutStreamer.EmitLabel(CurrentFnSym);
+  if (CurrentFnSym->isVariable())
+    report_fatal_error("'" + Twine(CurrentFnSym->getName()) +
+                       "' is a protected alias");
+  if (CurrentFnSym->isDefined())
+    report_fatal_error("'" + Twine(CurrentFnSym->getName()) +
+                       "' label emitted multiple times to assembly file");
 
-  report_fatal_error("'" + Twine(CurrentFnSym->getName()) +
-                     "' label emitted multiple times to assembly file");
+  return OutStreamer.EmitLabel(CurrentFnSym);
 }
 
 /// emitComments - Pretty-print comments for instructions.
@@ -708,8 +732,7 @@ AsmPrinter::CFIMoveType AsmPrinter::needsCFIMoves() {
 }
 
 bool AsmPrinter::needsSEHMoves() {
-  return MAI->getExceptionHandlingType() == ExceptionHandling::ItaniumWinEH &&
-         MF->getFunction()->needsUnwindTableEntry();
+  return MAI->usesWindowsCFI() && MF->getFunction()->needsUnwindTableEntry();
 }
 
 void AsmPrinter::emitCFIInstruction(const MachineInstr &MI) {
@@ -726,6 +749,16 @@ void AsmPrinter::emitCFIInstruction(const MachineInstr &MI) {
   unsigned CFIIndex = MI.getOperand(0).getCFIIndex();
   const MCCFIInstruction &CFI = Instrs[CFIIndex];
   emitCFIInstruction(CFI);
+}
+
+void AsmPrinter::emitFrameAlloc(const MachineInstr &MI) {
+  // The operands are the MCSymbol and the frame offset of the allocation.
+  MCSymbol *FrameAllocSym = MI.getOperand(0).getMCSymbol();
+  int FrameOffset = MI.getOperand(1).getImm();
+
+  // Emit a symbol assignment.
+  OutStreamer.EmitAssignment(FrameAllocSym,
+                             MCConstantExpr::Create(FrameOffset, OutContext));
 }
 
 /// EmitFunctionBody - This method emits the body and trailer for a
@@ -764,6 +797,10 @@ void AsmPrinter::EmitFunctionBody() {
       switch (MI.getOpcode()) {
       case TargetOpcode::CFI_INSTRUCTION:
         emitCFIInstruction(MI);
+        break;
+
+      case TargetOpcode::FRAME_ALLOC:
+        emitFrameAlloc(MI);
         break;
 
       case TargetOpcode::EH_LABEL:
@@ -990,6 +1027,23 @@ bool AsmPrinter::doFinalization(Module &M) {
 
   // Emit llvm.ident metadata in an '.ident' directive.
   EmitModuleIdents(M);
+
+  // Emit __morestack address if needed for indirect calls.
+  if (MMI->usesMorestackAddr()) {
+    const MCSection *ReadOnlySection =
+        getObjFileLowering().getSectionForConstant(SectionKind::getReadOnly(),
+                                                   /*C=*/nullptr);
+    OutStreamer.SwitchSection(ReadOnlySection);
+
+    MCSymbol *AddrSymbol =
+        OutContext.GetOrCreateSymbol(StringRef("__morestack_addr"));
+    OutStreamer.EmitLabel(AddrSymbol);
+
+    const DataLayout &DL = *TM.getSubtargetImpl()->getDataLayout();
+    unsigned PtrSize = DL.getPointerSize(0);
+    OutStreamer.EmitSymbolValue(GetExternalSymbolSymbol("__morestack"),
+                                PtrSize);
+  }
 
   // If we don't have any trampolines, then we don't require stack memory
   // to be executable. Some targets have a directive to declare this.
@@ -2256,6 +2310,11 @@ isBlockOnlyReachableByFallthrough(const MachineBasicBlock *MBB) const {
 GCMetadataPrinter *AsmPrinter::GetOrCreateGCPrinter(GCStrategy &S) {
   if (!S.usesMetadata())
     return nullptr;
+
+  assert(!S.useStatepoints() && "statepoints do not currently support custom"
+         " stackmap formats, please see the documentation for a description of"
+         " the default format.  If you really need a custom serialized format,"
+         " please file a bug");
 
   gcp_map_type &GCMap = getGCMap(GCMetadataPrinters);
   gcp_map_type::iterator GCPI = GCMap.find(&S);

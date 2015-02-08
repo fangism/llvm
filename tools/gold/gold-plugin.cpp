@@ -19,6 +19,8 @@
 #include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -269,6 +271,23 @@ static bool shouldSkip(uint32_t Symflags) {
   return false;
 }
 
+static void diagnosticHandler(const DiagnosticInfo &DI, void *Context) {
+  assert(DI.getSeverity() == DS_Error && "Only expecting errors");
+  const auto &BDI = cast<BitcodeDiagnosticInfo>(DI);
+  std::error_code EC = BDI.getError();
+  if (EC == BitcodeError::InvalidBitcodeSignature)
+    return;
+
+  std::string ErrStorage;
+  {
+    raw_string_ostream OS(ErrStorage);
+    DiagnosticPrinterRawOStream DP(OS);
+    DI.print(DP);
+  }
+  message(LDPL_FATAL, "LLVM gold plugin has failed to create LTO module: %s",
+          ErrStorage.c_str());
+}
+
 /// Called by gold to see whether this file is one that our plugin can handle.
 /// We'll try to open it and register all the symbols with add_symbol if
 /// possible.
@@ -302,11 +321,11 @@ static ld_plugin_status claim_file_hook(const ld_plugin_input_file *file,
     BufferRef = Buffer->getMemBufferRef();
   }
 
+  Context.setDiagnosticHandler(diagnosticHandler);
   ErrorOr<std::unique_ptr<object::IRObjectFile>> ObjOrErr =
       object::IRObjectFile::create(BufferRef, Context);
   std::error_code EC = ObjOrErr.getError();
-  if (EC == BitcodeError::InvalidBitcodeSignature ||
-      EC == object::object_error::invalid_file_type ||
+  if (EC == object::object_error::invalid_file_type ||
       EC == object::object_error::bitcode_section_not_found)
     return LDPS_OK;
 
@@ -532,6 +551,13 @@ static Constant *mapConstantToLocalCopy(Constant *C, ValueToValueMapTy &VM,
   return MapValue(C, VM, RF_IgnoreMissingEntries, nullptr, Materializer);
 }
 
+static void freeSymName(ld_plugin_symbol &Sym) {
+  free(Sym.name);
+  free(Sym.comdat_key);
+  Sym.name = nullptr;
+  Sym.comdat_key = nullptr;
+}
+
 static std::unique_ptr<Module>
 getModuleForFile(LLVMContext &Context, claimed_file &F, raw_fd_ostream *ApiFile,
                  StringSet<> &Internalize, StringSet<> &Maybe) {
@@ -581,8 +607,10 @@ getModuleForFile(LLVMContext &Context, claimed_file &F, raw_fd_ostream *ApiFile,
       *ApiFile << Sym.name << ' ' << getResolutionName(Resolution) << '\n';
 
     GlobalValue *GV = Obj.getSymbolGV(ObjSym.getRawDataRefImpl());
-    if (!GV)
+    if (!GV) {
+      freeSymName(Sym);
       continue; // Asm symbol.
+    }
 
     if (Resolution != LDPR_PREVAILING_DEF_IRONLY && GV->hasCommonLinkage()) {
       // Common linkage is special. There is no single symbol that wins the
@@ -590,6 +618,7 @@ getModuleForFile(LLVMContext &Context, claimed_file &F, raw_fd_ostream *ApiFile,
       // The IR linker does that for us if we just pass it every common GV.
       // We still have to keep track of LDPR_PREVAILING_DEF_IRONLY so we
       // internalize once the IR linker has done its job.
+      freeSymName(Sym);
       continue;
     }
 
@@ -600,8 +629,12 @@ getModuleForFile(LLVMContext &Context, claimed_file &F, raw_fd_ostream *ApiFile,
     case LDPR_RESOLVED_IR:
     case LDPR_RESOLVED_EXEC:
     case LDPR_RESOLVED_DYN:
-    case LDPR_UNDEF:
       assert(GV->isDeclarationForLinker());
+      break;
+
+    case LDPR_UNDEF:
+      assert(GV->hasComdat());
+      Drop.insert(GV);
       break;
 
     case LDPR_PREVAILING_DEF_IRONLY: {
@@ -642,10 +675,7 @@ getModuleForFile(LLVMContext &Context, claimed_file &F, raw_fd_ostream *ApiFile,
     }
     }
 
-    free(Sym.name);
-    free(Sym.comdat_key);
-    Sym.name = nullptr;
-    Sym.comdat_key = nullptr;
+    freeSymName(Sym);
   }
 
   ValueToValueMapTy VM;

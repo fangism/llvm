@@ -12,16 +12,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "DwarfDebug.h"
-
 #include "ByteStreamer.h"
-#include "DwarfCompileUnit.h"
-#include "DIE.h"
 #include "DIEHash.h"
+#include "DwarfCompileUnit.h"
+#include "DwarfExpression.h"
 #include "DwarfUnit.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/CodeGen/DIE.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/IR/Constants.h"
@@ -1026,8 +1026,10 @@ void DwarfDebug::beginInstruction(const MachineInstr *MI) {
       if (DL == PrologEndLoc) {
         Flags |= DWARF2_FLAG_PROLOGUE_END;
         PrologEndLoc = DebugLoc();
+        Flags |= DWARF2_FLAG_IS_STMT;
       }
-      if (PrologEndLoc.isUnknown())
+      if (DL.getLine() !=
+          Asm->OutStreamer.getContext().getCurrentDwarfLoc().getLine())
         Flags |= DWARF2_FLAG_IS_STMT;
 
       if (!DL.isUnknown()) {
@@ -1667,19 +1669,18 @@ void DwarfDebug::emitLocPieces(ByteStreamer &Streamer,
 
   unsigned Offset = 0;
   for (auto Piece : Values) {
+    const unsigned SizeOfByte = 8;
     DIExpression Expr = Piece.getExpression();
     unsigned PieceOffset = Expr.getPieceOffset();
     unsigned PieceSize = Expr.getPieceSize();
     assert(Offset <= PieceOffset && "overlapping or duplicate pieces");
     if (Offset < PieceOffset) {
       // The DWARF spec seriously mandates pieces with no locations for gaps.
-      Asm->EmitDwarfOpPiece(Streamer, (PieceOffset-Offset)*8);
+      Asm->EmitDwarfOpPiece(Streamer, (PieceOffset-Offset)*SizeOfByte);
       Offset += PieceOffset-Offset;
     }
-
     Offset += PieceSize;
 
-    const unsigned SizeOfByte = 8;
 #ifndef NDEBUG
     DIVariable Var = Piece.getVariable();
     assert(!Var.isIndirect() && "indirect address for piece");
@@ -1689,14 +1690,8 @@ void DwarfDebug::emitLocPieces(ByteStreamer &Streamer,
     assert(PieceSize*SizeOfByte != VarSize
            && "piece covers entire variable");
 #endif
-    if (Piece.isLocation() && Piece.getLoc().isReg())
-      Asm->EmitDwarfRegOpPiece(Streamer,
-                               Piece.getLoc(),
-                               PieceSize*SizeOfByte);
-    else {
-      emitDebugLocValue(Streamer, Piece);
-      Asm->EmitDwarfOpPiece(Streamer, PieceSize*SizeOfByte);
-    }
+
+    emitDebugLocValue(Streamer, Piece, PieceOffset*SizeOfByte);
   }
 }
 
@@ -1713,74 +1708,35 @@ void DwarfDebug::emitDebugLocEntry(ByteStreamer &Streamer,
 }
 
 void DwarfDebug::emitDebugLocValue(ByteStreamer &Streamer,
-                                   const DebugLocEntry::Value &Value) {
+                                   const DebugLocEntry::Value &Value,
+                                   unsigned PieceOffsetInBits) {
   DIVariable DV = Value.getVariable();
+  DebugLocDwarfExpression DwarfExpr(*Asm, Streamer);
+
   // Regular entry.
   if (Value.isInt()) {
     DIBasicType BTy(resolve(DV.getType()));
     if (BTy.Verify() && (BTy.getEncoding() == dwarf::DW_ATE_signed ||
-                         BTy.getEncoding() == dwarf::DW_ATE_signed_char)) {
-      Streamer.EmitInt8(dwarf::DW_OP_consts, "DW_OP_consts");
-      Streamer.EmitSLEB128(Value.getInt());
-    } else {
-      Streamer.EmitInt8(dwarf::DW_OP_constu, "DW_OP_constu");
-      Streamer.EmitULEB128(Value.getInt());
-    }
-    // The proper way to describe a constant value is 
-    // DW_OP_constu <const>, DW_OP_stack_value. 
-    // Unfortunately, DW_OP_stack_value was not available until DWARF-4,
-    // so we will continue to generate DW_OP_constu <const> for DWARF-2
-    // and DWARF-3. Technically, this is incorrect since DW_OP_const <const>
-    // actually describes a value at a constant addess, not a constant value. 
-    // However, in the past there was no better way  to describe a constant 
-    // value, so the producers and consumers started to rely on heuristics 
-    // to disambiguate the value vs. location status of the expression. 
-    // See PR21176 for more details.
-    if (getDwarfVersion() >= 4)
-      Streamer.EmitInt8(dwarf::DW_OP_stack_value, "DW_OP_stack_value");
+                         BTy.getEncoding() == dwarf::DW_ATE_signed_char))
+      DwarfExpr.AddSignedConstant(Value.getInt());
+    else
+      DwarfExpr.AddUnsignedConstant(Value.getInt());
   } else if (Value.isLocation()) {
     MachineLocation Loc = Value.getLoc();
     DIExpression Expr = Value.getExpression();
-    if (!Expr)
+    if (!Expr || (Expr.getNumElements() == 0))
       // Regular entry.
       Asm->EmitDwarfRegOp(Streamer, Loc, DV.isIndirect());
     else {
       // Complex address entry.
-      unsigned N = Expr.getNumElements();
-      unsigned i = 0;
-      if (N >= 2 && Expr.getElement(0) == dwarf::DW_OP_plus) {
-        if (Loc.getOffset()) {
-          i = 2;
-          Asm->EmitDwarfRegOp(Streamer, Loc, DV.isIndirect());
-          Streamer.EmitInt8(dwarf::DW_OP_deref, "DW_OP_deref");
-          Streamer.EmitInt8(dwarf::DW_OP_plus_uconst, "DW_OP_plus_uconst");
-          Streamer.EmitSLEB128(Expr.getElement(1));
-        } else {
-          // If first address element is OpPlus then emit
-          // DW_OP_breg + Offset instead of DW_OP_reg + Offset.
-          MachineLocation TLoc(Loc.getReg(), Expr.getElement(1));
-          Asm->EmitDwarfRegOp(Streamer, TLoc, DV.isIndirect());
-          i = 2;
-        }
-      } else {
-        Asm->EmitDwarfRegOp(Streamer, Loc, DV.isIndirect());
-      }
-
-      // Emit remaining complex address elements.
-      for (; i < N; ++i) {
-        uint64_t Element = Expr.getElement(i);
-        if (Element == dwarf::DW_OP_plus) {
-          Streamer.EmitInt8(dwarf::DW_OP_plus_uconst, "DW_OP_plus_uconst");
-          Streamer.EmitULEB128(Expr.getElement(++i));
-        } else if (Element == dwarf::DW_OP_deref) {
-          if (!Loc.isReg())
-            Streamer.EmitInt8(dwarf::DW_OP_deref, "DW_OP_deref");
-        } else if (Element == dwarf::DW_OP_piece) {
-          i += 3;
-          // handled in emitDebugLocEntry.
-        } else
-          llvm_unreachable("unknown Opcode found in complex address");
-      }
+      if (Loc.getOffset()) {
+        DwarfExpr.AddMachineRegIndirect(Loc.getReg(), Loc.getOffset());
+        DwarfExpr.AddExpression(Expr, PieceOffsetInBits);
+      } else
+        DwarfExpr.AddMachineRegExpression(Expr, Loc.getReg(),
+                                          PieceOffsetInBits);
+      if (DV.isIndirect())
+        DwarfExpr.EmitOp(dwarf::DW_OP_deref);
     }
   }
   // else ... ignore constant fp. There is not any good way to

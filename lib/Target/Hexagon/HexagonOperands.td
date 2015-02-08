@@ -39,6 +39,7 @@ let PrintMethod = "printImmOperand" in {
   def u16_0Imm : Operand<i32>;
   def u16_1Imm : Operand<i32>;
   def u16_2Imm : Operand<i32>;
+  def u16_3Imm : Operand<i32>;
   def u11_3Imm : Operand<i32>;
   def u10Imm : Operand<i32>;
   def u9Imm : Operand<i32>;
@@ -256,6 +257,13 @@ def u16_s8ImmPred  : PatLeaf<(i32 imm), [{
   // extended s8 field.
   int64_t v = (int64_t)N->getSExtValue();
   return isShiftedUInt<16,8>(v);
+}]>;
+
+def u11_3ImmPred : PatLeaf<(i32 imm), [{
+  // True if the immediate fits in a 14-bit unsigned field, and the lowest
+  // three bits are 0.
+  int64_t v = (int64_t)N->getSExtValue();
+  return isShiftedUInt<11,3>(v);
 }]>;
 
 def u9ImmPred  : PatLeaf<(i32 imm), [{
@@ -799,6 +807,12 @@ def u6_3ExtPred  : PatLeaf<(i32 imm), [{
     return isConstExtProfitable(Node) && isUInt<32>(v) && ((v % 8) == 0);
   }
 }]>;
+
+
+// This complex pattern exists only to create a machine instruction operand
+// of type "frame index". There doesn't seem to be a way to do that directly
+// in the patterns.
+def AddrFI : ComplexPattern<i32, 1, "SelectAddrFI", [frameindex], []>;
 
 // Addressing modes.
 

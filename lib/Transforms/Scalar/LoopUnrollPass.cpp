@@ -13,7 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/Scalar.h"
-#include "llvm/Analysis/AssumptionTracker.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/FunctionTargetTransformInfo.h"
 #include "llvm/Analysis/LoopPass.h"
@@ -104,7 +104,7 @@ namespace {
     /// loop preheaders be inserted into the CFG...
     ///
     void getAnalysisUsage(AnalysisUsage &AU) const override {
-      AU.addRequired<AssumptionTracker>();
+      AU.addRequired<AssumptionCacheTracker>();
       AU.addRequired<LoopInfo>();
       AU.addPreserved<LoopInfo>();
       AU.addRequiredID(LoopSimplifyID);
@@ -186,7 +186,7 @@ namespace {
 char LoopUnroll::ID = 0;
 INITIALIZE_PASS_BEGIN(LoopUnroll, "loop-unroll", "Unroll loops", false, false)
 INITIALIZE_AG_DEPENDENCY(TargetTransformInfo)
-INITIALIZE_PASS_DEPENDENCY(AssumptionTracker)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_DEPENDENCY(FunctionTargetTransformInfo)
 INITIALIZE_PASS_DEPENDENCY(LoopInfo)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
@@ -207,9 +207,9 @@ Pass *llvm::createSimpleLoopUnrollPass() {
 static unsigned ApproximateLoopSize(const Loop *L, unsigned &NumCalls,
                                     bool &NotDuplicatable,
                                     const TargetTransformInfo &TTI,
-                                    AssumptionTracker *AT) {
+                                    AssumptionCache *AC) {
   SmallPtrSet<const Value *, 32> EphValues;
-  CodeMetrics::collectEphemeralValues(L, AT, EphValues);
+  CodeMetrics::collectEphemeralValues(L, AC, EphValues);
 
   CodeMetrics Metrics;
   for (Loop::block_iterator I = L->block_begin(), E = L->block_end();
@@ -222,8 +222,11 @@ static unsigned ApproximateLoopSize(const Loop *L, unsigned &NumCalls,
 
   // Don't allow an estimate of size zero.  This would allows unrolling of loops
   // with huge iteration counts, which is a compile time problem even if it's
-  // not a problem for code quality.
-  if (LoopSize == 0) LoopSize = 1;
+  // not a problem for code quality. Also, the code using this size may assume
+  // that each loop has at least three instructions (likely a conditional
+  // branch, a comparison feeding that branch, and some kind of loop increment
+  // feeding that comparison instruction).
+  LoopSize = std::max(LoopSize, 3u);
 
   return LoopSize;
 }
@@ -365,7 +368,8 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
   const TargetTransformInfo &TTI = getAnalysis<TargetTransformInfo>();
   const FunctionTargetTransformInfo &FTTI =
       getAnalysis<FunctionTargetTransformInfo>();
-  AssumptionTracker *AT = &getAnalysis<AssumptionTracker>();
+  auto &AC = getAnalysis<AssumptionCacheTracker>().getAssumptionCache(
+      *L->getHeader()->getParent());
 
   BasicBlock *Header = L->getHeader();
   DEBUG(dbgs() << "Loop Unroll: F[" << Header->getParent()->getName()
@@ -404,9 +408,13 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
   unsigned NumInlineCandidates;
   bool notDuplicatable;
   unsigned LoopSize =
-      ApproximateLoopSize(L, NumInlineCandidates, notDuplicatable, TTI, AT);
+      ApproximateLoopSize(L, NumInlineCandidates, notDuplicatable, TTI, &AC);
   DEBUG(dbgs() << "  Loop Size = " << LoopSize << "\n");
-  uint64_t UnrolledSize = (uint64_t)LoopSize * Count;
+
+  // When computing the unrolled size, note that the conditional branch on the
+  // backedge and the comparison feeding it are not replicated like the rest of
+  // the loop body (which is why 2 is subtracted).
+  uint64_t UnrolledSize = (uint64_t)(LoopSize-2) * Count + 2;
   if (notDuplicatable) {
     DEBUG(dbgs() << "  Not unrolling loop which contains non-duplicatable"
                  << " instructions.\n");
@@ -451,7 +459,7 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
     }
     if (PartialThreshold != NoThreshold && UnrolledSize > PartialThreshold) {
       // Reduce unroll count to be modulo of TripCount for partial unrolling.
-      Count = PartialThreshold / LoopSize;
+      Count = (std::max(PartialThreshold, 3u)-2) / (LoopSize-2);
       while (Count != 0 && TripCount % Count != 0)
         Count--;
     }
@@ -465,7 +473,7 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
     // the original count which satisfies the threshold limit.
     while (Count != 0 && UnrolledSize > PartialThreshold) {
       Count >>= 1;
-      UnrolledSize = LoopSize * Count;
+      UnrolledSize = (LoopSize-2) * Count + 2;
     }
     if (Count > UP.MaxCount)
       Count = UP.MaxCount;
@@ -511,7 +519,7 @@ bool LoopUnroll::runOnLoop(Loop *L, LPPassManager &LPM) {
 
   // Unroll the loop.
   if (!UnrollLoop(L, Count, TripCount, AllowRuntime, TripMultiple, LI, this,
-                  &LPM, AT))
+                  &LPM, &AC))
     return false;
 
   return true;

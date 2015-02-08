@@ -18,7 +18,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/AssumptionTracker.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/PHITransAddr.h"
@@ -59,7 +59,7 @@ char MemoryDependenceAnalysis::ID = 0;
 // Register this pass...
 INITIALIZE_PASS_BEGIN(MemoryDependenceAnalysis, "memdep",
                 "Memory Dependence Analysis", false, true)
-INITIALIZE_PASS_DEPENDENCY(AssumptionTracker)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(MemoryDependenceAnalysis, "memdep",
                       "Memory Dependence Analysis", false, true)
@@ -88,13 +88,13 @@ void MemoryDependenceAnalysis::releaseMemory() {
 ///
 void MemoryDependenceAnalysis::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
-  AU.addRequired<AssumptionTracker>();
+  AU.addRequired<AssumptionCacheTracker>();
   AU.addRequiredTransitive<AliasAnalysis>();
 }
 
-bool MemoryDependenceAnalysis::runOnFunction(Function &) {
+bool MemoryDependenceAnalysis::runOnFunction(Function &F) {
   AA = &getAnalysis<AliasAnalysis>();
-  AT = &getAnalysis<AssumptionTracker>();
+  AC = &getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
   DataLayoutPass *DLP = getAnalysisIfAvailable<DataLayoutPass>();
   DL = DLP ? &DLP->getDataLayout() : nullptr;
   DominatorTreeWrapperPass *DTWP =
@@ -859,14 +859,65 @@ MemoryDependenceAnalysis::getNonLocalCallDependency(CallSite QueryCS) {
 /// own block.
 ///
 void MemoryDependenceAnalysis::
-getNonLocalPointerDependency(const AliasAnalysis::Location &Loc, bool isLoad,
-                             BasicBlock *FromBB,
+getNonLocalPointerDependency(Instruction *QueryInst,
                              SmallVectorImpl<NonLocalDepResult> &Result) {
+
+  auto getLocation = [](AliasAnalysis *AA, Instruction *Inst) {
+    if (auto *I = dyn_cast<LoadInst>(Inst))
+      return AA->getLocation(I);
+    else if (auto *I = dyn_cast<StoreInst>(Inst))
+      return AA->getLocation(I);
+    else if (auto *I = dyn_cast<VAArgInst>(Inst))
+      return AA->getLocation(I);
+    else if (auto *I = dyn_cast<AtomicCmpXchgInst>(Inst))
+      return AA->getLocation(I);
+    else if (auto *I = dyn_cast<AtomicRMWInst>(Inst))
+      return AA->getLocation(I);
+    else
+      llvm_unreachable("unsupported memory instruction");
+  };
+   
+  const AliasAnalysis::Location Loc = getLocation(AA, QueryInst);
+  bool isLoad = isa<LoadInst>(QueryInst);
+  BasicBlock *FromBB = QueryInst->getParent();
+  assert(FromBB);
+
   assert(Loc.Ptr->getType()->isPointerTy() &&
          "Can't get pointer deps of a non-pointer!");
   Result.clear();
+  
+  // This routine does not expect to deal with volatile instructions.
+  // Doing so would require piping through the QueryInst all the way through.
+  // TODO: volatiles can't be elided, but they can be reordered with other
+  // non-volatile accesses.
+  auto isVolatile = [](Instruction *Inst) {
+    if (LoadInst *LI = dyn_cast<LoadInst>(Inst)) {
+      return LI->isVolatile();
+    } else if (StoreInst *SI = dyn_cast<StoreInst>(Inst)) {
+      return SI->isVolatile();
+    }
+    return false;
+  };
+  // We currently give up on any instruction which is ordered, but we do handle
+  // atomic instructions which are unordered.
+  // TODO: Handle ordered instructions
+  auto isOrdered = [](Instruction *Inst) {
+    if (LoadInst *LI = dyn_cast<LoadInst>(Inst)) {
+      return !LI->isUnordered();
+    } else if (StoreInst *SI = dyn_cast<StoreInst>(Inst)) {
+      return !SI->isUnordered();
+    }
+    return false;
+  };
+  if (isVolatile(QueryInst) || isOrdered(QueryInst)) {
+    Result.push_back(NonLocalDepResult(FromBB,
+                                       MemDepResult::getUnknown(),
+                                       const_cast<Value *>(Loc.Ptr)));
+    return;
+  }
 
-  PHITransAddr Address(const_cast<Value *>(Loc.Ptr), DL, AT);
+
+  PHITransAddr Address(const_cast<Value *>(Loc.Ptr), DL, AC);
 
   // This is the set of blocks we've inspected, and the pointer we consider in
   // each block.  Because of critical edges, we currently bail out if querying
@@ -1145,7 +1196,6 @@ getNonLocalPointerDepFromBB(const PHITransAddr &Pointer,
       // cache value will only see properly sorted cache arrays.
       if (Cache && NumSortedEntries != Cache->size()) {
         SortNonLocalDepInfoCache(*Cache, NumSortedEntries);
-        NumSortedEntries = Cache->size();
       }
       // Since we bail out, the "Cache" set won't contain all of the
       // results for the query.  This is ok (we can still use it to accelerate

@@ -495,8 +495,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
   const bool Uses64BitFramePtr = STI.isTarget64BitLP64() || STI.isTargetNaCl64();
   bool IsWin64 = STI.isTargetWin64();
   // Not necessarily synonymous with IsWin64.
-  bool IsWinEH = MF.getTarget().getMCAsmInfo()->getExceptionHandlingType() ==
-                 ExceptionHandling::ItaniumWinEH;
+  bool IsWinEH = MF.getTarget().getMCAsmInfo()->usesWindowsCFI();
   bool NeedsWinEH = IsWinEH && Fn->needsUnwindTableEntry();
   bool NeedsDwarfCFI =
       !IsWinEH && (MMI.hasDebugInfo() || Fn->needsUnwindTableEntry());
@@ -528,6 +527,14 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
       X86FI->getCalleeSavedFrameSize() - TailCallReturnAddrDelta);
 
   bool UseStackProbe = (STI.isOSWindows() && !STI.isTargetMachO());
+
+  // The default stack probe size is 4096 if the function has no stackprobesize
+  // attribute.
+  unsigned StackProbeSize = 4096;
+  if (Fn->hasFnAttribute("stack-probe-size"))
+    Fn->getFnAttribute("stack-probe-size")
+        .getValueAsString()
+        .getAsInteger(0, StackProbeSize);
 
   // If this is x86-64 and the Red Zone is not disabled, if we are a leaf
   // function, and use up to 128 bytes of stack space, don't have a frame
@@ -706,8 +713,6 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
 
   // Adjust stack pointer: ESP -= numbytes.
 
-  static const size_t PageSize = 4096;
-
   // Windows and cygwin/mingw require a prologue helper routine when allocating
   // more than 4K bytes on the stack.  Windows uses __chkstk and cygwin/mingw
   // uses __alloca.  __alloca and the 32-bit version of __chkstk will probe the
@@ -716,7 +721,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
   // responsible for adjusting the stack pointer.  Touching the stack at 4K
   // increments is necessary to ensure that the guard pages used by the OS
   // virtual memory manager are allocated in correct sequence.
-  if (NumBytes >= PageSize && UseStackProbe) {
+  if (NumBytes >= StackProbeSize && UseStackProbe) {
     const char *StackProbeSymbol;
     unsigned CallOp;
 
@@ -906,8 +911,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
              getX86SubSuperRegister(FramePtr, MVT::i64, false) : FramePtr;
   unsigned StackPtr = RegInfo->getStackRegister();
 
-  bool IsWinEH = MF.getTarget().getMCAsmInfo()->getExceptionHandlingType() ==
-                 ExceptionHandling::ItaniumWinEH;
+  bool IsWinEH = MF.getTarget().getMCAsmInfo()->usesWindowsCFI();
   bool NeedsWinEH = IsWinEH && MF.getFunction()->needsUnwindTableEntry();
 
   switch (RetOpcode) {
@@ -1478,8 +1482,9 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
 
   if (MF.getFunction()->isVarArg())
     report_fatal_error("Segmented stacks do not support vararg functions.");
-  if (!STI.isTargetLinux() && !STI.isTargetDarwin() &&
-      !STI.isTargetWin32() && !STI.isTargetWin64() && !STI.isTargetFreeBSD())
+  if (!STI.isTargetLinux() && !STI.isTargetDarwin() && !STI.isTargetWin32() &&
+      !STI.isTargetWin64() && !STI.isTargetFreeBSD() &&
+      !STI.isTargetDragonFly())
     report_fatal_error("Segmented stacks not supported on this platform.");
 
   // Eventually StackSize will be calculated by a link-time pass; which will
@@ -1533,6 +1538,9 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
     } else if (STI.isTargetFreeBSD()) {
       TlsReg = X86::FS;
       TlsOffset = 0x18;
+    } else if (STI.isTargetDragonFly()) {
+      TlsReg = X86::FS;
+      TlsOffset = 0x20; // use tls_tcb.tcb_segstack
     } else {
       report_fatal_error("Segmented stacks not supported on this platform.");
     }
@@ -1555,6 +1563,9 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
     } else if (STI.isTargetWin32()) {
       TlsReg = X86::FS;
       TlsOffset = 0x14; // pvArbitrary, reserved for application use
+    } else if (STI.isTargetDragonFly()) {
+      TlsReg = X86::FS;
+      TlsOffset = 0x10; // use tls_tcb.tcb_segstack
     } else if (STI.isTargetFreeBSD()) {
       report_fatal_error("Segmented stacks not supported on FreeBSD i386.");
     } else {
@@ -1567,7 +1578,8 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
       BuildMI(checkMBB, DL, TII.get(X86::LEA32r), ScratchReg).addReg(X86::ESP)
         .addImm(1).addReg(0).addImm(-StackSize).addReg(0);
 
-    if (STI.isTargetLinux() || STI.isTargetWin32() || STI.isTargetWin64()) {
+    if (STI.isTargetLinux() || STI.isTargetWin32() || STI.isTargetWin64() ||
+        STI.isTargetDragonFly()) {
       BuildMI(checkMBB, DL, TII.get(X86::CMP32rm)).addReg(ScratchReg)
         .addReg(0).addImm(0).addReg(0).addImm(TlsOffset).addReg(TlsReg);
     } else if (STI.isTargetDarwin()) {
@@ -1611,7 +1623,7 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
 
   // This jump is taken if SP >= (Stacklet Limit + Stack Space required).
   // It jumps to normal execution of the function body.
-  BuildMI(checkMBB, DL, TII.get(X86::JA_4)).addMBB(&prologueMBB);
+  BuildMI(checkMBB, DL, TII.get(X86::JA_1)).addMBB(&prologueMBB);
 
   // On 32 bit we first push the arguments size and then the frame size. On 64
   // bit, we pass the stack frame size in r10 and the argument size in r11.
@@ -1642,12 +1654,36 @@ X86FrameLowering::adjustForSegmentedStacks(MachineFunction &MF) const {
   }
 
   // __morestack is in libgcc
-  if (Is64Bit)
-    BuildMI(allocMBB, DL, TII.get(X86::CALL64pcrel32))
-      .addExternalSymbol("__morestack");
-  else
-    BuildMI(allocMBB, DL, TII.get(X86::CALLpcrel32))
-      .addExternalSymbol("__morestack");
+  if (Is64Bit && MF.getTarget().getCodeModel() == CodeModel::Large) {
+    // Under the large code model, we cannot assume that __morestack lives
+    // within 2^31 bytes of the call site, so we cannot use pc-relative
+    // addressing. We cannot perform the call via a temporary register,
+    // as the rax register may be used to store the static chain, and all
+    // other suitable registers may be either callee-save or used for
+    // parameter passing. We cannot use the stack at this point either
+    // because __morestack manipulates the stack directly.
+    //
+    // To avoid these issues, perform an indirect call via a read-only memory
+    // location containing the address.
+    //
+    // This solution is not perfect, as it assumes that the .rodata section
+    // is laid out within 2^31 bytes of each function body, but this seems
+    // to be sufficient for JIT.
+    BuildMI(allocMBB, DL, TII.get(X86::CALL64m))
+        .addReg(X86::RIP)
+        .addImm(0)
+        .addReg(0)
+        .addExternalSymbol("__morestack_addr")
+        .addReg(0);
+    MF.getMMI().setUsesMorestackAddr(true);
+  } else {
+    if (Is64Bit)
+      BuildMI(allocMBB, DL, TII.get(X86::CALL64pcrel32))
+        .addExternalSymbol("__morestack");
+    else
+      BuildMI(allocMBB, DL, TII.get(X86::CALLpcrel32))
+        .addExternalSymbol("__morestack");
+  }
 
   if (IsNested)
     BuildMI(allocMBB, DL, TII.get(X86::MORESTACK_RET_RESTORE_R10));
@@ -1791,7 +1827,7 @@ void X86FrameLowering::adjustForHiPEPrologue(MachineFunction &MF) const {
     // SPLimitOffset is in a fixed heap location (pointed by BP).
     addRegOffset(BuildMI(stackCheckMBB, DL, TII.get(CMPop))
                  .addReg(ScratchReg), PReg, false, SPLimitOffset);
-    BuildMI(stackCheckMBB, DL, TII.get(X86::JAE_4)).addMBB(&prologueMBB);
+    BuildMI(stackCheckMBB, DL, TII.get(X86::JAE_1)).addMBB(&prologueMBB);
 
     // Create new MBB for IncStack:
     BuildMI(incStackMBB, DL, TII.get(CALLop)).
@@ -1800,7 +1836,7 @@ void X86FrameLowering::adjustForHiPEPrologue(MachineFunction &MF) const {
                  SPReg, false, -MaxStack);
     addRegOffset(BuildMI(incStackMBB, DL, TII.get(CMPop))
                  .addReg(ScratchReg), PReg, false, SPLimitOffset);
-    BuildMI(incStackMBB, DL, TII.get(X86::JLE_4)).addMBB(incStackMBB);
+    BuildMI(incStackMBB, DL, TII.get(X86::JLE_1)).addMBB(incStackMBB);
 
     stackCheckMBB->addSuccessor(&prologueMBB, 99);
     stackCheckMBB->addSuccessor(incStackMBB, 1);

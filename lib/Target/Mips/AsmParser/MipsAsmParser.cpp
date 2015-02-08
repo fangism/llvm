@@ -12,8 +12,8 @@
 #include "MipsRegisterInfo.h"
 #include "MipsTargetStreamer.h"
 #include "llvm/ADT/APInt.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
@@ -26,8 +26,8 @@
 #include "llvm/MC/MCTargetAsmParser.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
-#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TargetRegistry.h"
 #include <memory>
 
 using namespace llvm;
@@ -824,6 +824,11 @@ public:
     return isMem() && isConstantMemOff() && isUInt<Bits>(getConstantMemOff())
       && getMemBase()->isRegIdx() && (getMemBase()->getGPR32Reg() == Mips::SP);
   }
+  template <unsigned Bits> bool isMemWithUimmWordAlignedOffsetSP() const {
+    return isMem() && isConstantMemOff() && isUInt<Bits>(getConstantMemOff())
+      && (getConstantMemOff() % 4 == 0) && getMemBase()->isRegIdx()
+      && (getMemBase()->getGPR32Reg() == Mips::SP);
+  }
   bool isRegList16() const {
     if (!isRegList())
       return false;
@@ -1202,6 +1207,17 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
                             1LL << (inMicroMipsMode() ? 1 : 2)))
         return Error(IDLoc, "branch to misaligned address");
       break;
+    case Mips::BEQZ16_MM:
+    case Mips::BNEZ16_MM:
+      assert(MCID.getNumOperands() == 2 && "unexpected number of operands");
+      Offset = Inst.getOperand(1);
+      if (!Offset.isImm())
+        break; // We'll deal with this situation later on when applying fixups.
+      if (!isIntN(8, Offset.getImm()))
+        return Error(IDLoc, "branch target out of range");
+      if (OffsetToAlignment(Offset.getImm(), 2LL))
+        return Error(IDLoc, "branch to misaligned address");
+      break;
     }
   }
 
@@ -1371,6 +1387,15 @@ bool MipsAsmParser::processInstruction(MCInst &Inst, SMLoc IDLoc,
         if (Imm < 0 || Imm > 60 || (Imm % 4 != 0))
           return Error(IDLoc, "immediate operand value out of range");
         break;
+      case Mips::CACHE:
+      case Mips::PREF:
+        Opnd = Inst.getOperand(2);
+        if (!Opnd.isImm())
+          return Error(IDLoc, "expected immediate operand kind");
+        Imm = Opnd.getImm();
+        if (!isUInt<5>(Imm))
+          return Error(IDLoc, "immediate operand value out of range");
+        break;
     }
   }
 
@@ -1398,9 +1423,7 @@ bool MipsAsmParser::needsExpansion(MCInst &Inst) {
 bool MipsAsmParser::expandInstruction(MCInst &Inst, SMLoc IDLoc,
                                       SmallVectorImpl<MCInst> &Instructions) {
   switch (Inst.getOpcode()) {
-  default:
-    assert(0 && "unimplemented expansion");
-    return true;
+  default: llvm_unreachable("unimplemented expansion");
   case Mips::LoadImm32Reg:
     return expandLoadImm(Inst, IDLoc, Instructions);
   case Mips::LoadImm64Reg:
@@ -1838,8 +1861,6 @@ bool MipsAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       MatchInstructionImpl(Operands, Inst, ErrorInfo, MatchingInlineAsm);
 
   switch (MatchResult) {
-  default:
-    break;
   case Match_Success: {
     if (processInstruction(Inst, IDLoc, Instructions))
       return true;
@@ -1868,7 +1889,8 @@ bool MipsAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_RequiresDifferentSrcAndDst:
     return Error(IDLoc, "source and destination must be different");
   }
-  return true;
+
+  llvm_unreachable("Implement any new match types added!");
 }
 
 void MipsAsmParser::warnIfAssemblerTemporary(int RegIndex, SMLoc Loc) {

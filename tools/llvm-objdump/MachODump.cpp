@@ -34,10 +34,10 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/GraphWriter.h"
 #include "llvm/Support/MachO.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -65,6 +65,10 @@ static cl::opt<bool> FullLeadingAddr("full-leading-addr",
 static cl::opt<bool>
     PrintImmHex("print-imm-hex",
                 cl::desc("Use hex format for immediate values"));
+
+cl::opt<bool>
+    llvm::UniversalHeaders("universal-headers",
+                           cl::desc("Print Mach-O universal headers"));
 
 static cl::list<std::string>
     ArchFlags("arch", cl::desc("architecture(s) from a Mach-O file to dump"),
@@ -285,11 +289,236 @@ static bool checkMachOAndArchFlags(ObjectFile *O, StringRef Filename) {
   return true;
 }
 
-static void DisassembleInputMachO2(StringRef Filename, MachOObjectFile *MachOOF,
-                                   StringRef ArchiveMemberName = StringRef(),
-                                   StringRef ArchitectureName = StringRef());
+static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF);
 
-void llvm::DisassembleInputMachO(StringRef Filename) {
+// ProcessMachO() is passed a single opened Mach-O file, which may be an
+// archive member and or in a slice of a universal file.  It prints the
+// the file name and header info and then processes it according to the
+// command line options.
+static void ProcessMachO(StringRef Filename, MachOObjectFile *MachOOF,
+                         StringRef ArchiveMemberName = StringRef(),
+                         StringRef ArchitectureName = StringRef()) {
+  // If we are doing some processing here on the Mach-O file print the header
+  // info.  And don't print it otherwise like in the case of printing the
+  // UniversalHeaders.
+  if (Disassemble || PrivateHeaders || ExportsTrie || Rebase || Bind ||
+      LazyBind || WeakBind) {
+    outs() << Filename;
+    if (!ArchiveMemberName.empty())
+      outs() << '(' << ArchiveMemberName << ')';
+    if (!ArchitectureName.empty())
+      outs() << " (architecture " << ArchitectureName << ")";
+    outs() << ":\n";
+  }
+
+  if (Disassemble)
+    DisassembleMachO(Filename, MachOOF);
+  // TODO: These should/could be printed in Darwin's otool(1) or nm(1) style
+  //       for -macho. Or just used a new option that maps to the otool(1)
+  //       option like -r, -l, etc.  Or just the normal llvm-objdump option
+  //       but now for this slice so that the -arch options can be used.
+  // if (Relocations)
+  //   PrintRelocations(MachOOF);
+  // if (SectionHeaders)
+  //   PrintSectionHeaders(MachOOF);
+  // if (SectionContents)
+  //   PrintSectionContents(MachOOF);
+  // if (SymbolTable)
+  //   PrintSymbolTable(MachOOF);
+  // if (UnwindInfo)
+  //   PrintUnwindInfo(MachOOF);
+  if (PrivateHeaders)
+    printMachOFileHeader(MachOOF);
+  if (ExportsTrie)
+    printExportsTrie(MachOOF);
+  if (Rebase)
+    printRebaseTable(MachOOF);
+  if (Bind)
+    printBindTable(MachOOF);
+  if (LazyBind)
+    printLazyBindTable(MachOOF);
+  if (WeakBind)
+    printWeakBindTable(MachOOF);
+}
+
+// printUnknownCPUType() helps print_fat_headers for unknown CPU's.
+static void printUnknownCPUType(uint32_t cputype, uint32_t cpusubtype) {
+  outs() << "    cputype (" << cputype << ")\n";
+  outs() << "    cpusubtype (" << cpusubtype << ")\n";
+}
+
+// printCPUType() helps print_fat_headers by printing the cputype and
+// pusubtype (symbolically for the one's it knows about).
+static void printCPUType(uint32_t cputype, uint32_t cpusubtype) {
+  switch (cputype) {
+  case MachO::CPU_TYPE_I386:
+    switch (cpusubtype) {
+    case MachO::CPU_SUBTYPE_I386_ALL:
+      outs() << "    cputype CPU_TYPE_I386\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_I386_ALL\n";
+      break;
+    default:
+      printUnknownCPUType(cputype, cpusubtype);
+      break;
+    }
+    break;
+  case MachO::CPU_TYPE_X86_64:
+    switch (cpusubtype) {
+    case MachO::CPU_SUBTYPE_X86_64_ALL:
+      outs() << "    cputype CPU_TYPE_X86_64\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_X86_64_ALL\n";
+      break;
+    case MachO::CPU_SUBTYPE_X86_64_H:
+      outs() << "    cputype CPU_TYPE_X86_64\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_X86_64_H\n";
+      break;
+    default:
+      printUnknownCPUType(cputype, cpusubtype);
+      break;
+    }
+    break;
+  case MachO::CPU_TYPE_ARM:
+    switch (cpusubtype) {
+    case MachO::CPU_SUBTYPE_ARM_ALL:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_ALL\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_V4T:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_V4T\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_V5TEJ:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_V5TEJ\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_XSCALE:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_XSCALE\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_V6:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_V6\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_V6M:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_V6M\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_V7:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_V7\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_V7EM:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_V7EM\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_V7K:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_V7K\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_V7M:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_V7M\n";
+      break;
+    case MachO::CPU_SUBTYPE_ARM_V7S:
+      outs() << "    cputype CPU_TYPE_ARM\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM_V7S\n";
+      break;
+    default:
+      printUnknownCPUType(cputype, cpusubtype);
+      break;
+    }
+    break;
+  case MachO::CPU_TYPE_ARM64:
+    switch (cpusubtype & ~MachO::CPU_SUBTYPE_MASK) {
+    case MachO::CPU_SUBTYPE_ARM64_ALL:
+      outs() << "    cputype CPU_TYPE_ARM64\n";
+      outs() << "    cpusubtype CPU_SUBTYPE_ARM64_ALL\n";
+      break;
+    default:
+      printUnknownCPUType(cputype, cpusubtype);
+      break;
+    }
+    break;
+  default:
+    printUnknownCPUType(cputype, cpusubtype);
+    break;
+  }
+}
+
+static void printMachOUniversalHeaders(const object::MachOUniversalBinary *UB,
+                                       bool verbose) {
+  outs() << "Fat headers\n";
+  if (verbose)
+    outs() << "fat_magic FAT_MAGIC\n";
+  else
+    outs() << "fat_magic " << format("0x%" PRIx32, MachO::FAT_MAGIC) << "\n";
+
+  uint32_t nfat_arch = UB->getNumberOfObjects();
+  StringRef Buf = UB->getData();
+  uint64_t size = Buf.size();
+  uint64_t big_size = sizeof(struct MachO::fat_header) +
+                      nfat_arch * sizeof(struct MachO::fat_arch);
+  outs() << "nfat_arch " << UB->getNumberOfObjects();
+  if (nfat_arch == 0)
+    outs() << " (malformed, contains zero architecture types)\n";
+  else if (big_size > size)
+    outs() << " (malformed, architectures past end of file)\n";
+  else
+    outs() << "\n";
+
+  for (uint32_t i = 0; i < nfat_arch; ++i) {
+    MachOUniversalBinary::ObjectForArch OFA(UB, i);
+    uint32_t cputype = OFA.getCPUType();
+    uint32_t cpusubtype = OFA.getCPUSubType();
+    outs() << "architecture ";
+    for (uint32_t j = 0; i != 0 && j <= i - 1; j++) {
+      MachOUniversalBinary::ObjectForArch other_OFA(UB, j);
+      uint32_t other_cputype = other_OFA.getCPUType();
+      uint32_t other_cpusubtype = other_OFA.getCPUSubType();
+      if (cputype != 0 && cpusubtype != 0 && cputype == other_cputype &&
+          (cpusubtype & ~MachO::CPU_SUBTYPE_MASK) ==
+              (other_cpusubtype & ~MachO::CPU_SUBTYPE_MASK)) {
+        outs() << "(illegal duplicate architecture) ";
+        break;
+      }
+    }
+    if (verbose) {
+      outs() << OFA.getArchTypeName() << "\n";
+      printCPUType(cputype, cpusubtype & ~MachO::CPU_SUBTYPE_MASK);
+    } else {
+      outs() << i << "\n";
+      outs() << "    cputype " << cputype << "\n";
+      outs() << "    cpusubtype " << (cpusubtype & ~MachO::CPU_SUBTYPE_MASK)
+             << "\n";
+    }
+    if (verbose &&
+        (cpusubtype & MachO::CPU_SUBTYPE_MASK) == MachO::CPU_SUBTYPE_LIB64)
+      outs() << "    capabilities CPU_SUBTYPE_LIB64\n";
+    else
+      outs() << "    capabilities "
+             << format("0x%" PRIx32,
+                       (cpusubtype & MachO::CPU_SUBTYPE_MASK) >> 24) << "\n";
+    outs() << "    offset " << OFA.getOffset();
+    if (OFA.getOffset() > size)
+      outs() << " (past end of file)";
+    if (OFA.getOffset() % (1 << OFA.getAlign()) != 0)
+      outs() << " (not aligned on it's alignment (2^" << OFA.getAlign() << ")";
+    outs() << "\n";
+    outs() << "    size " << OFA.getSize();
+    big_size = OFA.getOffset() + OFA.getSize();
+    if (big_size > size)
+      outs() << " (past end of file)";
+    outs() << "\n";
+    outs() << "    align 2^" << OFA.getAlign() << " (" << (1 << OFA.getAlign())
+           << ")\n";
+  }
+}
+
+// ParseInputMachO() parses the named Mach-O file in Filename and handles the
+// -arch flags selecting just those slices as specified by them and also parses
+// archive files.  Then for each individual Mach-O file ProcessMachO() is
+// called to process the file based on the command line options.
+void llvm::ParseInputMachO(StringRef Filename) {
   // Check for -arch all and verifiy the -arch flags are valid.
   for (unsigned i = 0; i < ArchFlags.size(); ++i) {
     if (ArchFlags[i] == "all") {
@@ -321,10 +550,14 @@ void llvm::DisassembleInputMachO(StringRef Filename) {
       if (MachOObjectFile *O = dyn_cast<MachOObjectFile>(&*ChildOrErr.get())) {
         if (!checkMachOAndArchFlags(O, Filename))
           return;
-        DisassembleInputMachO2(Filename, O, O->getFileName());
+        ProcessMachO(Filename, O, O->getFileName());
       }
     }
     return;
+  }
+  if (UniversalHeaders) {
+    if (MachOUniversalBinary *UB = dyn_cast<MachOUniversalBinary>(&Bin))
+      printMachOUniversalHeaders(UB, true);
   }
   if (MachOUniversalBinary *UB = dyn_cast<MachOUniversalBinary>(&Bin)) {
     // If we have a list of architecture flags specified dump only those.
@@ -346,7 +579,7 @@ void llvm::DisassembleInputMachO(StringRef Filename) {
             if (ObjOrErr) {
               ObjectFile &O = *ObjOrErr.get();
               if (MachOObjectFile *MachOOF = dyn_cast<MachOObjectFile>(&O))
-                DisassembleInputMachO2(Filename, MachOOF, "", ArchitectureName);
+                ProcessMachO(Filename, MachOOF, "", ArchitectureName);
             } else if (ErrorOr<std::unique_ptr<Archive>> AOrErr =
                            I->getAsArchive()) {
               std::unique_ptr<Archive> &A = *AOrErr;
@@ -362,8 +595,7 @@ void llvm::DisassembleInputMachO(StringRef Filename) {
                   continue;
                 if (MachOObjectFile *O =
                         dyn_cast<MachOObjectFile>(&*ChildOrErr.get()))
-                  DisassembleInputMachO2(Filename, O, O->getFileName(),
-                                         ArchitectureName);
+                  ProcessMachO(Filename, O, O->getFileName(), ArchitectureName);
               }
             }
           }
@@ -379,18 +611,18 @@ void llvm::DisassembleInputMachO(StringRef Filename) {
     // No architecture flags were specified so if this contains a slice that
     // matches the host architecture dump only that.
     if (!ArchAll) {
-      StringRef HostArchName = MachOObjectFile::getHostArch().getArchName();
       for (MachOUniversalBinary::object_iterator I = UB->begin_objects(),
                                                  E = UB->end_objects();
            I != E; ++I) {
-        if (HostArchName == I->getArchTypeName()) {
+        if (MachOObjectFile::getHostArch().getArchName() ==
+            I->getArchTypeName()) {
           ErrorOr<std::unique_ptr<ObjectFile>> ObjOrErr = I->getAsObjectFile();
           std::string ArchiveName;
           ArchiveName.clear();
           if (ObjOrErr) {
             ObjectFile &O = *ObjOrErr.get();
             if (MachOObjectFile *MachOOF = dyn_cast<MachOObjectFile>(&O))
-              DisassembleInputMachO2(Filename, MachOOF);
+              ProcessMachO(Filename, MachOOF);
           } else if (ErrorOr<std::unique_ptr<Archive>> AOrErr =
                          I->getAsArchive()) {
             std::unique_ptr<Archive> &A = *AOrErr;
@@ -403,7 +635,7 @@ void llvm::DisassembleInputMachO(StringRef Filename) {
                 continue;
               if (MachOObjectFile *O =
                       dyn_cast<MachOObjectFile>(&*ChildOrErr.get()))
-                DisassembleInputMachO2(Filename, O, O->getFileName());
+                ProcessMachO(Filename, O, O->getFileName());
             }
           }
           return;
@@ -423,7 +655,7 @@ void llvm::DisassembleInputMachO(StringRef Filename) {
       if (ObjOrErr) {
         ObjectFile &Obj = *ObjOrErr.get();
         if (MachOObjectFile *MachOOF = dyn_cast<MachOObjectFile>(&Obj))
-          DisassembleInputMachO2(Filename, MachOOF, "", ArchitectureName);
+          ProcessMachO(Filename, MachOOF, "", ArchitectureName);
       } else if (ErrorOr<std::unique_ptr<Archive>> AOrErr = I->getAsArchive()) {
         std::unique_ptr<Archive> &A = *AOrErr;
         outs() << "Archive : " << Filename;
@@ -438,8 +670,8 @@ void llvm::DisassembleInputMachO(StringRef Filename) {
           if (MachOObjectFile *O =
                   dyn_cast<MachOObjectFile>(&*ChildOrErr.get())) {
             if (MachOObjectFile *MachOOF = dyn_cast<MachOObjectFile>(O))
-              DisassembleInputMachO2(Filename, MachOOF, MachOOF->getFileName(),
-                                     ArchitectureName);
+              ProcessMachO(Filename, MachOOF, MachOOF->getFileName(),
+                           ArchitectureName);
           }
         }
       }
@@ -450,7 +682,7 @@ void llvm::DisassembleInputMachO(StringRef Filename) {
     if (!checkMachOAndArchFlags(O, Filename))
       return;
     if (MachOObjectFile *MachOOF = dyn_cast<MachOObjectFile>(&*O)) {
-      DisassembleInputMachO2(Filename, MachOOF);
+      ProcessMachO(Filename, MachOOF);
     } else
       errs() << "llvm-objdump: '" << Filename << "': "
              << "Object is not a Mach-O file type.\n";
@@ -1785,9 +2017,7 @@ static void emitComments(raw_svector_ostream &CommentStream,
   CommentStream.resync();
 }
 
-static void DisassembleInputMachO2(StringRef Filename, MachOObjectFile *MachOOF,
-                                   StringRef ArchiveMemberName,
-                                   StringRef ArchitectureName) {
+static void DisassembleMachO(StringRef Filename, MachOObjectFile *MachOOF) {
   const char *McpuDefault = nullptr;
   const Target *ThumbTarget = nullptr;
   const Target *TheTarget = GetTarget(MachOOF, &McpuDefault, &ThumbTarget);
@@ -1893,13 +2123,6 @@ static void DisassembleInputMachO2(StringRef Filename, MachOObjectFile *MachOOF,
            << ThumbTripleName << '\n';
     return;
   }
-
-  outs() << Filename;
-  if (!ArchiveMemberName.empty())
-    outs() << '(' << ArchiveMemberName << ')';
-  if (!ArchitectureName.empty())
-    outs() << " (architecture " << ArchitectureName << ")";
-  outs() << ":\n";
 
   MachO::mach_header Header = MachOOF->getHeader();
 
@@ -2729,12 +2952,17 @@ static void PrintMachHeader(uint32_t magic, uint32_t cputype,
       break;
     case MachO::CPU_TYPE_X86_64:
       outs() << "  X86_64";
-    case MachO::CPU_SUBTYPE_X86_64_ALL:
-      outs() << "        ALL";
-      break;
-    case MachO::CPU_SUBTYPE_X86_64_H:
-      outs() << "    Haswell";
-      outs() << format(" %10d", cpusubtype & ~MachO::CPU_SUBTYPE_MASK);
+      switch (cpusubtype & ~MachO::CPU_SUBTYPE_MASK) {
+      case MachO::CPU_SUBTYPE_X86_64_ALL:
+        outs() << "        ALL";
+        break;
+      case MachO::CPU_SUBTYPE_X86_64_H:
+        outs() << "    Haswell";
+        break;
+      default:
+        outs() << format(" %10d", cpusubtype & ~MachO::CPU_SUBTYPE_MASK);
+        break;
+      }
       break;
     case MachO::CPU_TYPE_ARM:
       outs() << "     ARM";
@@ -3524,8 +3752,7 @@ static void PrintUuidLoadCommand(MachO::uuid_command uuid) {
   outs() << "\n";
 }
 
-static void PrintRpathLoadCommand(MachO::rpath_command rpath,
-                                  const char *Ptr) {
+static void PrintRpathLoadCommand(MachO::rpath_command rpath, const char *Ptr) {
   outs() << "          cmd LC_RPATH\n";
   outs() << "      cmdsize " << rpath.cmdsize;
   if (rpath.cmdsize < sizeof(struct MachO::rpath_command))
@@ -3623,7 +3850,7 @@ static void PrintEncryptionInfoCommand(MachO::encryption_info_command ec,
 }
 
 static void PrintEncryptionInfoCommand64(MachO::encryption_info_command_64 ec,
-                                       uint32_t object_size) {
+                                         uint32_t object_size) {
   outs() << "          cmd LC_ENCRYPTION_INFO_64\n";
   outs() << "      cmdsize " << ec.cmdsize;
   if (ec.cmdsize != sizeof(struct MachO::encryption_info_command_64))
@@ -3642,6 +3869,482 @@ static void PrintEncryptionInfoCommand64(MachO::encryption_info_command_64 ec,
     outs() << "\n";
   outs() << "      cryptid " << ec.cryptid << "\n";
   outs() << "          pad " << ec.pad << "\n";
+}
+
+static void PrintLinkerOptionCommand(MachO::linker_option_command lo,
+                                     const char *Ptr) {
+  outs() << "     cmd LC_LINKER_OPTION\n";
+  outs() << " cmdsize " << lo.cmdsize;
+  if (lo.cmdsize < sizeof(struct MachO::linker_option_command))
+    outs() << " Incorrect size\n";
+  else
+    outs() << "\n";
+  outs() << "   count " << lo.count << "\n";
+  const char *string = Ptr + sizeof(struct MachO::linker_option_command);
+  uint32_t left = lo.cmdsize - sizeof(struct MachO::linker_option_command);
+  uint32_t i = 0;
+  while (left > 0) {
+    while (*string == '\0' && left > 0) {
+      string++;
+      left--;
+    }
+    if (left > 0) {
+      i++;
+      outs() << "  string #" << i << " " << format("%.*s\n", left, string);
+      uint32_t NullPos = StringRef(string, left).find('\0');
+      uint32_t len = std::min(NullPos, left) + 1;
+      string += len;
+      left -= len;
+    }
+  }
+  if (lo.count != i)
+    outs() << "   count " << lo.count << " does not match number of strings "
+           << i << "\n";
+}
+
+static void PrintSubFrameworkCommand(MachO::sub_framework_command sub,
+                                     const char *Ptr) {
+  outs() << "          cmd LC_SUB_FRAMEWORK\n";
+  outs() << "      cmdsize " << sub.cmdsize;
+  if (sub.cmdsize < sizeof(struct MachO::sub_framework_command))
+    outs() << " Incorrect size\n";
+  else
+    outs() << "\n";
+  if (sub.umbrella < sub.cmdsize) {
+    const char *P = Ptr + sub.umbrella;
+    outs() << "     umbrella " << P << " (offset " << sub.umbrella << ")\n";
+  } else {
+    outs() << "     umbrella ?(bad offset " << sub.umbrella << ")\n";
+  }
+}
+
+static void PrintSubUmbrellaCommand(MachO::sub_umbrella_command sub,
+                                    const char *Ptr) {
+  outs() << "          cmd LC_SUB_UMBRELLA\n";
+  outs() << "      cmdsize " << sub.cmdsize;
+  if (sub.cmdsize < sizeof(struct MachO::sub_umbrella_command))
+    outs() << " Incorrect size\n";
+  else
+    outs() << "\n";
+  if (sub.sub_umbrella < sub.cmdsize) {
+    const char *P = Ptr + sub.sub_umbrella;
+    outs() << " sub_umbrella " << P << " (offset " << sub.sub_umbrella << ")\n";
+  } else {
+    outs() << " sub_umbrella ?(bad offset " << sub.sub_umbrella << ")\n";
+  }
+}
+
+static void PrintSubLibraryCommand(MachO::sub_library_command sub,
+                                   const char *Ptr) {
+  outs() << "          cmd LC_SUB_LIBRARY\n";
+  outs() << "      cmdsize " << sub.cmdsize;
+  if (sub.cmdsize < sizeof(struct MachO::sub_library_command))
+    outs() << " Incorrect size\n";
+  else
+    outs() << "\n";
+  if (sub.sub_library < sub.cmdsize) {
+    const char *P = Ptr + sub.sub_library;
+    outs() << "  sub_library " << P << " (offset " << sub.sub_library << ")\n";
+  } else {
+    outs() << "  sub_library ?(bad offset " << sub.sub_library << ")\n";
+  }
+}
+
+static void PrintSubClientCommand(MachO::sub_client_command sub,
+                                  const char *Ptr) {
+  outs() << "          cmd LC_SUB_CLIENT\n";
+  outs() << "      cmdsize " << sub.cmdsize;
+  if (sub.cmdsize < sizeof(struct MachO::sub_client_command))
+    outs() << " Incorrect size\n";
+  else
+    outs() << "\n";
+  if (sub.client < sub.cmdsize) {
+    const char *P = Ptr + sub.client;
+    outs() << "       client " << P << " (offset " << sub.client << ")\n";
+  } else {
+    outs() << "       client ?(bad offset " << sub.client << ")\n";
+  }
+}
+
+static void PrintRoutinesCommand(MachO::routines_command r) {
+  outs() << "          cmd LC_ROUTINES\n";
+  outs() << "      cmdsize " << r.cmdsize;
+  if (r.cmdsize != sizeof(struct MachO::routines_command))
+    outs() << " Incorrect size\n";
+  else
+    outs() << "\n";
+  outs() << " init_address " << format("0x%08" PRIx32, r.init_address) << "\n";
+  outs() << "  init_module " << r.init_module << "\n";
+  outs() << "    reserved1 " << r.reserved1 << "\n";
+  outs() << "    reserved2 " << r.reserved2 << "\n";
+  outs() << "    reserved3 " << r.reserved3 << "\n";
+  outs() << "    reserved4 " << r.reserved4 << "\n";
+  outs() << "    reserved5 " << r.reserved5 << "\n";
+  outs() << "    reserved6 " << r.reserved6 << "\n";
+}
+
+static void PrintRoutinesCommand64(MachO::routines_command_64 r) {
+  outs() << "          cmd LC_ROUTINES_64\n";
+  outs() << "      cmdsize " << r.cmdsize;
+  if (r.cmdsize != sizeof(struct MachO::routines_command_64))
+    outs() << " Incorrect size\n";
+  else
+    outs() << "\n";
+  outs() << " init_address " << format("0x%016" PRIx64, r.init_address) << "\n";
+  outs() << "  init_module " << r.init_module << "\n";
+  outs() << "    reserved1 " << r.reserved1 << "\n";
+  outs() << "    reserved2 " << r.reserved2 << "\n";
+  outs() << "    reserved3 " << r.reserved3 << "\n";
+  outs() << "    reserved4 " << r.reserved4 << "\n";
+  outs() << "    reserved5 " << r.reserved5 << "\n";
+  outs() << "    reserved6 " << r.reserved6 << "\n";
+}
+
+static void Print_x86_thread_state64_t(MachO::x86_thread_state64_t &cpu64) {
+  outs() << "   rax  " << format("0x%016" PRIx64, cpu64.rax);
+  outs() << " rbx " << format("0x%016" PRIx64, cpu64.rbx);
+  outs() << " rcx  " << format("0x%016" PRIx64, cpu64.rcx) << "\n";
+  outs() << "   rdx  " << format("0x%016" PRIx64, cpu64.rdx);
+  outs() << " rdi " << format("0x%016" PRIx64, cpu64.rdi);
+  outs() << " rsi  " << format("0x%016" PRIx64, cpu64.rsi) << "\n";
+  outs() << "   rbp  " << format("0x%016" PRIx64, cpu64.rbp);
+  outs() << " rsp " << format("0x%016" PRIx64, cpu64.rsp);
+  outs() << " r8   " << format("0x%016" PRIx64, cpu64.r8) << "\n";
+  outs() << "    r9  " << format("0x%016" PRIx64, cpu64.r9);
+  outs() << " r10 " << format("0x%016" PRIx64, cpu64.r10);
+  outs() << " r11  " << format("0x%016" PRIx64, cpu64.r11) << "\n";
+  outs() << "   r12  " << format("0x%016" PRIx64, cpu64.r12);
+  outs() << " r13 " << format("0x%016" PRIx64, cpu64.r13);
+  outs() << " r14  " << format("0x%016" PRIx64, cpu64.r14) << "\n";
+  outs() << "   r15  " << format("0x%016" PRIx64, cpu64.r15);
+  outs() << " rip " << format("0x%016" PRIx64, cpu64.rip) << "\n";
+  outs() << "rflags  " << format("0x%016" PRIx64, cpu64.rflags);
+  outs() << " cs  " << format("0x%016" PRIx64, cpu64.cs);
+  outs() << " fs   " << format("0x%016" PRIx64, cpu64.fs) << "\n";
+  outs() << "    gs  " << format("0x%016" PRIx64, cpu64.gs) << "\n";
+}
+
+static void Print_mmst_reg(MachO::mmst_reg_t &r) {
+  uint32_t f;
+  outs() << "\t      mmst_reg  ";
+  for (f = 0; f < 10; f++)
+    outs() << format("%02" PRIx32, (r.mmst_reg[f] & 0xff)) << " ";
+  outs() << "\n";
+  outs() << "\t      mmst_rsrv ";
+  for (f = 0; f < 6; f++)
+    outs() << format("%02" PRIx32, (r.mmst_rsrv[f] & 0xff)) << " ";
+  outs() << "\n";
+}
+
+static void Print_xmm_reg(MachO::xmm_reg_t &r) {
+  uint32_t f;
+  outs() << "\t      xmm_reg ";
+  for (f = 0; f < 16; f++)
+    outs() << format("%02" PRIx32, (r.xmm_reg[f] & 0xff)) << " ";
+  outs() << "\n";
+}
+
+static void Print_x86_float_state_t(MachO::x86_float_state64_t &fpu) {
+  outs() << "\t    fpu_reserved[0] " << fpu.fpu_reserved[0];
+  outs() << " fpu_reserved[1] " << fpu.fpu_reserved[1] << "\n";
+  outs() << "\t    control: invalid " << fpu.fpu_fcw.invalid;
+  outs() << " denorm " << fpu.fpu_fcw.denorm;
+  outs() << " zdiv " << fpu.fpu_fcw.zdiv;
+  outs() << " ovrfl " << fpu.fpu_fcw.ovrfl;
+  outs() << " undfl " << fpu.fpu_fcw.undfl;
+  outs() << " precis " << fpu.fpu_fcw.precis << "\n";
+  outs() << "\t\t     pc ";
+  if (fpu.fpu_fcw.pc == MachO::x86_FP_PREC_24B)
+    outs() << "FP_PREC_24B ";
+  else if (fpu.fpu_fcw.pc == MachO::x86_FP_PREC_53B)
+    outs() << "FP_PREC_53B ";
+  else if (fpu.fpu_fcw.pc == MachO::x86_FP_PREC_64B)
+    outs() << "FP_PREC_64B ";
+  else
+    outs() << fpu.fpu_fcw.pc << " ";
+  outs() << "rc ";
+  if (fpu.fpu_fcw.rc == MachO::x86_FP_RND_NEAR)
+    outs() << "FP_RND_NEAR ";
+  else if (fpu.fpu_fcw.rc == MachO::x86_FP_RND_DOWN)
+    outs() << "FP_RND_DOWN ";
+  else if (fpu.fpu_fcw.rc == MachO::x86_FP_RND_UP)
+    outs() << "FP_RND_UP ";
+  else if (fpu.fpu_fcw.rc == MachO::x86_FP_CHOP)
+    outs() << "FP_CHOP ";
+  outs() << "\n";
+  outs() << "\t    status: invalid " << fpu.fpu_fsw.invalid;
+  outs() << " denorm " << fpu.fpu_fsw.denorm;
+  outs() << " zdiv " << fpu.fpu_fsw.zdiv;
+  outs() << " ovrfl " << fpu.fpu_fsw.ovrfl;
+  outs() << " undfl " << fpu.fpu_fsw.undfl;
+  outs() << " precis " << fpu.fpu_fsw.precis;
+  outs() << " stkflt " << fpu.fpu_fsw.stkflt << "\n";
+  outs() << "\t            errsumm " << fpu.fpu_fsw.errsumm;
+  outs() << " c0 " << fpu.fpu_fsw.c0;
+  outs() << " c1 " << fpu.fpu_fsw.c1;
+  outs() << " c2 " << fpu.fpu_fsw.c2;
+  outs() << " tos " << fpu.fpu_fsw.tos;
+  outs() << " c3 " << fpu.fpu_fsw.c3;
+  outs() << " busy " << fpu.fpu_fsw.busy << "\n";
+  outs() << "\t    fpu_ftw " << format("0x%02" PRIx32, fpu.fpu_ftw);
+  outs() << " fpu_rsrv1 " << format("0x%02" PRIx32, fpu.fpu_rsrv1);
+  outs() << " fpu_fop " << format("0x%04" PRIx32, fpu.fpu_fop);
+  outs() << " fpu_ip " << format("0x%08" PRIx32, fpu.fpu_ip) << "\n";
+  outs() << "\t    fpu_cs " << format("0x%04" PRIx32, fpu.fpu_cs);
+  outs() << " fpu_rsrv2 " << format("0x%04" PRIx32, fpu.fpu_rsrv2);
+  outs() << " fpu_dp " << format("0x%08" PRIx32, fpu.fpu_dp);
+  outs() << " fpu_ds " << format("0x%04" PRIx32, fpu.fpu_ds) << "\n";
+  outs() << "\t    fpu_rsrv3 " << format("0x%04" PRIx32, fpu.fpu_rsrv3);
+  outs() << " fpu_mxcsr " << format("0x%08" PRIx32, fpu.fpu_mxcsr);
+  outs() << " fpu_mxcsrmask " << format("0x%08" PRIx32, fpu.fpu_mxcsrmask);
+  outs() << "\n";
+  outs() << "\t    fpu_stmm0:\n";
+  Print_mmst_reg(fpu.fpu_stmm0);
+  outs() << "\t    fpu_stmm1:\n";
+  Print_mmst_reg(fpu.fpu_stmm1);
+  outs() << "\t    fpu_stmm2:\n";
+  Print_mmst_reg(fpu.fpu_stmm2);
+  outs() << "\t    fpu_stmm3:\n";
+  Print_mmst_reg(fpu.fpu_stmm3);
+  outs() << "\t    fpu_stmm4:\n";
+  Print_mmst_reg(fpu.fpu_stmm4);
+  outs() << "\t    fpu_stmm5:\n";
+  Print_mmst_reg(fpu.fpu_stmm5);
+  outs() << "\t    fpu_stmm6:\n";
+  Print_mmst_reg(fpu.fpu_stmm6);
+  outs() << "\t    fpu_stmm7:\n";
+  Print_mmst_reg(fpu.fpu_stmm7);
+  outs() << "\t    fpu_xmm0:\n";
+  Print_xmm_reg(fpu.fpu_xmm0);
+  outs() << "\t    fpu_xmm1:\n";
+  Print_xmm_reg(fpu.fpu_xmm1);
+  outs() << "\t    fpu_xmm2:\n";
+  Print_xmm_reg(fpu.fpu_xmm2);
+  outs() << "\t    fpu_xmm3:\n";
+  Print_xmm_reg(fpu.fpu_xmm3);
+  outs() << "\t    fpu_xmm4:\n";
+  Print_xmm_reg(fpu.fpu_xmm4);
+  outs() << "\t    fpu_xmm5:\n";
+  Print_xmm_reg(fpu.fpu_xmm5);
+  outs() << "\t    fpu_xmm6:\n";
+  Print_xmm_reg(fpu.fpu_xmm6);
+  outs() << "\t    fpu_xmm7:\n";
+  Print_xmm_reg(fpu.fpu_xmm7);
+  outs() << "\t    fpu_xmm8:\n";
+  Print_xmm_reg(fpu.fpu_xmm8);
+  outs() << "\t    fpu_xmm9:\n";
+  Print_xmm_reg(fpu.fpu_xmm9);
+  outs() << "\t    fpu_xmm10:\n";
+  Print_xmm_reg(fpu.fpu_xmm10);
+  outs() << "\t    fpu_xmm11:\n";
+  Print_xmm_reg(fpu.fpu_xmm11);
+  outs() << "\t    fpu_xmm12:\n";
+  Print_xmm_reg(fpu.fpu_xmm12);
+  outs() << "\t    fpu_xmm13:\n";
+  Print_xmm_reg(fpu.fpu_xmm13);
+  outs() << "\t    fpu_xmm14:\n";
+  Print_xmm_reg(fpu.fpu_xmm14);
+  outs() << "\t    fpu_xmm15:\n";
+  Print_xmm_reg(fpu.fpu_xmm15);
+  outs() << "\t    fpu_rsrv4:\n";
+  for (uint32_t f = 0; f < 6; f++) {
+    outs() << "\t            ";
+    for (uint32_t g = 0; g < 16; g++)
+      outs() << format("%02" PRIx32, fpu.fpu_rsrv4[f * g]) << " ";
+    outs() << "\n";
+  }
+  outs() << "\t    fpu_reserved1 " << format("0x%08" PRIx32, fpu.fpu_reserved1);
+  outs() << "\n";
+}
+
+static void Print_x86_exception_state_t(MachO::x86_exception_state64_t &exc64) {
+  outs() << "\t    trapno " << format("0x%08" PRIx32, exc64.trapno);
+  outs() << " err " << format("0x%08" PRIx32, exc64.err);
+  outs() << " faultvaddr " << format("0x%016" PRIx64, exc64.faultvaddr) << "\n";
+}
+
+static void PrintThreadCommand(MachO::thread_command t, const char *Ptr,
+                               bool isLittleEndian, uint32_t cputype) {
+  if (t.cmd == MachO::LC_THREAD)
+    outs() << "        cmd LC_THREAD\n";
+  else if (t.cmd == MachO::LC_UNIXTHREAD)
+    outs() << "        cmd LC_UNIXTHREAD\n";
+  else
+    outs() << "        cmd " << t.cmd << " (unknown)\n";
+  outs() << "    cmdsize " << t.cmdsize;
+  if (t.cmdsize < sizeof(struct MachO::thread_command) + 2 * sizeof(uint32_t))
+    outs() << " Incorrect size\n";
+  else
+    outs() << "\n";
+
+  const char *begin = Ptr + sizeof(struct MachO::thread_command);
+  const char *end = Ptr + t.cmdsize;
+  uint32_t flavor, count, left;
+  if (cputype == MachO::CPU_TYPE_X86_64) {
+    while (begin < end) {
+      if (end - begin > (ptrdiff_t)sizeof(uint32_t)) {
+        memcpy((char *)&flavor, begin, sizeof(uint32_t));
+        begin += sizeof(uint32_t);
+      } else {
+        flavor = 0;
+        begin = end;
+      }
+      if (isLittleEndian != sys::IsLittleEndianHost)
+        sys::swapByteOrder(flavor);
+      if (end - begin > (ptrdiff_t)sizeof(uint32_t)) {
+        memcpy((char *)&count, begin, sizeof(uint32_t));
+        begin += sizeof(uint32_t);
+      } else {
+        count = 0;
+        begin = end;
+      }
+      if (isLittleEndian != sys::IsLittleEndianHost)
+        sys::swapByteOrder(count);
+      if (flavor == MachO::x86_THREAD_STATE64) {
+        outs() << "     flavor x86_THREAD_STATE64\n";
+        if (count == MachO::x86_THREAD_STATE64_COUNT)
+          outs() << "      count x86_THREAD_STATE64_COUNT\n";
+        else
+          outs() << "      count " << count
+                 << " (not x86_THREAD_STATE64_COUNT)\n";
+        MachO::x86_thread_state64_t cpu64;
+        left = end - begin;
+        if (left >= sizeof(MachO::x86_thread_state64_t)) {
+          memcpy(&cpu64, begin, sizeof(MachO::x86_thread_state64_t));
+          begin += sizeof(MachO::x86_thread_state64_t);
+        } else {
+          memset(&cpu64, '\0', sizeof(MachO::x86_thread_state64_t));
+          memcpy(&cpu64, begin, left);
+          begin += left;
+        }
+        if (isLittleEndian != sys::IsLittleEndianHost)
+          swapStruct(cpu64);
+        Print_x86_thread_state64_t(cpu64);
+      } else if (flavor == MachO::x86_THREAD_STATE) {
+        outs() << "     flavor x86_THREAD_STATE\n";
+        if (count == MachO::x86_THREAD_STATE_COUNT)
+          outs() << "      count x86_THREAD_STATE_COUNT\n";
+        else
+          outs() << "      count " << count
+                 << " (not x86_THREAD_STATE_COUNT)\n";
+        struct MachO::x86_thread_state_t ts;
+        left = end - begin;
+        if (left >= sizeof(MachO::x86_thread_state_t)) {
+          memcpy(&ts, begin, sizeof(MachO::x86_thread_state_t));
+          begin += sizeof(MachO::x86_thread_state_t);
+        } else {
+          memset(&ts, '\0', sizeof(MachO::x86_thread_state_t));
+          memcpy(&ts, begin, left);
+          begin += left;
+        }
+        if (isLittleEndian != sys::IsLittleEndianHost)
+          swapStruct(ts);
+        if (ts.tsh.flavor == MachO::x86_THREAD_STATE64) {
+          outs() << "\t    tsh.flavor x86_THREAD_STATE64 ";
+          if (ts.tsh.count == MachO::x86_THREAD_STATE64_COUNT)
+            outs() << "tsh.count x86_THREAD_STATE64_COUNT\n";
+          else
+            outs() << "tsh.count " << ts.tsh.count
+                   << " (not x86_THREAD_STATE64_COUNT\n";
+          Print_x86_thread_state64_t(ts.uts.ts64);
+        } else {
+          outs() << "\t    tsh.flavor " << ts.tsh.flavor << "  tsh.count "
+                 << ts.tsh.count << "\n";
+        }
+      } else if (flavor == MachO::x86_FLOAT_STATE) {
+        outs() << "     flavor x86_FLOAT_STATE\n";
+        if (count == MachO::x86_FLOAT_STATE_COUNT)
+          outs() << "      count x86_FLOAT_STATE_COUNT\n";
+        else
+          outs() << "      count " << count << " (not x86_FLOAT_STATE_COUNT)\n";
+        struct MachO::x86_float_state_t fs;
+        left = end - begin;
+        if (left >= sizeof(MachO::x86_float_state_t)) {
+          memcpy(&fs, begin, sizeof(MachO::x86_float_state_t));
+          begin += sizeof(MachO::x86_float_state_t);
+        } else {
+          memset(&fs, '\0', sizeof(MachO::x86_float_state_t));
+          memcpy(&fs, begin, left);
+          begin += left;
+        }
+        if (isLittleEndian != sys::IsLittleEndianHost)
+          swapStruct(fs);
+        if (fs.fsh.flavor == MachO::x86_FLOAT_STATE64) {
+          outs() << "\t    fsh.flavor x86_FLOAT_STATE64 ";
+          if (fs.fsh.count == MachO::x86_FLOAT_STATE64_COUNT)
+            outs() << "fsh.count x86_FLOAT_STATE64_COUNT\n";
+          else
+            outs() << "fsh.count " << fs.fsh.count
+                   << " (not x86_FLOAT_STATE64_COUNT\n";
+          Print_x86_float_state_t(fs.ufs.fs64);
+        } else {
+          outs() << "\t    fsh.flavor " << fs.fsh.flavor << "  fsh.count "
+                 << fs.fsh.count << "\n";
+        }
+      } else if (flavor == MachO::x86_EXCEPTION_STATE) {
+        outs() << "     flavor x86_EXCEPTION_STATE\n";
+        if (count == MachO::x86_EXCEPTION_STATE_COUNT)
+          outs() << "      count x86_EXCEPTION_STATE_COUNT\n";
+        else
+          outs() << "      count " << count
+                 << " (not x86_EXCEPTION_STATE_COUNT)\n";
+        struct MachO::x86_exception_state_t es;
+        left = end - begin;
+        if (left >= sizeof(MachO::x86_exception_state_t)) {
+          memcpy(&es, begin, sizeof(MachO::x86_exception_state_t));
+          begin += sizeof(MachO::x86_exception_state_t);
+        } else {
+          memset(&es, '\0', sizeof(MachO::x86_exception_state_t));
+          memcpy(&es, begin, left);
+          begin += left;
+        }
+        if (isLittleEndian != sys::IsLittleEndianHost)
+          swapStruct(es);
+        if (es.esh.flavor == MachO::x86_EXCEPTION_STATE64) {
+          outs() << "\t    esh.flavor x86_EXCEPTION_STATE64\n";
+          if (es.esh.count == MachO::x86_EXCEPTION_STATE64_COUNT)
+            outs() << "\t    esh.count x86_EXCEPTION_STATE64_COUNT\n";
+          else
+            outs() << "\t    esh.count " << es.esh.count
+                   << " (not x86_EXCEPTION_STATE64_COUNT\n";
+          Print_x86_exception_state_t(es.ues.es64);
+        } else {
+          outs() << "\t    esh.flavor " << es.esh.flavor << "  esh.count "
+                 << es.esh.count << "\n";
+        }
+      } else {
+        outs() << "     flavor " << flavor << " (unknown)\n";
+        outs() << "      count " << count << "\n";
+        outs() << "      state (unknown)\n";
+        begin += count * sizeof(uint32_t);
+      }
+    }
+  } else {
+    while (begin < end) {
+      if (end - begin > (ptrdiff_t)sizeof(uint32_t)) {
+        memcpy((char *)&flavor, begin, sizeof(uint32_t));
+        begin += sizeof(uint32_t);
+      } else {
+        flavor = 0;
+        begin = end;
+      }
+      if (isLittleEndian != sys::IsLittleEndianHost)
+        sys::swapByteOrder(flavor);
+      if (end - begin > (ptrdiff_t)sizeof(uint32_t)) {
+        memcpy((char *)&count, begin, sizeof(uint32_t));
+        begin += sizeof(uint32_t);
+      } else {
+        count = 0;
+        begin = end;
+      }
+      if (isLittleEndian != sys::IsLittleEndianHost)
+        sys::swapByteOrder(count);
+      outs() << "     flavor " << flavor << "\n";
+      outs() << "      count " << count << "\n";
+      outs() << "      state (Unknown cputype/cpusubtype)\n";
+      begin += count * sizeof(uint32_t);
+    }
+  }
 }
 
 static void PrintDylibCommand(MachO::dylib_command dl, const char *Ptr) {
@@ -3727,6 +4430,8 @@ static void PrintLinkEditDataCommand(MachO::linkedit_data_command ld,
 static void PrintLoadCommands(const MachOObjectFile *Obj, uint32_t ncmds,
                               uint32_t filetype, uint32_t cputype,
                               bool verbose) {
+  if (ncmds == 0)
+    return;
   StringRef Buf = Obj->getData();
   MachOObjectFile::LoadCommandInfo Command = Obj->getFirstLoadCommandInfo();
   for (unsigned i = 0;; ++i) {
@@ -3792,11 +4497,39 @@ static void PrintLoadCommands(const MachOObjectFile *Obj, uint32_t ncmds,
       MachO::entry_point_command Ep = Obj->getEntryPointCommand(Command);
       PrintEntryPointCommand(Ep);
     } else if (Command.C.cmd == MachO::LC_ENCRYPTION_INFO) {
-      MachO::encryption_info_command Ei = Obj->getEncryptionInfoCommand(Command);
+      MachO::encryption_info_command Ei =
+          Obj->getEncryptionInfoCommand(Command);
       PrintEncryptionInfoCommand(Ei, Buf.size());
     } else if (Command.C.cmd == MachO::LC_ENCRYPTION_INFO_64) {
-      MachO::encryption_info_command_64 Ei = Obj->getEncryptionInfoCommand64(Command);
+      MachO::encryption_info_command_64 Ei =
+          Obj->getEncryptionInfoCommand64(Command);
       PrintEncryptionInfoCommand64(Ei, Buf.size());
+    } else if (Command.C.cmd == MachO::LC_LINKER_OPTION) {
+      MachO::linker_option_command Lo =
+          Obj->getLinkerOptionLoadCommand(Command);
+      PrintLinkerOptionCommand(Lo, Command.Ptr);
+    } else if (Command.C.cmd == MachO::LC_SUB_FRAMEWORK) {
+      MachO::sub_framework_command Sf = Obj->getSubFrameworkCommand(Command);
+      PrintSubFrameworkCommand(Sf, Command.Ptr);
+    } else if (Command.C.cmd == MachO::LC_SUB_UMBRELLA) {
+      MachO::sub_umbrella_command Sf = Obj->getSubUmbrellaCommand(Command);
+      PrintSubUmbrellaCommand(Sf, Command.Ptr);
+    } else if (Command.C.cmd == MachO::LC_SUB_LIBRARY) {
+      MachO::sub_library_command Sl = Obj->getSubLibraryCommand(Command);
+      PrintSubLibraryCommand(Sl, Command.Ptr);
+    } else if (Command.C.cmd == MachO::LC_SUB_CLIENT) {
+      MachO::sub_client_command Sc = Obj->getSubClientCommand(Command);
+      PrintSubClientCommand(Sc, Command.Ptr);
+    } else if (Command.C.cmd == MachO::LC_ROUTINES) {
+      MachO::routines_command Rc = Obj->getRoutinesCommand(Command);
+      PrintRoutinesCommand(Rc);
+    } else if (Command.C.cmd == MachO::LC_ROUTINES_64) {
+      MachO::routines_command_64 Rc = Obj->getRoutinesCommand64(Command);
+      PrintRoutinesCommand64(Rc);
+    } else if (Command.C.cmd == MachO::LC_THREAD ||
+               Command.C.cmd == MachO::LC_UNIXTHREAD) {
+      MachO::thread_command Tc = Obj->getThreadCommand(Command);
+      PrintThreadCommand(Tc, Command.Ptr, Obj->isLittleEndian(), cputype);
     } else if (Command.C.cmd == MachO::LC_LOAD_DYLIB ||
                Command.C.cmd == MachO::LC_ID_DYLIB ||
                Command.C.cmd == MachO::LC_LOAD_WEAK_DYLIB ||

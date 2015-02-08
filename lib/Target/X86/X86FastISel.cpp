@@ -1362,7 +1362,7 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
       // X86 requires a second branch to handle UNE (and OEQ, which is mapped
       // to UNE above).
       if (NeedExtraBranch) {
-        BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(X86::JP_4))
+        BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(X86::JP_1))
           .addMBB(TrueMBB);
       }
 
@@ -1399,10 +1399,10 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
         BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(TestOpc))
           .addReg(OpReg).addImm(1);
 
-        unsigned JmpOpc = X86::JNE_4;
+        unsigned JmpOpc = X86::JNE_1;
         if (FuncInfo.MBB->isLayoutSuccessor(TrueMBB)) {
           std::swap(TrueMBB, FalseMBB);
-          JmpOpc = X86::JE_4;
+          JmpOpc = X86::JE_1;
         }
 
         BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(JmpOpc))
@@ -1444,7 +1444,7 @@ bool X86FastISel::X86SelectBranch(const Instruction *I) {
 
   BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(X86::TEST8ri))
     .addReg(OpReg).addImm(1);
-  BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(X86::JNE_4))
+  BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc, TII.get(X86::JNE_1))
     .addMBB(TrueMBB);
   fastEmitBranch(FalseMBB, DbgLoc);
   uint32_t BranchWeight = 0;
@@ -2370,19 +2370,16 @@ bool X86FastISel::fastLowerIntrinsicCall(const IntrinsicInst *II) {
     unsigned ResultReg = 0;
     // Check if we have an immediate version.
     if (const auto *CI = dyn_cast<ConstantInt>(RHS)) {
-      static const unsigned Opc[2][2][4] = {
-        { { X86::INC8r, X86::INC16r,    X86::INC32r,    X86::INC64r },
-          { X86::DEC8r, X86::DEC16r,    X86::DEC32r,    X86::DEC64r }  },
-        { { X86::INC8r, X86::INC64_16r, X86::INC64_32r, X86::INC64r },
-          { X86::DEC8r, X86::DEC64_16r, X86::DEC64_32r, X86::DEC64r }  }
+      static const unsigned Opc[2][4] = {
+        { X86::INC8r, X86::INC16r, X86::INC32r, X86::INC64r },
+        { X86::DEC8r, X86::DEC16r, X86::DEC32r, X86::DEC64r }
       };
 
       if (BaseOpc == X86ISD::INC || BaseOpc == X86ISD::DEC) {
         ResultReg = createResultReg(TLI.getRegClassFor(VT));
-        bool Is64Bit = Subtarget->is64Bit();
         bool IsDec = BaseOpc == X86ISD::DEC;
         BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DbgLoc,
-                TII.get(Opc[Is64Bit][IsDec][VT.SimpleTy-MVT::i8]), ResultReg)
+                TII.get(Opc[IsDec][VT.SimpleTy-MVT::i8]), ResultReg)
           .addReg(LHSReg, getKillRegState(LHSIsKill));
       } else
         ResultReg = fastEmit_ri(VT, VT, BaseOpc, LHSReg, LHSIsKill,
@@ -2672,6 +2669,9 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
                        TM.Options.GuaranteedTailCallOpt))
     return false;
 
+  SmallVector<MVT, 16> OutVTs;
+  SmallVector<unsigned, 16> ArgRegs;
+
   // If this is a constant i1/i8/i16 argument, promote to i32 to avoid an extra
   // instruction. This is safe because it is common to all FastISel supported
   // calling conventions on x86.
@@ -2689,28 +2689,34 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
 
     // Passing bools around ends up doing a trunc to i1 and passing it.
     // Codegen this as an argument + "and 1".
-    if (auto *TI = dyn_cast<TruncInst>(Val)) {
-      if (TI->getType()->isIntegerTy(1) && CLI.CS &&
-          (TI->getParent() == CLI.CS->getInstruction()->getParent()) &&
-          TI->hasOneUse()) {
-        Val = cast<TruncInst>(Val)->getOperand(0);
-        unsigned ResultReg = getRegForValue(Val);
+    MVT VT;
+    auto *TI = dyn_cast<TruncInst>(Val);
+    unsigned ResultReg;
+    if (TI && TI->getType()->isIntegerTy(1) && CLI.CS &&
+              (TI->getParent() == CLI.CS->getInstruction()->getParent()) &&
+              TI->hasOneUse()) {
+      Value *PrevVal = TI->getOperand(0);
+      ResultReg = getRegForValue(PrevVal);
 
-        if (!ResultReg)
-          return false;
+      if (!ResultReg)
+        return false;
 
-        MVT ArgVT;
-        if (!isTypeLegal(Val->getType(), ArgVT))
-          return false;
+      if (!isTypeLegal(PrevVal->getType(), VT))
+        return false;
 
-        ResultReg =
-          fastEmit_ri(ArgVT, ArgVT, ISD::AND, ResultReg, Val->hasOneUse(), 1);
-
-        if (!ResultReg)
-          return false;
-        updateValueMap(Val, ResultReg);
-      }
+      ResultReg =
+        fastEmit_ri(VT, VT, ISD::AND, ResultReg, hasTrivialKill(PrevVal), 1);
+    } else {
+      if (!isTypeLegal(Val->getType(), VT))
+        return false;
+      ResultReg = getRegForValue(Val);
     }
+
+    if (!ResultReg)
+      return false;
+
+    ArgRegs.push_back(ResultReg);
+    OutVTs.push_back(VT);
   }
 
   // Analyze operands of the call, assigning locations to each operand.
@@ -2721,13 +2727,6 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
   if (IsWin64)
     CCInfo.AllocateStack(32, 8);
 
-  SmallVector<MVT, 16> OutVTs;
-  for (auto *Val : OutVals) {
-    MVT VT;
-    if (!isTypeLegal(Val->getType(), VT))
-      return false;
-    OutVTs.push_back(VT);
-  }
   CCInfo.AnalyzeCallOperands(OutVTs, OutFlags, CC_X86);
 
   // Get a count of how many bytes are to be pushed on the stack.
@@ -2749,9 +2748,7 @@ bool X86FastISel::fastLowerCall(CallLoweringInfo &CLI) {
     if (ArgVT == MVT::x86mmx)
       return false;
 
-    unsigned ArgReg = getRegForValue(ArgVal);
-    if (!ArgReg)
-      return false;
+    unsigned ArgReg = ArgRegs[VA.getValNo()];
 
     // Promote the value if needed.
     switch (VA.getLocInfo()) {

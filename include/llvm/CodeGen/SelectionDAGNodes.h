@@ -19,7 +19,6 @@
 #ifndef LLVM_CODEGEN_SELECTIONDAGNODES_H
 #define LLVM_CODEGEN_SELECTIONDAGNODES_H
 
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/GraphTraits.h"
@@ -27,6 +26,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/ilist_node.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/ValueTypes.h"
@@ -1417,6 +1417,12 @@ public:
 
   /// isNaN - Return true if the value is a NaN.
   bool isNaN() const { return Value->isNaN(); }
+
+  /// isInfinity - Return true if the value is an infinity
+  bool isInfinity() const { return Value->isInfinity(); }
+
+  /// isNegative - Return true if the value is negative.
+  bool isNegative() const { return Value->isNegative(); }
 
   /// isExactlyValue - We don't rely on operator== working on double values, as
   /// it returns true for things that are clearly not equal, like -0.0 and 0.0.
