@@ -175,7 +175,7 @@ public:
                                               const MCFragment &FB, bool InSet,
                                               bool IsPCRel) const override;
 
-  void RecordRelocation(MCAssembler &Asm, const MCAsmLayout &Layout,
+  void RecordRelocation(const MCAssembler &Asm, const MCAsmLayout &Layout,
                         const MCFragment *Fragment, const MCFixup &Fixup,
                         MCValue Target, bool &IsPCRel,
                         uint64_t &FixedValue) override;
@@ -661,9 +661,13 @@ bool WinCOFFObjectWriter::IsSymbolRefDifferenceFullyResolvedImpl(
                                                                 InSet, IsPCRel);
 }
 
-void WinCOFFObjectWriter::RecordRelocation(
-    MCAssembler &Asm, const MCAsmLayout &Layout, const MCFragment *Fragment,
-    const MCFixup &Fixup, MCValue Target, bool &IsPCRel, uint64_t &FixedValue) {
+void WinCOFFObjectWriter::RecordRelocation(const MCAssembler &Asm,
+                                           const MCAsmLayout &Layout,
+                                           const MCFragment *Fragment,
+                                           const MCFixup &Fixup,
+                                           MCValue Target,
+                                           bool &IsPCRel,
+                                           uint64_t &FixedValue) {
   assert(Target.getSymA() && "Relocation must reference a symbol!");
 
   const MCSymbol &Symbol = Target.getSymA()->getSymbol();
@@ -706,17 +710,22 @@ void WinCOFFObjectWriter::RecordRelocation(
     CrossSection = &Symbol.getSection() != &B->getSection();
 
     // Offset of the symbol in the section
-    int64_t a = Layout.getSymbolOffset(&B_SD);
+    int64_t OffsetOfB = Layout.getSymbolOffset(&B_SD);
 
-    // Offset of the relocation in the section
-    int64_t b = Layout.getFragmentOffset(Fragment) + Fixup.getOffset();
-
-    FixedValue = b - a;
     // In the case where we have SymbA and SymB, we just need to store the delta
     // between the two symbols.  Update FixedValue to account for the delta, and
     // skip recording the relocation.
-    if (!CrossSection)
+    if (!CrossSection) {
+      int64_t OffsetOfA = Layout.getSymbolOffset(&A_SD);
+      FixedValue = (OffsetOfA - OffsetOfB) + Target.getConstant();
       return;
+    }
+
+    // Offset of the relocation in the section
+    int64_t OffsetOfRelocation =
+        Layout.getFragmentOffset(Fragment) + Fixup.getOffset();
+
+    FixedValue = OffsetOfRelocation - OffsetOfB;
   } else {
     FixedValue = Target.getConstant();
   }

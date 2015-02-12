@@ -167,6 +167,11 @@ void ReplaceableMetadataImpl::replaceAllUsesWith(Metadata *MD) {
     return L.second.second < R.second.second;
   });
   for (const auto &Pair : Uses) {
+    // Check that this Ref hasn't disappeared after RAUW (when updating a
+    // previous Ref).
+    if (!UseMap.count(Pair.first))
+      continue;
+
     OwnerTy Owner = Pair.second.first;
     if (!Owner) {
       // Update unowned tracking references directly.
@@ -814,6 +819,28 @@ MDNode *MDNode::intersect(MDNode *A, MDNode *B) {
         MDs.push_back(MD);
         break;
       }
+  }
+
+  // FIXME: This preserves long-standing behaviour, but is it really the right
+  // behaviour?  Or was that an unintended side-effect of node uniquing?
+  return getOrSelfReference(A->getContext(), MDs);
+}
+
+MDNode *MDNode::getMostGenericAliasScope(MDNode *A, MDNode *B) {
+  if (!A || !B)
+    return nullptr;
+
+  SmallVector<Metadata *, 4> MDs(B->op_begin(), B->op_end());
+  for (unsigned i = 0, ie = A->getNumOperands(); i != ie; ++i) {
+    Metadata *MD = A->getOperand(i);
+    bool insert = true;
+    for (unsigned j = 0, je = B->getNumOperands(); j != je; ++j)
+      if (MD == B->getOperand(j)) {
+        insert = false;
+        break;
+      }
+    if (insert)
+        MDs.push_back(MD);
   }
 
   // FIXME: This preserves long-standing behaviour, but is it really the right

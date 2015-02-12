@@ -115,6 +115,9 @@ class MetadataAsValue : public Value {
   MetadataAsValue(Type *Ty, Metadata *MD);
   ~MetadataAsValue();
 
+  /// \brief Drop use of metadata (during teardown).
+  void dropUse() { MD = nullptr; }
+
 public:
   static MetadataAsValue *get(LLVMContext &Context, Metadata *MD);
   static MetadataAsValue *getIfExists(LLVMContext &Context, Metadata *MD);
@@ -184,6 +187,11 @@ class ValueAsMetadata : public Metadata, ReplaceableMetadataImpl {
   friend class LLVMContextImpl;
 
   Value *V;
+
+  /// \brief Drop users without RAUW (during teardown).
+  void dropUsers() {
+    ReplaceableMetadataImpl::resolveAllUses(/* ResolveUsers */ false);
+  }
 
 protected:
   ValueAsMetadata(unsigned ID, Value *V)
@@ -685,6 +693,7 @@ public:
   static AAMDNodes getMostGenericAA(const AAMDNodes &A, const AAMDNodes &B);
   static MDNode *getMostGenericFPMath(MDNode *A, MDNode *B);
   static MDNode *getMostGenericRange(MDNode *A, MDNode *B);
+  static MDNode *getMostGenericAliasScope(MDNode *A, MDNode *B);
 };
 
 /// \brief Uniquable metadata node.
@@ -886,7 +895,7 @@ class MDNodeFwdDecl : public MDNode, ReplaceableMetadataImpl {
 public:
   ~MDNodeFwdDecl() { dropAllReferences(); }
 
-  // MSVC doesn't seem to see the alternaive: "using MDNode::operator delete".
+  // MSVC doesn't see the alternative: "using MDNode::operator delete".
   void operator delete(void *Mem) { MDNode::operator delete(Mem); }
 
   static MDNodeFwdDecl *get(LLVMContext &Context, ArrayRef<Metadata *> MDs) {

@@ -22,7 +22,7 @@
 ; X86-NEXT: L{{.*}}:
 ; X86-NEXT: [[END_OF_F:^L.*]]:
 ;
-; X86-LABEL: .section        .debug$S,"rd"
+; X86-LABEL: .section        .debug$S,"dr"
 ; X86-NEXT: .long   4
 ; Symbol subsection
 ; X86-NEXT: .long   241
@@ -127,7 +127,7 @@
 ; X64-NEXT: .L{{.*}}:
 ; X64-NEXT: [[END_OF_F:.*]]:
 ;
-; X64-LABEL: .section        .debug$S,"rd"
+; X64-LABEL: .section        .debug$S,"dr"
 ; X64-NEXT: .long   4
 ; Symbol subsection
 ; X64-NEXT: .long   241
@@ -251,6 +251,6 @@ attributes #2 = { nounwind }
 !9 = !{i32 2, !"Dwarf Version", i32 4}
 !10 = !{i32 1, !"Debug Info Version", i32 2}
 !11 = !{!"clang version 3.5 "}
-!12 = !{i32 4, i32 0, !4, null}
-!13 = !{i32 5, i32 0, !4, null}
-!14 = !{i32 6, i32 0, !4, null}
+!12 = !MDLocation(line: 4, scope: !4)
+!13 = !MDLocation(line: 5, scope: !4)
+!14 = !MDLocation(line: 6, scope: !4)

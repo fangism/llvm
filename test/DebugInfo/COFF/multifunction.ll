@@ -53,7 +53,7 @@
 ; X86-NEXT: L{{.*}}:
 ; X86-NEXT: [[END_OF_F:.*]]:
 ;
-; X86-LABEL: .section        .debug$S,"rd"
+; X86-LABEL: .section        .debug$S,"dr"
 ; X86-NEXT: .long   4
 ; Symbol subsection for x
 ; X86-NEXT: .long   241
@@ -317,7 +317,7 @@
 ; X64-NEXT: .L{{.*}}:
 ; X64-NEXT: [[END_OF_F:.*]]:
 ;
-; X64-LABEL: .section        .debug$S,"rd"
+; X64-LABEL: .section        .debug$S,"dr"
 ; X64-NEXT: .long   4
 ; Symbol subsection for x
 ; X64-NEXT: .long   241
@@ -596,11 +596,11 @@ attributes #1 = { "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "
 !11 = !{i32 2, !"Dwarf Version", i32 4}
 !12 = !{i32 1, !"Debug Info Version", i32 2}
 !13 = !{!"clang version 3.5 "}
-!14 = !{i32 4, i32 0, !4, null}
-!15 = !{i32 5, i32 0, !4, null}
-!16 = !{i32 8, i32 0, !9, null}
-!17 = !{i32 9, i32 0, !9, null}
-!18 = !{i32 12, i32 0, !10, null}
-!19 = !{i32 13, i32 0, !10, null}
-!20 = !{i32 14, i32 0, !10, null}
-!21 = !{i32 15, i32 0, !10, null}
+!14 = !MDLocation(line: 4, scope: !4)
+!15 = !MDLocation(line: 5, scope: !4)
+!16 = !MDLocation(line: 8, scope: !9)
+!17 = !MDLocation(line: 9, scope: !9)
+!18 = !MDLocation(line: 12, scope: !10)
+!19 = !MDLocation(line: 13, scope: !10)
+!20 = !MDLocation(line: 14, scope: !10)
+!21 = !MDLocation(line: 15, scope: !10)

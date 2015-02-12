@@ -6,7 +6,7 @@
 ; CHECK:    .section  .apple_types
 
 ; RUN: llc -mtriple=i686-pc-win32 -filetype=asm -O0 < %s | FileCheck -check-prefix=WIN32 %s
-; WIN32:    .section .debug$S,"rd"
+; WIN32:    .section .debug$S,"dr"
 
 ; RUN: llc -mtriple=i686-pc-win32 -filetype=null -O0 < %s
 
@@ -39,5 +39,5 @@ attributes #0 = { nounwind "less-precise-fpmad"="false" "no-frame-pointer-elim"=
 !7 = !{!8}
 !8 = !{!"0x24\00int\000\0032\0032\000\000\005", null, null} ; [ DW_TAG_base_type ] [int] [line 0, size 32, align 32, offset 0, enc DW_ATE_signed]
 !9 = !{i32 2, !"Dwarf Version", i32 3}
-!10 = !{i32 3, i32 0, !4, null}
+!10 = !MDLocation(line: 3, scope: !4)
 !11 = !{i32 1, !"Debug Info Version", i32 2}
