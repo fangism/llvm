@@ -39,6 +39,16 @@ def RetCC_X86Common : CallingConv<[
   CCIfType<[i32], CCAssignToReg<[EAX, EDX, ECX]>>,
   CCIfType<[i64], CCAssignToReg<[RAX, RDX, RCX]>>,
 
+  // Boolean vectors of AVX-512 are returned in SIMD registers.
+  // The call from AVX to AVX-512 function should work,
+  // since the boolean types in AVX/AVX2 are promoted by default.
+  CCIfType<[v2i1],  CCPromoteToType<v2i64>>,
+  CCIfType<[v4i1],  CCPromoteToType<v4i32>>,
+  CCIfType<[v8i1],  CCPromoteToType<v8i16>>,
+  CCIfType<[v16i1], CCPromoteToType<v16i8>>,
+  CCIfType<[v32i1], CCPromoteToType<v32i8>>,
+  CCIfType<[v64i1], CCPromoteToType<v64i8>>,
+
   // Vector types are returned in XMM0 and XMM1, when they fit.  XMM2 and XMM3
   // can only be used by ABI non-compliant code. If the target doesn't have XMM
   // registers, it won't have vector types.
@@ -258,6 +268,16 @@ def CC_X86_64_C : CallingConv<[
             CCIfSubtarget<"hasSSE2()",
             CCPromoteToType<v2i64>>>>,
 
+  // Boolean vectors of AVX-512 are passed in SIMD registers.
+  // The call from AVX to AVX-512 function should work,
+  // since the boolean types in AVX/AVX2 are promoted by default.
+  CCIfType<[v2i1],  CCPromoteToType<v2i64>>,
+  CCIfType<[v4i1],  CCPromoteToType<v4i32>>,
+  CCIfType<[v8i1],  CCPromoteToType<v8i16>>,
+  CCIfType<[v16i1], CCPromoteToType<v16i8>>,
+  CCIfType<[v32i1], CCPromoteToType<v32i8>>,
+  CCIfType<[v64i1], CCPromoteToType<v64i8>>,
+
   // The first 8 FP/Vector arguments are passed in XMM registers.
   CCIfType<[f32, f64, v16i8, v8i16, v4i32, v2i64, v4f32, v2f64],
             CCIfSubtarget<"hasSSE1()",
@@ -452,6 +472,16 @@ def CC_X86_32_Common : CallingConv<[
   // Long doubles get slots whose size depends on the subtarget.
   CCIfType<[f80], CCAssignToStack<0, 4>>,
 
+  // Boolean vectors of AVX-512 are passed in SIMD registers.
+  // The call from AVX to AVX-512 function should work,
+  // since the boolean types in AVX/AVX2 are promoted by default.
+  CCIfType<[v2i1],  CCPromoteToType<v2i64>>,
+  CCIfType<[v4i1],  CCPromoteToType<v4i32>>,
+  CCIfType<[v8i1],  CCPromoteToType<v8i16>>,
+  CCIfType<[v16i1], CCPromoteToType<v16i8>>,
+  CCIfType<[v32i1], CCPromoteToType<v32i8>>,
+  CCIfType<[v64i1], CCPromoteToType<v64i8>>,
+
   // The first 4 SSE vector arguments are passed in XMM registers.
   CCIfNotVarArg<CCIfType<[v16i8, v8i16, v4i32, v2i64, v4f32, v2f64],
                 CCAssignToReg<[XMM0, XMM1, XMM2, XMM3]>>>,
@@ -461,12 +491,20 @@ def CC_X86_32_Common : CallingConv<[
                 CCIfSubtarget<"hasFp256()",
                 CCAssignToReg<[YMM0, YMM1, YMM2, YMM3]>>>>,
 
+  // The first 4 AVX 512-bit vector arguments are passed in ZMM registers.
+  CCIfNotVarArg<CCIfType<[v64i8, v32i16, v16i32, v8i64, v16f32, v8f64],
+                CCAssignToReg<[ZMM0, ZMM1, ZMM2, ZMM3]>>>,
+
   // Other SSE vectors get 16-byte stack slots that are 16-byte aligned.
   CCIfType<[v16i8, v8i16, v4i32, v2i64, v4f32, v2f64], CCAssignToStack<16, 16>>,
 
   // 256-bit AVX vectors get 32-byte stack slots that are 32-byte aligned.
   CCIfType<[v32i8, v16i16, v8i32, v4i64, v8f32, v4f64],
            CCAssignToStack<32, 32>>,
+
+  // 512-bit AVX 512-bit vectors get 64-byte stack slots that are 64-byte aligned.
+  CCIfType<[v64i8, v32i16, v16i32, v8i64, v16f32, v8f64],
+           CCAssignToStack<64, 64>>,
 
   // __m64 vectors get 8-byte stack slots that are 4-byte aligned. They are
   // passed in the parameter area.
@@ -625,6 +663,9 @@ def CC_Intel_OCL_BI : CallingConv<[
   // The 512-bit vector arguments are passed in ZMM registers.
   CCIfType<[v16f32, v8f64, v16i32, v8i64],
            CCAssignToReg<[ZMM0, ZMM1, ZMM2, ZMM3]>>,
+
+  // Pass masks in mask registers
+  CCIfType<[v16i1, v8i1], CCAssignToReg<[K1]>>,
 
   CCIfSubtarget<"isTargetWin64()", CCDelegateTo<CC_X86_Win64_C>>,
   CCIfSubtarget<"is64Bit()",       CCDelegateTo<CC_X86_64_C>>,

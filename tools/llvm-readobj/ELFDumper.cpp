@@ -207,6 +207,7 @@ static const EnumEntry<unsigned> ElfOSABI[] = {
   { "NSK",          ELF::ELFOSABI_NSK          },
   { "AROS",         ELF::ELFOSABI_AROS         },
   { "FenixOS",      ELF::ELFOSABI_FENIXOS      },
+  { "CloudABI",     ELF::ELFOSABI_CLOUDABI     },
   { "C6000_ELFABI", ELF::ELFOSABI_C6000_ELFABI },
   { "C6000_LINUX" , ELF::ELFOSABI_C6000_LINUX  },
   { "ARM",          ELF::ELFOSABI_ARM          },
@@ -372,9 +373,10 @@ static const EnumEntry<unsigned> ElfMachineType[] = {
 };
 
 static const EnumEntry<unsigned> ElfSymbolBindings[] = {
-  { "Local",  ELF::STB_LOCAL  },
-  { "Global", ELF::STB_GLOBAL },
-  { "Weak",   ELF::STB_WEAK   }
+  { "Local",  ELF::STB_LOCAL        },
+  { "Global", ELF::STB_GLOBAL       },
+  { "Weak",   ELF::STB_WEAK         },
+  { "Unique", ELF::STB_GNU_UNIQUE   }
 };
 
 static const EnumEntry<unsigned> ElfSymbolTypes[] = {
@@ -780,6 +782,7 @@ static const char *getTypeString(uint64_t Type) {
   LLVM_READOBJ_TYPE_CASE(MIPS_GOTSYM);
   LLVM_READOBJ_TYPE_CASE(MIPS_RLD_MAP);
   LLVM_READOBJ_TYPE_CASE(MIPS_PLTGOT);
+  LLVM_READOBJ_TYPE_CASE(MIPS_OPTIONS);
   default: return "unknown";
   }
 }
@@ -871,6 +874,7 @@ static void printValue(const ELFFile<ELFT> *O, uint64_t Type, uint64_t Value,
   case DT_MIPS_GOTSYM:
   case DT_MIPS_RLD_MAP:
   case DT_MIPS_PLTGOT:
+  case DT_MIPS_OPTIONS:
     OS << format("0x%" PRIX64, Value);
     break;
   case DT_RELCOUNT:

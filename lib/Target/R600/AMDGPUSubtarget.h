@@ -22,13 +22,14 @@
 #include "R600ISelLowering.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 
 #define GET_SUBTARGETINFO_HEADER
 #include "AMDGPUGenSubtargetInfo.inc"
 
 namespace llvm {
+
+class SIMachineFunctionInfo;
 
 class AMDGPUSubtarget : public AMDGPUGenSubtargetInfo {
 
@@ -43,6 +44,10 @@ public:
     VOLCANIC_ISLANDS,
   };
 
+  enum {
+    FIXED_SGPR_COUNT_FOR_INIT_BUG = 80
+  };
+
 private:
   std::string DevName;
   bool Is64bit;
@@ -54,6 +59,7 @@ private:
   bool FP64;
   bool FP64Denormals;
   bool FP32Denormals;
+  bool FastFMAF32;
   bool CaymanISA;
   bool FlatAddressSpace;
   bool EnableIRStructurizer;
@@ -63,8 +69,14 @@ private:
   unsigned WavefrontSize;
   bool CFALUBug;
   int LocalMemorySize;
+  bool EnableVGPRSpilling;
+  bool SGPRInitBug;
+  bool IsGCN;
+  bool GCN1Encoding;
+  bool GCN3Encoding;
+  bool CIInsts;
+  bool FeatureDisable;
 
-  const DataLayout DL;
   AMDGPUFrameLowering FrameLowering;
   std::unique_ptr<AMDGPUTargetLowering> TLInfo;
   std::unique_ptr<AMDGPUInstrInfo> InstrInfo;
@@ -73,7 +85,8 @@ private:
 
 public:
   AMDGPUSubtarget(StringRef TT, StringRef CPU, StringRef FS, TargetMachine &TM);
-  AMDGPUSubtarget &initializeSubtargetDependencies(StringRef GPU, StringRef FS);
+  AMDGPUSubtarget &initializeSubtargetDependencies(StringRef TT, StringRef GPU,
+                                                   StringRef FS);
 
   const AMDGPUFrameLowering *getFrameLowering() const override {
     return &FrameLowering;
@@ -87,7 +100,6 @@ public:
   AMDGPUTargetLowering *getTargetLowering() const override {
     return TLInfo.get();
   }
-  const DataLayout *getDataLayout() const override { return &DL; }
   const InstrItineraryData *getInstrItineraryData() const override {
     return &InstrItins;
   }
@@ -124,6 +136,10 @@ public:
 
   bool hasFP64Denormals() const {
     return FP64Denormals;
+  }
+
+  bool hasFastFMAF32() const {
+    return FastFMAF32;
   }
 
   bool hasFlatAddressSpace() const {
@@ -169,6 +185,14 @@ public:
     return (getGeneration() >= EVERGREEN);
   }
 
+  bool hasCARRY() const {
+    return (getGeneration() >= EVERGREEN);
+  }
+
+  bool hasBORROW() const {
+    return (getGeneration() >= EVERGREEN);
+  }
+
   bool IsIRStructurizerEnabled() const {
     return EnableIRStructurizer;
   }
@@ -200,11 +224,19 @@ public:
     return LocalMemorySize;
   }
 
+  bool hasSGPRInitBug() const {
+    return SGPRInitBug;
+  }
+
   unsigned getAmdKernelCodeChipID() const;
 
   bool enableMachineScheduler() const override {
-    return getGeneration() <= NORTHERN_ISLANDS;
+    return true;
   }
+
+  void overrideSchedPolicy(MachineSchedPolicy &Policy,
+                           MachineInstr *begin, MachineInstr *end,
+                           unsigned NumRegionInstrs) const override;
 
   // Helper functions to simplify if statements
   bool isTargetELF() const {
@@ -223,6 +255,19 @@ public:
   }
   bool isAmdHsaOS() const {
     return TargetTriple.getOS() == Triple::AMDHSA;
+  }
+  bool isVGPRSpillingEnabled(const SIMachineFunctionInfo *MFI) const;
+
+  unsigned getMaxWavesPerCU() const {
+    if (getGeneration() >= AMDGPUSubtarget::SOUTHERN_ISLANDS)
+      return 10;
+
+    // FIXME: Not sure what this is for other subtagets.
+    llvm_unreachable("do not know max waves per CU for this subtarget.");
+  }
+
+  bool enableSubRegLiveness() const override {
+    return false;
   }
 };
 

@@ -37,6 +37,7 @@ add_llvm_library(LLVMSupport
   BlockFrequency.cpp
   BranchProbability.cpp
   circular_raw_ostream.cpp
+  COM.cpp
   CommandLine.cpp
   Compression.cpp
   ConvertUTF.c
@@ -59,8 +60,6 @@ add_llvm_library(LLVMSupport
   IntEqClasses.cpp
   IntervalMap.cpp
   IntrusiveRefCntPtr.cpp
-  IsInf.cpp
-  IsNAN.cpp
   LEB128.cpp
   LineIterator.cpp
   Locale.cpp
@@ -121,33 +120,14 @@ add_llvm_library(LLVMSupport
   TimeValue.cpp
   Valgrind.cpp
   Watchdog.cpp
-
-  ADDITIONAL_HEADERS
-  Unix/Host.inc
-  Unix/Memory.inc
-  Unix/Mutex.inc
-  Unix/Path.inc
-  Unix/Process.inc
-  Unix/Program.inc
-  Unix/RWMutex.inc
-  Unix/Signals.inc
-  Unix/ThreadLocal.inc
-  Unix/TimeValue.inc
-  Unix/Watchdog.inc
-  Windows/DynamicLibrary.inc
-  Windows/Host.inc
-  Windows/Memory.inc
-  Windows/Mutex.inc
-  Windows/Path.inc
-  Windows/Process.inc
-  Windows/Program.inc
-  Windows/RWMutex.inc
-  Windows/Signals.inc
-  Windows/ThreadLocal.inc
-  Windows/TimeValue.inc
-  Windows/Watchdog.inc
 # fang's debugging tools
   stacktrace.cc
+
+  ADDITIONAL_HEADER_DIRS
+  Unix
+  Windows
+  ${LLVM_MAIN_INCLUDE_DIR}/llvm/Support
+
   LINK_LIBS ${system_libs}
   )
 

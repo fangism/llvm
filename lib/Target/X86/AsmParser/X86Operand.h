@@ -187,6 +187,13 @@ struct X86Operand : public MCParsedAsmOperand {
     return isImmSExti64i32Value(CE->getValue());
   }
 
+  bool isImmUnsignedi8() const {
+    if (!isImm()) return false;
+    const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(getImm());
+    if (!CE) return false;
+    return isImmUnsignedi8Value(CE->getValue());
+  }
+
   bool isOffsetOf() const override {
     return OffsetOfLoc.getPointer();
   }
@@ -253,13 +260,12 @@ struct X86Operand : public MCParsedAsmOperand {
     return Kind == Memory && !getMemSegReg() && !getMemBaseReg() &&
       !getMemIndexReg() && getMemScale() == 1;
   }
+  bool isAVX512RC() const{
+      return isImm();
+  }
 
   bool isAbsMem16() const {
     return isAbsMem() && Mem.ModeSize == 16;
-  }
-
-  bool isAbsMem32() const {
-    return isAbsMem() && Mem.ModeSize != 16;
   }
 
   bool isSrcIdx() const {
@@ -391,7 +397,10 @@ struct X86Operand : public MCParsedAsmOperand {
       RegNo = getGR32FromGR64(RegNo);
     Inst.addOperand(MCOperand::CreateReg(RegNo));
   }
-
+  void addAVX512RCOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    addExpr(Inst, getImm());
+  }
   void addImmOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     addExpr(Inst, getImm());

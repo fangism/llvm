@@ -177,6 +177,20 @@ protected:
     return DRI;
   }
 
+  bool isExportedToOtherDSO(const Elf_Sym *ESym) const {
+    unsigned char Binding = ESym->getBinding();
+    unsigned char Visibility = ESym->getVisibility();
+
+    // A symbol is exported if its binding is either GLOBAL or WEAK, and its
+    // visibility is either DEFAULT or PROTECTED. All other symbols are not
+    // exported.
+    if ((Binding == ELF::STB_GLOBAL || Binding == ELF::STB_WEAK) &&
+        (Visibility == ELF::STV_DEFAULT || Visibility == ELF::STV_PROTECTED))
+      return true;
+
+    return false;
+  }
+
   // This flag is used for classof, to distinguish ELFObjectFile from
   // its subclass. If more subclasses will be created, this flag will
   // have to become an enum.
@@ -300,8 +314,11 @@ std::error_code ELFObjectFile<ELFT>::getSymbolAddress(DataRefImpl Symb,
       ESym->getType() == ELF::STT_FUNC)
     Result &= ~1;
 
-  if (Header->e_type == ELF::ET_REL)
-    Result += EF.getSection(ESym)->sh_addr;
+  if (Header->e_type == ELF::ET_REL) {
+    const typename ELFFile<ELFT>::Elf_Shdr * Section = EF.getSection(ESym);
+    if (Section != nullptr)
+      Result += Section->sh_addr;
+  }
 
   return object_error::success;
 }
@@ -388,6 +405,12 @@ uint32_t ELFObjectFile<ELFT>::getSymbolFlags(DataRefImpl Symb) const {
   if (ESym->getType() == ELF::STT_COMMON ||
       EF.getSymbolTableIndex(ESym) == ELF::SHN_COMMON)
     Result |= SymbolRef::SF_Common;
+
+  if (isExportedToOtherDSO(ESym))
+    Result |= SymbolRef::SF_Exported;
+
+  if (ESym->getVisibility() == ELF::STV_HIDDEN)
+    Result |= SymbolRef::SF_Hidden;
 
   return Result;
 }
@@ -908,7 +931,7 @@ unsigned ELFObjectFile<ELFT>::getArch() const {
 
   case ELF::EM_SPARC:
   case ELF::EM_SPARC32PLUS:
-    return Triple::sparc;
+    return IsLittleEndian ? Triple::sparcel : Triple::sparc;
   case ELF::EM_SPARCV9:
     return Triple::sparcv9;
 

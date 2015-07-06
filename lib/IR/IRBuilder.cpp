@@ -23,7 +23,8 @@ using namespace llvm;
 /// has array of i8 type filled in with the nul terminated string value
 /// specified.  If Name is specified, it is the name of the global variable
 /// created.
-Value *IRBuilderBase::CreateGlobalString(StringRef Str, const Twine &Name) {
+GlobalVariable *IRBuilderBase::CreateGlobalString(StringRef Str,
+                                                  const Twine &Name) {
   Constant *StrConstant = ConstantDataArray::getString(Context, Str);
   Module &M = *BB->getParent()->getParent();
   GlobalVariable *GV = new GlobalVariable(M, StrConstant->getType(),
@@ -231,48 +232,49 @@ CallInst *IRBuilderBase::CreateMaskedIntrinsic(unsigned Id,
 }
 
 CallInst *IRBuilderBase::CreateGCStatepoint(Value *ActualCallee,
-                                            ArrayRef<Value*> CallArgs,
-                                            ArrayRef<Value*> DeoptArgs,
-                                            ArrayRef<Value*> GCArgs,
-                                            const Twine& Name) {
- // Extract out the type of the callee.
- PointerType *FuncPtrType = cast<PointerType>(ActualCallee->getType());
- assert(isa<FunctionType>(FuncPtrType->getElementType()) &&
-        "actual callee must be a callable value");
+                                            ArrayRef<Value *> CallArgs,
+                                            ArrayRef<Value *> DeoptArgs,
+                                            ArrayRef<Value *> GCArgs,
+                                            const Twine &Name) {
+  // Extract out the type of the callee.
+  PointerType *FuncPtrType = cast<PointerType>(ActualCallee->getType());
+  assert(isa<FunctionType>(FuncPtrType->getElementType()) &&
+         "actual callee must be a callable value");
 
- 
- Module *M = BB->getParent()->getParent();
- // Fill in the one generic type'd argument (the function is also vararg)
- Type *ArgTypes[] = { FuncPtrType };
- Function *FnStatepoint =
-   Intrinsic::getDeclaration(M, Intrinsic::experimental_gc_statepoint,
-                             ArgTypes);
+  Module *M = BB->getParent()->getParent();
+  // Fill in the one generic type'd argument (the function is also vararg)
+  Type *ArgTypes[] = { FuncPtrType };
+  Function *FnStatepoint =
+    Intrinsic::getDeclaration(M, Intrinsic::experimental_gc_statepoint,
+                              ArgTypes);
 
- std::vector<llvm::Value *> args;
- args.push_back(ActualCallee);
- args.push_back(getInt32(CallArgs.size()));
- args.push_back(getInt32(0 /*unused*/));
- args.insert(args.end(), CallArgs.begin(), CallArgs.end());
- args.push_back(getInt32(DeoptArgs.size()));
- args.insert(args.end(), DeoptArgs.begin(), DeoptArgs.end());
- args.insert(args.end(), GCArgs.begin(), GCArgs.end());
+  std::vector<llvm::Value *> args;
+  args.push_back(ActualCallee);
+  args.push_back(getInt32(CallArgs.size()));
+  args.push_back(getInt32(0 /*unused*/));
+  args.insert(args.end(), CallArgs.begin(), CallArgs.end());
+  args.push_back(getInt32(DeoptArgs.size()));
+  args.insert(args.end(), DeoptArgs.begin(), DeoptArgs.end());
+  args.insert(args.end(), GCArgs.begin(), GCArgs.end());
 
- return createCallHelper(FnStatepoint, args, this, Name);
+  return createCallHelper(FnStatepoint, args, this, Name);
+}
+
+CallInst *IRBuilderBase::CreateGCStatepoint(Value *ActualCallee,
+                                            ArrayRef<Use> CallArgs,
+                                            ArrayRef<Value *> DeoptArgs,
+                                            ArrayRef<Value *> GCArgs,
+                                            const Twine &Name) {
+  std::vector<Value *> VCallArgs;
+  for (auto &U : CallArgs)
+    VCallArgs.push_back(U.get());
+  return CreateGCStatepoint(ActualCallee, VCallArgs, DeoptArgs, GCArgs, Name);
 }
 
 CallInst *IRBuilderBase::CreateGCResult(Instruction *Statepoint,
                                        Type *ResultType,
                                        const Twine &Name) {
- Intrinsic::ID ID;
- if (ResultType->isIntegerTy()) {
-   ID = Intrinsic::experimental_gc_result_int;
- } else if (ResultType->isFloatingPointTy()) {
-   ID = Intrinsic::experimental_gc_result_float;
- } else if (ResultType->isPointerTy()) {
-   ID = Intrinsic::experimental_gc_result_ptr;
- } else {
-   llvm_unreachable("unimplemented result type for gc.result");
- }
+ Intrinsic::ID ID = Intrinsic::experimental_gc_result;
  Module *M = BB->getParent()->getParent();
  Type *Types[] = {ResultType};
  Value *FnGCResult = Intrinsic::getDeclaration(M, ID, Types);

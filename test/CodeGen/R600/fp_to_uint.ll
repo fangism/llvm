@@ -1,5 +1,6 @@
 ; RUN: llc -march=r600 -mcpu=redwood < %s | FileCheck %s -check-prefix=EG -check-prefix=FUNC
 ; RUN: llc -march=amdgcn -mcpu=SI -verify-machineinstrs < %s | FileCheck %s -check-prefix=SI -check-prefix=FUNC
+; RUN: llc -march=amdgcn -mcpu=tonga -verify-machineinstrs < %s | FileCheck %s -check-prefix=SI -check-prefix=FUNC
 
 ; FUNC-LABEL: {{^}}fp_to_uint_f32_to_i32:
 ; EG: FLT_TO_UINT {{\** *}}T{{[0-9]+\.[XYZW], PV\.[XYZW]}}
@@ -35,7 +36,7 @@ define void @fp_to_uint_v2f32_to_v2i32(<2 x i32> addrspace(1)* %out, <2 x float>
 ; SI: v_cvt_u32_f32_e32
 
 define void @fp_to_uint_v4f32_to_v4i32(<4 x i32> addrspace(1)* %out, <4 x float> addrspace(1)* %in) {
-  %value = load <4 x float> addrspace(1) * %in
+  %value = load <4 x float>, <4 x float> addrspace(1) * %in
   %result = fptoui <4 x float> %value to <4 x i32>
   store <4 x i32> %result, <4 x i32> addrspace(1)* %out
   ret void

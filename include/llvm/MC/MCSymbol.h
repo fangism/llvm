@@ -15,6 +15,7 @@
 #define LLVM_MC_MCSYMBOL_H
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/Support/Compiler.h"
 
 namespace llvm {
@@ -24,7 +25,7 @@ namespace llvm {
   class raw_ostream;
 
   /// MCSymbol - Instances of this class represent a symbol name in the MC file,
-  /// and MCSymbols are created and unique'd by the MCContext class.  MCSymbols
+  /// and MCSymbols are created and uniqued by the MCContext class.  MCSymbols
   /// should only be constructed with valid names for the object file.
   ///
   /// If the symbol is defined/emitted into the current translation unit, the
@@ -42,8 +43,9 @@ namespace llvm {
 
     /// Section - The section the symbol is defined in. This is null for
     /// undefined symbols, and the special AbsolutePseudoSection value for
-    /// absolute symbols.
-    const MCSection *Section;
+    /// absolute symbols. If this is a variable symbol, this caches the
+    /// variable value's section.
+    mutable const MCSection *Section;
 
     /// Value - If non-null, the value for a variable symbol.
     const MCExpr *Value;
@@ -66,13 +68,19 @@ namespace llvm {
       : Name(name), Section(nullptr), Value(nullptr),
         IsTemporary(isTemporary), IsRedefinable(false), IsUsed(false) {}
 
-    MCSymbol(const MCSymbol&) LLVM_DELETED_FUNCTION;
-    void operator=(const MCSymbol&) LLVM_DELETED_FUNCTION;
+    MCSymbol(const MCSymbol&) = delete;
+    void operator=(const MCSymbol&) = delete;
+    const MCSection *getSectionPtr() const {
+      if (Section || !Value)
+        return Section;
+      return Section = Value->FindAssociatedSection();
+    }
+
   public:
     /// getName - Get the symbol name.
     StringRef getName() const { return Name; }
 
-    /// @name Accessors
+    /// \name Accessors
     /// @{
 
     /// isTemporary - Check if this is an assembler temporary symbol.
@@ -96,14 +104,14 @@ namespace llvm {
     }
 
     /// @}
-    /// @name Associated Sections
+    /// \name Associated Sections
     /// @{
 
     /// isDefined - Check if this symbol is defined (i.e., it has an address).
     ///
     /// Defined symbols are either absolute or in some section.
     bool isDefined() const {
-      return Section != nullptr;
+      return getSectionPtr() != nullptr;
     }
 
     /// isInSection - Check if this symbol is defined in some section (i.e., it
@@ -119,29 +127,29 @@ namespace llvm {
 
     /// isAbsolute - Check if this is an absolute symbol.
     bool isAbsolute() const {
-      return Section == AbsolutePseudoSection;
+      return getSectionPtr() == AbsolutePseudoSection;
     }
 
     /// getSection - Get the section associated with a defined, non-absolute
     /// symbol.
     const MCSection &getSection() const {
       assert(isInSection() && "Invalid accessor!");
-      return *Section;
+      return *getSectionPtr();
     }
 
     /// setSection - Mark the symbol as defined in the section \p S.
-    void setSection(const MCSection &S) { Section = &S; }
+    void setSection(const MCSection &S) {
+      assert(!isVariable() && "Cannot set section of variable");
+      Section = &S;
+    }
 
     /// setUndefined - Mark the symbol as undefined.
     void setUndefined() {
       Section = nullptr;
     }
 
-    /// setAbsolute - Mark the symbol as absolute.
-    void setAbsolute() { Section = AbsolutePseudoSection; }
-
     /// @}
-    /// @name Variable Symbols
+    /// \name Variable Symbols
     /// @{
 
     /// isVariable - Check if this is a variable symbol.
@@ -155,11 +163,6 @@ namespace llvm {
       IsUsed = true;
       return Value;
     }
-
-    // AliasedSymbol() - If this is an alias (a = b), return the symbol
-    // we ultimately point to. For a non-alias, this just returns the symbol
-    // itself.
-    const MCSymbol &AliasedSymbol() const;
 
     void setVariableValue(const MCExpr *Value);
 

@@ -50,8 +50,8 @@ template<class T> class SmallVectorImpl;
 /// TargetInstrInfo - Interface to description of machine instruction set
 ///
 class TargetInstrInfo : public MCInstrInfo {
-  TargetInstrInfo(const TargetInstrInfo &) LLVM_DELETED_FUNCTION;
-  void operator=(const TargetInstrInfo &) LLVM_DELETED_FUNCTION;
+  TargetInstrInfo(const TargetInstrInfo &) = delete;
+  void operator=(const TargetInstrInfo &) = delete;
 public:
   TargetInstrInfo(int CFSetupOpcode = -1, int CFDestroyOpcode = -1)
     : CallFrameSetupOpcode(CFSetupOpcode),
@@ -67,9 +67,11 @@ public:
                                          const TargetRegisterInfo *TRI,
                                          const MachineFunction &MF) const;
 
-  /// isTriviallyReMaterializable - Return true if the instruction is trivially
-  /// rematerializable, meaning it has no side effects and requires no operands
-  /// that aren't always available.
+  /// Return true if the instruction is trivially rematerializable, meaning it
+  /// has no side effects and requires no operands that aren't always available.
+  /// This means the only allowed uses are constants and unallocatable physical
+  /// registers so that the instructions result is independent of the place
+  /// in the function.
   bool isTriviallyReMaterializable(const MachineInstr *MI,
                                    AliasAnalysis *AA = nullptr) const {
     return MI->getOpcode() == TargetOpcode::IMPLICIT_DEF ||
@@ -79,12 +81,13 @@ public:
   }
 
 protected:
-  /// isReallyTriviallyReMaterializable - For instructions with opcodes for
-  /// which the M_REMATERIALIZABLE flag is set, this hook lets the target
-  /// specify whether the instruction is actually trivially rematerializable,
-  /// taking into consideration its operands. This predicate must return false
-  /// if the instruction has any side effects other than producing a value, or
-  /// if it requres any address registers that are not always available.
+  /// For instructions with opcodes for which the M_REMATERIALIZABLE flag is
+  /// set, this hook lets the target specify whether the instruction is actually
+  /// trivially rematerializable, taking into consideration its operands. This
+  /// predicate must return false if the instruction has any side effects other
+  /// than producing a value, or if it requres any address registers that are
+  /// not always available.
+  /// Requirements must be check as stated in isTriviallyReMaterializable() .
   virtual bool isReallyTriviallyReMaterializable(const MachineInstr *MI,
                                                  AliasAnalysis *AA) const {
     return false;
@@ -207,7 +210,7 @@ public:
   /// this, particularly to support spilled vector registers.
   virtual bool getStackSlotRange(const TargetRegisterClass *RC, unsigned SubIdx,
                                  unsigned &Size, unsigned &Offset,
-                                 const TargetMachine *TM) const;
+                                 const MachineFunction &MF) const;
 
   /// isAsCheapAsAMove - Return true if the instruction is as cheap as a move
   /// instruction.
@@ -672,16 +675,15 @@ public:
   /// operand folded, otherwise NULL is returned.
   /// The new instruction is inserted before MI, and the client is responsible
   /// for removing the old instruction.
-  MachineInstr* foldMemoryOperand(MachineBasicBlock::iterator MI,
-                                  const SmallVectorImpl<unsigned> &Ops,
-                                  int FrameIndex) const;
+  MachineInstr *foldMemoryOperand(MachineBasicBlock::iterator MI,
+                                  ArrayRef<unsigned> Ops, int FrameIndex) const;
 
   /// foldMemoryOperand - Same as the previous version except it allows folding
   /// of any load and store from / to any address, not just from a specific
   /// stack slot.
-  MachineInstr* foldMemoryOperand(MachineBasicBlock::iterator MI,
-                                  const SmallVectorImpl<unsigned> &Ops,
-                                  MachineInstr* LoadMI) const;
+  MachineInstr *foldMemoryOperand(MachineBasicBlock::iterator MI,
+                                  ArrayRef<unsigned> Ops,
+                                  MachineInstr *LoadMI) const;
 
   /// hasPattern - return true when there is potentially a faster code sequence
   /// for an instruction chain ending in \p Root. All potential pattern are
@@ -723,20 +725,20 @@ protected:
   /// foldMemoryOperandImpl - Target-dependent implementation for
   /// foldMemoryOperand. Target-independent code in foldMemoryOperand will
   /// take care of adding a MachineMemOperand to the newly created instruction.
-  virtual MachineInstr* foldMemoryOperandImpl(MachineFunction &MF,
-                                          MachineInstr* MI,
-                                          const SmallVectorImpl<unsigned> &Ops,
-                                          int FrameIndex) const {
+  virtual MachineInstr *foldMemoryOperandImpl(MachineFunction &MF,
+                                              MachineInstr *MI,
+                                              ArrayRef<unsigned> Ops,
+                                              int FrameIndex) const {
     return nullptr;
   }
 
   /// foldMemoryOperandImpl - Target-dependent implementation for
   /// foldMemoryOperand. Target-independent code in foldMemoryOperand will
   /// take care of adding a MachineMemOperand to the newly created instruction.
-  virtual MachineInstr* foldMemoryOperandImpl(MachineFunction &MF,
-                                              MachineInstr* MI,
-                                          const SmallVectorImpl<unsigned> &Ops,
-                                              MachineInstr* LoadMI) const {
+  virtual MachineInstr *foldMemoryOperandImpl(MachineFunction &MF,
+                                              MachineInstr *MI,
+                                              ArrayRef<unsigned> Ops,
+                                              MachineInstr *LoadMI) const {
     return nullptr;
   }
 
@@ -786,9 +788,8 @@ protected:
 public:
   /// canFoldMemoryOperand - Returns true for the specified load / store if
   /// folding is possible.
-  virtual
-  bool canFoldMemoryOperand(const MachineInstr *MI,
-                            const SmallVectorImpl<unsigned> &Ops) const;
+  virtual bool canFoldMemoryOperand(const MachineInstr *MI,
+                                    ArrayRef<unsigned> Ops) const;
 
   /// unfoldMemoryOperand - Separate a single instruction which folded a load or
   /// a store or a load and a store into two or more instruction. If this is

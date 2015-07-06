@@ -32,7 +32,8 @@ ARMSelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, SDLoc dl,
                                              bool isVolatile, bool AlwaysInline,
                                              MachinePointerInfo DstPtrInfo,
                                           MachinePointerInfo SrcPtrInfo) const {
-  const ARMSubtarget &Subtarget = DAG.getTarget().getSubtarget<ARMSubtarget>();
+  const ARMSubtarget &Subtarget =
+      DAG.getMachineFunction().getSubtarget<ARMSubtarget>();
   // Do repeated 4-byte loads and stores. To be improved.
   // This requires 4-byte alignment.
   if ((Align & 3) != 0)
@@ -66,7 +67,7 @@ ARMSelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, SDLoc dl,
          i < MAX_LOADS_IN_LDM && EmittedNumMemOps + i < NumMemOps; ++i) {
       Loads[i] = DAG.getLoad(VT, dl, Chain,
                              DAG.getNode(ISD::ADD, dl, MVT::i32, Src,
-                                         DAG.getConstant(SrcOff, MVT::i32)),
+                                         DAG.getConstant(SrcOff, dl, MVT::i32)),
                              SrcPtrInfo.getWithOffset(SrcOff), isVolatile,
                              false, false, 0);
       TFOps[i] = Loads[i].getValue(1);
@@ -79,7 +80,7 @@ ARMSelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, SDLoc dl,
          i < MAX_LOADS_IN_LDM && EmittedNumMemOps + i < NumMemOps; ++i) {
       TFOps[i] = DAG.getStore(Chain, dl, Loads[i],
                               DAG.getNode(ISD::ADD, dl, MVT::i32, Dst,
-                                          DAG.getConstant(DstOff, MVT::i32)),
+                                          DAG.getConstant(DstOff, dl, MVT::i32)),
                               DstPtrInfo.getWithOffset(DstOff),
                               isVolatile, false, 0);
       DstOff += VTSize;
@@ -107,7 +108,7 @@ ARMSelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, SDLoc dl,
 
     Loads[i] = DAG.getLoad(VT, dl, Chain,
                            DAG.getNode(ISD::ADD, dl, MVT::i32, Src,
-                                       DAG.getConstant(SrcOff, MVT::i32)),
+                                       DAG.getConstant(SrcOff, dl, MVT::i32)),
                            SrcPtrInfo.getWithOffset(SrcOff),
                            false, false, false, 0);
     TFOps[i] = Loads[i].getValue(1);
@@ -131,7 +132,7 @@ ARMSelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, SDLoc dl,
 
     TFOps[i] = DAG.getStore(Chain, dl, Loads[i],
                             DAG.getNode(ISD::ADD, dl, MVT::i32, Dst,
-                                        DAG.getConstant(DstOff, MVT::i32)),
+                                        DAG.getConstant(DstOff, dl, MVT::i32)),
                             DstPtrInfo.getWithOffset(DstOff), false, false, 0);
     ++i;
     DstOff += VTSize;
@@ -150,14 +151,14 @@ EmitTargetCodeForMemset(SelectionDAG &DAG, SDLoc dl,
                         SDValue Src, SDValue Size,
                         unsigned Align, bool isVolatile,
                         MachinePointerInfo DstPtrInfo) const {
-  const ARMSubtarget &Subtarget = DAG.getTarget().getSubtarget<ARMSubtarget>();
+  const ARMSubtarget &Subtarget =
+      DAG.getMachineFunction().getSubtarget<ARMSubtarget>();
   // Use default for non-AAPCS (or MachO) subtargets
   if (!Subtarget.isAAPCS_ABI() || Subtarget.isTargetMachO() ||
       Subtarget.isTargetWindows())
     return SDValue();
 
-  const ARMTargetLowering &TLI =
-      *DAG.getTarget().getSubtarget<ARMSubtarget>().getTargetLowering();
+  const ARMTargetLowering &TLI = *Subtarget.getTargetLowering();
   TargetLowering::ArgListTy Args;
   TargetLowering::ArgListEntry Entry;
 

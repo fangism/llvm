@@ -60,8 +60,10 @@ static uint64_t readAbbreviatedField(BitstreamCursor &Cursor,
   case BitCodeAbbrevOp::Blob:
     llvm_unreachable("Should not reach here");
   case BitCodeAbbrevOp::Fixed:
+    assert((unsigned)Op.getEncodingData() <= Cursor.MaxChunkSize);
     return Cursor.Read((unsigned)Op.getEncodingData());
   case BitCodeAbbrevOp::VBR:
+    assert((unsigned)Op.getEncodingData() <= Cursor.MaxChunkSize);
     return Cursor.ReadVBR64((unsigned)Op.getEncodingData());
   case BitCodeAbbrevOp::Char6:
     return BitCodeAbbrevOp::DecodeChar6(Cursor.Read(6));
@@ -79,9 +81,11 @@ static void skipAbbreviatedField(BitstreamCursor &Cursor,
   case BitCodeAbbrevOp::Blob:
     llvm_unreachable("Should not reach here");
   case BitCodeAbbrevOp::Fixed:
+    assert((unsigned)Op.getEncodingData() <= Cursor.MaxChunkSize);
     Cursor.Read((unsigned)Op.getEncodingData());
     break;
   case BitCodeAbbrevOp::VBR:
+    assert((unsigned)Op.getEncodingData() <= Cursor.MaxChunkSize);
     Cursor.ReadVBR64((unsigned)Op.getEncodingData());
     break;
   case BitCodeAbbrevOp::Char6:
@@ -170,8 +174,12 @@ unsigned BitstreamCursor::readRecord(unsigned AbbrevID,
   unsigned Code;
   if (CodeOp.isLiteral())
     Code = CodeOp.getLiteralValue();
-  else
+  else {
+    if (CodeOp.getEncoding() == BitCodeAbbrevOp::Array ||
+        CodeOp.getEncoding() == BitCodeAbbrevOp::Blob)
+      report_fatal_error("Abbreviation starts with an Array or a Blob");
     Code = readAbbreviatedField(*this, CodeOp);
+  }
 
   for (unsigned i = 1, e = Abbv->getNumOperandInfos(); i != e; ++i) {
     const BitCodeAbbrevOp &Op = Abbv->getOperandInfo(i);
@@ -191,8 +199,12 @@ unsigned BitstreamCursor::readRecord(unsigned AbbrevID,
       unsigned NumElts = ReadVBR(6);
 
       // Get the element encoding.
-      assert(i+2 == e && "array op not second to last?");
+      if (i+2 != e)
+       report_fatal_error("Array op not second to last");
       const BitCodeAbbrevOp &EltEnc = Abbv->getOperandInfo(++i);
+      if (EltEnc.getEncoding() == BitCodeAbbrevOp::Array ||
+          EltEnc.getEncoding() == BitCodeAbbrevOp::Blob)
+        report_fatal_error("Array element type can't be an Array or a Blob");
 
       // Read all the elements.
       for (; NumElts; --NumElts)
@@ -241,7 +253,7 @@ void BitstreamCursor::ReadAbbrevRecord() {
   BitCodeAbbrev *Abbv = new BitCodeAbbrev();
   unsigned NumOpInfo = ReadVBR(5);
   for (unsigned i = 0; i != NumOpInfo; ++i) {
-    bool IsLiteral = Read(1) ? true : false;
+    bool IsLiteral = Read(1);
     if (IsLiteral) {
       Abbv->Add(BitCodeAbbrevOp(ReadVBR64(8)));
       continue;
@@ -249,7 +261,7 @@ void BitstreamCursor::ReadAbbrevRecord() {
 
     BitCodeAbbrevOp::Encoding E = (BitCodeAbbrevOp::Encoding)Read(3);
     if (BitCodeAbbrevOp::hasEncodingData(E)) {
-      unsigned Data = ReadVBR64(5);
+      uint64_t Data = ReadVBR64(5);
 
       // As a special case, handle fixed(0) (i.e., a fixed field with zero bits)
       // and vbr(0) as a literal zero.  This is decoded the same way, and avoids
@@ -259,6 +271,11 @@ void BitstreamCursor::ReadAbbrevRecord() {
         Abbv->Add(BitCodeAbbrevOp(0));
         continue;
       }
+
+      if ((E == BitCodeAbbrevOp::Fixed || E == BitCodeAbbrevOp::VBR) &&
+          Data > MaxChunkSize)
+        report_fatal_error(
+            "Fixed or VBR abbrev record with size > MaxChunkData");
 
       Abbv->Add(BitCodeAbbrevOp(E, Data));
     } else

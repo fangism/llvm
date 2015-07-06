@@ -35,7 +35,8 @@ enum {
   SMRD = 1 << 16,
   DS = 1 << 17,
   MIMG = 1 << 18,
-  FLAT = 1 << 19
+  FLAT = 1 << 19,
+  WQM = 1 << 20
 };
 }
 
@@ -162,5 +163,9 @@ namespace SIOutMods {
 
 #define R_00B860_COMPUTE_TMPRING_SIZE                                   0x00B860
 #define   S_00B860_WAVESIZE(x)                                        (((x) & 0x1FFF) << 12)
+
+#define R_0286E8_SPI_TMPRING_SIZE                                       0x0286E8
+#define   S_0286E8_WAVESIZE(x)                                        (((x) & 0x1FFF) << 12)
+
 
 #endif

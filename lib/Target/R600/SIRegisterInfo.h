@@ -17,17 +17,19 @@
 #define LLVM_LIB_TARGET_R600_SIREGISTERINFO_H
 
 #include "AMDGPURegisterInfo.h"
+#include "AMDGPUSubtarget.h"
+#include "llvm/Support/Debug.h"
 
 namespace llvm {
 
 struct SIRegisterInfo : public AMDGPURegisterInfo {
 
-  SIRegisterInfo(const AMDGPUSubtarget &st);
+  SIRegisterInfo();
 
   BitVector getReservedRegs(const MachineFunction &MF) const override;
 
-  unsigned getRegPressureLimit(const TargetRegisterClass *RC,
-                               MachineFunction &MF) const override;
+  unsigned getRegPressureSetLimit(const MachineFunction &MF,
+                                  unsigned Idx) const override;
 
   bool requiresRegisterScavenging(const MachineFunction &Fn) const override;
 
@@ -105,13 +107,22 @@ struct SIRegisterInfo : public AMDGPURegisterInfo {
   unsigned getPreloadedValue(const MachineFunction &MF,
                              enum PreloadedValue Value) const;
 
+  /// \brief Give the maximum number of VGPRs that can be used by \p WaveCount
+  ///        concurrent waves.
+  unsigned getNumVGPRsAllowed(unsigned WaveCount) const;
+
+  /// \brief Give the maximum number of SGPRs that can be used by \p WaveCount
+  ///        concurrent waves.
+  unsigned getNumSGPRsAllowed(AMDGPUSubtarget::Generation gen,
+                              unsigned WaveCount) const;
+
   unsigned findUnusedRegister(const MachineRegisterInfo &MRI,
                               const TargetRegisterClass *RC) const;
 
 private:
   void buildScratchLoadStore(MachineBasicBlock::iterator MI,
                              unsigned LoadStoreOp, unsigned Value,
-                             unsigned ScratchPtr, unsigned ScratchOffset,
+                             unsigned ScratchRsrcReg, unsigned ScratchOffset,
                              int64_t Offset, RegScavenger *RS) const;
 };
 

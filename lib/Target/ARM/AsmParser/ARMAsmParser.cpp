@@ -276,6 +276,9 @@ class ARMAsmParser : public MCTargetAsmParser {
   bool hasD16() const {
     return STI.getFeatureBits() & ARM::FeatureD16;
   }
+  bool hasV8_1aOps() const {
+    return STI.getFeatureBits() & ARM::HasV8_1aOps;
+  }
 
   void SwitchMode() {
     uint64_t FB = ComputeAvailableFeatures(STI.ToggleFeature(ARM::ModeThumb));
@@ -342,10 +345,10 @@ public:
 
   };
 
-  ARMAsmParser(MCSubtargetInfo & _STI, MCAsmParser & _Parser,
+  ARMAsmParser(MCSubtargetInfo &STI, MCAsmParser &Parser,
                const MCInstrInfo &MII, const MCTargetOptions &Options)
-      : MCTargetAsmParser(), STI(_STI), MII(MII), UC(_Parser) {
-    MCAsmParserExtension::Initialize(_Parser);
+      : STI(STI), MII(MII), UC(Parser) {
+    MCAsmParserExtension::Initialize(Parser);
 
     // Cache the MCRegisterInfo.
     MRI = getContext().getRegisterInfo();
@@ -4424,11 +4427,6 @@ ARMAsmParser::parseModImm(OperandVector &Operands) {
   if (CE) {
     // Immediate must fit within 32-bits
     Imm1 = CE->getValue();
-    if (Imm1 < INT32_MIN || Imm1 > UINT32_MAX) {
-      Error(Sx1, "immediate operand must be representable with 32 bits");
-      return MatchOperand_ParseFail;
-    }
-
     int Enc = ARM_AM::getSOImmVal(Imm1);
     if (Enc != -1 && Parser.getTok().is(AsmToken::EndOfStatement)) {
       // We have a match!
@@ -5420,47 +5418,44 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic,
 /// inclusion of carry set or predication code operands.
 //
 // FIXME: It would be nice to autogen this.
-void ARMAsmParser::
-getMnemonicAcceptInfo(StringRef Mnemonic, StringRef FullInst,
-                     bool &CanAcceptCarrySet, bool &CanAcceptPredicationCode) {
-  if (Mnemonic == "and" || Mnemonic == "lsl" || Mnemonic == "lsr" ||
+void ARMAsmParser::getMnemonicAcceptInfo(StringRef Mnemonic, StringRef FullInst,
+                                         bool &CanAcceptCarrySet,
+                                         bool &CanAcceptPredicationCode) {
+  CanAcceptCarrySet =
+      Mnemonic == "and" || Mnemonic == "lsl" || Mnemonic == "lsr" ||
       Mnemonic == "rrx" || Mnemonic == "ror" || Mnemonic == "sub" ||
-      Mnemonic == "add" || Mnemonic == "adc" ||
-      Mnemonic == "mul" || Mnemonic == "bic" || Mnemonic == "asr" ||
-      Mnemonic == "orr" || Mnemonic == "mvn" ||
-      Mnemonic == "rsb" || Mnemonic == "rsc" || Mnemonic == "orn" ||
-      Mnemonic == "sbc" || Mnemonic == "eor" || Mnemonic == "neg" ||
-      Mnemonic == "vfm" || Mnemonic == "vfnm" ||
-      (!isThumb() && (Mnemonic == "smull" || Mnemonic == "mov" ||
-                      Mnemonic == "mla" || Mnemonic == "smlal" ||
-                      Mnemonic == "umlal" || Mnemonic == "umull"))) {
-    CanAcceptCarrySet = true;
-  } else
-    CanAcceptCarrySet = false;
+      Mnemonic == "add" || Mnemonic == "adc" || Mnemonic == "mul" ||
+      Mnemonic == "bic" || Mnemonic == "asr" || Mnemonic == "orr" ||
+      Mnemonic == "mvn" || Mnemonic == "rsb" || Mnemonic == "rsc" ||
+      Mnemonic == "orn" || Mnemonic == "sbc" || Mnemonic == "eor" ||
+      Mnemonic == "neg" || Mnemonic == "vfm" || Mnemonic == "vfnm" ||
+      (!isThumb() &&
+       (Mnemonic == "smull" || Mnemonic == "mov" || Mnemonic == "mla" ||
+        Mnemonic == "smlal" || Mnemonic == "umlal" || Mnemonic == "umull"));
 
   if (Mnemonic == "bkpt" || Mnemonic == "cbnz" || Mnemonic == "setend" ||
-      Mnemonic == "cps" ||  Mnemonic == "it" ||  Mnemonic == "cbz" ||
+      Mnemonic == "cps" || Mnemonic == "it" || Mnemonic == "cbz" ||
       Mnemonic == "trap" || Mnemonic == "hlt" || Mnemonic == "udf" ||
       Mnemonic.startswith("crc32") || Mnemonic.startswith("cps") ||
-      Mnemonic.startswith("vsel") ||
-      Mnemonic == "vmaxnm" || Mnemonic == "vminnm" || Mnemonic == "vcvta" ||
-      Mnemonic == "vcvtn" || Mnemonic == "vcvtp" || Mnemonic == "vcvtm" ||
-      Mnemonic == "vrinta" || Mnemonic == "vrintn" || Mnemonic == "vrintp" ||
-      Mnemonic == "vrintm" || Mnemonic.startswith("aes") || Mnemonic == "hvc" ||
+      Mnemonic.startswith("vsel") || Mnemonic == "vmaxnm" ||
+      Mnemonic == "vminnm" || Mnemonic == "vcvta" || Mnemonic == "vcvtn" ||
+      Mnemonic == "vcvtp" || Mnemonic == "vcvtm" || Mnemonic == "vrinta" ||
+      Mnemonic == "vrintn" || Mnemonic == "vrintp" || Mnemonic == "vrintm" ||
+      Mnemonic.startswith("aes") || Mnemonic == "hvc" || Mnemonic == "setpan" ||
       Mnemonic.startswith("sha1") || Mnemonic.startswith("sha256") ||
       (FullInst.startswith("vmull") && FullInst.endswith(".p64"))) {
     // These mnemonics are never predicable
     CanAcceptPredicationCode = false;
   } else if (!isThumb()) {
     // Some instructions are only predicable in Thumb mode
-    CanAcceptPredicationCode
-      = Mnemonic != "cdp2" && Mnemonic != "clrex" && Mnemonic != "mcr2" &&
+    CanAcceptPredicationCode =
+        Mnemonic != "cdp2" && Mnemonic != "clrex" && Mnemonic != "mcr2" &&
         Mnemonic != "mcrr2" && Mnemonic != "mrc2" && Mnemonic != "mrrc2" &&
         Mnemonic != "dmb" && Mnemonic != "dsb" && Mnemonic != "isb" &&
         Mnemonic != "pld" && Mnemonic != "pli" && Mnemonic != "pldw" &&
-        Mnemonic != "ldc2" && Mnemonic != "ldc2l" &&
-        Mnemonic != "stc2" && Mnemonic != "stc2l" &&
-        !Mnemonic.startswith("rfe") && !Mnemonic.startswith("srs");
+        Mnemonic != "ldc2" && Mnemonic != "ldc2l" && Mnemonic != "stc2" &&
+        Mnemonic != "stc2l" && !Mnemonic.startswith("rfe") &&
+        !Mnemonic.startswith("srs");
   } else if (isThumbOne()) {
     if (hasV6MOps())
       CanAcceptPredicationCode = Mnemonic != "movs";
@@ -6153,6 +6148,14 @@ bool ARMAsmParser::validateInstruction(MCInst &Inst,
     if (Rt2 == Rt)
       return Error(Operands[3]->getStartLoc(),
                    "destination operands can't be identical");
+    return false;
+  }
+  case ARM::t2BXJ: {
+    const unsigned RmReg = Inst.getOperand(0).getReg();
+    // Rm = SP is no longer unpredictable in v8-A
+    if (RmReg == ARM::SP && !hasV8Ops())
+      return Error(Operands[2]->getStartLoc(),
+                   "r13 (SP) is an unpredictable operand to BXJ");
     return false;
   }
   case ARM::STRD: {
@@ -9010,7 +9013,7 @@ bool ARMAsmParser::parseDirectiveReq(StringRef Name, SMLoc L) {
 
   Parser.Lex(); // Consume the EndOfStatement
 
-  if (!RegisterReqs.insert(std::make_pair(Name, Reg)).second) {
+  if (RegisterReqs.insert(std::make_pair(Name, Reg)).first->second != Reg) {
     Error(SRegLoc, "redefinition of '" + Name + "' does not match original.");
     return false;
   }
@@ -9182,8 +9185,7 @@ bool ARMAsmParser::parseDirectiveCPU(SMLoc L) {
   // see: http://llvm.org/bugs/show_bug.cgi?id=20757
   STI.InitMCProcessorInfo(CPU, "");
   STI.InitCPUSchedModel(CPU);
-  unsigned FB = ComputeAvailableFeatures(STI.getFeatureBits());
-  setAvailableFeatures(FB);
+  setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
 
   return false;
 }
@@ -9191,32 +9193,59 @@ bool ARMAsmParser::parseDirectiveCPU(SMLoc L) {
 // FIXME: This is duplicated in getARMFPUFeatures() in
 // tools/clang/lib/Driver/Tools.cpp
 static const struct {
-  const unsigned Fpu;
+  const unsigned ID;
   const uint64_t Enabled;
   const uint64_t Disabled;
-} Fpus[] = {
-      {ARM::VFP, ARM::FeatureVFP2, ARM::FeatureNEON},
-      {ARM::VFPV2, ARM::FeatureVFP2, ARM::FeatureNEON},
-      {ARM::VFPV3, ARM::FeatureVFP3, ARM::FeatureNEON},
-      {ARM::VFPV3_D16, ARM::FeatureVFP3 | ARM::FeatureD16, ARM::FeatureNEON},
-      {ARM::VFPV4, ARM::FeatureVFP4, ARM::FeatureNEON},
-      {ARM::VFPV4_D16, ARM::FeatureVFP4 | ARM::FeatureD16, ARM::FeatureNEON},
-      {ARM::FPV5_D16, ARM::FeatureFPARMv8 | ARM::FeatureD16,
-       ARM::FeatureNEON | ARM::FeatureCrypto},
-      {ARM::FP_ARMV8, ARM::FeatureFPARMv8,
-       ARM::FeatureNEON | ARM::FeatureCrypto},
-      {ARM::NEON, ARM::FeatureNEON, 0},
-      {ARM::NEON_VFPV4, ARM::FeatureVFP4 | ARM::FeatureNEON, 0},
-      {ARM::NEON_FP_ARMV8, ARM::FeatureFPARMv8 | ARM::FeatureNEON,
-       ARM::FeatureCrypto},
-      {ARM::CRYPTO_NEON_FP_ARMV8,
-       ARM::FeatureFPARMv8 | ARM::FeatureNEON | ARM::FeatureCrypto, 0},
-      {ARM::SOFTVFP, 0, 0},
+} FPUs[] = {
+    {/* ID */ ARM::VFP,
+     /* Enabled */ ARM::FeatureVFP2,
+     /* Disabled */ ARM::FeatureNEON},
+    {/* ID */ ARM::VFPV2,
+     /* Enabled */ ARM::FeatureVFP2,
+     /* Disabled */ ARM::FeatureNEON},
+    {/* ID */ ARM::VFPV3,
+     /* Enabled */ ARM::FeatureVFP2 | ARM::FeatureVFP3,
+     /* Disabled */ ARM::FeatureNEON | ARM::FeatureD16},
+    {/* ID */ ARM::VFPV3_D16,
+     /* Enable */ ARM::FeatureVFP2 | ARM::FeatureVFP3 | ARM::FeatureD16,
+     /* Disabled */ ARM::FeatureNEON},
+    {/* ID */ ARM::VFPV4,
+     /* Enabled */ ARM::FeatureVFP2 | ARM::FeatureVFP3 | ARM::FeatureVFP4,
+     /* Disabled */ ARM::FeatureNEON | ARM::FeatureD16},
+    {/* ID */ ARM::VFPV4_D16,
+     /* Enabled */ ARM::FeatureVFP2 | ARM::FeatureVFP3 | ARM::FeatureVFP4 |
+         ARM::FeatureD16,
+     /* Disabled */ ARM::FeatureNEON},
+    {/* ID */ ARM::FPV5_D16,
+     /* Enabled */ ARM::FeatureVFP2 | ARM::FeatureVFP3 | ARM::FeatureVFP4 |
+         ARM::FeatureFPARMv8 | ARM::FeatureD16,
+     /* Disabled */ ARM::FeatureNEON | ARM::FeatureCrypto},
+    {/* ID */ ARM::FP_ARMV8,
+     /* Enabled */ ARM::FeatureVFP2 | ARM::FeatureVFP3 | ARM::FeatureVFP4 |
+         ARM::FeatureFPARMv8,
+     /* Disabled */ ARM::FeatureNEON | ARM::FeatureCrypto | ARM::FeatureD16},
+    {/* ID */ ARM::NEON,
+     /* Enabled */ ARM::FeatureVFP2 | ARM::FeatureVFP3 | ARM::FeatureNEON,
+     /* Disabled */ ARM::FeatureD16},
+    {/* ID */ ARM::NEON_VFPV4,
+     /* Enabled */ ARM::FeatureVFP2 | ARM::FeatureVFP3 | ARM::FeatureVFP4 |
+         ARM::FeatureNEON,
+     /* Disabled */ ARM::FeatureD16},
+    {/* ID */ ARM::NEON_FP_ARMV8,
+     /* Enabled */ ARM::FeatureVFP2 | ARM::FeatureVFP3 | ARM::FeatureVFP4 |
+         ARM::FeatureFPARMv8 | ARM::FeatureNEON,
+     /* Disabled */ ARM::FeatureCrypto | ARM::FeatureD16},
+    {/* ID */ ARM::CRYPTO_NEON_FP_ARMV8,
+     /* Enabled */ ARM::FeatureVFP2 | ARM::FeatureVFP3 | ARM::FeatureVFP4 |
+         ARM::FeatureFPARMv8 | ARM::FeatureNEON | ARM::FeatureCrypto,
+     /* Disabled */ ARM::FeatureD16},
+    {ARM::SOFTVFP, 0, 0},
 };
 
 /// parseDirectiveFPU
 ///  ::= .fpu str
 bool ARMAsmParser::parseDirectiveFPU(SMLoc L) {
+  SMLoc FPUNameLoc = getTok().getLoc();
   StringRef FPU = getParser().parseStringToEndOfStatement().trim();
 
   unsigned ID = StringSwitch<unsigned>(FPU)
@@ -9225,18 +9254,18 @@ bool ARMAsmParser::parseDirectiveFPU(SMLoc L) {
     .Default(ARM::INVALID_FPU);
 
   if (ID == ARM::INVALID_FPU) {
-    Error(L, "Unknown FPU name");
+    Error(FPUNameLoc, "Unknown FPU name");
     return false;
   }
 
-  for (const auto &Fpu : Fpus) {
-    if (Fpu.Fpu != ID)
+  for (const auto &Entry : FPUs) {
+    if (Entry.ID != ID)
       continue;
 
     // Need to toggle features that should be on but are off and that
     // should off but are on.
-    uint64_t Toggle = (Fpu.Enabled & ~STI.getFeatureBits()) |
-                      (Fpu.Disabled & STI.getFeatureBits());
+    uint64_t Toggle = (Entry.Enabled & ~STI.getFeatureBits()) |
+                      (Entry.Disabled & STI.getFeatureBits());
     setAvailableFeatures(ComputeAvailableFeatures(STI.ToggleFeature(Toggle)));
     break;
   }

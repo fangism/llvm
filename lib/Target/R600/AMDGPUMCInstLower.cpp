@@ -22,6 +22,7 @@
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
@@ -39,29 +40,17 @@ AMDGPUMCInstLower::AMDGPUMCInstLower(MCContext &ctx, const AMDGPUSubtarget &st):
   Ctx(ctx), ST(st)
 { }
 
-enum AMDGPUMCInstLower::SISubtarget
-AMDGPUMCInstLower::AMDGPUSubtargetToSISubtarget(unsigned Gen) const {
-  switch (Gen) {
-  default:
-    return AMDGPUMCInstLower::SI;
-  case AMDGPUSubtarget::VOLCANIC_ISLANDS:
-    return AMDGPUMCInstLower::VI;
-  }
-}
-
-unsigned AMDGPUMCInstLower::getMCOpcode(unsigned MIOpcode) const {
-
-  int MCOpcode = AMDGPU::getMCOpcode(MIOpcode,
-                              AMDGPUSubtargetToSISubtarget(ST.getGeneration()));
-  if (MCOpcode == -1)
-    MCOpcode = MIOpcode;
-
-  return MCOpcode;
-}
-
 void AMDGPUMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
 
-  OutMI.setOpcode(getMCOpcode(MI->getOpcode()));
+  int MCOpcode = ST.getInstrInfo()->pseudoToMCOpcode(MI->getOpcode());
+
+  if (MCOpcode == -1) {
+    LLVMContext &C = MI->getParent()->getParent()->getFunction()->getContext();
+    C.emitError("AMDGPUMCInstLower::lower - Pseudo instruction doesn't have "
+                "a target-specific version: " + Twine(MI->getOpcode()));
+  }
+
+  OutMI.setOpcode(MCOpcode);
 
   for (const MachineOperand &MO : MI->explicit_operands()) {
     MCOperand MCOp;
@@ -91,18 +80,24 @@ void AMDGPUMCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
       MCOp = MCOperand::CreateExpr(Expr);
       break;
     }
+    case MachineOperand::MO_ExternalSymbol: {
+      MCSymbol *Sym = Ctx.GetOrCreateSymbol(StringRef(MO.getSymbolName()));
+      const MCSymbolRefExpr *Expr = MCSymbolRefExpr::Create(Sym, Ctx);
+      MCOp = MCOperand::CreateExpr(Expr);
+      break;
+    }
     }
     OutMI.addOperand(MCOp);
   }
 }
 
 void AMDGPUAsmPrinter::EmitInstruction(const MachineInstr *MI) {
-  AMDGPUMCInstLower MCInstLowering(OutContext,
-                               MF->getTarget().getSubtarget<AMDGPUSubtarget>());
+  const AMDGPUSubtarget &STI = MF->getSubtarget<AMDGPUSubtarget>();
+  AMDGPUMCInstLower MCInstLowering(OutContext, STI);
 
 #ifdef _DEBUG
   StringRef Err;
-  if (!TM.getSubtargetImpl()->getInstrInfo()->verifyInstruction(MI, Err)) {
+  if (!STI.getInstrInfo()->verifyInstruction(MI, Err)) {
     errs() << "Warning: Illegal instruction detected: " << Err << "\n";
     MI->dump();
   }
@@ -118,28 +113,29 @@ void AMDGPUAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   } else {
     MCInst TmpInst;
     MCInstLowering.lower(MI, TmpInst);
-    EmitToStreamer(OutStreamer, TmpInst);
+    EmitToStreamer(*OutStreamer, TmpInst);
 
-    if (DisasmEnabled) {
+    if (STI.dumpCode()) {
       // Disassemble instruction/operands to text.
       DisasmLines.resize(DisasmLines.size() + 1);
       std::string &DisasmLine = DisasmLines.back();
       raw_string_ostream DisasmStream(DisasmLine);
 
       AMDGPUInstPrinter InstPrinter(*TM.getMCAsmInfo(),
-                                    *TM.getSubtargetImpl()->getInstrInfo(),
-                                    *TM.getSubtargetImpl()->getRegisterInfo());
-      InstPrinter.printInst(&TmpInst, DisasmStream, StringRef());
+                                    *MF->getSubtarget().getInstrInfo(),
+                                    *MF->getSubtarget().getRegisterInfo());
+      InstPrinter.printInst(&TmpInst, DisasmStream, StringRef(),
+                            MF->getSubtarget());
 
       // Disassemble instruction/operands to hex representation.
       SmallVector<MCFixup, 4> Fixups;
       SmallVector<char, 16> CodeBytes;
       raw_svector_ostream CodeStream(CodeBytes);
 
-      MCObjectStreamer &ObjStreamer = (MCObjectStreamer &)OutStreamer;
+      auto &ObjStreamer = static_cast<MCObjectStreamer&>(*OutStreamer);
       MCCodeEmitter &InstEmitter = ObjStreamer.getAssembler().getEmitter();
       InstEmitter.EncodeInstruction(TmpInst, CodeStream, Fixups,
-                                    TM.getSubtarget<MCSubtargetInfo>());
+                                    MF->getSubtarget<MCSubtargetInfo>());
       CodeStream.flush();
 
       HexLines.resize(HexLines.size() + 1);

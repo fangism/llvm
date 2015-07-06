@@ -47,8 +47,8 @@ class MCAsmBackend;
 class MCFragment : public ilist_node<MCFragment> {
   friend class MCAsmLayout;
 
-  MCFragment(const MCFragment&) LLVM_DELETED_FUNCTION;
-  void operator=(const MCFragment&) LLVM_DELETED_FUNCTION;
+  MCFragment(const MCFragment&) = delete;
+  void operator=(const MCFragment&) = delete;
 
 public:
   enum FragmentType {
@@ -73,7 +73,7 @@ private:
   /// symbol.
   MCSymbolData *Atom;
 
-  /// @name Assembler Backend Data
+  /// \name Assembler Backend Data
   /// @{
   //
   // FIXME: This could all be kept private to the assembler implementation.
@@ -88,7 +88,7 @@ private:
   /// @}
 
 protected:
-  MCFragment(FragmentType _Kind, MCSectionData *_Parent = nullptr);
+  MCFragment(FragmentType Kind, MCSectionData *Parent = nullptr);
 
 public:
   // Only for sentinel.
@@ -143,7 +143,7 @@ public:
     : MCFragment(FType, SD), BundlePadding(0)
   {
   }
-  virtual ~MCEncodedFragment();
+  ~MCEncodedFragment() override;
 
   virtual SmallVectorImpl<char> &getContents() = 0;
   virtual const SmallVectorImpl<char> &getContents() const = 0;
@@ -182,7 +182,7 @@ public:
   {
   }
 
-  virtual ~MCEncodedFragmentWithFixups();
+  ~MCEncodedFragmentWithFixups() override;
 
   typedef SmallVectorImpl<MCFixup>::const_iterator const_fixup_iterator;
   typedef SmallVectorImpl<MCFixup>::iterator fixup_iterator;
@@ -307,11 +307,9 @@ class MCRelaxableFragment : public MCEncodedFragmentWithFixups {
   SmallVector<MCFixup, 1> Fixups;
 
 public:
-  MCRelaxableFragment(const MCInst &_Inst,
-                      const MCSubtargetInfo &_STI,
+  MCRelaxableFragment(const MCInst &Inst, const MCSubtargetInfo &STI,
                       MCSectionData *SD = nullptr)
-    : MCEncodedFragmentWithFixups(FT_Relaxable, SD), Inst(_Inst), STI(_STI) {
-  }
+      : MCEncodedFragmentWithFixups(FT_Relaxable, SD), Inst(Inst), STI(STI) {}
 
   SmallVectorImpl<char> &getContents() override { return Contents; }
   const SmallVectorImpl<char> &getContents() const override { return Contents; }
@@ -364,13 +362,12 @@ class MCAlignFragment : public MCFragment {
   bool EmitNops : 1;
 
 public:
-  MCAlignFragment(unsigned _Alignment, int64_t _Value, unsigned _ValueSize,
-                  unsigned _MaxBytesToEmit, MCSectionData *SD = nullptr)
-    : MCFragment(FT_Align, SD), Alignment(_Alignment),
-      Value(_Value),ValueSize(_ValueSize),
-      MaxBytesToEmit(_MaxBytesToEmit), EmitNops(false) {}
+  MCAlignFragment(unsigned Alignment, int64_t Value, unsigned ValueSize,
+                  unsigned MaxBytesToEmit, MCSectionData *SD = nullptr)
+      : MCFragment(FT_Align, SD), Alignment(Alignment), Value(Value),
+        ValueSize(ValueSize), MaxBytesToEmit(MaxBytesToEmit), EmitNops(false) {}
 
-  /// @name Accessors
+  /// \name Accessors
   /// @{
 
   unsigned getAlignment() const { return Alignment; }
@@ -405,15 +402,15 @@ class MCFillFragment : public MCFragment {
   uint64_t Size;
 
 public:
-  MCFillFragment(int64_t _Value, unsigned _ValueSize, uint64_t _Size,
+  MCFillFragment(int64_t Value, unsigned ValueSize, uint64_t Size,
                  MCSectionData *SD = nullptr)
-    : MCFragment(FT_Fill, SD),
-      Value(_Value), ValueSize(_ValueSize), Size(_Size) {
+      : MCFragment(FT_Fill, SD), Value(Value), ValueSize(ValueSize),
+        Size(Size) {
     assert((!ValueSize || (Size % ValueSize) == 0) &&
            "Fill size must be a multiple of the value size!");
   }
 
-  /// @name Accessors
+  /// \name Accessors
   /// @{
 
   int64_t getValue() const { return Value; }
@@ -439,12 +436,10 @@ class MCOrgFragment : public MCFragment {
   int8_t Value;
 
 public:
-  MCOrgFragment(const MCExpr &_Offset, int8_t _Value,
-                MCSectionData *SD = nullptr)
-    : MCFragment(FT_Org, SD),
-      Offset(&_Offset), Value(_Value) {}
+  MCOrgFragment(const MCExpr &Offset, int8_t Value, MCSectionData *SD = nullptr)
+      : MCFragment(FT_Org, SD), Offset(&Offset), Value(Value) {}
 
-  /// @name Accessors
+  /// \name Accessors
   /// @{
 
   const MCExpr &getOffset() const { return *Offset; }
@@ -474,7 +469,7 @@ public:
     : MCFragment(FT_LEB, SD),
       Value(&Value_), IsSigned(IsSigned_) { Contents.push_back(0); }
 
-  /// @name Accessors
+  /// \name Accessors
   /// @{
 
   const MCExpr &getValue() const { return *Value; }
@@ -505,12 +500,13 @@ class MCDwarfLineAddrFragment : public MCFragment {
   SmallString<8> Contents;
 
 public:
-  MCDwarfLineAddrFragment(int64_t _LineDelta, const MCExpr &_AddrDelta,
-                      MCSectionData *SD = nullptr)
-    : MCFragment(FT_Dwarf, SD),
-      LineDelta(_LineDelta), AddrDelta(&_AddrDelta) { Contents.push_back(0); }
+  MCDwarfLineAddrFragment(int64_t LineDelta, const MCExpr &AddrDelta,
+                          MCSectionData *SD = nullptr)
+      : MCFragment(FT_Dwarf, SD), LineDelta(LineDelta), AddrDelta(&AddrDelta) {
+    Contents.push_back(0);
+  }
 
-  /// @name Accessors
+  /// \name Accessors
   /// @{
 
   int64_t getLineDelta() const { return LineDelta; }
@@ -537,12 +533,12 @@ class MCDwarfCallFrameFragment : public MCFragment {
   SmallString<8> Contents;
 
 public:
-  MCDwarfCallFrameFragment(const MCExpr &_AddrDelta,
-                           MCSectionData *SD = nullptr)
-    : MCFragment(FT_DwarfFrame, SD),
-      AddrDelta(&_AddrDelta) { Contents.push_back(0); }
+  MCDwarfCallFrameFragment(const MCExpr &AddrDelta, MCSectionData *SD = nullptr)
+      : MCFragment(FT_DwarfFrame, SD), AddrDelta(&AddrDelta) {
+    Contents.push_back(0);
+  }
 
-  /// @name Accessors
+  /// \name Accessors
   /// @{
 
   const MCExpr &getAddrDelta() const { return *AddrDelta; }
@@ -563,8 +559,8 @@ public:
 class MCSectionData : public ilist_node<MCSectionData> {
   friend class MCAsmLayout;
 
-  MCSectionData(const MCSectionData&) LLVM_DELETED_FUNCTION;
-  void operator=(const MCSectionData&) LLVM_DELETED_FUNCTION;
+  MCSectionData(const MCSectionData&) = delete;
+  void operator=(const MCSectionData&) = delete;
 
 public:
   typedef iplist<MCFragment> FragmentListType;
@@ -604,7 +600,7 @@ private:
   /// yet.
   bool BundleGroupBeforeFirstInst;
 
-  /// @name Assembler Backend Data
+  /// \name Assembler Backend Data
   /// @{
   //
   // FIXME: This could all be kept private to the assembler implementation.
@@ -638,7 +634,7 @@ public:
   unsigned getLayoutOrder() const { return LayoutOrder; }
   void setLayoutOrder(unsigned Value) { LayoutOrder = Value; }
 
-  /// @name Fragment Access
+  /// \name Fragment Access
   /// @{
 
   const FragmentListType &getFragmentList() const { return Fragments; }
@@ -722,10 +718,10 @@ class MCSymbolData : public ilist_node<MCSymbolData> {
 public:
   // Only for use as sentinel.
   MCSymbolData();
-  MCSymbolData(const MCSymbol &_Symbol, MCFragment *_Fragment, uint64_t _Offset,
+  MCSymbolData(const MCSymbol &Symbol, MCFragment *Fragment, uint64_t Offset,
                MCAssembler *A = nullptr);
 
-  /// @name Accessors
+  /// \name Accessors
   /// @{
 
   const MCSymbol &getSymbol() const { return *Symbol; }
@@ -743,7 +739,7 @@ public:
   }
 
   /// @}
-  /// @name Symbol Attributes
+  /// \name Symbol Attributes
   /// @{
 
   bool isExternal() const { return Fragment.getInt() & 1; }
@@ -865,8 +861,8 @@ public:
     unsigned Update;
   } VersionMinInfoType;
 private:
-  MCAssembler(const MCAssembler&) LLVM_DELETED_FUNCTION;
-  void operator=(const MCAssembler&) LLVM_DELETED_FUNCTION;
+  MCAssembler(const MCAssembler&) = delete;
+  void operator=(const MCAssembler&) = delete;
 
   MCContext &Context;
 
@@ -1081,7 +1077,7 @@ public:
     BundleAlignSize = Size;
   }
 
-  /// @name Section List Access
+  /// \name Section List Access
   /// @{
 
   const SectionDataListType &getSectionList() const { return Sections; }
@@ -1096,7 +1092,7 @@ public:
   size_t size() const { return Sections.size(); }
 
   /// @}
-  /// @name Symbol List Access
+  /// \name Symbol List Access
   /// @{
 
   const SymbolDataListType &getSymbolList() const { return Symbols; }
@@ -1114,7 +1110,7 @@ public:
   size_t symbol_size() const { return Symbols.size(); }
 
   /// @}
-  /// @name Indirect Symbol List Access
+  /// \name Indirect Symbol List Access
   /// @{
 
   // FIXME: This is a total hack, this should not be here. Once things are
@@ -1141,7 +1137,7 @@ public:
   size_t indirect_symbol_size() const { return IndirectSymbols.size(); }
 
   /// @}
-  /// @name Linker Option List Access
+  /// \name Linker Option List Access
   /// @{
 
   std::vector<std::vector<std::string> > &getLinkerOptions() {
@@ -1149,7 +1145,7 @@ public:
   }
 
   /// @}
-  /// @name Data Region List Access
+  /// \name Data Region List Access
   /// @{
 
   // FIXME: This is a total hack, this should not be here. Once things are
@@ -1176,7 +1172,7 @@ public:
   size_t data_region_size() const { return DataRegions.size(); }
 
   /// @}
-  /// @name Data Region List Access
+  /// \name Data Region List Access
   /// @{
 
   // FIXME: This is a total hack, this should not be here. Once things are
@@ -1189,7 +1185,7 @@ public:
     return const_cast<MCAssembler *>(this)->getLOHContainer();
   }
   /// @}
-  /// @name Backend Data Access
+  /// \name Backend Data Access
   /// @{
 
   MCSectionData &getSectionData(const MCSection &Section) const {
@@ -1249,10 +1245,22 @@ public:
       FileNames.push_back(FileName);
   }
 
+  /// \brief Write the necessary bundle padding to the given object writer.
+  /// Expects a fragment \p F containing instructions and its size \p FSize.
+  void writeFragmentPadding(const MCFragment &F, uint64_t FSize,
+                            MCObjectWriter *OW) const;
+
   /// @}
 
   void dump() const;
 };
+
+/// \brief Compute the amount of padding required before the fragment \p F to
+/// obey bundling restrictions, where \p FOffset is the fragment's offset in
+/// its section and \p FSize is the fragment's size.
+uint64_t computeBundlePadding(const MCAssembler &Assembler,
+                              const MCFragment *F,
+                              uint64_t FOffset, uint64_t FSize);
 
 } // end namespace llvm
 

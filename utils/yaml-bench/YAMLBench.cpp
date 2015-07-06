@@ -69,7 +69,7 @@ static std::string prettyTag(yaml::Node *N) {
   if (StringRef(Tag).startswith("tag:yaml.org,2002:")) {
     std::string Ret = "!!";
     Ret += StringRef(Tag).substr(18);
-    return std::move(Ret);
+    return Ret;
   }
   std::string Ret = "!<";
   Ret += Tag;
@@ -117,7 +117,7 @@ static void dumpNode( yaml::Node *n
     outs() << indent(Indent) << "}";
   } else if (yaml::AliasNode *an = dyn_cast<yaml::AliasNode>(n)){
     outs() << "*" << an->getName();
-  } else if (dyn_cast<yaml::NullNode>(n)) {
+  } else if (isa<yaml::NullNode>(n)) {
     outs() << prettyTag(n) << " null";
   }
 }

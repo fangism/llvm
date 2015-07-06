@@ -264,6 +264,11 @@ public:
   }
 
   /// operator< - Compare two classes.
+  // FIXME: This ordering seems to be broken. For example:
+  // u64 < i64, i64 < s8, s8 < u64, forming a cycle
+  // u64 is a subset of i64
+  // i64 and s8 are not subsets of each other, so are ordered by name
+  // s8 and u64 are not subsets of each other, so are ordered by name
   bool operator<(const ClassInfo &RHS) const {
     if (this == &RHS)
       return false;
@@ -979,6 +984,7 @@ static std::string getEnumNameForToken(StringRef Str) {
     case '.': Res += "_DOT_"; break;
     case '<': Res += "_LT_"; break;
     case '>': Res += "_GT_"; break;
+    case '-': Res += "_MINUS_"; break;
     default:
       if ((*it >= 'A' && *it <= 'Z') ||
           (*it >= 'a' && *it <= 'z') ||
@@ -1446,8 +1452,9 @@ void AsmMatcherInfo::buildInfo() {
       II->buildAliasResultOperands();
   }
   if (!NewMatchables.empty())
-    std::move(NewMatchables.begin(), NewMatchables.end(),
-              std::back_inserter(Matchables));
+    Matchables.insert(Matchables.end(),
+                      std::make_move_iterator(NewMatchables.begin()),
+                      std::make_move_iterator(NewMatchables.end()));
 
   // Process token alias definitions and set up the associated superclass
   // information.
@@ -1848,6 +1855,7 @@ static void emitConvertFuncs(CodeGenTarget &Target, StringRef ClassName,
       case MatchableInfo::ResOperand::ImmOperand: {
         int64_t Val = OpInfo.ImmVal;
         std::string Ty = "imm_" + itostr(Val);
+        Ty = getEnumNameForToken(Ty);
         Signature += "__" + Ty;
 
         std::string Name = "CVT_" + Ty;
@@ -2651,7 +2659,7 @@ void AsmMatcherEmitter::run(raw_ostream &OS) {
      << " bool matchingInlineAsm,\n"
      << "                                unsigned VariantID = 0);\n";
 
-  if (Info.OperandMatchInfo.size()) {
+  if (!Info.OperandMatchInfo.empty()) {
     OS << "\n  enum OperandMatchResultTy {\n";
     OS << "    MatchOperand_Success,    // operand matched successfully\n";
     OS << "    MatchOperand_NoMatch,    // operand did not match\n";
@@ -2879,7 +2887,7 @@ void AsmMatcherEmitter::run(raw_ostream &OS) {
   OS << "  uint64_t MissingFeatures = ~0ULL;\n";
   OS << "  // Set ErrorInfo to the operand that mismatches if it is\n";
   OS << "  // wrong for all instances of the instruction.\n";
-  OS << "  ErrorInfo = ~0U;\n";
+  OS << "  ErrorInfo = ~0ULL;\n";
 
   // Emit code to search the table.
   OS << "  // Find the appropriate table for this asm variant.\n";
@@ -2954,8 +2962,8 @@ void AsmMatcherEmitter::run(raw_ostream &OS) {
   OS << "      HadMatchOtherThanFeatures = true;\n";
   OS << "      uint64_t NewMissingFeatures = it->RequiredFeatures & "
         "~AvailableFeatures;\n";
-  OS << "      if (CountPopulation_64(NewMissingFeatures) <=\n"
-        "          CountPopulation_64(MissingFeatures))\n";
+  OS << "      if (countPopulation(NewMissingFeatures) <=\n"
+        "          countPopulation(MissingFeatures))\n";
   OS << "        MissingFeatures = NewMissingFeatures;\n";
   OS << "      continue;\n";
   OS << "    }\n";
@@ -3009,7 +3017,7 @@ void AsmMatcherEmitter::run(raw_ostream &OS) {
   OS << "  return Match_MissingFeature;\n";
   OS << "}\n\n";
 
-  if (Info.OperandMatchInfo.size())
+  if (!Info.OperandMatchInfo.empty())
     emitCustomOperandParsing(OS, Target, Info, ClassName, StringTable,
                              MaxMnemonicIndex);
 

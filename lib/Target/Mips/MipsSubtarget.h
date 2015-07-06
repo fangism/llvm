@@ -38,15 +38,12 @@ class MipsSubtarget : public MipsGenSubtargetInfo {
 
   enum MipsArchEnum {
     MipsDefault,
-    Mips1, Mips2, Mips32, Mips32r2, Mips32r6, Mips3, Mips4, Mips5, Mips64,
-    Mips64r2, Mips64r6
+    Mips1, Mips2, Mips32, Mips32r2, Mips32r3, Mips32r5, Mips32r6, Mips32Max,
+    Mips3, Mips4, Mips5, Mips64, Mips64r2, Mips64r3, Mips64r5, Mips64r6
   };
 
   // Mips architecture version
   MipsArchEnum MipsArchVersion;
-
-  // Selected ABI
-  MipsABIInfo ABI;
 
   // IsLittle - The target is Little Endian
   bool IsLittle;
@@ -140,7 +137,6 @@ class MipsSubtarget : public MipsGenSubtargetInfo {
 
   Triple TargetTriple;
 
-  const DataLayout DL; // Calculates type size & alignment
   const MipsSelectionDAGInfo TSInfo;
   std::unique_ptr<const MipsInstrInfo> InstrInfo;
   std::unique_ptr<const MipsFrameLowering> FrameLowering;
@@ -153,12 +149,12 @@ public:
   CodeGenOpt::Level getOptLevelToEnablePostRAScheduler() const override;
 
   /// Only O32 and EABI supported right now.
-  bool isABI_EABI() const { return ABI.IsEABI(); }
-  bool isABI_N64() const { return ABI.IsN64(); }
-  bool isABI_N32() const { return ABI.IsN32(); }
-  bool isABI_O32() const { return ABI.IsO32(); }
+  bool isABI_EABI() const;
+  bool isABI_N64() const;
+  bool isABI_N32() const;
+  bool isABI_O32() const;
+  const MipsABIInfo &getABI() const;
   bool isABI_FPXX() const { return isABI_O32() && IsFPXX; }
-  const MipsABIInfo &getABI() const { return ABI; }
 
   /// This constructor initializes the data members to match that
   /// of the specified triple.
@@ -178,21 +174,30 @@ public:
   bool hasMips4_32() const { return HasMips4_32; }
   bool hasMips4_32r2() const { return HasMips4_32r2; }
   bool hasMips32() const {
-    return MipsArchVersion >= Mips32 && MipsArchVersion != Mips3 &&
-           MipsArchVersion != Mips4 && MipsArchVersion != Mips5;
+    return (MipsArchVersion >= Mips32 && MipsArchVersion < Mips32Max) ||
+           hasMips64();
   }
   bool hasMips32r2() const {
-    return MipsArchVersion == Mips32r2 || MipsArchVersion == Mips32r6 ||
-           MipsArchVersion == Mips64r2 || MipsArchVersion == Mips64r6;
+    return (MipsArchVersion >= Mips32r2 && MipsArchVersion < Mips32Max) ||
+           hasMips64r2();
+  }
+  bool hasMips32r3() const {
+    return (MipsArchVersion >= Mips32r3 && MipsArchVersion < Mips32Max) ||
+           hasMips64r2();
+  }
+  bool hasMips32r5() const {
+    return (MipsArchVersion >= Mips32r5 && MipsArchVersion < Mips32Max) ||
+           hasMips64r2();
   }
   bool hasMips32r6() const {
-    return MipsArchVersion == Mips32r6 || MipsArchVersion == Mips64r6;
+    return (MipsArchVersion >= Mips32r6 && MipsArchVersion < Mips32Max) ||
+           hasMips64r6();
   }
   bool hasMips64() const { return MipsArchVersion >= Mips64; }
-  bool hasMips64r2() const {
-    return MipsArchVersion == Mips64r2 || MipsArchVersion == Mips64r6;
-  }
-  bool hasMips64r6() const { return MipsArchVersion == Mips64r6; }
+  bool hasMips64r2() const { return MipsArchVersion >= Mips64r2; }
+  bool hasMips64r3() const { return MipsArchVersion >= Mips64r3; }
+  bool hasMips64r5() const { return MipsArchVersion >= Mips64r5; }
+  bool hasMips64r6() const { return MipsArchVersion >= Mips64r6; }
 
   bool hasCnMips() const { return HasCnMips; }
 
@@ -220,6 +225,7 @@ public:
     return inMips16Mode() && InMips16HardFloat;
   }
   bool inMicroMipsMode() const { return InMicroMipsMode; }
+  bool inMicroMips32r6Mode() const { return InMicroMipsMode && hasMips32r6(); }
   bool hasDSP() const { return HasDSP; }
   bool hasDSPR2() const { return HasDSPR2; }
   bool hasMSA() const { return HasMSA; }
@@ -238,9 +244,9 @@ public:
   bool hasMTHC1() const { return hasMips32r2(); }
 
   bool allowMixed16_32() const { return inMips16ModeDefault() |
-                                        AllowMixed16_32;}
+                                        AllowMixed16_32; }
 
-  bool os16() const { return Os16;};
+  bool os16() const { return Os16; }
 
   bool isTargetNaCl() const { return TargetTriple.isOSNaCl(); }
 
@@ -270,7 +276,6 @@ public:
   const MipsSelectionDAGInfo *getSelectionDAGInfo() const override {
     return &TSInfo;
   }
-  const DataLayout *getDataLayout() const override { return &DL; }
   const MipsInstrInfo *getInstrInfo() const override { return InstrInfo.get(); }
   const TargetFrameLowering *getFrameLowering() const override {
     return FrameLowering.get();

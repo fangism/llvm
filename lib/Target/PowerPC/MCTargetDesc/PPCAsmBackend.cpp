@@ -182,12 +182,7 @@ public:
     for (uint64_t i = 0; i != NumNops; ++i)
       OW->Write32(0x60000000);
 
-    switch (Count % 4) {
-    default: break; // No leftover bytes to write
-    case 1: OW->Write8(0); break;
-    case 2: OW->Write16(0); break;
-    case 3: OW->Write16(0); OW->Write8(0); break;
-    }
+    OW->WriteZeros(Count % 4);
 
     return true;
   }
@@ -212,7 +207,7 @@ namespace {
   public:
     DarwinPPCAsmBackend(const Target &T) : PPCAsmBackend(T, false) { }
 
-    MCObjectWriter *createObjectWriter(raw_ostream &OS) const override {
+    MCObjectWriter *createObjectWriter(raw_pwrite_stream &OS) const override {
       STACKTRACE_VERBOSE;
       bool is64 = getPointerSize() == 8;
       return createPPCMachObjectWriter(
@@ -229,8 +224,7 @@ namespace {
     ELFPPCAsmBackend(const Target &T, bool IsLittleEndian, uint8_t OSABI) :
       PPCAsmBackend(T, IsLittleEndian), OSABI(OSABI) { }
 
-
-    MCObjectWriter *createObjectWriter(raw_ostream &OS) const override {
+    MCObjectWriter *createObjectWriter(raw_pwrite_stream &OS) const override {
       bool is64 = getPointerSize() == 8;
       return createPPCELFObjectWriter(OS, is64, isLittleEndian(), OSABI);
     }

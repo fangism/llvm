@@ -21,7 +21,7 @@ def ARMtcall : SDNode<"ARMISD::tCALL", SDT_ARMcall,
 
 def imm_sr_XFORM: SDNodeXForm<imm, [{
   unsigned Imm = N->getZExtValue();
-  return CurDAG->getTargetConstant((Imm == 32 ? 0 : Imm), MVT::i32);
+  return CurDAG->getTargetConstant((Imm == 32 ? 0 : Imm), SDLoc(N), MVT::i32);
 }]>;
 def ThumbSRImmAsmOperand: AsmOperandClass { let Name = "ImmThumbSR"; }
 def imm_sr : Operand<i32>, PatLeaf<(imm), [{
@@ -33,7 +33,8 @@ def imm_sr : Operand<i32>, PatLeaf<(imm), [{
 }
 
 def imm_comp_XFORM : SDNodeXForm<imm, [{
-  return CurDAG->getTargetConstant(~((uint32_t)N->getZExtValue()), MVT::i32);
+  return CurDAG->getTargetConstant(~((uint32_t)N->getZExtValue()), SDLoc(N),
+                                   MVT::i32);
 }]>;
 
 def imm0_7_neg : PatLeaf<(i32 imm), [{
@@ -61,12 +62,12 @@ def thumb_immshifted : PatLeaf<(imm), [{
 
 def thumb_immshifted_val : SDNodeXForm<imm, [{
   unsigned V = ARM_AM::getThumbImmNonShiftedVal((unsigned)N->getZExtValue());
-  return CurDAG->getTargetConstant(V, MVT::i32);
+  return CurDAG->getTargetConstant(V, SDLoc(N), MVT::i32);
 }]>;
 
 def thumb_immshifted_shamt : SDNodeXForm<imm, [{
   unsigned V = ARM_AM::getThumbImmValShift((unsigned)N->getZExtValue());
-  return CurDAG->getTargetConstant(V, MVT::i32);
+  return CurDAG->getTargetConstant(V, SDLoc(N), MVT::i32);
 }]>;
 
 // Scaled 4 immediate.
@@ -142,7 +143,7 @@ def t_blxtarget : Operand<i32> {
 
 // t_addrmode_pc := <label> => pc + imm8 * 4
 //
-def t_addrmode_pc : Operand<i32> {
+def t_addrmode_pc : MemOperand {
   let EncoderMethod = "getAddrModePCOpValue";
   let DecoderMethod = "DecodeThumbAddrModePC";
   let PrintMethod = "printThumbLdrLabelOperand";
@@ -153,7 +154,7 @@ def t_addrmode_pc : Operand<i32> {
 // t_addrmode_rr := reg + reg
 //
 def t_addrmode_rr_asm_operand : AsmOperandClass { let Name = "MemThumbRR"; }
-def t_addrmode_rr : Operand<i32>,
+def t_addrmode_rr : MemOperand,
                     ComplexPattern<i32, 2, "SelectThumbAddrModeRR", []> {
   let EncoderMethod = "getThumbAddrModeRegRegOpValue";
   let PrintMethod = "printThumbAddrModeRROperand";
@@ -169,7 +170,7 @@ def t_addrmode_rr : Operand<i32>,
 // the reg+imm forms will match instead. This is a horrible way to do that,
 // as it forces tight coupling between the methods, but it's how selectiondag
 // currently works.
-def t_addrmode_rrs1 : Operand<i32>,
+def t_addrmode_rrs1 : MemOperand,
                       ComplexPattern<i32, 2, "SelectThumbAddrModeRI5S1", []> {
   let EncoderMethod = "getThumbAddrModeRegRegOpValue";
   let PrintMethod = "printThumbAddrModeRROperand";
@@ -177,7 +178,7 @@ def t_addrmode_rrs1 : Operand<i32>,
   let ParserMatchClass = t_addrmode_rr_asm_operand;
   let MIOperandInfo = (ops tGPR:$base, tGPR:$offsreg);
 }
-def t_addrmode_rrs2 : Operand<i32>,
+def t_addrmode_rrs2 : MemOperand,
                       ComplexPattern<i32, 2, "SelectThumbAddrModeRI5S2", []> {
   let EncoderMethod = "getThumbAddrModeRegRegOpValue";
   let DecoderMethod = "DecodeThumbAddrModeRR";
@@ -185,7 +186,7 @@ def t_addrmode_rrs2 : Operand<i32>,
   let ParserMatchClass = t_addrmode_rr_asm_operand;
   let MIOperandInfo = (ops tGPR:$base, tGPR:$offsreg);
 }
-def t_addrmode_rrs4 : Operand<i32>,
+def t_addrmode_rrs4 : MemOperand,
                       ComplexPattern<i32, 2, "SelectThumbAddrModeRI5S4", []> {
   let EncoderMethod = "getThumbAddrModeRegRegOpValue";
   let DecoderMethod = "DecodeThumbAddrModeRR";
@@ -197,7 +198,7 @@ def t_addrmode_rrs4 : Operand<i32>,
 // t_addrmode_is4 := reg + imm5 * 4
 //
 def t_addrmode_is4_asm_operand : AsmOperandClass { let Name = "MemThumbRIs4"; }
-def t_addrmode_is4 : Operand<i32>,
+def t_addrmode_is4 : MemOperand,
                      ComplexPattern<i32, 2, "SelectThumbAddrModeImm5S4", []> {
   let EncoderMethod = "getAddrModeISOpValue";
   let DecoderMethod = "DecodeThumbAddrModeIS";
@@ -209,7 +210,7 @@ def t_addrmode_is4 : Operand<i32>,
 // t_addrmode_is2 := reg + imm5 * 2
 //
 def t_addrmode_is2_asm_operand : AsmOperandClass { let Name = "MemThumbRIs2"; }
-def t_addrmode_is2 : Operand<i32>,
+def t_addrmode_is2 : MemOperand,
                      ComplexPattern<i32, 2, "SelectThumbAddrModeImm5S2", []> {
   let EncoderMethod = "getAddrModeISOpValue";
   let DecoderMethod = "DecodeThumbAddrModeIS";
@@ -221,7 +222,7 @@ def t_addrmode_is2 : Operand<i32>,
 // t_addrmode_is1 := reg + imm5
 //
 def t_addrmode_is1_asm_operand : AsmOperandClass { let Name = "MemThumbRIs1"; }
-def t_addrmode_is1 : Operand<i32>,
+def t_addrmode_is1 : MemOperand,
                      ComplexPattern<i32, 2, "SelectThumbAddrModeImm5S1", []> {
   let EncoderMethod = "getAddrModeISOpValue";
   let DecoderMethod = "DecodeThumbAddrModeIS";
@@ -235,7 +236,7 @@ def t_addrmode_is1 : Operand<i32>,
 // FIXME: This really shouldn't have an explicit SP operand at all. It should
 // be implicit, just like in the instruction encoding itself.
 def t_addrmode_sp_asm_operand : AsmOperandClass { let Name = "MemThumbSPI"; }
-def t_addrmode_sp : Operand<i32>,
+def t_addrmode_sp : MemOperand,
                     ComplexPattern<i32, 2, "SelectThumbAddrModeSP", []> {
   let EncoderMethod = "getAddrModeThumbSPOpValue";
   let DecoderMethod = "DecodeThumbAddrModeSP";
@@ -1374,6 +1375,17 @@ def : T1Pat<(zextloadi1 t_addrmode_rrs1:$addr),
             (tLDRBr t_addrmode_rrs1:$addr)>;
 def : T1Pat<(zextloadi1 t_addrmode_is1:$addr),
             (tLDRBi t_addrmode_is1:$addr)>;
+
+// extload from the stack -> word load from the stack, as it avoids having to
+// materialize the base in a separate register. This only works when a word
+// load puts the byte/halfword value in the same place in the register that the
+// byte/halfword load would, i.e. when little-endian.
+def : T1Pat<(extloadi1  t_addrmode_sp:$addr), (tLDRspi t_addrmode_sp:$addr)>,
+      Requires<[IsThumb, IsThumb1Only, IsLE]>;
+def : T1Pat<(extloadi8  t_addrmode_sp:$addr), (tLDRspi t_addrmode_sp:$addr)>,
+      Requires<[IsThumb, IsThumb1Only, IsLE]>;
+def : T1Pat<(extloadi16 t_addrmode_sp:$addr), (tLDRspi t_addrmode_sp:$addr)>,
+      Requires<[IsThumb, IsThumb1Only, IsLE]>;
 
 // extload -> zextload
 def : T1Pat<(extloadi1  t_addrmode_rrs1:$addr), (tLDRBr t_addrmode_rrs1:$addr)>;

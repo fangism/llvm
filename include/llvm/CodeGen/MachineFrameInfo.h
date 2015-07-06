@@ -246,6 +246,16 @@ class MachineFrameInfo {
   /// True if this is a varargs function that contains a musttail call.
   bool HasMustTailInVarArgFunc;
 
+  /// Not null, if shrink-wrapping found a better place for the prologue.
+  MachineBasicBlock *Save;
+  /// Not null, if shrink-wrapping found a better place for the epilogue.
+  MachineBasicBlock *Restore;
+
+  /// Check if it exists a path from \p MBB leading to the basic
+  /// block with a SavePoint (a.k.a. prologue).
+  bool isBeforeSavePoint(const MachineFunction &MF,
+                         const MachineBasicBlock &MBB) const;
+
 public:
   explicit MachineFrameInfo(unsigned StackAlign, bool isStackRealign,
                             bool RealignOpt)
@@ -269,6 +279,8 @@ public:
     HasInlineAsmWithSPAdjust = false;
     HasVAStart = false;
     HasMustTailInVarArgFunc = false;
+    Save = nullptr;
+    Restore = nullptr;
   }
 
   /// hasStackObjects - Return true if there are any stack objects in this
@@ -516,10 +528,6 @@ public:
   /// on the stack.  Returns an index with a negative value.
   int CreateFixedSpillStackObject(uint64_t Size, int64_t SPOffset);
 
-  /// Allocates memory at a fixed, target-specific offset from the frame
-  /// pointer. Marks the function as having its frame address taken.
-  int CreateFrameAllocation(uint64_t Size);
-
   /// isFixedObjectIndex - Returns true if the specified index corresponds to a
   /// fixed stack object.
   bool isFixedObjectIndex(int ObjectIdx) const {
@@ -600,6 +608,11 @@ public:
   bool isCalleeSavedInfoValid() const { return CSIValid; }
 
   void setCalleeSavedInfoValid(bool v) { CSIValid = v; }
+
+  MachineBasicBlock *getSavePoint() const { return Save; }
+  void setSavePoint(MachineBasicBlock *NewSave) { Save = NewSave; }
+  MachineBasicBlock *getRestorePoint() const { return Restore; }
+  void setRestorePoint(MachineBasicBlock *NewRestore) { Restore = NewRestore; }
 
   /// getPristineRegs - Return a set of physical registers that are pristine on
   /// entry to the MBB.

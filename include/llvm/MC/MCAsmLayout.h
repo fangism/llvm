@@ -50,13 +50,8 @@ private:
   /// \brief Is the layout for this fragment valid?
   bool isFragmentValid(const MCFragment *F) const;
 
-  /// \brief Compute the amount of padding required before this fragment to
-  /// obey bundling restrictions.
-  uint64_t computeBundlePadding(const MCFragment *F,
-                                uint64_t FOffset, uint64_t FSize);
-
 public:
-  MCAsmLayout(MCAssembler &_Assembler);
+  MCAsmLayout(MCAssembler &Assembler);
 
   /// Get the assembler object this is a layout for.
   MCAssembler &getAssembler() const { return Assembler; }
@@ -71,7 +66,7 @@ public:
   /// been initialized.
   void layoutFragment(MCFragment *Fragment);
 
-  /// @name Section Access (in layout order)
+  /// \name Section Access (in layout order)
   /// @{
 
   llvm::SmallVectorImpl<MCSectionData*> &getSectionOrder() {
@@ -82,14 +77,14 @@ public:
   }
 
   /// @}
-  /// @name Fragment Layout Data
+  /// \name Fragment Layout Data
   /// @{
 
   /// \brief Get the offset of the given fragment inside its containing section.
   uint64_t getFragmentOffset(const MCFragment *F) const;
 
   /// @}
-  /// @name Utility Functions
+  /// \name Utility Functions
   /// @{
 
   /// \brief Get the address space size of the given section, as it effects
@@ -103,7 +98,7 @@ public:
 
   /// \brief Get the offset of the given symbol, as computed in the current
   /// layout.
-  /// \result True on success.
+  /// \return True on success.
   bool getSymbolOffset(const MCSymbolData *SD, uint64_t &Val) const;
 
   /// \brief Variant that reports a fatal error if the offset is not computable.

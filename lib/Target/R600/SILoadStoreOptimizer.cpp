@@ -45,6 +45,7 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
@@ -55,7 +56,6 @@ namespace {
 
 class SILoadStoreOptimizer : public MachineFunctionPass {
 private:
-  const TargetMachine *TM;
   const SIInstrInfo *TII;
   const SIRegisterInfo *TRI;
   MachineRegisterInfo *MRI;
@@ -86,20 +86,11 @@ private:
 public:
   static char ID;
 
-  SILoadStoreOptimizer() :
-    MachineFunctionPass(ID),
-    TM(nullptr),
-    TII(nullptr),
-    TRI(nullptr),
-    MRI(nullptr),
-    LIS(nullptr) {
+  SILoadStoreOptimizer()
+      : MachineFunctionPass(ID), TII(nullptr), TRI(nullptr), MRI(nullptr),
+        LIS(nullptr) {}
 
-  }
-
-  SILoadStoreOptimizer(const TargetMachine &TM_) :
-    MachineFunctionPass(ID),
-    TM(&TM_),
-    TII(static_cast<const SIInstrInfo*>(TM->getSubtargetImpl()->getInstrInfo())) {
+  SILoadStoreOptimizer(const TargetMachine &TM_) : MachineFunctionPass(ID) {
     initializeSILoadStoreOptimizerPass(*PassRegistry::getPassRegistry());
   }
 
@@ -259,10 +250,10 @@ MachineBasicBlock::iterator  SILoadStoreOptimizer::mergeRead2Pair(
   DebugLoc DL = I->getDebugLoc();
   MachineInstrBuilder Read2
     = BuildMI(*MBB, I, DL, Read2Desc, DestReg)
-    .addImm(0) // gds
     .addOperand(*AddrReg) // addr
     .addImm(NewOffset0) // offset0
     .addImm(NewOffset1) // offset1
+    .addImm(0) // gds
     .addOperand(*M0Reg) // M0
     .addMemOperand(*I->memoperands_begin())
     .addMemOperand(*Paired->memoperands_begin());
@@ -342,12 +333,12 @@ MachineBasicBlock::iterator SILoadStoreOptimizer::mergeWrite2Pair(
 
   MachineInstrBuilder Write2
     = BuildMI(*MBB, I, DL, Write2Desc)
-    .addImm(0) // gds
     .addOperand(*Addr) // addr
     .addOperand(*Data0) // data0
     .addOperand(*Data1) // data1
     .addImm(NewOffset0) // offset0
     .addImm(NewOffset1) // offset1
+    .addImm(0) // gds
     .addOperand(*M0Reg)  // m0
     .addMemOperand(*I->memoperands_begin())
     .addMemOperand(*Paired->memoperands_begin());
@@ -414,9 +405,9 @@ bool SILoadStoreOptimizer::optimizeBlock(MachineBasicBlock &MBB) {
 }
 
 bool SILoadStoreOptimizer::runOnMachineFunction(MachineFunction &MF) {
-  const TargetSubtargetInfo *STM = MF.getTarget().getSubtargetImpl();
-  TRI = static_cast<const SIRegisterInfo*>(STM->getRegisterInfo());
-  TII = static_cast<const SIInstrInfo*>(STM->getInstrInfo());
+  const TargetSubtargetInfo &STM = MF.getSubtarget();
+  TRI = static_cast<const SIRegisterInfo *>(STM.getRegisterInfo());
+  TII = static_cast<const SIInstrInfo *>(STM.getInstrInfo());
   MRI = &MF.getRegInfo();
 
   LIS = &getAnalysis<LiveIntervals>();

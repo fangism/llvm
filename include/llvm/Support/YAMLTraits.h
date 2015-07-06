@@ -46,6 +46,10 @@ struct MappingTraits {
   // static void mapping(IO &io, T &fields);
   // Optionally may provide:
   // static StringRef validate(IO &io, T &fields);
+  //
+  // The optional flow flag will cause generated YAML to use a flow mapping
+  // (e.g. { a: 0, b: 1 }):
+  // static const bool flow = true;
 };
 
 
@@ -445,8 +449,12 @@ public:
   virtual bool preflightKey(const char*, bool, bool, bool &, void *&) = 0;
   virtual void postflightKey(void*) = 0;
 
+  virtual void beginFlowMapping() = 0;
+  virtual void endFlowMapping() = 0;
+
   virtual void beginEnumScalar() = 0;
   virtual bool matchEnumScalar(const char*, bool) = 0;
+  virtual bool matchEnumFallback() = 0;
   virtual void endEnumScalar() = 0;
 
   virtual bool beginBitSetScalar(bool &) = 0;
@@ -469,6 +477,16 @@ public:
   void enumCase(T &Val, const char* Str, const uint32_t ConstVal) {
     if ( matchEnumScalar(Str, outputting() && Val == static_cast<T>(ConstVal)) ) {
       Val = ConstVal;
+    }
+  }
+
+  template <typename FBT, typename T>
+  void enumFallback(T &Val) {
+    if ( matchEnumFallback() ) {
+      // FIXME: Force integral conversion to allow strong typedefs to convert.
+      FBT Res = (uint64_t)Val;
+      yamlize(*this, Res, true);
+      Val = (uint64_t)Res;
     }
   }
 
@@ -532,7 +550,7 @@ public:
   void mapOptional(const char* Key, T& Val, const T& Default) {
     this->processKeyWithDefault(Key, Val, Default, false);
   }
-  
+
 private:
   template <typename T>
   void processKeyWithDefault(const char *Key, Optional<T> &Val,
@@ -632,7 +650,10 @@ yamlize(IO &io, T &Val, bool) {
 template<typename T>
 typename std::enable_if<validatedMappingTraits<T>::value, void>::type
 yamlize(IO &io, T &Val, bool) {
-  io.beginMapping();
+  if (has_FlowTraits<MappingTraits<T>>::value)
+    io.beginFlowMapping();
+  else
+    io.beginMapping();
   if (io.outputting()) {
     StringRef Err = MappingTraits<T>::validate(io, Val);
     if (!Err.empty()) {
@@ -646,15 +667,24 @@ yamlize(IO &io, T &Val, bool) {
     if (!Err.empty())
       io.setError(Err);
   }
-  io.endMapping();
+  if (has_FlowTraits<MappingTraits<T>>::value)
+    io.endFlowMapping();
+  else
+    io.endMapping();
 }
 
 template<typename T>
 typename std::enable_if<unvalidatedMappingTraits<T>::value, void>::type
 yamlize(IO &io, T &Val, bool) {
-  io.beginMapping();
-  MappingTraits<T>::mapping(io, Val);
-  io.endMapping();
+  if (has_FlowTraits<MappingTraits<T>>::value) {
+    io.beginFlowMapping();
+    MappingTraits<T>::mapping(io, Val);
+    io.endFlowMapping();
+  } else {
+    io.beginMapping();
+    MappingTraits<T>::mapping(io, Val);
+    io.endMapping();
+  }
 }
 
 template<typename T>
@@ -706,7 +736,7 @@ struct ScalarTraits<StringRef> {
   static StringRef input(StringRef, void*, StringRef &);
   static bool mustQuote(StringRef S) { return needsQuotes(S); }
 };
- 
+
 template<>
 struct ScalarTraits<std::string> {
   static void output(const std::string &, void*, llvm::raw_ostream &);
@@ -877,7 +907,7 @@ public:
         void *Ctxt = nullptr,
         SourceMgr::DiagHandlerTy DiagHandler = nullptr,
         void *DiagHandlerCtxt = nullptr);
-  ~Input();
+  ~Input() override;
 
   // Check if there was an syntax or semantic error during parsing.
   std::error_code error();
@@ -889,6 +919,8 @@ private:
   void endMapping() override;
   bool preflightKey(const char *, bool, bool, bool &, void *&) override;
   void postflightKey(void *) override;
+  void beginFlowMapping() override;
+  void endFlowMapping() override;
   unsigned beginSequence() override;
   void endSequence() override;
   bool preflightElement(unsigned index, void *&) override;
@@ -899,6 +931,7 @@ private:
   void endFlowSequence() override;
   void beginEnumScalar() override;
   bool matchEnumScalar(const char*, bool) override;
+  bool matchEnumFallback() override;
   void endEnumScalar() override;
   bool beginBitSetScalar(bool &) override;
   bool bitSetMatch(const char *, bool ) override;
@@ -943,7 +976,7 @@ private:
   };
 
   class MapHNode : public HNode {
-    virtual void anchor();
+    void anchor() override;
 
   public:
     MapHNode(Node *n) : HNode(n) { }
@@ -962,7 +995,7 @@ private:
   };
 
   class SequenceHNode : public HNode {
-    virtual void anchor();
+    void anchor() override;
 
   public:
     SequenceHNode(Node *n) : HNode(n) { }
@@ -1008,7 +1041,7 @@ private:
 class Output : public IO {
 public:
   Output(llvm::raw_ostream &, void *Ctxt=nullptr);
-  virtual ~Output();
+  ~Output() override;
 
   bool outputting() override;
   bool mapTag(StringRef, bool) override;
@@ -1016,6 +1049,8 @@ public:
   void endMapping() override;
   bool preflightKey(const char *key, bool, bool, bool &, void *&) override;
   void postflightKey(void *) override;
+  void beginFlowMapping() override;
+  void endFlowMapping() override;
   unsigned beginSequence() override;
   void endSequence() override;
   bool preflightElement(unsigned, void *&) override;
@@ -1026,6 +1061,7 @@ public:
   void endFlowSequence() override;
   void beginEnumScalar() override;
   bool matchEnumScalar(const char*, bool) override;
+  bool matchEnumFallback() override;
   void endEnumScalar() override;
   bool beginBitSetScalar(bool &) override;
   bool bitSetMatch(const char *, bool ) override;
@@ -1047,13 +1083,22 @@ private:
   void newLineCheck();
   void outputNewLine();
   void paddedKey(StringRef key);
+  void flowKey(StringRef Key);
 
-  enum InState { inSeq, inFlowSeq, inMapFirstKey, inMapOtherKey };
+  enum InState {
+    inSeq,
+    inFlowSeq,
+    inMapFirstKey,
+    inMapOtherKey,
+    inFlowMapFirstKey,
+    inFlowMapOtherKey
+  };
 
   llvm::raw_ostream       &Out;
   SmallVector<InState, 8>  StateStack;
   int                      Column;
   int                      ColumnAtFlowStart;
+  int                      ColumnAtMapFlowStart;
   bool                     NeedBitValueComma;
   bool                     NeedFlowSequenceComma;
   bool                     EnumerationMatchFound;

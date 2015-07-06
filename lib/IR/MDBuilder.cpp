@@ -55,22 +55,26 @@ MDNode *MDBuilder::createBranchWeights(ArrayRef<uint32_t> Weights) {
 
 MDNode *MDBuilder::createRange(const APInt &Lo, const APInt &Hi) {
   assert(Lo.getBitWidth() == Hi.getBitWidth() && "Mismatched bitwidths!");
+
+  Type *Ty = IntegerType::get(Context, Lo.getBitWidth());
+  return createRange(ConstantInt::get(Ty, Lo), ConstantInt::get(Ty, Hi));
+}
+
+MDNode *MDBuilder::createRange(Constant *Lo, Constant *Hi) {
   // If the range is everything then it is useless.
   if (Hi == Lo)
     return nullptr;
 
   // Return the range [Lo, Hi).
-  Type *Ty = IntegerType::get(Context, Lo.getBitWidth());
-  Metadata *Range[2] = {createConstant(ConstantInt::get(Ty, Lo)),
-                        createConstant(ConstantInt::get(Ty, Hi))};
+  Metadata *Range[2] = {createConstant(Lo), createConstant(Hi)};
   return MDNode::get(Context, Range);
 }
 
 MDNode *MDBuilder::createAnonymousAARoot(StringRef Name, MDNode *Extra) {
   // To ensure uniqueness the root node is self-referential.
-  MDNode *Dummy = MDNode::getTemporary(Context, None);
+  auto Dummy = MDNode::getTemporary(Context, None);
 
-  SmallVector<Metadata *, 3> Args(1, Dummy);
+  SmallVector<Metadata *, 3> Args(1, Dummy.get());
   if (Extra)
     Args.push_back(Extra);
   if (!Name.empty())
@@ -82,7 +86,7 @@ MDNode *MDBuilder::createAnonymousAARoot(StringRef Name, MDNode *Extra) {
   //   !1 = metadata !{metadata !0} <- root
   // Replace the dummy operand with the root node itself and delete the dummy.
   Root->replaceOperandWith(0, Root);
-  MDNode::deleteTemporary(Dummy);
+
   // We now have
   //   !1 = metadata !{metadata !1} <- self-referential root
   return Root;

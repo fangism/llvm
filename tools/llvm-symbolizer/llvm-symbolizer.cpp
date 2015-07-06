@@ -17,10 +17,12 @@
 
 #include "LLVMSymbolize.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/COM.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/ManagedStatic.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
@@ -122,6 +124,8 @@ int main(int argc, char **argv) {
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y; // Call llvm_shutdown() on exit.
 
+  llvm::sys::InitializeCOMRAII COM(llvm::sys::COMThreadingMode::MultiThreaded);
+
   cl::ParseCommandLineOptions(argc, argv, "llvm-symbolizer\n");
   LLVMSymbolizer::Options Opts(ClUseSymbolTable, ClPrintFunctions,
                                ClPrintInlining, ClDemangle, ClDefaultArch);
@@ -145,5 +149,6 @@ int main(int argc, char **argv) {
     outs() << Result << "\n";
     outs().flush();
   }
+
   return 0;
 }

@@ -9,81 +9,47 @@
 // Instruction definitions for VI and newer.
 //===----------------------------------------------------------------------===//
 
-let SubtargetPredicate = isVI in {
-
-def V_LDEXP_F32 : VOP3InstVI <0x288, "v_ldexp_f32", VOP_F32_F32_I32,
-  AMDGPUldexp
->;
-def V_BFM_B32 : VOP3InstVI <0x293, "v_bfm_b32", VOP_I32_I32_I32, AMDGPUbfm>;
-def V_BCNT_U32_B32 : VOP3InstVI <0x28b, "v_bcnt_u32_b32", VOP_I32_I32_I32>;
-def V_MBCNT_LO_U32_B32 : VOP3InstVI <0x28c, "v_mbcnt_lo_u32_b32",
-  VOP_I32_I32_I32
->;
-def V_MBCNT_HI_U32_B32 : VOP3InstVI <0x28d, "v_mbcnt_hi_u32_b32",
-  VOP_I32_I32_I32
->;
-
-def V_CVT_PKRTZ_F16_F32 : VOP3InstVI <0x296, "v_cvt_pkrtz_f16_f32",
- VOP_I32_F32_F32, int_SI_packf16
->;
-
-defm BUFFER_LOAD_DWORD_VI : MUBUF_Load_Helper_vi <
-  0x14, "buffer_load_dword", VGPR_32, i32, global_load
->;
-
-defm BUFFER_LOAD_FORMAT_XYZW_VI : MUBUF_Load_Helper_vi <
-  0x03, "buffer_load_format_xyzw", VReg_128
->;
-
-} // End SubtargetPredicate = isVI
+let SIAssemblerPredicate = DisableInst, SubtargetPredicate = isVI in {
 
 //===----------------------------------------------------------------------===//
-// VOP2 Patterns
+// VOP1 Instructions
 //===----------------------------------------------------------------------===//
 
-let Predicates = [isVI] in {
-
-def : Pat <
-  (int_SI_tid),
-  (V_MBCNT_HI_U32_B32 0xffffffff,
-                      (V_MBCNT_LO_U32_B32 0xffffffff, 0))
+defm V_CVT_F16_U16 : VOP1Inst <vop1<0, 0x39>, "v_cvt_f16_u16", VOP_F16_I16>;
+defm V_CVT_F16_I16 : VOP1Inst <vop1<0, 0x3a>, "v_cvt_f16_i16", VOP_F16_I16>;
+defm V_CVT_U16_F16 : VOP1Inst <vop1<0, 0x3b>, "v_cvt_u16_f16", VOP_I16_F16>;
+defm V_CVT_I16_F16 : VOP1Inst <vop1<0, 0x3c>, "v_cvt_i16_f16", VOP_I16_F16>;
+defm V_RCP_F16 : VOP1Inst <vop1<0, 0x3d>, "v_rcp_f16", VOP_F16_F16>;
+defm V_SQRT_F16 : VOP1Inst <vop1<0, 0x3e>, "v_sqrt_f16", VOP_F16_F16>;
+defm V_RSQ_F16 : VOP1Inst <vop1<0, 0x3f>, "v_rsq_f16", VOP_F16_F16>;
+defm V_LOG_F16 : VOP1Inst <vop1<0, 0x40>, "v_log_f16", VOP_F16_F16>;
+defm V_EXP_F16 : VOP1Inst <vop1<0, 0x41>, "v_exp_f16", VOP_F16_F16>;
+defm V_FREXP_MANT_F16 : VOP1Inst <vop1<0, 0x42>, "v_frexp_mant_f16",
+  VOP_F16_F16
 >;
+defm V_FREXP_EXP_I16_F16 : VOP1Inst <vop1<0, 0x43>, "v_frexp_exp_i16_f16",
+  VOP_I16_F16
+>;
+defm V_FLOOR_F16 : VOP1Inst <vop1<0, 0x44>, "v_floor_f16", VOP_F16_F16>;
+defm V_CEIL_F16 : VOP1Inst <vop1<0, 0x45>, "v_ceil_f16", VOP_F16_F16>;
+defm V_TRUNC_F16 : VOP1Inst <vop1<0, 0x46>, "v_trunc_f16", VOP_F16_F16>;
+defm V_RNDNE_F16 : VOP1Inst <vop1<0, 0x47>, "v_rndne_f16", VOP_F16_F16>;
+defm V_FRACT_F16 : VOP1Inst <vop1<0, 0x48>, "v_fract_f16", VOP_F16_F16>;
+defm V_SIN_F16 : VOP1Inst <vop1<0, 0x49>, "v_sin_f16", VOP_F16_F16>;
+defm V_COS_F16 : VOP1Inst <vop1<0, 0x4a>, "v_cos_f16", VOP_F16_F16>;
+
+} // End SIAssemblerPredicate = DisableInst, SubtargetPredicate = isVI
 
 //===----------------------------------------------------------------------===//
 // SMEM Patterns
 //===----------------------------------------------------------------------===//
 
-// 1. Offset as 8bit DWORD immediate
+let Predicates = [isVI] in {
+
+// 1. Offset as 20bit DWORD immediate
 def : Pat <
   (SIload_constant v4i32:$sbase, IMM20bit:$offset),
   (S_BUFFER_LOAD_DWORD_IMM $sbase, (as_i32imm $offset))
 >;
-
-//===----------------------------------------------------------------------===//
-// MUBUF Patterns
-//===----------------------------------------------------------------------===//
-
-// Offset in an 32Bit VGPR
-def : Pat <
-  (SIload_constant v4i32:$sbase, i32:$voff),
-  (BUFFER_LOAD_DWORD_VI_OFFEN $sbase, $voff, 0, 0, 0, 0, 0)
->;
-
-// Offset in an 32Bit VGPR
-def : Pat <
-  (SIload_constant v4i32:$sbase, i32:$voff),
-  (BUFFER_LOAD_DWORD_VI_OFFEN $sbase, $voff, 0, 0, 0, 0, 0)
->;
-
-/* int_SI_vs_load_input */
-def : Pat<
-  (SIload_input v4i32:$tlst, imm:$attr_offset, i32:$buf_idx_vgpr),
-  (BUFFER_LOAD_FORMAT_XYZW_VI_IDXEN $tlst, $buf_idx_vgpr, imm:$attr_offset, 0, 0, 0, 0)
->;
-
-defm : MUBUF_Load_Dword <i32, BUFFER_LOAD_DWORD_VI_OFFSET,
-                         BUFFER_LOAD_DWORD_VI_OFFEN,
-                         BUFFER_LOAD_DWORD_VI_IDXEN,
-                         BUFFER_LOAD_DWORD_VI_BOTHEN>;
 
 } // End Predicates = [isVI]

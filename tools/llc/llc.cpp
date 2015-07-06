@@ -14,18 +14,21 @@
 //===----------------------------------------------------------------------===//
 
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/CodeGen/LinkAllAsmWriterComponents.h"
 #include "llvm/CodeGen/LinkAllCodegenComponents.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/IRPrintingPasses.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Pass.h"
-#include "llvm/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
@@ -39,7 +42,6 @@
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/ToolOutputFile.h"
-#include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include <memory>
@@ -210,17 +212,19 @@ static int compileModule(char **argv, LLVMContext &Context) {
   bool SkipModule = MCPU == "help" ||
                     (!MAttrs.empty() && MAttrs.front() == "help");
 
-  // If user asked for the 'native' CPU, autodetect here. If autodection fails,
-  // this will set the CPU to an empty string which tells the target to
-  // pick a basic default.
-  if (MCPU == "native")
-    MCPU = sys::getHostCPUName();
-
   // If user just wants to list available options, skip module loading
   if (!SkipModule) {
     M = parseIRFile(InputFilename, Err, Context);
     if (!M) {
       Err.print(argv[0], errs());
+      return 1;
+    }
+
+    // Verify module immediately to catch problems before doInitialization() is
+    // called on any passes.
+    if (!NoVerify && verifyModule(*M, &errs())) {
+      errs() << argv[0] << ": " << InputFilename
+             << ": error: input module is broken!\n";
       return 1;
     }
 
@@ -246,12 +250,30 @@ static int compileModule(char **argv, LLVMContext &Context) {
 
   // Package up features to be passed to target/subtarget
   std::string FeaturesStr;
-  if (MAttrs.size()) {
+  if (!MAttrs.empty() || MCPU == "native") {
     SubtargetFeatures Features;
+
+    // If user asked for the 'native' CPU, we need to autodetect features.
+    // This is necessary for x86 where the CPU might not support all the
+    // features the autodetected CPU name lists in the target. For example,
+    // not all Sandybridge processors support AVX.
+    if (MCPU == "native") {
+      StringMap<bool> HostFeatures;
+      if (sys::getHostCPUFeatures(HostFeatures))
+        for (auto &F : HostFeatures)
+          Features.AddFeature(F.first(), F.second);
+    }
+
     for (unsigned i = 0; i != MAttrs.size(); ++i)
       Features.AddFeature(MAttrs[i]);
     FeaturesStr = Features.getString();
   }
+
+  // If user asked for the 'native' CPU, autodetect here. If autodection fails,
+  // this will set the CPU to an empty string which tells the target to
+  // pick a basic default.
+  if (MCPU == "native")
+    MCPU = sys::getHostCPUName();
 
   CodeGenOpt::Level OLvl = CodeGenOpt::Default;
   switch (OptLevel) {
@@ -293,18 +315,19 @@ static int compileModule(char **argv, LLVMContext &Context) {
   if (!Out) return 1;
 
   // Build up all of the passes that we want to do to the module.
-  PassManager PM;
+  legacy::PassManager PM;
 
   // Add an appropriate TargetLibraryInfo pass for the module's triple.
-  TargetLibraryInfo *TLI = new TargetLibraryInfo(TheTriple);
+  TargetLibraryInfoImpl TLII(Triple(M->getTargetTriple()));
+
+  // The -disable-simplify-libcalls flag actually disables all builtin optzns.
   if (DisableSimplifyLibCalls)
-    TLI->disableAllFunctions();
-  PM.add(TLI);
+    TLII.disableAllFunctions();
+  PM.add(new TargetLibraryInfoWrapperPass(TLII));
 
   // Add the target data from the target machine, if it exists, or the module.
-  if (const DataLayout *DL = Target->getSubtargetImpl()->getDataLayout())
-    M->setDataLayout(DL);
-  PM.add(new DataLayoutPass());
+  if (const DataLayout *DL = Target->getDataLayout())
+    M->setDataLayout(*DL);
 
   if (RelaxAll.getNumOccurrences() > 0 &&
       FileType != TargetMachine::CGFT_ObjectFile)
@@ -312,7 +335,13 @@ static int compileModule(char **argv, LLVMContext &Context) {
              << ": warning: ignoring -mc-relax-all because filetype != obj";
 
   {
-    formatted_raw_ostream FOS(Out->os());
+    raw_pwrite_stream *OS = &Out->os();
+    std::unique_ptr<buffer_ostream> BOS;
+    if (FileType != TargetMachine::CGFT_AssemblyFile &&
+        !Out->os().supportsSeeking()) {
+      BOS = make_unique<buffer_ostream>(*OS);
+      OS = BOS.get();
+    }
 
     AnalysisID StartAfterID = nullptr;
     AnalysisID StopAfterID = nullptr;
@@ -335,8 +364,8 @@ static int compileModule(char **argv, LLVMContext &Context) {
     }
 
     // Ask the target to add backend passes as necessary.
-    if (Target->addPassesToEmitFile(PM, FOS, FileType, NoVerify,
-                                    StartAfterID, StopAfterID)) {
+    if (Target->addPassesToEmitFile(PM, *OS, FileType, NoVerify, StartAfterID,
+                                    StopAfterID)) {
       errs() << argv[0] << ": target does not support generation of this"
              << " file type!\n";
       return 1;

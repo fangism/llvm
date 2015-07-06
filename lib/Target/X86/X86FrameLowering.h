@@ -18,18 +18,16 @@
 
 namespace llvm {
 
-class MCSymbol;
-class X86TargetMachine;
-class X86Subtarget;
-
 class X86FrameLowering : public TargetFrameLowering {
 public:
   explicit X86FrameLowering(StackDirection D, unsigned StackAl, int LAO)
     : TargetFrameLowering(StackGrowsDown, StackAl, LAO) {}
 
-  static void getStackProbeFunction(const X86Subtarget &STI,
-                                    unsigned &CallOp,
-                                    const char *&Symbol);
+  /// Emit a call to the target's stack probe function. This is required for all
+  /// large stack allocations on Windows. The caller is required to materialize
+  /// the number of bytes to probe in RAX/EAX.
+  static void emitStackProbeCall(MachineFunction &MF, MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator MBBI, DebugLoc DL);
 
   void emitCalleeSavedFrameMoves(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MBBI,
@@ -37,12 +35,14 @@ public:
 
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
   /// the function.
-  void emitPrologue(MachineFunction &MF) const override;
+  void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
 
-  void adjustForSegmentedStacks(MachineFunction &MF) const override;
+  void adjustForSegmentedStacks(MachineFunction &MF,
+                                MachineBasicBlock &PrologueMBB) const override;
 
-  void adjustForHiPEPrologue(MachineFunction &MF) const override;
+  void adjustForHiPEPrologue(MachineFunction &MF,
+                             MachineBasicBlock &PrologueMBB) const override;
 
   void processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
                                      RegScavenger *RS = nullptr) const override;
@@ -64,6 +64,8 @@ public:
 
   bool hasFP(const MachineFunction &MF) const override;
   bool hasReservedCallFrame(const MachineFunction &MF) const override;
+  bool canSimplifyCallFramePseudos(const MachineFunction &MF) const override;
+  bool needsFrameIndexResolution(const MachineFunction &MF) const override;
 
   int getFrameIndexOffset(const MachineFunction &MF, int FI) const override;
   int getFrameIndexReference(const MachineFunction &MF, int FI,
