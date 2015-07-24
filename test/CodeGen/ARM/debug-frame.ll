@@ -73,14 +73,13 @@ declare void @_Z5printddddd(double, double, double, double, double)
 
 define void @_Z4testiiiiiddddd(i32 %a, i32 %b, i32 %c, i32 %d, i32 %e,
                                double %m, double %n, double %p,
-                               double %q, double %r) {
+                               double %q, double %r) personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*) {
 entry:
   invoke void @_Z5printiiiii(i32 %a, i32 %b, i32 %c, i32 %d, i32 %e)
           to label %try.cont unwind label %lpad
 
 lpad:
   %0 = landingpad { i8*, i32 }
-          personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*)
           catch i8* null
   %1 = extractvalue { i8*, i32 } %0, 0
   %2 = tail call i8* @__cxa_begin_catch(i8* %1)
@@ -97,7 +96,6 @@ try.cont:
 
 lpad1:
   %3 = landingpad { i8*, i32 }
-          personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*)
           cleanup
   invoke void @__cxa_end_catch()
           to label %eh.resume unwind label %terminate.lpad
@@ -107,7 +105,6 @@ eh.resume:
 
 terminate.lpad:
   %4 = landingpad { i8*, i32 }
-          personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*)
           catch i8* null
   %5 = extractvalue { i8*, i32 } %4, 0
   tail call void @__clang_call_terminate(i8* %5)
@@ -179,7 +176,7 @@ declare void @_ZSt9terminatev()
 ; CHECK-FP:   .cfi_offset r4, -36
 ; CHECK-FP:   add    r11, sp, #28
 ; CHECK-FP:   .cfi_def_cfa r11, 8
-; CHECK-FP:   sub    sp, sp, #28
+; CHECK-FP:   sub    sp, sp, #44
 ; CHECK-FP:   .cfi_endproc
 
 ; CHECK-FP-ELIM-LABEL: _Z4testiiiiiddddd:
@@ -195,8 +192,8 @@ declare void @_ZSt9terminatev()
 ; CHECK-FP-ELIM:   .cfi_offset r6, -28
 ; CHECK-FP-ELIM:   .cfi_offset r5, -32
 ; CHECK-FP-ELIM:   .cfi_offset r4, -36
-; CHECK-FP-ELIM:   sub   sp, sp, #28
-; CHECK-FP-ELIM:   .cfi_def_cfa_offset 64
+; CHECK-FP-ELIM:   sub   sp, sp, #36
+; CHECK-FP-ELIM:   .cfi_def_cfa_offset 72
 ; CHECK-FP-ELIM:   .cfi_endproc
 
 ; CHECK-V7-FP-LABEL: _Z4testiiiiiddddd:

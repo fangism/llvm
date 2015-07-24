@@ -467,6 +467,56 @@ looks like:
       // Determine if this scalar needs quotes.
       static bool mustQuote(StringRef) { return true; }
     };
+
+Block Scalars
+-------------
+
+YAML block scalars are string literals that are represented in YAML using the
+literal block notation, just like the example shown below:
+
+.. code-block:: yaml
+
+    text: |
+      First line
+      Second line
+
+The YAML I/O library provides support for translating between YAML block scalars
+and specific C++ types by allowing you to specialize BlockScalarTraits<> on
+your data type. The library doesn't provide any built-in support for block
+scalar I/O for types like std::string and llvm::StringRef as they are already
+supported by YAML I/O and use the ordinary scalar notation by default.
+
+BlockScalarTraits specializations are very similar to the
+ScalarTraits specialization - YAML I/O will provide the native type and your
+specialization must create a temporary llvm::StringRef when writing, and
+it will also provide an llvm::StringRef that has the value of that block scalar
+and your specialization must convert that to your native data type when reading.
+An example of a custom type with an appropriate specialization of
+BlockScalarTraits is shown below:
+
+.. code-block:: c++
+
+    using llvm::yaml::BlockScalarTraits;
+    using llvm::yaml::IO;
+
+    struct MyStringType {
+      std::string Str;
+    };
+
+    template <>
+    struct BlockScalarTraits<MyStringType> {
+      static void output(const MyStringType &Value, void *Ctxt,
+                         llvm::raw_ostream &OS) {
+        OS << Value.Str;
+      }
+
+      static StringRef input(StringRef Scalar, void *Ctxt,
+                             MyStringType &Value) {
+        Value.Str = Scalar.str();
+        return StringRef();
+      }
+    };
+
     
 
 Mappings
@@ -748,6 +798,8 @@ add "static const bool flow = true;". For instance:
       static const bool flow = true;
     }
 
+Flow mappings are subject to line wrapping according to the Output object
+configuration.
 
 Sequence
 ========
@@ -795,6 +847,8 @@ With the above, if you used MyList as the data type in your native data
 structures, then when converted to YAML, a flow sequence of integers 
 will be used (e.g. [ 10, -3, 4 ]).
 
+Flow sequences are subject to line wrapping according to the Output object
+configuration.
 
 Utility Macros
 --------------
@@ -858,14 +912,14 @@ Output
 
 The llvm::yaml::Output class is used to generate a YAML document from your 
 in-memory data structures, using traits defined on your data types.  
-To instantiate an Output object you need an llvm::raw_ostream, and optionally 
-a context pointer:
+To instantiate an Output object you need an llvm::raw_ostream, an optional 
+context pointer and an optional wrapping column:
 
 .. code-block:: c++
 
       class Output : public IO {
       public:
-        Output(llvm::raw_ostream &, void *context=NULL);
+        Output(llvm::raw_ostream &, void *context = NULL, int WrapColumn = 70);
     
 Once you have an Output object, you can use the C++ stream operator on it
 to write your native data as YAML. One thing to recall is that a YAML file
@@ -873,6 +927,10 @@ can contain multiple "documents".  If the top level data structure you are
 streaming as YAML is a mapping, scalar, or sequence, then Output assumes you
 are generating one document and wraps the mapping output 
 with  "``---``" and trailing "``...``".  
+
+The WrapColumn parameter will cause the flow mappings and sequences to
+line-wrap when they go over the supplied column. Pass 0 to completely
+suppress the wrapping.
 
 .. code-block:: c++
    

@@ -138,6 +138,9 @@ DIScopeRef DIScope::getScope() const {
   if (auto *NS = dyn_cast<DINamespace>(this))
     return DIScopeRef(NS->getScope());
 
+  if (auto *M = dyn_cast<DIModule>(this))
+    return DIScopeRef(M->getScope());
+
   assert((isa<DIFile>(this) || isa<DICompileUnit>(this)) &&
          "Unhandled type of scope.");
   return nullptr;
@@ -150,6 +153,8 @@ StringRef DIScope::getName() const {
     return SP->getName();
   if (auto *NS = dyn_cast<DINamespace>(this))
     return NS->getName();
+  if (auto *M = dyn_cast<DIModule>(this))
+    return M->getName();
   assert((isa<DILexicalBlockBase>(this) || isa<DIFile>(this) ||
           isa<DICompileUnit>(this)) &&
          "Unhandled type of scope.");
@@ -311,7 +316,8 @@ DICompileUnit *DICompileUnit::getImpl(
     unsigned RuntimeVersion, MDString *SplitDebugFilename,
     unsigned EmissionKind, Metadata *EnumTypes, Metadata *RetainedTypes,
     Metadata *Subprograms, Metadata *GlobalVariables,
-    Metadata *ImportedEntities, StorageType Storage, bool ShouldCreate) {
+    Metadata *ImportedEntities, uint64_t DWOId,
+    StorageType Storage, bool ShouldCreate) {
   assert(isCanonical(Producer) && "Expected canonical MDString");
   assert(isCanonical(Flags) && "Expected canonical MDString");
   assert(isCanonical(SplitDebugFilename) && "Expected canonical MDString");
@@ -319,13 +325,13 @@ DICompileUnit *DICompileUnit::getImpl(
       DICompileUnit,
       (SourceLanguage, File, getString(Producer), IsOptimized, getString(Flags),
        RuntimeVersion, getString(SplitDebugFilename), EmissionKind, EnumTypes,
-       RetainedTypes, Subprograms, GlobalVariables, ImportedEntities));
+       RetainedTypes, Subprograms, GlobalVariables, ImportedEntities, DWOId));
   Metadata *Ops[] = {File, Producer, Flags, SplitDebugFilename, EnumTypes,
                      RetainedTypes, Subprograms, GlobalVariables,
                      ImportedEntities};
   DEFINE_GETIMPL_STORE(
       DICompileUnit,
-      (SourceLanguage, IsOptimized, RuntimeVersion, EmissionKind), Ops);
+      (SourceLanguage, IsOptimized, RuntimeVersion, EmissionKind, DWOId), Ops);
 }
 
 DISubprogram *DILocalScope::getSubprogram() const {
@@ -407,6 +413,18 @@ DINamespace *DINamespace::getImpl(LLVMContext &Context, Metadata *Scope,
   DEFINE_GETIMPL_LOOKUP(DINamespace, (Scope, File, getString(Name), Line));
   Metadata *Ops[] = {File, Scope, Name};
   DEFINE_GETIMPL_STORE(DINamespace, (Line), Ops);
+}
+
+DIModule *DIModule::getImpl(LLVMContext &Context, Metadata *Scope,
+                            MDString *Name, MDString *ConfigurationMacros,
+                            MDString *IncludePath, MDString *ISysRoot,
+                            StorageType Storage, bool ShouldCreate) {
+  assert(isCanonical(Name) && "Expected canonical MDString");
+  DEFINE_GETIMPL_LOOKUP(DIModule,
+    (Scope, getString(Name), getString(ConfigurationMacros),
+     getString(IncludePath), getString(ISysRoot)));
+  Metadata *Ops[] = {Scope, Name, ConfigurationMacros, IncludePath, ISysRoot};
+  DEFINE_GETIMPL_STORE_NO_CONSTRUCTOR_ARGS(DIModule, Ops);
 }
 
 DITemplateTypeParameter *DITemplateTypeParameter::getImpl(LLVMContext &Context,

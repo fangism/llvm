@@ -218,6 +218,7 @@ public:
     case DILocalVariableKind:
     case DIObjCPropertyKind:
     case DIImportedEntityKind:
+    case DIModuleKind:
       return true;
     }
   }
@@ -443,6 +444,7 @@ public:
     case DILexicalBlockKind:
     case DILexicalBlockFileKind:
     case DINamespaceKind:
+    case DIModuleKind:
       return true;
     }
   }
@@ -971,13 +973,15 @@ class DICompileUnit : public DIScope {
   bool IsOptimized;
   unsigned RuntimeVersion;
   unsigned EmissionKind;
+  uint64_t DWOId;
 
   DICompileUnit(LLVMContext &C, StorageType Storage, unsigned SourceLanguage,
                 bool IsOptimized, unsigned RuntimeVersion,
-                unsigned EmissionKind, ArrayRef<Metadata *> Ops)
+                unsigned EmissionKind, uint64_t DWOId, ArrayRef<Metadata *> Ops)
       : DIScope(C, DICompileUnitKind, Storage, dwarf::DW_TAG_compile_unit, Ops),
         SourceLanguage(SourceLanguage), IsOptimized(IsOptimized),
-        RuntimeVersion(RuntimeVersion), EmissionKind(EmissionKind) {}
+        RuntimeVersion(RuntimeVersion), EmissionKind(EmissionKind),
+        DWOId(DWOId) {}
   ~DICompileUnit() = default;
 
   static DICompileUnit *
@@ -987,14 +991,15 @@ class DICompileUnit : public DIScope {
           unsigned EmissionKind, DICompositeTypeArray EnumTypes,
           DITypeArray RetainedTypes, DISubprogramArray Subprograms,
           DIGlobalVariableArray GlobalVariables,
-          DIImportedEntityArray ImportedEntities, StorageType Storage,
-          bool ShouldCreate = true) {
-    return getImpl(
-        Context, SourceLanguage, File, getCanonicalMDString(Context, Producer),
-        IsOptimized, getCanonicalMDString(Context, Flags), RuntimeVersion,
-        getCanonicalMDString(Context, SplitDebugFilename), EmissionKind,
-        EnumTypes.get(), RetainedTypes.get(), Subprograms.get(),
-        GlobalVariables.get(), ImportedEntities.get(), Storage, ShouldCreate);
+          DIImportedEntityArray ImportedEntities, uint64_t DWOId,
+          StorageType Storage, bool ShouldCreate = true) {
+    return getImpl(Context, SourceLanguage, File,
+                   getCanonicalMDString(Context, Producer), IsOptimized,
+                   getCanonicalMDString(Context, Flags), RuntimeVersion,
+                   getCanonicalMDString(Context, SplitDebugFilename),
+                   EmissionKind, EnumTypes.get(), RetainedTypes.get(),
+                   Subprograms.get(), GlobalVariables.get(),
+                   ImportedEntities.get(), DWOId, Storage, ShouldCreate);
   }
   static DICompileUnit *
   getImpl(LLVMContext &Context, unsigned SourceLanguage, Metadata *File,
@@ -1002,7 +1007,7 @@ class DICompileUnit : public DIScope {
           unsigned RuntimeVersion, MDString *SplitDebugFilename,
           unsigned EmissionKind, Metadata *EnumTypes, Metadata *RetainedTypes,
           Metadata *Subprograms, Metadata *GlobalVariables,
-          Metadata *ImportedEntities, StorageType Storage,
+          Metadata *ImportedEntities, uint64_t DWOId, StorageType Storage,
           bool ShouldCreate = true);
 
   TempDICompileUnit cloneImpl() const {
@@ -1010,7 +1015,7 @@ class DICompileUnit : public DIScope {
         getContext(), getSourceLanguage(), getFile(), getProducer(),
         isOptimized(), getFlags(), getRuntimeVersion(), getSplitDebugFilename(),
         getEmissionKind(), getEnumTypes(), getRetainedTypes(), getSubprograms(),
-        getGlobalVariables(), getImportedEntities());
+        getGlobalVariables(), getImportedEntities(), DWOId);
   }
 
 public:
@@ -1021,22 +1026,21 @@ public:
                      DICompositeTypeArray EnumTypes, DITypeArray RetainedTypes,
                      DISubprogramArray Subprograms,
                      DIGlobalVariableArray GlobalVariables,
-                     DIImportedEntityArray ImportedEntities),
+                     DIImportedEntityArray ImportedEntities, uint64_t DWOId),
                     (SourceLanguage, File, Producer, IsOptimized, Flags,
                      RuntimeVersion, SplitDebugFilename, EmissionKind,
                      EnumTypes, RetainedTypes, Subprograms, GlobalVariables,
-                     ImportedEntities))
-  DEFINE_MDNODE_GET(DICompileUnit,
-                    (unsigned SourceLanguage, Metadata *File,
-                     MDString *Producer, bool IsOptimized, MDString *Flags,
-                     unsigned RuntimeVersion, MDString *SplitDebugFilename,
-                     unsigned EmissionKind, Metadata *EnumTypes,
-                     Metadata *RetainedTypes, Metadata *Subprograms,
-                     Metadata *GlobalVariables, Metadata *ImportedEntities),
-                    (SourceLanguage, File, Producer, IsOptimized, Flags,
-                     RuntimeVersion, SplitDebugFilename, EmissionKind,
-                     EnumTypes, RetainedTypes, Subprograms, GlobalVariables,
-                     ImportedEntities))
+                     ImportedEntities, DWOId))
+  DEFINE_MDNODE_GET(
+      DICompileUnit,
+      (unsigned SourceLanguage, Metadata *File, MDString *Producer,
+       bool IsOptimized, MDString *Flags, unsigned RuntimeVersion,
+       MDString *SplitDebugFilename, unsigned EmissionKind, Metadata *EnumTypes,
+       Metadata *RetainedTypes, Metadata *Subprograms,
+       Metadata *GlobalVariables, Metadata *ImportedEntities, uint64_t DWOId),
+      (SourceLanguage, File, Producer, IsOptimized, Flags, RuntimeVersion,
+       SplitDebugFilename, EmissionKind, EnumTypes, RetainedTypes, Subprograms,
+       GlobalVariables, ImportedEntities, DWOId))
 
   TempDICompileUnit clone() const { return cloneImpl(); }
 
@@ -1062,6 +1066,7 @@ public:
   DIImportedEntityArray getImportedEntities() const {
     return cast_or_null<MDTuple>(getRawImportedEntities());
   }
+  unsigned getDWOId() const { return DWOId; }
 
   MDString *getRawProducer() const { return getOperandAs<MDString>(1); }
   MDString *getRawFlags() const { return getOperandAs<MDString>(2); }
@@ -1080,11 +1085,20 @@ public:
   /// deleted on a uniquing collision.  In practice, uniquing collisions on \a
   /// DICompileUnit should be fairly rare.
   /// @{
+  void replaceEnumTypes(DICompositeTypeArray N) {
+    replaceOperandWith(4, N.get());
+  }
+  void replaceRetainedTypes(DITypeArray N) {
+    replaceOperandWith(5, N.get());
+  }
   void replaceSubprograms(DISubprogramArray N) {
     replaceOperandWith(6, N.get());
   }
   void replaceGlobalVariables(DIGlobalVariableArray N) {
     replaceOperandWith(7, N.get());
+  }
+  void replaceImportedEntities(DIImportedEntityArray N) {
+    replaceOperandWith(8, N.get());
   }
   /// @}
 
@@ -1620,6 +1634,66 @@ public:
   }
 };
 
+/// \brief A (clang) module that has been imported by the compile unit.
+///
+class DIModule : public DIScope {
+  friend class LLVMContextImpl;
+  friend class MDNode;
+
+  DIModule(LLVMContext &Context, StorageType Storage, ArrayRef<Metadata *> Ops)
+      : DIScope(Context, DIModuleKind, Storage, dwarf::DW_TAG_module, Ops) {}
+  ~DIModule() {}
+
+  static DIModule *getImpl(LLVMContext &Context, DIScope *Scope,
+                           StringRef Name, StringRef ConfigurationMacros,
+                           StringRef IncludePath, StringRef ISysRoot,
+                           StorageType Storage, bool ShouldCreate = true) {
+    return getImpl(Context, Scope, getCanonicalMDString(Context, Name),
+                   getCanonicalMDString(Context, ConfigurationMacros),
+                   getCanonicalMDString(Context, IncludePath),
+                   getCanonicalMDString(Context, ISysRoot),
+                   Storage, ShouldCreate);
+  }
+  static DIModule *getImpl(LLVMContext &Context, Metadata *Scope,
+                           MDString *Name, MDString *ConfigurationMacros,
+                           MDString *IncludePath, MDString *ISysRoot,
+                           StorageType Storage, bool ShouldCreate = true);
+
+  TempDIModule cloneImpl() const {
+    return getTemporary(getContext(), getScope(), getName(),
+                        getConfigurationMacros(), getIncludePath(),
+                        getISysRoot());
+  }
+
+public:
+  DEFINE_MDNODE_GET(DIModule, (DIScope *Scope, StringRef Name,
+                               StringRef ConfigurationMacros, StringRef IncludePath,
+                               StringRef ISysRoot),
+                    (Scope, Name, ConfigurationMacros, IncludePath, ISysRoot))
+  DEFINE_MDNODE_GET(DIModule,
+                    (Metadata *Scope, MDString *Name, MDString *ConfigurationMacros,
+                     MDString *IncludePath, MDString *ISysRoot),
+                    (Scope, Name, ConfigurationMacros, IncludePath, ISysRoot))
+
+  TempDIModule clone() const { return cloneImpl(); }
+
+  DIScope *getScope() const { return cast_or_null<DIScope>(getRawScope()); }
+  StringRef getName() const { return getStringOperand(1); }
+  StringRef getConfigurationMacros() const { return getStringOperand(2); }
+  StringRef getIncludePath() const { return getStringOperand(3); }
+  StringRef getISysRoot() const { return getStringOperand(4); }
+
+  Metadata *getRawScope() const { return getOperand(0); }
+  MDString *getRawName() const { return getOperandAs<MDString>(1); }
+  MDString *getRawConfigurationMacros() const { return getOperandAs<MDString>(2); }
+  MDString *getRawIncludePath() const { return getOperandAs<MDString>(3); }
+  MDString *getRawISysRoot() const { return getOperandAs<MDString>(4); }
+
+  static bool classof(const Metadata *MD) {
+    return MD->getMetadataID() == DIModuleKind;
+  }
+};
+
 /// \brief Base class for template parameters.
 class DITemplateParameter : public DINode {
 protected:
@@ -2089,7 +2163,7 @@ class DIObjCProperty : public DINode {
   static DIObjCProperty *
   getImpl(LLVMContext &Context, StringRef Name, DIFile *File, unsigned Line,
           StringRef GetterName, StringRef SetterName, unsigned Attributes,
-          DIType *Type, StorageType Storage, bool ShouldCreate = true) {
+          DITypeRef Type, StorageType Storage, bool ShouldCreate = true) {
     return getImpl(Context, getCanonicalMDString(Context, Name), File, Line,
                    getCanonicalMDString(Context, GetterName),
                    getCanonicalMDString(Context, SetterName), Attributes, Type,
@@ -2111,7 +2185,7 @@ public:
   DEFINE_MDNODE_GET(DIObjCProperty,
                     (StringRef Name, DIFile *File, unsigned Line,
                      StringRef GetterName, StringRef SetterName,
-                     unsigned Attributes, DIType *Type),
+                     unsigned Attributes, DITypeRef Type),
                     (Name, File, Line, GetterName, SetterName, Attributes,
                      Type))
   DEFINE_MDNODE_GET(DIObjCProperty,
@@ -2129,12 +2203,7 @@ public:
   DIFile *getFile() const { return cast_or_null<DIFile>(getRawFile()); }
   StringRef getGetterName() const { return getStringOperand(2); }
   StringRef getSetterName() const { return getStringOperand(3); }
-
-  /// \brief Get the type.
-  ///
-  /// \note Objective-C doesn't have an ODR, so there is no benefit in storing
-  /// a type ref here.
-  DIType *getType() const { return cast_or_null<DIType>(getRawType()); }
+  DITypeRef getType() const { return DITypeRef(getRawType()); }
 
   StringRef getFilename() const {
     if (auto *F = getFile())

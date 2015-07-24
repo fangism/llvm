@@ -282,7 +282,7 @@ bool SampleProfileLoader::computeBlockWeights(Function &F) {
 /// \brief Find equivalence classes for the given block.
 ///
 /// This finds all the blocks that are guaranteed to execute the same
-/// number of times as \p BB1. To do this, it traverses all the the
+/// number of times as \p BB1. To do this, it traverses all the
 /// descendants of \p BB1 in the dominator or post-dominator tree.
 ///
 /// A block BB2 will be in the same equivalence class as \p BB1 if
@@ -579,6 +579,10 @@ void SampleProfileLoader::buildEdges(Function &F) {
 void SampleProfileLoader::propagateWeights(Function &F) {
   bool Changed = true;
   unsigned i = 0;
+
+  // Add an entry count to the function using the samples gathered
+  // at the function entry.
+  F.setEntryCount(Samples->getHeadSamples());
 
   // Before propagation starts, build, for each block, a list of
   // unique predecessors and successors. This is necessary to handle

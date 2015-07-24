@@ -567,8 +567,8 @@ def : InstAlias<"ngcs $dst, $src", (SBCSWr GPR32:$dst, WZR, GPR32:$src)>;
 def : InstAlias<"ngcs $dst, $src", (SBCSXr GPR64:$dst, XZR, GPR64:$src)>;
 
 // Add/subtract
-defm ADD : AddSub<0, "add", add>;
-defm SUB : AddSub<1, "sub">;
+defm ADD : AddSub<0, "add", "sub", add>;
+defm SUB : AddSub<1, "sub", "add">;
 
 def : InstAlias<"mov $dst, $src",
                 (ADDWri GPR32sponly:$dst, GPR32sp:$src, 0, 0)>;
@@ -579,8 +579,8 @@ def : InstAlias<"mov $dst, $src",
 def : InstAlias<"mov $dst, $src",
                 (ADDXri GPR64sp:$dst, GPR64sponly:$src, 0, 0)>;
 
-defm ADDS : AddSubS<0, "adds", AArch64add_flag, "cmn">;
-defm SUBS : AddSubS<1, "subs", AArch64sub_flag, "cmp">;
+defm ADDS : AddSubS<0, "adds", AArch64add_flag, "cmn", "subs", "cmp">;
+defm SUBS : AddSubS<1, "subs", AArch64sub_flag, "cmp", "adds", "cmn">;
 
 // Use SUBS instead of SUB to enable CSE between SUBS and SUB.
 def : Pat<(sub GPR32sp:$Rn, addsub_shifted_imm32:$imm),
@@ -727,6 +727,74 @@ def CRC32CHrr : BaseCRC32<0, 0b01, 1, GPR32, int_aarch64_crc32ch, "crc32ch">;
 def CRC32CWrr : BaseCRC32<0, 0b10, 1, GPR32, int_aarch64_crc32cw, "crc32cw">;
 def CRC32CXrr : BaseCRC32<1, 0b11, 1, GPR64, int_aarch64_crc32cx, "crc32cx">;
 
+// v8.1 atomic CAS
+defm CAS   : CompareAndSwap<0, 0, "">;
+defm CASA  : CompareAndSwap<1, 0, "a">;
+defm CASL  : CompareAndSwap<0, 1, "l">;
+defm CASAL : CompareAndSwap<1, 1, "al">;
+
+// v8.1 atomic CASP
+defm CASP   : CompareAndSwapPair<0, 0, "">;
+defm CASPA  : CompareAndSwapPair<1, 0, "a">;
+defm CASPL  : CompareAndSwapPair<0, 1, "l">;
+defm CASPAL : CompareAndSwapPair<1, 1, "al">;
+
+// v8.1 atomic SWP
+defm SWP   : Swap<0, 0, "">;
+defm SWPA  : Swap<1, 0, "a">;
+defm SWPL  : Swap<0, 1, "l">;
+defm SWPAL : Swap<1, 1, "al">;
+
+// v8.1 atomic LD<OP>(register). Performs load and then ST<OP>(register)
+defm LDADD   : LDOPregister<0b000, "add", 0, 0, "">;
+defm LDADDA  : LDOPregister<0b000, "add", 1, 0, "a">;
+defm LDADDL  : LDOPregister<0b000, "add", 0, 1, "l">;
+defm LDADDAL : LDOPregister<0b000, "add", 1, 1, "al">;
+
+defm LDCLR   : LDOPregister<0b001, "clr", 0, 0, "">;
+defm LDCLRA  : LDOPregister<0b001, "clr", 1, 0, "a">;
+defm LDCLRL  : LDOPregister<0b001, "clr", 0, 1, "l">;
+defm LDCLRAL : LDOPregister<0b001, "clr", 1, 1, "al">;
+
+defm LDEOR   : LDOPregister<0b010, "eor", 0, 0, "">;
+defm LDEORA  : LDOPregister<0b010, "eor", 1, 0, "a">;
+defm LDEORL  : LDOPregister<0b010, "eor", 0, 1, "l">;
+defm LDEORAL : LDOPregister<0b010, "eor", 1, 1, "al">;
+
+defm LDSET   : LDOPregister<0b011, "set", 0, 0, "">;
+defm LDSETA  : LDOPregister<0b011, "set", 1, 0, "a">;
+defm LDSETL  : LDOPregister<0b011, "set", 0, 1, "l">;
+defm LDSETAL : LDOPregister<0b011, "set", 1, 1, "al">;
+
+defm LDSMAX   : LDOPregister<0b100, "smax", 0, 0, "">;
+defm LDSMAXA  : LDOPregister<0b100, "smax", 1, 0, "a">;
+defm LDSMAXL  : LDOPregister<0b100, "smax", 0, 1, "l">;
+defm LDSMAXAL : LDOPregister<0b100, "smax", 1, 1, "al">;
+
+defm LDSMIN   : LDOPregister<0b101, "smin", 0, 0, "">;
+defm LDSMINA  : LDOPregister<0b101, "smin", 1, 0, "a">;
+defm LDSMINL  : LDOPregister<0b101, "smin", 0, 1, "l">;
+defm LDSMINAL : LDOPregister<0b101, "smin", 1, 1, "al">;
+
+defm LDUMAX   : LDOPregister<0b110, "umax", 0, 0, "">;
+defm LDUMAXA  : LDOPregister<0b110, "umax", 1, 0, "a">;
+defm LDUMAXL  : LDOPregister<0b110, "umax", 0, 1, "l">;
+defm LDUMAXAL : LDOPregister<0b110, "umax", 1, 1, "al">;
+
+defm LDUMIN   : LDOPregister<0b111, "umin", 0, 0, "">;
+defm LDUMINA  : LDOPregister<0b111, "umin", 1, 0, "a">;
+defm LDUMINL  : LDOPregister<0b111, "umin", 0, 1, "l">;
+defm LDUMINAL : LDOPregister<0b111, "umin", 1, 1, "al">;
+
+// v8.1 atomic ST<OP>(register) as aliases to "LD<OP>(register) when Rt=xZR"
+defm : STOPregister<"stadd","LDADD">; // STADDx
+defm : STOPregister<"stclr","LDCLR">; // STCLRx
+defm : STOPregister<"steor","LDEOR">; // STEORx
+defm : STOPregister<"stset","LDSET">; // STSETx
+defm : STOPregister<"stsmax","LDSMAX">;// STSMAXx
+defm : STOPregister<"stsmin","LDSMIN">;// STSMINx
+defm : STOPregister<"stumax","LDUMAX">;// STUMAXx
+defm : STOPregister<"stumin","LDUMIN">;// STUMINx
 
 //===----------------------------------------------------------------------===//
 // Logical instructions.
@@ -825,6 +893,8 @@ def REVWr   : OneWRegData<0b010, "rev", bswap>;
 def REVXr   : OneXRegData<0b011, "rev", bswap>;
 def REV32Xr : OneXRegData<0b010, "rev32",
                                  UnOpFrag<(rotr (bswap node:$LHS), (i64 32))>>;
+
+def : InstAlias<"rev64 $Rd, $Rn", (REVXr GPR64:$Rd, GPR64:$Rn), 0>;
 
 // The bswap commutes with the rotr so we want a pattern for both possible
 // orders.
@@ -2808,6 +2878,55 @@ defm EOR : SIMDLogicalThreeVector<1, 0b00, "eor", xor>;
 defm ORN : SIMDLogicalThreeVector<0, 0b11, "orn",
                                   BinOpFrag<(or node:$LHS, (vnot node:$RHS))> >;
 defm ORR : SIMDLogicalThreeVector<0, 0b10, "orr", or>;
+
+def : Pat<(v8i8 (smin V64:$Rn, V64:$Rm)),
+          (SMINv8i8 V64:$Rn, V64:$Rm)>;
+def : Pat<(v4i16 (smin V64:$Rn, V64:$Rm)),
+          (SMINv4i16 V64:$Rn, V64:$Rm)>;
+def : Pat<(v2i32 (smin V64:$Rn, V64:$Rm)),
+          (SMINv2i32 V64:$Rn, V64:$Rm)>;
+def : Pat<(v16i8 (smin V128:$Rn, V128:$Rm)),
+          (SMINv16i8 V128:$Rn, V128:$Rm)>;
+def : Pat<(v8i16 (smin V128:$Rn, V128:$Rm)),
+          (SMINv8i16 V128:$Rn, V128:$Rm)>;
+def : Pat<(v4i32 (smin V128:$Rn, V128:$Rm)),
+          (SMINv4i32 V128:$Rn, V128:$Rm)>;
+def : Pat<(v8i8 (smax V64:$Rn, V64:$Rm)),
+          (SMAXv8i8 V64:$Rn, V64:$Rm)>;
+def : Pat<(v4i16 (smax V64:$Rn, V64:$Rm)),
+          (SMAXv4i16 V64:$Rn, V64:$Rm)>;
+def : Pat<(v2i32 (smax V64:$Rn, V64:$Rm)),
+          (SMAXv2i32 V64:$Rn, V64:$Rm)>;
+def : Pat<(v16i8 (smax V128:$Rn, V128:$Rm)),
+          (SMAXv16i8 V128:$Rn, V128:$Rm)>;
+def : Pat<(v8i16 (smax V128:$Rn, V128:$Rm)),
+          (SMAXv8i16 V128:$Rn, V128:$Rm)>;
+def : Pat<(v4i32 (smax V128:$Rn, V128:$Rm)),
+          (SMAXv4i32 V128:$Rn, V128:$Rm)>;
+def : Pat<(v8i8 (umin V64:$Rn, V64:$Rm)),
+          (UMINv8i8 V64:$Rn, V64:$Rm)>;
+def : Pat<(v4i16 (umin V64:$Rn, V64:$Rm)),
+          (UMINv4i16 V64:$Rn, V64:$Rm)>;
+def : Pat<(v2i32 (umin V64:$Rn, V64:$Rm)),
+          (UMINv2i32 V64:$Rn, V64:$Rm)>;
+def : Pat<(v16i8 (umin V128:$Rn, V128:$Rm)),
+          (UMINv16i8 V128:$Rn, V128:$Rm)>;
+def : Pat<(v8i16 (umin V128:$Rn, V128:$Rm)),
+          (UMINv8i16 V128:$Rn, V128:$Rm)>;
+def : Pat<(v4i32 (umin V128:$Rn, V128:$Rm)),
+          (UMINv4i32 V128:$Rn, V128:$Rm)>;
+def : Pat<(v8i8 (umax V64:$Rn, V64:$Rm)),
+          (UMAXv8i8 V64:$Rn, V64:$Rm)>;
+def : Pat<(v4i16 (umax V64:$Rn, V64:$Rm)),
+          (UMAXv4i16 V64:$Rn, V64:$Rm)>;
+def : Pat<(v2i32 (umax V64:$Rn, V64:$Rm)),
+          (UMAXv2i32 V64:$Rn, V64:$Rm)>;
+def : Pat<(v16i8 (umax V128:$Rn, V128:$Rm)),
+          (UMAXv16i8 V128:$Rn, V128:$Rm)>;
+def : Pat<(v8i16 (umax V128:$Rn, V128:$Rm)),
+          (UMAXv8i16 V128:$Rn, V128:$Rm)>;
+def : Pat<(v4i32 (umax V128:$Rn, V128:$Rm)),
+          (UMAXv4i32 V128:$Rn, V128:$Rm)>;
 
 def : Pat<(AArch64bsl (v8i8 V64:$Rd), V64:$Rn, V64:$Rm),
           (BSLv8i8 V64:$Rd, V64:$Rn, V64:$Rm)>;
@@ -5166,18 +5285,23 @@ def : Pat<(v8f16 (AArch64NvCast (v4i32 FPR128:$src))), (v8f16 FPR128:$src)>;
 def : Pat<(v4i32 (AArch64NvCast (v4i32 FPR128:$src))), (v4i32 FPR128:$src)>;
 def : Pat<(v4f32 (AArch64NvCast (v4i32 FPR128:$src))), (v4f32 FPR128:$src)>;
 def : Pat<(v2i64 (AArch64NvCast (v4i32 FPR128:$src))), (v2i64 FPR128:$src)>;
+def : Pat<(v2f64 (AArch64NvCast (v4i32 FPR128:$src))), (v2f64 FPR128:$src)>;
 
 def : Pat<(v16i8 (AArch64NvCast (v8i16 FPR128:$src))), (v16i8 FPR128:$src)>;
 def : Pat<(v8i16 (AArch64NvCast (v8i16 FPR128:$src))), (v8i16 FPR128:$src)>;
 def : Pat<(v8f16 (AArch64NvCast (v8i16 FPR128:$src))), (v8f16 FPR128:$src)>;
 def : Pat<(v4i32 (AArch64NvCast (v8i16 FPR128:$src))), (v4i32 FPR128:$src)>;
 def : Pat<(v2i64 (AArch64NvCast (v8i16 FPR128:$src))), (v2i64 FPR128:$src)>;
+def : Pat<(v4f32 (AArch64NvCast (v8i16 FPR128:$src))), (v4f32 FPR128:$src)>;
+def : Pat<(v2f64 (AArch64NvCast (v8i16 FPR128:$src))), (v2f64 FPR128:$src)>;
 
 def : Pat<(v16i8 (AArch64NvCast (v16i8 FPR128:$src))), (v16i8 FPR128:$src)>;
 def : Pat<(v8i16 (AArch64NvCast (v16i8 FPR128:$src))), (v8i16 FPR128:$src)>;
 def : Pat<(v8f16 (AArch64NvCast (v16i8 FPR128:$src))), (v8f16 FPR128:$src)>;
 def : Pat<(v4i32 (AArch64NvCast (v16i8 FPR128:$src))), (v4i32 FPR128:$src)>;
 def : Pat<(v2i64 (AArch64NvCast (v16i8 FPR128:$src))), (v2i64 FPR128:$src)>;
+def : Pat<(v4f32 (AArch64NvCast (v16i8 FPR128:$src))), (v4f32 FPR128:$src)>;
+def : Pat<(v2f64 (AArch64NvCast (v16i8 FPR128:$src))), (v2f64 FPR128:$src)>;
 
 def : Pat<(v16i8 (AArch64NvCast (v2i64 FPR128:$src))), (v16i8 FPR128:$src)>;
 def : Pat<(v8i16 (AArch64NvCast (v2i64 FPR128:$src))), (v8i16 FPR128:$src)>;
@@ -5192,12 +5316,16 @@ def : Pat<(v8i16 (AArch64NvCast (v4f32 FPR128:$src))), (v8i16 FPR128:$src)>;
 def : Pat<(v4i32 (AArch64NvCast (v4f32 FPR128:$src))), (v4i32 FPR128:$src)>;
 def : Pat<(v4f32 (AArch64NvCast (v4f32 FPR128:$src))), (v4f32 FPR128:$src)>;
 def : Pat<(v2i64 (AArch64NvCast (v4f32 FPR128:$src))), (v2i64 FPR128:$src)>;
+def : Pat<(v8f16 (AArch64NvCast (v4f32 FPR128:$src))), (v8f16 FPR128:$src)>;
+def : Pat<(v2f64 (AArch64NvCast (v4f32 FPR128:$src))), (v2f64 FPR128:$src)>;
 
 def : Pat<(v16i8 (AArch64NvCast (v2f64 FPR128:$src))), (v16i8 FPR128:$src)>;
 def : Pat<(v8i16 (AArch64NvCast (v2f64 FPR128:$src))), (v8i16 FPR128:$src)>;
 def : Pat<(v4i32 (AArch64NvCast (v2f64 FPR128:$src))), (v4i32 FPR128:$src)>;
 def : Pat<(v2i64 (AArch64NvCast (v2f64 FPR128:$src))), (v2i64 FPR128:$src)>;
 def : Pat<(v2f64 (AArch64NvCast (v2f64 FPR128:$src))), (v2f64 FPR128:$src)>;
+def : Pat<(v8f16 (AArch64NvCast (v2f64 FPR128:$src))), (v8f16 FPR128:$src)>;
+def : Pat<(v4f32 (AArch64NvCast (v2f64 FPR128:$src))), (v4f32 FPR128:$src)>;
 
 let Predicates = [IsLE] in {
 def : Pat<(v8i8  (bitconvert GPR64:$Xn)), (COPY_TO_REGCLASS GPR64:$Xn, FPR64)>;

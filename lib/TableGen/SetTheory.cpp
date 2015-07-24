@@ -12,10 +12,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/TableGen/SetTheory.h"
 #include "llvm/Support/Format.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
-#include "llvm/TableGen/SetTheory.h"
 
 using namespace llvm;
 
@@ -302,7 +302,7 @@ const RecVec *SetTheory::expand(Record *Set) {
     return &I->second;
 
   // This is the first time we see Set. Find a suitable expander.
-  const std::vector<Record*> &SC = Set->getSuperClasses();
+  ArrayRef<Record *> SC = Set->getSuperClasses();
   for (unsigned i = 0, e = SC.size(); i != e; ++i) {
     // Skip unnamed superclasses.
     if (!dyn_cast<StringInit>(SC[i]->getNameInit()))

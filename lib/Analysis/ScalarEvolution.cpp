@@ -2926,6 +2926,56 @@ ScalarEvolution::getAddRecExpr(SmallVectorImpl<const SCEV *> &Operands,
   return S;
 }
 
+const SCEV *
+ScalarEvolution::getGEPExpr(Type *PointeeType, const SCEV *BaseExpr,
+                            const SmallVectorImpl<const SCEV *> &IndexExprs,
+                            bool InBounds) {
+  // getSCEV(Base)->getType() has the same address space as Base->getType()
+  // because SCEV::getType() preserves the address space.
+  Type *IntPtrTy = getEffectiveSCEVType(BaseExpr->getType());
+  // FIXME(PR23527): Don't blindly transfer the inbounds flag from the GEP
+  // instruction to its SCEV, because the Instruction may be guarded by control
+  // flow and the no-overflow bits may not be valid for the expression in any
+  // context.
+  SCEV::NoWrapFlags Wrap = InBounds ? SCEV::FlagNSW : SCEV::FlagAnyWrap;
+
+  const SCEV *TotalOffset = getConstant(IntPtrTy, 0);
+  // The address space is unimportant. The first thing we do on CurTy is getting
+  // its element type.
+  Type *CurTy = PointerType::getUnqual(PointeeType);
+  for (const SCEV *IndexExpr : IndexExprs) {
+    // Compute the (potentially symbolic) offset in bytes for this index.
+    if (StructType *STy = dyn_cast<StructType>(CurTy)) {
+      // For a struct, add the member offset.
+      ConstantInt *Index = cast<SCEVConstant>(IndexExpr)->getValue();
+      unsigned FieldNo = Index->getZExtValue();
+      const SCEV *FieldOffset = getOffsetOfExpr(IntPtrTy, STy, FieldNo);
+
+      // Add the field offset to the running total offset.
+      TotalOffset = getAddExpr(TotalOffset, FieldOffset);
+
+      // Update CurTy to the type of the field at Index.
+      CurTy = STy->getTypeAtIndex(Index);
+    } else {
+      // Update CurTy to its element type.
+      CurTy = cast<SequentialType>(CurTy)->getElementType();
+      // For an array, add the element offset, explicitly scaled.
+      const SCEV *ElementSize = getSizeOfExpr(IntPtrTy, CurTy);
+      // Getelementptr indices are signed.
+      IndexExpr = getTruncateOrSignExtend(IndexExpr, IntPtrTy);
+
+      // Multiply the index by the element size to compute the element offset.
+      const SCEV *LocalOffset = getMulExpr(IndexExpr, ElementSize, Wrap);
+
+      // Add the element offset to the running total offset.
+      TotalOffset = getAddExpr(TotalOffset, LocalOffset);
+    }
+  }
+
+  // Add the total offset from all the GEP indices to the base.
+  return getAddExpr(BaseExpr, TotalOffset, Wrap);
+}
+
 const SCEV *ScalarEvolution::getSMaxExpr(const SCEV *LHS,
                                          const SCEV *RHS) {
   SmallVector<const SCEV *, 2> Ops;
@@ -3700,52 +3750,16 @@ const SCEV *ScalarEvolution::createNodeForPHI(PHINode *PN) {
 /// operations. This allows them to be analyzed by regular SCEV code.
 ///
 const SCEV *ScalarEvolution::createNodeForGEP(GEPOperator *GEP) {
-  Type *IntPtrTy = getEffectiveSCEVType(GEP->getType());
   Value *Base = GEP->getOperand(0);
   // Don't attempt to analyze GEPs over unsized objects.
   if (!Base->getType()->getPointerElementType()->isSized())
     return getUnknown(GEP);
 
-  // Don't blindly transfer the inbounds flag from the GEP instruction to the
-  // Add expression, because the Instruction may be guarded by control flow
-  // and the no-overflow bits may not be valid for the expression in any
-  // context.
-  SCEV::NoWrapFlags Wrap = GEP->isInBounds() ? SCEV::FlagNSW : SCEV::FlagAnyWrap;
-
-  const SCEV *TotalOffset = getConstant(IntPtrTy, 0);
-  gep_type_iterator GTI = gep_type_begin(GEP);
-  for (GetElementPtrInst::op_iterator I = std::next(GEP->op_begin()),
-                                      E = GEP->op_end();
-       I != E; ++I) {
-    Value *Index = *I;
-    // Compute the (potentially symbolic) offset in bytes for this index.
-    if (StructType *STy = dyn_cast<StructType>(*GTI++)) {
-      // For a struct, add the member offset.
-      unsigned FieldNo = cast<ConstantInt>(Index)->getZExtValue();
-      const SCEV *FieldOffset = getOffsetOfExpr(IntPtrTy, STy, FieldNo);
-
-      // Add the field offset to the running total offset.
-      TotalOffset = getAddExpr(TotalOffset, FieldOffset);
-    } else {
-      // For an array, add the element offset, explicitly scaled.
-      const SCEV *ElementSize = getSizeOfExpr(IntPtrTy, *GTI);
-      const SCEV *IndexS = getSCEV(Index);
-      // Getelementptr indices are signed.
-      IndexS = getTruncateOrSignExtend(IndexS, IntPtrTy);
-
-      // Multiply the index by the element size to compute the element offset.
-      const SCEV *LocalOffset = getMulExpr(IndexS, ElementSize, Wrap);
-
-      // Add the element offset to the running total offset.
-      TotalOffset = getAddExpr(TotalOffset, LocalOffset);
-    }
-  }
-
-  // Get the SCEV for the GEP base.
-  const SCEV *BaseS = getSCEV(Base);
-
-  // Add the total offset from all the GEP indices to the base.
-  return getAddExpr(BaseS, TotalOffset, Wrap);
+  SmallVector<const SCEV *, 4> IndexExprs;
+  for (auto Index = GEP->idx_begin(); Index != GEP->idx_end(); ++Index)
+    IndexExprs.push_back(getSCEV(*Index));
+  return getGEPExpr(GEP->getSourceElementType(), getSCEV(Base), IndexExprs,
+                    GEP->isInBounds());
 }
 
 /// GetMinTrailingZeros - Determine the minimum number of zero bits that S is
@@ -7633,11 +7647,11 @@ struct SCEVCollectTerms {
 }
 
 /// Find parametric terms in this SCEVAddRecExpr.
-void SCEVAddRecExpr::collectParametricTerms(
-    ScalarEvolution &SE, SmallVectorImpl<const SCEV *> &Terms) const {
+void ScalarEvolution::collectParametricTerms(const SCEV *Expr,
+    SmallVectorImpl<const SCEV *> &Terms) {
   SmallVector<const SCEV *, 4> Strides;
-  SCEVCollectStrides StrideCollector(SE, Strides);
-  visitAll(this, StrideCollector);
+  SCEVCollectStrides StrideCollector(*this, Strides);
+  visitAll(Expr, StrideCollector);
 
   DEBUG({
       dbgs() << "Strides:\n";
@@ -7853,19 +7867,23 @@ void ScalarEvolution::findArrayDimensions(SmallVectorImpl<const SCEV *> &Terms,
 
 /// Third step of delinearization: compute the access functions for the
 /// Subscripts based on the dimensions in Sizes.
-void SCEVAddRecExpr::computeAccessFunctions(
-    ScalarEvolution &SE, SmallVectorImpl<const SCEV *> &Subscripts,
-    SmallVectorImpl<const SCEV *> &Sizes) const {
+void ScalarEvolution::computeAccessFunctions(
+    const SCEV *Expr, SmallVectorImpl<const SCEV *> &Subscripts,
+    SmallVectorImpl<const SCEV *> &Sizes) {
 
   // Early exit in case this SCEV is not an affine multivariate function.
-  if (Sizes.empty() || !this->isAffine())
+  if (Sizes.empty())
     return;
 
-  const SCEV *Res = this;
+  if (auto AR = dyn_cast<SCEVAddRecExpr>(Expr))
+    if (!AR->isAffine())
+      return;
+
+  const SCEV *Res = Expr;
   int Last = Sizes.size() - 1;
   for (int i = Last; i >= 0; i--) {
     const SCEV *Q, *R;
-    SCEVDivision::divide(SE, Res, Sizes[i], &Q, &R);
+    SCEVDivision::divide(*this, Res, Sizes[i], &Q, &R);
 
     DEBUG({
         dbgs() << "Res: " << *Res << "\n";
@@ -7957,31 +7975,31 @@ void SCEVAddRecExpr::computeAccessFunctions(
 /// asking for the SCEV of the memory access with respect to all enclosing
 /// loops, calling SCEV->delinearize on that and printing the results.
 
-void SCEVAddRecExpr::delinearize(ScalarEvolution &SE,
+void ScalarEvolution::delinearize(const SCEV *Expr,
                                  SmallVectorImpl<const SCEV *> &Subscripts,
                                  SmallVectorImpl<const SCEV *> &Sizes,
-                                 const SCEV *ElementSize) const {
+                                 const SCEV *ElementSize) {
   // First step: collect parametric terms.
   SmallVector<const SCEV *, 4> Terms;
-  collectParametricTerms(SE, Terms);
+  collectParametricTerms(Expr, Terms);
 
   if (Terms.empty())
     return;
 
   // Second step: find subscript sizes.
-  SE.findArrayDimensions(Terms, Sizes, ElementSize);
+  findArrayDimensions(Terms, Sizes, ElementSize);
 
   if (Sizes.empty())
     return;
 
   // Third step: compute the access functions for each subscript.
-  computeAccessFunctions(SE, Subscripts, Sizes);
+  computeAccessFunctions(Expr, Subscripts, Sizes);
 
   if (Subscripts.empty())
     return;
 
   DEBUG({
-      dbgs() << "succeeded to delinearize " << *this << "\n";
+      dbgs() << "succeeded to delinearize " << *Expr << "\n";
       dbgs() << "ArrayDecl[UnknownSize]";
       for (const SCEV *S : Sizes)
         dbgs() << "[" << *S << "]";

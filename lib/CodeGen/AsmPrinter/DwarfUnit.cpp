@@ -66,11 +66,11 @@ bool DIEDwarfExpression::isFrameRegister(unsigned MachineReg) {
 DwarfUnit::DwarfUnit(unsigned UID, dwarf::Tag UnitTag,
                      const DICompileUnit *Node, AsmPrinter *A, DwarfDebug *DW,
                      DwarfFile *DWU)
-    : UniqueID(UID), CUNode(Node), UnitDie(UnitTag), DebugInfoOffset(0), Asm(A),
-      DD(DW), DU(DWU), IndexTyDie(nullptr), Section(nullptr) {
+    : UniqueID(UID), CUNode(Node),
+      UnitDie(*DIE::get(DIEValueAllocator, UnitTag)), DebugInfoOffset(0),
+      Asm(A), DD(DW), DU(DWU), IndexTyDie(nullptr), Section(nullptr) {
   assert(UnitTag == dwarf::DW_TAG_compile_unit ||
          UnitTag == dwarf::DW_TAG_type_unit);
-  DIEIntegerOne = new (DIEValueAllocator) DIEInteger(1);
 }
 
 DwarfTypeUnit::DwarfTypeUnit(unsigned UID, DwarfCompileUnit &CU, AsmPrinter *A,
@@ -87,11 +87,6 @@ DwarfUnit::~DwarfUnit() {
     DIEBlocks[j]->~DIEBlock();
   for (unsigned j = 0, M = DIELocs.size(); j < M; ++j)
     DIELocs[j]->~DIELoc();
-}
-
-DIEEntry *DwarfUnit::createDIEEntry(DIE &Entry) {
-  DIEEntry *Value = new (DIEValueAllocator) DIEEntry(Entry);
-  return Value;
 }
 
 int64_t DwarfUnit::getDefaultLowerBound() const {
@@ -190,18 +185,18 @@ void DwarfUnit::insertDIE(const DINode *Desc, DIE *D) {
 
 void DwarfUnit::addFlag(DIE &Die, dwarf::Attribute Attribute) {
   if (DD->getDwarfVersion() >= 4)
-    Die.addValue(Attribute, dwarf::DW_FORM_flag_present, DIEIntegerOne);
+    Die.addValue(DIEValueAllocator, Attribute, dwarf::DW_FORM_flag_present,
+                 DIEInteger(1));
   else
-    Die.addValue(Attribute, dwarf::DW_FORM_flag, DIEIntegerOne);
+    Die.addValue(DIEValueAllocator, Attribute, dwarf::DW_FORM_flag,
+                 DIEInteger(1));
 }
 
 void DwarfUnit::addUInt(DIE &Die, dwarf::Attribute Attribute,
                         Optional<dwarf::Form> Form, uint64_t Integer) {
   if (!Form)
     Form = DIEInteger::BestForm(false, Integer);
-  DIEValue *Value = Integer == 1 ? DIEIntegerOne : new (DIEValueAllocator)
-                        DIEInteger(Integer);
-  Die.addValue(Attribute, *Form, Value);
+  Die.addValue(DIEValueAllocator, Attribute, *Form, DIEInteger(Integer));
 }
 
 void DwarfUnit::addUInt(DIE &Block, dwarf::Form Form, uint64_t Integer) {
@@ -212,8 +207,7 @@ void DwarfUnit::addSInt(DIE &Die, dwarf::Attribute Attribute,
                         Optional<dwarf::Form> Form, int64_t Integer) {
   if (!Form)
     Form = DIEInteger::BestForm(true, Integer);
-  DIEValue *Value = new (DIEValueAllocator) DIEInteger(Integer);
-  Die.addValue(Attribute, *Form, Value);
+  Die.addValue(DIEValueAllocator, Attribute, *Form, DIEInteger(Integer));
 }
 
 void DwarfUnit::addSInt(DIELoc &Die, Optional<dwarf::Form> Form,
@@ -223,38 +217,15 @@ void DwarfUnit::addSInt(DIELoc &Die, Optional<dwarf::Form> Form,
 
 void DwarfUnit::addString(DIE &Die, dwarf::Attribute Attribute,
                           StringRef String) {
-  if (!isDwoUnit())
-    return addLocalString(Die, Attribute, String);
-
-  addIndexedString(Die, Attribute, String);
+  Die.addValue(DIEValueAllocator, Attribute,
+               isDwoUnit() ? dwarf::DW_FORM_GNU_str_index : dwarf::DW_FORM_strp,
+               DIEString(DU->getStringPool().getEntry(*Asm, String)));
 }
 
-void DwarfUnit::addIndexedString(DIE &Die, dwarf::Attribute Attribute,
-                                 StringRef String) {
-  unsigned idx = DU->getStringPool().getIndex(*Asm, String);
-  DIEValue *Value = new (DIEValueAllocator) DIEInteger(idx);
-  DIEValue *Str = new (DIEValueAllocator) DIEString(Value, String);
-  Die.addValue(Attribute, dwarf::DW_FORM_GNU_str_index, Str);
-}
-
-void DwarfUnit::addLocalString(DIE &Die, dwarf::Attribute Attribute,
-                               StringRef String) {
-  const TargetLoweringObjectFile &TLOF = Asm->getObjFileLowering();
-  MCSymbol *Symb = DU->getStringPool().getSymbol(*Asm, String);
-  DIEValue *Value;
-  if (Asm->MAI->doesDwarfUseRelocationsAcrossSections())
-    Value = new (DIEValueAllocator) DIELabel(Symb);
-  else
-    Value = new (DIEValueAllocator)
-        DIEDelta(Symb, TLOF.getDwarfStrSection()->getBeginSymbol());
-  DIEValue *Str = new (DIEValueAllocator) DIEString(Value, String);
-  Die.addValue(Attribute, dwarf::DW_FORM_strp, Str);
-}
-
-void DwarfUnit::addLabel(DIE &Die, dwarf::Attribute Attribute, dwarf::Form Form,
-                         const MCSymbol *Label) {
-  DIEValue *Value = new (DIEValueAllocator) DIELabel(Label);
-  Die.addValue(Attribute, Form, Value);
+DIE::value_iterator DwarfUnit::addLabel(DIE &Die, dwarf::Attribute Attribute,
+                                        dwarf::Form Form,
+                                        const MCSymbol *Label) {
+  return Die.addValue(DIEValueAllocator, Attribute, Form, DIELabel(Label));
 }
 
 void DwarfUnit::addLabel(DIELoc &Die, dwarf::Form Form, const MCSymbol *Label) {
@@ -287,12 +258,12 @@ void DwarfUnit::addOpAddress(DIELoc &Die, const MCSymbol *Sym) {
 
 void DwarfUnit::addLabelDelta(DIE &Die, dwarf::Attribute Attribute,
                               const MCSymbol *Hi, const MCSymbol *Lo) {
-  DIEValue *Value = new (DIEValueAllocator) DIEDelta(Hi, Lo);
-  Die.addValue(Attribute, dwarf::DW_FORM_data4, Value);
+  Die.addValue(DIEValueAllocator, Attribute, dwarf::DW_FORM_data4,
+               new (DIEValueAllocator) DIEDelta(Hi, Lo));
 }
 
 void DwarfUnit::addDIEEntry(DIE &Die, dwarf::Attribute Attribute, DIE &Entry) {
-  addDIEEntry(Die, Attribute, createDIEEntry(Entry));
+  addDIEEntry(Die, Attribute, DIEEntry(Entry));
 }
 
 void DwarfUnit::addDIETypeSignature(DIE &Die, const DwarfTypeUnit &Type) {
@@ -302,20 +273,20 @@ void DwarfUnit::addDIETypeSignature(DIE &Die, const DwarfTypeUnit &Type) {
   // and think this is a full definition.
   addFlag(Die, dwarf::DW_AT_declaration);
 
-  Die.addValue(dwarf::DW_AT_signature, dwarf::DW_FORM_ref_sig8,
-               new (DIEValueAllocator) DIETypeSignature(Type));
+  Die.addValue(DIEValueAllocator, dwarf::DW_AT_signature,
+               dwarf::DW_FORM_ref_sig8, DIETypeSignature(Type));
 }
 
 void DwarfUnit::addDIEEntry(DIE &Die, dwarf::Attribute Attribute,
-                            DIEEntry *Entry) {
+                            DIEEntry Entry) {
   const DIE *DieCU = Die.getUnitOrNull();
-  const DIE *EntryCU = Entry->getEntry().getUnitOrNull();
+  const DIE *EntryCU = Entry.getEntry().getUnitOrNull();
   if (!DieCU)
     // We assume that Die belongs to this CU, if it is not linked to any CU yet.
     DieCU = &getUnitDie();
   if (!EntryCU)
     EntryCU = &getUnitDie();
-  Die.addValue(Attribute,
+  Die.addValue(DIEValueAllocator, Attribute,
                EntryCU == DieCU ? dwarf::DW_FORM_ref4 : dwarf::DW_FORM_ref_addr,
                Entry);
 }
@@ -323,8 +294,7 @@ void DwarfUnit::addDIEEntry(DIE &Die, dwarf::Attribute Attribute,
 DIE &DwarfUnit::createAndAddDIE(unsigned Tag, DIE &Parent, const DINode *N) {
   assert(Tag != dwarf::DW_TAG_auto_variable &&
          Tag != dwarf::DW_TAG_arg_variable);
-  Parent.addChild(make_unique<DIE>((dwarf::Tag)Tag));
-  DIE &Die = *Parent.getChildren().back();
+  DIE &Die = Parent.addChild(DIE::get(DIEValueAllocator, (dwarf::Tag)Tag));
   if (N)
     insertDIE(N, &Die);
   return Die;
@@ -333,14 +303,15 @@ DIE &DwarfUnit::createAndAddDIE(unsigned Tag, DIE &Parent, const DINode *N) {
 void DwarfUnit::addBlock(DIE &Die, dwarf::Attribute Attribute, DIELoc *Loc) {
   Loc->ComputeSize(Asm);
   DIELocs.push_back(Loc); // Memoize so we can call the destructor later on.
-  Die.addValue(Attribute, Loc->BestForm(DD->getDwarfVersion()), Loc);
+  Die.addValue(DIEValueAllocator, Attribute,
+               Loc->BestForm(DD->getDwarfVersion()), Loc);
 }
 
 void DwarfUnit::addBlock(DIE &Die, dwarf::Attribute Attribute,
                          DIEBlock *Block) {
   Block->ComputeSize(Asm);
   DIEBlocks.push_back(Block); // Memoize so we can call the destructor later on.
-  Die.addValue(Attribute, Block->BestForm(), Block);
+  Die.addValue(DIEValueAllocator, Attribute, Block->BestForm(), Block);
 }
 
 void DwarfUnit::addSourceLine(DIE &Die, unsigned Line, StringRef File,
@@ -493,7 +464,7 @@ void DwarfUnit::addBlockByrefAddress(const DbgVariable &DV, DIE &Die,
 
   // Decode the original location, and use that as the start of the byref
   // variable's location.
-  DIELoc *Loc = new (DIEValueAllocator) DIELoc();
+  DIELoc *Loc = new (DIEValueAllocator) DIELoc;
 
   bool validReg;
   if (Location.isReg())
@@ -610,7 +581,7 @@ static uint64_t getBaseTypeSize(DwarfDebug *DD, const DIDerivedType *Ty) {
 
 void DwarfUnit::addConstantFPValue(DIE &Die, const MachineOperand &MO) {
   assert(MO.isFPImm() && "Invalid machine operand!");
-  DIEBlock *Block = new (DIEValueAllocator) DIEBlock();
+  DIEBlock *Block = new (DIEValueAllocator) DIEBlock;
   APFloat FPImm = MO.getFPImm()->getValueAPF();
 
   // Get the raw data form of the floating point.
@@ -666,7 +637,7 @@ void DwarfUnit::addConstantValue(DIE &Die, const APInt &Val, bool Unsigned) {
     return;
   }
 
-  DIEBlock *Block = new (DIEValueAllocator) DIEBlock();
+  DIEBlock *Block = new (DIEValueAllocator) DIEBlock;
 
   // Get the raw data form of the large APInt.
   const uint64_t *Ptr64 = Val.getRawData();
@@ -799,22 +770,7 @@ void DwarfUnit::updateAcceleratorTables(const DIScope *Context,
 void DwarfUnit::addType(DIE &Entity, const DIType *Ty,
                         dwarf::Attribute Attribute) {
   assert(Ty && "Trying to add a type that doesn't exist?");
-
-  // Check for pre-existence.
-  DIEEntry *Entry = getDIEEntry(Ty);
-  // If it exists then use the existing value.
-  if (Entry) {
-    addDIEEntry(Entity, Attribute, Entry);
-    return;
-  }
-
-  // Construct type.
-  DIE *Buffer = getOrCreateTypeDIE(Ty);
-
-  // Set up proxy.
-  Entry = createDIEEntry(*Buffer);
-  insertDIEEntry(Ty, Entry);
-  addDIEEntry(Entity, Attribute, Entry);
+  addDIEEntry(Entity, Attribute, DIEEntry(*getOrCreateTypeDIE(Ty)));
 }
 
 std::string DwarfUnit::getParentContextString(const DIScope *Context) const {
@@ -980,7 +936,7 @@ void DwarfUnit::constructTypeDIE(DIE &Buffer, const DICompositeType *CTy) {
         StringRef PropertyName = Property->getName();
         addString(ElemDie, dwarf::DW_AT_APPLE_property_name, PropertyName);
         if (Property->getType())
-          addType(ElemDie, Property->getType());
+          addType(ElemDie, resolve(Property->getType()));
         addSourceLine(ElemDie, Property);
         StringRef GetterName = Property->getGetterName();
         if (!GetterName.empty())
@@ -991,12 +947,6 @@ void DwarfUnit::constructTypeDIE(DIE &Buffer, const DICompositeType *CTy) {
         if (unsigned PropertyAttributes = Property->getAttributes())
           addUInt(ElemDie, dwarf::DW_AT_APPLE_property_attribute, None,
                   PropertyAttributes);
-
-        DIEEntry *Entry = getDIEEntry(Element);
-        if (!Entry) {
-          Entry = createDIEEntry(ElemDie);
-          insertDIEEntry(Element, Entry);
-        }
       }
     }
 
@@ -1083,7 +1033,7 @@ void DwarfUnit::constructTemplateValueParameterDIE(
     else if (GlobalValue *GV = mdconst::dyn_extract<GlobalValue>(Val)) {
       // For declaration non-type template parameters (such as global values and
       // functions)
-      DIELoc *Loc = new (DIEValueAllocator) DIELoc();
+      DIELoc *Loc = new (DIEValueAllocator) DIELoc;
       addOpAddress(*Loc, Asm->getSymbol(GV));
       // Emit DW_OP_stack_value to use the address as the immediate value of the
       // parameter, rather than a pointer to it.
@@ -1117,6 +1067,30 @@ DIE *DwarfUnit::getOrCreateNameSpace(const DINamespace *NS) {
   addGlobalName(Name, NDie, NS->getScope());
   addSourceLine(NDie, NS);
   return &NDie;
+}
+
+DIE *DwarfUnit::getOrCreateModule(const DIModule *M) {
+  // Construct the context before querying for the existence of the DIE in case
+  // such construction creates the DIE.
+  DIE *ContextDIE = getOrCreateContextDIE(M->getScope());
+
+  if (DIE *MDie = getDIE(M))
+    return MDie;
+  DIE &MDie = createAndAddDIE(dwarf::DW_TAG_module, *ContextDIE, M);
+
+  if (!M->getName().empty()) {
+    addString(MDie, dwarf::DW_AT_name, M->getName());
+    addGlobalName(M->getName(), MDie, M->getScope());
+  }
+  if (!M->getConfigurationMacros().empty())
+    addString(MDie, dwarf::DW_AT_LLVM_config_macros,
+              M->getConfigurationMacros());
+  if (!M->getIncludePath().empty())
+    addString(MDie, dwarf::DW_AT_LLVM_include_path, M->getIncludePath());
+  if (!M->getISysRoot().empty())
+    addString(MDie, dwarf::DW_AT_LLVM_isysroot, M->getISysRoot());
+  
+  return &MDie;
 }
 
 DIE *DwarfUnit::getOrCreateSubprogramDIE(const DISubprogram *SP, bool Minimal) {
@@ -1376,7 +1350,7 @@ void DwarfUnit::constructMemberDIE(DIE &Buffer, const DIDerivedType *DT) {
     // expression to extract appropriate offset from vtable.
     // BaseAddr = ObAddr + *((*ObAddr) - Offset)
 
-    DIELoc *VBaseLocationDie = new (DIEValueAllocator) DIELoc();
+    DIELoc *VBaseLocationDie = new (DIEValueAllocator) DIELoc;
     addUInt(*VBaseLocationDie, dwarf::DW_FORM_data1, dwarf::DW_OP_dup);
     addUInt(*VBaseLocationDie, dwarf::DW_FORM_data1, dwarf::DW_OP_deref);
     addUInt(*VBaseLocationDie, dwarf::DW_FORM_data1, dwarf::DW_OP_constu);
@@ -1395,27 +1369,47 @@ void DwarfUnit::constructMemberDIE(DIE &Buffer, const DIDerivedType *DT) {
       // Handle bitfield, assume bytes are 8 bits.
       addUInt(MemberDie, dwarf::DW_AT_byte_size, None, FieldSize/8);
       addUInt(MemberDie, dwarf::DW_AT_bit_size, None, Size);
-
+      //
+      // The DWARF 2 DW_AT_bit_offset is counting the bits between the most
+      // significant bit of the aligned storage unit containing the bit field to
+      // the most significan bit of the bit field.
+      //
+      // FIXME: DWARF 4 states that DW_AT_data_bit_offset (which
+      // counts from the beginning, regardless of endianness) should
+      // be used instead.
+      //
+      //
+      // Struct      Align       Align       Align
+      // v           v           v           v
+      // +-----------+-----*-----+-----*-----+--
+      // | ...             |b1|b2|b3|b4|
+      // +-----------+-----*-----+-----*-----+--
+      // |           |     |<-- Size ->|     |
+      // |<---- Offset --->|           |<--->|
+      // |           |     |              \_ DW_AT_bit_offset (little endian)
+      // |           |<--->|
+      // |<--------->|  \_ StartBitOffset = DW_AT_bit_offset (big endian)
+      //     \                            = DW_AT_data_bit_offset (biendian)
+      //      \_ OffsetInBytes
       uint64_t Offset = DT->getOffsetInBits();
-      uint64_t AlignMask = ~(DT->getAlignInBits() - 1);
-      uint64_t HiMark = (Offset + FieldSize) & AlignMask;
-      uint64_t FieldOffset = (HiMark - FieldSize);
-      Offset -= FieldOffset;
+      uint64_t Align = DT->getAlignInBits() ? DT->getAlignInBits() : FieldSize;
+      uint64_t AlignMask = ~(Align - 1);
+      // The bits from the start of the storage unit to the start of the field.
+      uint64_t StartBitOffset = Offset - (Offset & AlignMask);
+      // The endian-dependent DWARF 2 offset.
+      uint64_t DwarfBitOffset = Asm->getDataLayout().isLittleEndian()
+        ? OffsetToAlignment(Offset + Size, Align)
+        : StartBitOffset;
 
-      // Maybe we need to work from the other end.
-      if (Asm->getDataLayout().isLittleEndian())
-        Offset = FieldSize - (Offset + Size);
-      addUInt(MemberDie, dwarf::DW_AT_bit_offset, None, Offset);
-
-      // Here DW_AT_data_member_location points to the anonymous
-      // field that includes this bit field.
-      OffsetInBytes = FieldOffset >> 3;
+      // The byte offset of the field's aligned storage unit inside the struct.
+      OffsetInBytes = (Offset - StartBitOffset) / 8;
+      addUInt(MemberDie, dwarf::DW_AT_bit_offset, None, DwarfBitOffset);
     } else
       // This is not a bitfield.
-      OffsetInBytes = DT->getOffsetInBits() >> 3;
+      OffsetInBytes = DT->getOffsetInBits() / 8;
 
     if (DD->getDwarfVersion() <= 2) {
-      DIELoc *MemLocationDie = new (DIEValueAllocator) DIELoc();
+      DIELoc *MemLocationDie = new (DIEValueAllocator) DIELoc;
       addUInt(*MemLocationDie, dwarf::DW_FORM_data1, dwarf::DW_OP_plus_uconst);
       addUInt(*MemLocationDie, dwarf::DW_FORM_udata, OffsetInBytes);
       addBlock(MemberDie, dwarf::DW_AT_data_member_location, MemLocationDie);
@@ -1439,10 +1433,10 @@ void DwarfUnit::constructMemberDIE(DIE &Buffer, const DIDerivedType *DT) {
             dwarf::DW_VIRTUALITY_virtual);
 
   // Objective-C properties.
-  if (MDNode *PNode = DT->getObjCProperty())
-    if (DIEEntry *PropertyDie = getDIEEntry(PNode))
-      MemberDie.addValue(dwarf::DW_AT_APPLE_property, dwarf::DW_FORM_ref4,
-                         PropertyDie);
+  if (DINode *PNode = DT->getObjCProperty())
+    if (DIE *PDie = getDIE(PNode))
+      MemberDie.addValue(DIEValueAllocator, dwarf::DW_AT_APPLE_property,
+                         dwarf::DW_FORM_ref4, DIEEntry(*PDie));
 
   if (DT->isArtificial())
     addFlag(MemberDie, dwarf::DW_AT_artificial);
@@ -1504,16 +1498,14 @@ void DwarfUnit::emitHeader(bool UseOffsets) {
   // start of the section. Use a relocatable offset where needed to ensure
   // linking doesn't invalidate that offset.
   const TargetLoweringObjectFile &TLOF = Asm->getObjFileLowering();
-  if (!UseOffsets)
-    Asm->emitSectionOffset(TLOF.getDwarfAbbrevSection()->getBeginSymbol());
-  else
-    Asm->EmitInt32(0);
+  Asm->emitDwarfSymbolReference(TLOF.getDwarfAbbrevSection()->getBeginSymbol(),
+                                UseOffsets);
 
   Asm->OutStreamer->AddComment("Address Size (in bytes)");
   Asm->EmitInt8(Asm->getDataLayout().getPointerSize());
 }
 
-void DwarfUnit::initSection(const MCSection *Section) {
+void DwarfUnit::initSection(MCSection *Section) {
   assert(!this->Section);
   this->Section = Section;
 }

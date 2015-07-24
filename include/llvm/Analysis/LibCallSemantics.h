@@ -48,8 +48,7 @@ class InvokeInst;
     enum LocResult {
       Yes, No, Unknown
     };
-    LocResult (*isLocation)(ImmutableCallSite CS,
-                            const AliasAnalysis::Location &Loc);
+    LocResult (*isLocation)(ImmutableCallSite CS, const MemoryLocation &Loc);
   };
   
   /// LibCallFunctionInfo - Each record in the array of FunctionInfo structs
@@ -207,7 +206,19 @@ class InvokeInst;
     llvm_unreachable("invalid enum");
   }
 
-  bool canSimplifyInvokeNoUnwind(const InvokeInst *II);
+  /// \brief Return true if this personality may be safely removed if there
+  /// are no invoke instructions remaining in the current function.
+  inline bool isNoOpWithoutInvoke(EHPersonality Pers) {
+    switch (Pers) {
+    case EHPersonality::Unknown:
+      return false;
+    // All known personalities currently have this behavior
+    default: return true;
+    }
+    llvm_unreachable("invalid enum");
+  }
+
+  bool canSimplifyInvokeNoUnwind(const Function *F);
 
 } // end namespace llvm
 

@@ -144,8 +144,6 @@ BasicBlock *llvm::InsertPreheaderForLoop(Loop *L, Pass *PP) {
   PreheaderBB = SplitBlockPredecessors(Header, OutsideBlocks, ".preheader",
                                        AA, DT, LI, PreserveLCSSA);
 
-  PreheaderBB->getTerminator()->setDebugLoc(
-                                      Header->getFirstNonPHI()->getDebugLoc());
   DEBUG(dbgs() << "LoopSimplify: Creating pre-header "
                << PreheaderBB->getName() << "\n");
 
@@ -388,8 +386,9 @@ static BasicBlock *insertUniqueBackedgeBlock(Loop *L, BasicBlock *Preheader,
 
   // Create and insert the new backedge block...
   BasicBlock *BEBlock = BasicBlock::Create(Header->getContext(),
-                                           Header->getName()+".backedge", F);
+                                           Header->getName() + ".backedge", F);
   BranchInst *BETerminator = BranchInst::Create(Header, BEBlock);
+  BETerminator->setDebugLoc(Header->getFirstNonPHI()->getDebugLoc());
 
   DEBUG(dbgs() << "LoopSimplify: Inserting unique backedge block "
                << BEBlock->getName() << "\n");
@@ -404,7 +403,6 @@ static BasicBlock *insertUniqueBackedgeBlock(Loop *L, BasicBlock *Preheader,
     PHINode *PN = cast<PHINode>(I);
     PHINode *NewPN = PHINode::Create(PN->getType(), BackedgeBlocks.size(),
                                      PN->getName()+".be", BETerminator);
-    if (AA) AA->copyValue(PN, NewPN);
 
     // Loop over the PHI node, moving all entries except the one for the
     // preheader over to the new PHI node.

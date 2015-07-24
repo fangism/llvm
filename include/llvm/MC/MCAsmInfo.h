@@ -18,7 +18,6 @@
 
 #include "llvm/MC/MCDirectives.h"
 #include "llvm/MC/MCDwarf.h"
-#include "llvm/MC/MachineLocation.h"
 #include <cassert>
 #include <vector>
 
@@ -155,6 +154,10 @@ protected:
   /// This is true if the assembler allows @ characters in symbol names.
   /// Defaults to false.
   bool AllowAtInName;
+
+  /// If this is true, symbol names with invalid characters will be printed in
+  /// quotes.
+  bool SupportsQuotedNames;
 
   /// This is true if data region markers should be printed as
   /// ".data_region/.end_data_region" directives. If false, use "$d/$a" labels
@@ -389,7 +392,7 @@ public:
   /// Targets can implement this method to specify a section to switch to if the
   /// translation unit doesn't have any trampolines that require an executable
   /// stack.
-  virtual const MCSection *getNonexecutableStackSection(MCContext &Ctx) const {
+  virtual MCSection *getNonexecutableStackSection(MCContext &Ctx) const {
     return nullptr;
   }
 
@@ -406,6 +409,10 @@ public:
   virtual const MCExpr *getExprForFDESymbol(const MCSymbol *Sym,
                                             unsigned Encoding,
                                             MCStreamer &Streamer) const;
+
+  /// Return true if the identifier \p Name does not need quotes to be
+  /// syntactically correct.
+  virtual bool isValidUnquotedName(StringRef Name) const;
 
   bool usesSunStyleELFSectionSwitchSyntax() const {
     return SunStyleELFSectionSwitchSyntax;
@@ -457,6 +464,7 @@ public:
   const char *getCode64Directive() const { return Code64Directive; }
   unsigned getAssemblerDialect() const { return AssemblerDialect; }
   bool doesAllowAtInName() const { return AllowAtInName; }
+  bool supportsNameQuoting() const { return SupportsQuotedNames; }
   bool doesSupportDataRegionDirectives() const {
     return UseDataRegionDirectives;
   }
