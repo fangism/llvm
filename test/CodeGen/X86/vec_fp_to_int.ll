@@ -1,5 +1,10 @@
-; RUN: llc < %s -mtriple=x86_64-unknown-unknown -mattr=+sse2 | FileCheck %s --check-prefix=ALL --check-prefix=SSE2
-; RUN: llc < %s -mtriple=x86_64-unknown-unknown -mattr=+avx | FileCheck %s --check-prefix=ALL  --check-prefix=AVX
+; RUN: llc < %s -mtriple=x86_64-unknown-unknown -mattr=+sse2 | FileCheck %s --check-prefix=ALL --check-prefix=SSE --check-prefix=SSE2
+; RUN: llc < %s -mtriple=x86_64-unknown-unknown -mattr=+avx | FileCheck %s --check-prefix=ALL --check-prefix=AVX --check-prefix=AVX1
+;
+; 32-bit tests to make sure we're not doing anything stupid.
+; RUN: llc < %s -mtriple=i686-unknown-unknown
+; RUN: llc < %s -mtriple=i686-unknown-unknown -mattr=+sse
+; RUN: llc < %s -mtriple=i686-unknown-unknown -mattr=+sse2
 
 ;
 ; Double to Signed Integer
@@ -239,7 +244,6 @@ define <4 x i64> @fptoui_4vf64(<4 x double> %a) {
 ; SSE2:       # BB#0:
 ; SSE2-NEXT:    movapd %xmm0, %xmm2
 ; SSE2-NEXT:    movsd {{.*#+}} xmm3 = mem[0],zero
-; SSE2-NEXT:    {{.*#+}} kill: XMM0<def> XMM2<kill>
 ; SSE2-NEXT:    subsd %xmm3, %xmm0
 ; SSE2-NEXT:    cvttsd2si %xmm0, %rcx
 ; SSE2-NEXT:    movabsq $-9223372036854775808, %rax # imm = 0x8000000000000000
@@ -589,7 +593,6 @@ define <8 x i32> @fptoui_8vf32(<8 x float> %a) {
 ; SSE2-LABEL: fptoui_8vf32:
 ; SSE2:       # BB#0:
 ; SSE2-NEXT:    movaps %xmm0, %xmm2
-; SSE2-NEXT:    {{.*#+}} kill: XMM0<def> XMM2<kill>
 ; SSE2-NEXT:    shufps {{.*#+}} xmm0 = xmm0[3,1,2,3]
 ; SSE2-NEXT:    cvttss2si %xmm0, %rax
 ; SSE2-NEXT:    movd %eax, %xmm0

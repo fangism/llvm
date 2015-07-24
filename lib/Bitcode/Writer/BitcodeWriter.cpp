@@ -162,10 +162,14 @@ static uint64_t getAttrKindEncoding(Attribute::AttrKind Kind) {
     return bitc::ATTR_KIND_ALIGNMENT;
   case Attribute::AlwaysInline:
     return bitc::ATTR_KIND_ALWAYS_INLINE;
+  case Attribute::ArgMemOnly:
+    return bitc::ATTR_KIND_ARGMEMONLY;
   case Attribute::Builtin:
     return bitc::ATTR_KIND_BUILTIN;
   case Attribute::ByVal:
     return bitc::ATTR_KIND_BY_VAL;
+  case Attribute::Convergent:
+    return bitc::ATTR_KIND_CONVERGENT;
   case Attribute::InAlloca:
     return bitc::ATTR_KIND_IN_ALLOCA;
   case Attribute::Cold:
@@ -230,6 +234,8 @@ static uint64_t getAttrKindEncoding(Attribute::AttrKind Kind) {
     return bitc::ATTR_KIND_STACK_PROTECT_REQ;
   case Attribute::StackProtectStrong:
     return bitc::ATTR_KIND_STACK_PROTECT_STRONG;
+  case Attribute::SafeStack:
+    return bitc::ATTR_KIND_SAFESTACK;
   case Attribute::StructRet:
     return bitc::ATTR_KIND_STRUCT_RET;
   case Attribute::SanitizeAddress:
@@ -691,7 +697,7 @@ static void WriteModuleInfo(const Module *M, const ValueEnumerator &VE,
   for (const Function &F : *M) {
     // FUNCTION:  [type, callingconv, isproto, linkage, paramattrs, alignment,
     //             section, visibility, gc, unnamed_addr, prologuedata,
-    //             dllstorageclass, comdat, prefixdata]
+    //             dllstorageclass, comdat, prefixdata, personalityfn]
     Vals.push_back(VE.getTypeID(F.getFunctionType()));
     Vals.push_back(F.getCallingConv());
     Vals.push_back(F.isDeclaration());
@@ -708,6 +714,8 @@ static void WriteModuleInfo(const Module *M, const ValueEnumerator &VE,
     Vals.push_back(F.hasComdat() ? VE.getComdatID(F.getComdat()) : 0);
     Vals.push_back(F.hasPrefixData() ? (VE.getValueID(F.getPrefixData()) + 1)
                                      : 0);
+    Vals.push_back(
+        F.hasPersonalityFn() ? (VE.getValueID(F.getPersonalityFn()) + 1) : 0);
 
     unsigned AbbrevToUse = 0;
     Stream.EmitRecord(bitc::MODULE_CODE_FUNCTION, Vals, AbbrevToUse);
@@ -949,6 +957,7 @@ static void WriteDICompileUnit(const DICompileUnit *N,
   Record.push_back(VE.getMetadataOrNullID(N->getSubprograms().get()));
   Record.push_back(VE.getMetadataOrNullID(N->getGlobalVariables().get()));
   Record.push_back(VE.getMetadataOrNullID(N->getImportedEntities().get()));
+  Record.push_back(N->getDWOId());
 
   Stream.EmitRecord(bitc::METADATA_COMPILE_UNIT, Record, Abbrev);
   Record.clear();
@@ -1022,6 +1031,17 @@ static void WriteDINamespace(const DINamespace *N, const ValueEnumerator &VE,
   Record.push_back(N->getLine());
 
   Stream.EmitRecord(bitc::METADATA_NAMESPACE, Record, Abbrev);
+  Record.clear();
+}
+
+static void WriteDIModule(const DIModule *N, const ValueEnumerator &VE,
+                          BitstreamWriter &Stream,
+                          SmallVectorImpl<uint64_t> &Record, unsigned Abbrev) {
+  Record.push_back(N->isDistinct());
+  for (auto &I : N->operands())
+    Record.push_back(VE.getMetadataOrNullID(I));
+
+  Stream.EmitRecord(bitc::METADATA_MODULE, Record, Abbrev);
   Record.clear();
 }
 
@@ -1512,8 +1532,8 @@ static void WriteConstants(unsigned FirstVal, unsigned LastVal,
     } else if (isa<ConstantArray>(C) || isa<ConstantStruct>(C) ||
                isa<ConstantVector>(C)) {
       Code = bitc::CST_CODE_AGGREGATE;
-      for (unsigned i = 0, e = C->getNumOperands(); i != e; ++i)
-        Record.push_back(VE.getValueID(C->getOperand(i)));
+      for (const Value *Op : C->operands())
+        Record.push_back(VE.getValueID(Op));
       AbbrevToUse = AggregateAbbrev;
     } else if (const ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
       switch (CE->getOpcode()) {
@@ -1741,13 +1761,17 @@ static void WriteInstruction(const Instruction &I, unsigned InstID,
     pushValue(I.getOperand(2), InstID, Vals, VE);
     break;
   case Instruction::ICmp:
-  case Instruction::FCmp:
+  case Instruction::FCmp: {
     // compare returning Int1Ty or vector of Int1Ty
     Code = bitc::FUNC_CODE_INST_CMP2;
     PushValueAndType(I.getOperand(0), InstID, Vals, VE);
     pushValue(I.getOperand(1), InstID, Vals, VE);
     Vals.push_back(cast<CmpInst>(I).getPredicate());
+    uint64_t Flags = GetOptimizationFlags(&I);
+    if (Flags != 0)
+      Vals.push_back(Flags);
     break;
+  }
 
   case Instruction::Ret:
     {
@@ -1854,7 +1878,6 @@ static void WriteInstruction(const Instruction &I, unsigned InstID,
     const LandingPadInst &LP = cast<LandingPadInst>(I);
     Code = bitc::FUNC_CODE_INST_LANDINGPAD;
     Vals.push_back(VE.getTypeID(LP.getType()));
-    PushValueAndType(LP.getPersonalityFn(), InstID, Vals, VE);
     Vals.push_back(LP.isCleanup());
     Vals.push_back(LP.getNumClauses());
     for (unsigned I = 0, E = LP.getNumClauses(); I != E; ++I) {
@@ -2135,6 +2158,8 @@ static void WriteFunction(const Function &F, ValueEnumerator &VE,
       Vals.push_back(VE.getMetadataOrNullID(DL->getInlinedAt()));
       Stream.EmitRecord(bitc::FUNC_CODE_DEBUG_LOC, Vals);
       Vals.clear();
+
+      LastDL = DL;
     }
 
   // Emit names for all the instructions etc.
@@ -2398,10 +2423,7 @@ enum {
 
 static void WriteInt32ToBuffer(uint32_t Value, SmallVectorImpl<char> &Buffer,
                                uint32_t &Position) {
-  Buffer[Position + 0] = (unsigned char) (Value >>  0);
-  Buffer[Position + 1] = (unsigned char) (Value >>  8);
-  Buffer[Position + 2] = (unsigned char) (Value >> 16);
-  Buffer[Position + 3] = (unsigned char) (Value >> 24);
+  support::endian::write32le(&Buffer[Position], Value);
   Position += 4;
 }
 

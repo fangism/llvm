@@ -78,6 +78,7 @@ public:
   /// Note: this is undefined behavior if the instruction does not have a
   /// parent, or the parent basic block does not have a parent function.
   const Module *getModule() const;
+  Module *getModule();
 
   /// removeFromParent - This method unlinks 'this' from the containing basic
   /// block, but does not delete it.
@@ -90,12 +91,12 @@ public:
   /// \returns an iterator pointing to the element after the erased one
   iplist<Instruction>::iterator eraseFromParent();
 
-  /// insertBefore - Insert an unlinked instructions into a basic block
-  /// immediately before the specified instruction.
+  /// Insert an unlinked instruction into a basic block immediately before
+  /// the specified instruction.
   void insertBefore(Instruction *InsertPos);
 
-  /// insertAfter - Insert an unlinked instructions into a basic block
-  /// immediately after the specified instruction.
+  /// Insert an unlinked instruction into a basic block immediately after the
+  /// specified instruction.
   void insertAfter(Instruction *InsertPos);
 
   /// moveBefore - Unlink this instruction from its current basic block and
@@ -381,7 +382,7 @@ public:
   ///
   /// Note that this does not consider malloc and alloca to have side
   /// effects because the newly allocated memory is completely invisible to
-  /// instructions which don't used the returned value.  For cases where this
+  /// instructions which don't use the returned value.  For cases where this
   /// matters, isSafeToSpeculativelyExecute may be more appropriate.
   bool mayHaveSideEffects() const {
     return mayWriteToMemory() || mayThrow() || !mayReturn();
@@ -508,8 +509,10 @@ protected:
               Instruction *InsertBefore = nullptr);
   Instruction(Type *Ty, unsigned iType, Use *Ops, unsigned NumOps,
               BasicBlock *InsertAtEnd);
-  virtual Instruction *clone_impl() const = 0;
 
+private:
+  /// Create a copy of this instruction.
+  Instruction *cloneImpl() const;
 };
 
 inline Instruction *ilist_traits<Instruction>::createSentinel() const {

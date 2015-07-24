@@ -23,6 +23,9 @@ include "llvm/Target/Target.td"
 def ModeThumb  : SubtargetFeature<"thumb-mode", "InThumbMode", "true",
                                   "Thumb mode">;
 
+def ModeSoftFloat : SubtargetFeature<"soft-float", "UseSoftFloat", "true",
+                                     "Use software floating point features.">;
+
 //===----------------------------------------------------------------------===//
 // ARM Subtarget features.
 //
@@ -146,6 +149,10 @@ def FeatureAClass : SubtargetFeature<"aclass", "ARMProcClass", "AClass",
 // See ARMInstrInfo.td for details.
 def FeatureNaClTrap : SubtargetFeature<"nacl-trap", "UseNaClTrap", "true",
                                        "NaCl trap">;
+
+def FeatureLongCalls : SubtargetFeature<"long-calls", "GenLongCalls", "true",
+                                        "Generate calls via indirect call "
+                                        "instructions">;
 
 // ARM ISAs.
 def HasV4TOps   : SubtargetFeature<"v4t", "HasV4TOps", "true",
@@ -407,13 +414,13 @@ def : ProcessorModel<"cortex-r4",   CortexA8Model,
 def : ProcessorModel<"cortex-r4f",  CortexA8Model,
                                     [ProcR4,
                                      FeatureSlowFPBrcc, FeatureHasSlowFPVMLx,
-                                     FeatureVFP3, FeatureVFPOnlySP, FeatureD16]>;
+                                     FeatureVFP3, FeatureD16]>;
 
 // FIXME: R5 has currently the same ProcessorModel as A8.
 def : ProcessorModel<"cortex-r5",   CortexA8Model,
                                     [ProcR5, HasV7Ops, FeatureDB,
                                      FeatureVFP3, FeatureDSPThumb2,
-                                     FeatureHasRAS, FeatureVFPOnlySP,
+                                     FeatureHasRAS,
                                      FeatureD16, FeatureRClass]>;
 
 // FIXME: R7 has currently the same ProcessorModel as A8 and is modelled as R5.

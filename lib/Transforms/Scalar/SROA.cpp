@@ -1088,7 +1088,8 @@ class AllocaPromoter : public LoadAndStorePromoter {
   SmallVector<DbgValueInst *, 4> DVIs;
 
 public:
-  AllocaPromoter(const SmallVectorImpl<Instruction *> &Insts, SSAUpdater &S,
+  AllocaPromoter(ArrayRef<const Instruction *> Insts,
+                 SSAUpdater &S,
                  AllocaInst &AI, DIBuilder &DIB)
       : LoadAndStorePromoter(Insts, S), AI(AI), DIB(DIB) {}
 
@@ -2592,13 +2593,21 @@ private:
       V = rewriteIntegerLoad(LI);
     } else if (NewBeginOffset == NewAllocaBeginOffset &&
                canConvertValue(DL, NewAllocaTy, LI.getType())) {
-      V = IRB.CreateAlignedLoad(&NewAI, NewAI.getAlignment(), LI.isVolatile(),
-                                LI.getName());
+      LoadInst *NewLI = IRB.CreateAlignedLoad(&NewAI, NewAI.getAlignment(),
+                                              LI.isVolatile(), LI.getName());
+      if (LI.isVolatile())
+        NewLI->setAtomic(LI.getOrdering(), LI.getSynchScope());
+
+      V = NewLI;
     } else {
       Type *LTy = TargetTy->getPointerTo();
-      V = IRB.CreateAlignedLoad(getNewAllocaSlicePtr(IRB, LTy),
-                                getSliceAlign(TargetTy), LI.isVolatile(),
-                                LI.getName());
+      LoadInst *NewLI = IRB.CreateAlignedLoad(getNewAllocaSlicePtr(IRB, LTy),
+                                              getSliceAlign(TargetTy),
+                                              LI.isVolatile(), LI.getName());
+      if (LI.isVolatile())
+        NewLI->setAtomic(LI.getOrdering(), LI.getSynchScope());
+
+      V = NewLI;
       IsPtrAdjusted = true;
     }
     V = convertValue(DL, IRB, V, TargetTy);
@@ -2721,7 +2730,8 @@ private:
       NewSI = IRB.CreateAlignedStore(V, NewPtr, getSliceAlign(V->getType()),
                                      SI.isVolatile());
     }
-    (void)NewSI;
+    if (SI.isVolatile())
+      NewSI->setAtomic(SI.getOrdering(), SI.getSynchScope());
     Pass.DeadInsts.insert(&SI);
     deleteIfTriviallyDead(OldOp);
 

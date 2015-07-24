@@ -30,26 +30,17 @@ class TargetTransformInfoImplBase {
 protected:
   typedef TargetTransformInfo TTI;
 
-  const DataLayout *DL;
+  const DataLayout &DL;
 
-  explicit TargetTransformInfoImplBase(const DataLayout *DL)
-      : DL(DL) {}
+  explicit TargetTransformInfoImplBase(const DataLayout &DL) : DL(DL) {}
 
 public:
   // Provide value semantics. MSVC requires that we spell all of these out.
   TargetTransformInfoImplBase(const TargetTransformInfoImplBase &Arg)
       : DL(Arg.DL) {}
-  TargetTransformInfoImplBase(TargetTransformInfoImplBase &&Arg)
-      : DL(std::move(Arg.DL)) {}
-  TargetTransformInfoImplBase &
-  operator=(const TargetTransformInfoImplBase &RHS) {
-    DL = RHS.DL;
-    return *this;
-  }
-  TargetTransformInfoImplBase &operator=(TargetTransformInfoImplBase &&RHS) {
-    DL = std::move(RHS.DL);
-    return *this;
-  }
+  TargetTransformInfoImplBase(TargetTransformInfoImplBase &&Arg) : DL(Arg.DL) {}
+
+  const DataLayout &getDataLayout() const { return DL; }
 
   unsigned getOperationCost(unsigned Opcode, Type *Ty, Type *OpTy) {
     switch (Opcode) {
@@ -70,28 +61,22 @@ public:
       return TTI::TCC_Basic;
 
     case Instruction::IntToPtr: {
-      if (!DL)
-        return TTI::TCC_Basic;
-
       // An inttoptr cast is free so long as the input is a legal integer type
       // which doesn't contain values outside the range of a pointer.
       unsigned OpSize = OpTy->getScalarSizeInBits();
-      if (DL->isLegalInteger(OpSize) &&
-          OpSize <= DL->getPointerTypeSizeInBits(Ty))
+      if (DL.isLegalInteger(OpSize) &&
+          OpSize <= DL.getPointerTypeSizeInBits(Ty))
         return TTI::TCC_Free;
 
       // Otherwise it's not a no-op.
       return TTI::TCC_Basic;
     }
     case Instruction::PtrToInt: {
-      if (!DL)
-        return TTI::TCC_Basic;
-
       // A ptrtoint cast is free so long as the result is large enough to store
       // the pointer, and a legal integer type.
       unsigned DestSize = Ty->getScalarSizeInBits();
-      if (DL->isLegalInteger(DestSize) &&
-          DestSize >= DL->getPointerTypeSizeInBits(OpTy))
+      if (DL.isLegalInteger(DestSize) &&
+          DestSize >= DL.getPointerTypeSizeInBits(OpTy))
         return TTI::TCC_Free;
 
       // Otherwise it's not a no-op.
@@ -100,7 +85,7 @@ public:
     case Instruction::Trunc:
       // trunc to a native type is free (assuming the target has compare and
       // shift-right of the same width).
-      if (DL && DL->isLegalInteger(DL->getTypeSizeInBits(Ty)))
+      if (DL.isLegalInteger(DL.getTypeSizeInBits(Ty)))
         return TTI::TCC_Free;
 
       return TTI::TCC_Basic;
@@ -207,10 +192,11 @@ public:
   bool isLegalICmpImmediate(int64_t Imm) { return false; }
 
   bool isLegalAddressingMode(Type *Ty, GlobalValue *BaseGV, int64_t BaseOffset,
-                             bool HasBaseReg, int64_t Scale) {
-    // Guess that reg+reg addressing is allowed. This heuristic is taken from
-    // the implementation of LSR.
-    return !BaseGV && BaseOffset == 0 && Scale <= 1;
+                             bool HasBaseReg, int64_t Scale,
+                             unsigned AddrSpace) {
+    // Guess that only reg and reg+reg addressing is allowed. This heuristic is
+    // taken from the implementation of LSR.
+    return !BaseGV && BaseOffset == 0 && (Scale == 0 || Scale == 1);
   }
 
   bool isLegalMaskedStore(Type *DataType, int Consecutive) { return false; }
@@ -218,9 +204,10 @@ public:
   bool isLegalMaskedLoad(Type *DataType, int Consecutive) { return false; }
 
   int getScalingFactorCost(Type *Ty, GlobalValue *BaseGV, int64_t BaseOffset,
-                           bool HasBaseReg, int64_t Scale) {
+                           bool HasBaseReg, int64_t Scale, unsigned AddrSpace) {
     // Guess that all legal addressing mode are free.
-    if (isLegalAddressingMode(Ty, BaseGV, BaseOffset, HasBaseReg, Scale))
+    if (isLegalAddressingMode(Ty, BaseGV, BaseOffset, HasBaseReg,
+                              Scale, AddrSpace))
       return 0;
     return -1;
   }
@@ -300,6 +287,14 @@ public:
     return 1;
   }
 
+  unsigned getInterleavedMemoryOpCost(unsigned Opcode, Type *VecTy,
+                                      unsigned Factor,
+                                      ArrayRef<unsigned> Indices,
+                                      unsigned Alignment,
+                                      unsigned AddressSpace) {
+    return 1;
+  }
+
   unsigned getIntrinsicInstrCost(Intrinsic::ID ID, Type *RetTy,
                                  ArrayRef<Type *> Tys) {
     return 1;
@@ -325,6 +320,14 @@ public:
                                            Type *ExpectedType) {
     return nullptr;
   }
+
+  bool hasCompatibleFunctionAttributes(const Function *Caller,
+                                       const Function *Callee) const {
+    return (Caller->getFnAttribute("target-cpu") ==
+            Callee->getFnAttribute("target-cpu")) &&
+           (Caller->getFnAttribute("target-features") ==
+            Callee->getFnAttribute("target-features"));
+  }
 };
 
 /// \brief CRTP base class for use as a mix-in that aids implementing
@@ -335,8 +338,7 @@ private:
   typedef TargetTransformInfoImplBase BaseT;
 
 protected:
-  explicit TargetTransformInfoImplCRTPBase(const DataLayout *DL)
-      : BaseT(DL) {}
+  explicit TargetTransformInfoImplCRTPBase(const DataLayout &DL) : BaseT(DL) {}
 
 public:
   // Provide value semantics. MSVC requires that we spell all of these out.
@@ -344,16 +346,6 @@ public:
       : BaseT(static_cast<const BaseT &>(Arg)) {}
   TargetTransformInfoImplCRTPBase(TargetTransformInfoImplCRTPBase &&Arg)
       : BaseT(std::move(static_cast<BaseT &>(Arg))) {}
-  TargetTransformInfoImplCRTPBase &
-  operator=(const TargetTransformInfoImplCRTPBase &RHS) {
-    BaseT::operator=(static_cast<const BaseT &>(RHS));
-    return *this;
-  }
-  TargetTransformInfoImplCRTPBase &
-  operator=(TargetTransformInfoImplCRTPBase &&RHS) {
-    BaseT::operator=(std::move(static_cast<BaseT &>(RHS)));
-    return *this;
-  }
 
   using BaseT::getCallCost;
 
@@ -365,7 +357,7 @@ public:
       // function.
       NumArgs = F->arg_size();
 
-    if (Intrinsic::ID IID = (Intrinsic::ID)F->getIntrinsicID()) {
+    if (Intrinsic::ID IID = F->getIntrinsicID()) {
       FunctionType *FTy = F->getFunctionType();
       SmallVector<Type *, 8> ParamTys(FTy->param_begin(), FTy->param_end());
       return static_cast<T *>(this)

@@ -194,7 +194,7 @@ def X86rdpmc   : SDNode<"X86ISD::RDPMC_DAG", SDTX86Void,
 def X86Wrapper    : SDNode<"X86ISD::Wrapper",     SDTX86Wrapper>;
 def X86WrapperRIP : SDNode<"X86ISD::WrapperRIP",  SDTX86Wrapper>;
 
-def X86RecoverFrameAlloc : SDNode<"ISD::FRAME_ALLOC_RECOVER",
+def X86RecoverFrameAlloc : SDNode<"ISD::LOCAL_RECOVER",
                                   SDTypeProfile<1, 1, [SDTCisSameAs<0, 1>,
                                                        SDTCisInt<1>]>>;
 
@@ -282,6 +282,10 @@ let RenderMethod = "addMemOperands" in {
   def X86MemVX64Operand : AsmOperandClass { let Name = "MemVX64"; }
   def X86MemVY64Operand : AsmOperandClass { let Name = "MemVY64"; }
   def X86MemVZ64Operand : AsmOperandClass { let Name = "MemVZ64"; }
+  def X86MemVX32XOperand : AsmOperandClass { let Name = "MemVX32X"; }
+  def X86MemVY32XOperand : AsmOperandClass { let Name = "MemVY32X"; }
+  def X86MemVX64XOperand : AsmOperandClass { let Name = "MemVX64X"; }
+  def X86MemVY64XOperand : AsmOperandClass { let Name = "MemVY64X"; }
 }
 
 def X86AbsMemAsmOperand : AsmOperandClass {
@@ -332,7 +336,11 @@ def vx32mem  : X86VMemOperand<VR128,  "printi32mem", X86MemVX32Operand>;
 def vy32mem  : X86VMemOperand<VR256,  "printi32mem", X86MemVY32Operand>;
 def vx64mem  : X86VMemOperand<VR128,  "printi64mem", X86MemVX64Operand>;
 def vy64mem  : X86VMemOperand<VR256,  "printi64mem", X86MemVY64Operand>;
-def vy64xmem : X86VMemOperand<VR256X, "printi64mem", X86MemVY64Operand>;
+
+def vx32xmem : X86VMemOperand<VR128X, "printi32mem", X86MemVX32XOperand>;
+def vx64xmem : X86VMemOperand<VR128X, "printi32mem", X86MemVX64XOperand>;
+def vy32xmem : X86VMemOperand<VR256X, "printi32mem", X86MemVY32XOperand>;
+def vy64xmem : X86VMemOperand<VR256X, "printi64mem", X86MemVY64XOperand>;
 def vz32mem  : X86VMemOperand<VR512,  "printi32mem", X86MemVZ32Operand>;
 def vz64mem  : X86VMemOperand<VR512,  "printi64mem", X86MemVZ64Operand>;
 
@@ -788,6 +796,7 @@ def HasRDSEED    : Predicate<"Subtarget->hasRDSEED()">;
 def HasPrefetchW : Predicate<"Subtarget->hasPRFCHW()">;
 def FPStackf32   : Predicate<"!Subtarget->hasSSE1()">;
 def FPStackf64   : Predicate<"!Subtarget->hasSSE2()">;
+def HasMPX       : Predicate<"Subtarget->hasMPX()">;
 def HasCmpxchg16b: Predicate<"Subtarget->hasCmpxchg16b()">;
 def Not64BitMode : Predicate<"!Subtarget->is64Bit()">,
                              AssemblerPredicate<"!Mode64Bit", "Not 64-bit mode">;
@@ -1019,13 +1028,12 @@ def PUSH32rmm: I<0xFF, MRM6m, (outs), (ins i32mem:$src), "push{l}\t$src",[],
                  IIC_PUSH_MEM>, OpSize32, Requires<[Not64BitMode]>;
 
 def PUSH16i8 : Ii8<0x6a, RawFrm, (outs), (ins i16i8imm:$imm),
-                   "push{w}\t$imm", [], IIC_PUSH_IMM>, OpSize16,
-                   Requires<[Not64BitMode]>;
+                   "push{w}\t$imm", [], IIC_PUSH_IMM>, OpSize16;
+def PUSHi16  : Ii16<0x68, RawFrm, (outs), (ins i16imm:$imm),
+                   "push{w}\t$imm", [], IIC_PUSH_IMM>, OpSize16;
+
 def PUSH32i8 : Ii8<0x6a, RawFrm, (outs), (ins i32i8imm:$imm),
                    "push{l}\t$imm", [], IIC_PUSH_IMM>, OpSize32,
-                   Requires<[Not64BitMode]>;
-def PUSHi16  : Ii16<0x68, RawFrm, (outs), (ins i16imm:$imm),
-                   "push{w}\t$imm", [], IIC_PUSH_IMM>, OpSize16,
                    Requires<[Not64BitMode]>;
 def PUSHi32  : Ii32<0x68, RawFrm, (outs), (ins i32imm:$imm),
                    "push{l}\t$imm", [], IIC_PUSH_IMM>, OpSize32,
@@ -1072,9 +1080,6 @@ let Defs = [RSP], Uses = [RSP], hasSideEffects = 0, mayStore = 1,
     SchedRW = [WriteStore] in {
 def PUSH64i8   : Ii8<0x6a, RawFrm, (outs), (ins i64i8imm:$imm),
                     "push{q}\t$imm", [], IIC_PUSH_IMM>, Requires<[In64BitMode]>;
-def PUSH64i16  : Ii16<0x68, RawFrm, (outs), (ins i16imm:$imm),
-                    "push{w}\t$imm", [], IIC_PUSH_IMM>, OpSize16,
-                    Requires<[In64BitMode]>;
 def PUSH64i32  : Ii32S<0x68, RawFrm, (outs), (ins i64i32imm:$imm),
                     "push{q}\t$imm", [], IIC_PUSH_IMM>, OpSize32,
                     Requires<[In64BitMode]>;
@@ -2455,6 +2460,9 @@ include "X86InstrSSE.td"
 include "X86InstrAVX512.td"
 include "X86InstrMMX.td"
 include "X86Instr3DNow.td"
+
+// MPX instructions
+include "X86InstrMPX.td"
 
 include "X86InstrVMX.td"
 include "X86InstrSVM.td"

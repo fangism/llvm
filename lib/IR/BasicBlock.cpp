@@ -117,6 +117,10 @@ const Module *BasicBlock::getModule() const {
   return getParent()->getParent();
 }
 
+Module *BasicBlock::getModule() {
+  return getParent()->getParent();
+}
+
 TerminatorInst *BasicBlock::getTerminator() {
   if (InstList.empty()) return nullptr;
   return dyn_cast<TerminatorInst>(&InstList.back());
@@ -159,47 +163,40 @@ CallInst *BasicBlock::getTerminatingMustTailCall() {
 }
 
 Instruction* BasicBlock::getFirstNonPHI() {
-  BasicBlock::iterator i = begin();
-  // All valid basic blocks should have a terminator,
-  // which is not a PHINode. If we have an invalid basic
-  // block we'll get an assertion failure when dereferencing
-  // a past-the-end iterator.
-  while (isa<PHINode>(i)) ++i;
-  return &*i;
+  for (Instruction &I : *this)
+    if (!isa<PHINode>(I))
+      return &I;
+  return nullptr;
 }
 
 Instruction* BasicBlock::getFirstNonPHIOrDbg() {
-  BasicBlock::iterator i = begin();
-  // All valid basic blocks should have a terminator,
-  // which is not a PHINode. If we have an invalid basic
-  // block we'll get an assertion failure when dereferencing
-  // a past-the-end iterator.
-  while (isa<PHINode>(i) || isa<DbgInfoIntrinsic>(i)) ++i;
-  return &*i;
+  for (Instruction &I : *this)
+    if (!isa<PHINode>(I) && !isa<DbgInfoIntrinsic>(I))
+      return &I;
+  return nullptr;
 }
 
 Instruction* BasicBlock::getFirstNonPHIOrDbgOrLifetime() {
-  // All valid basic blocks should have a terminator,
-  // which is not a PHINode. If we have an invalid basic
-  // block we'll get an assertion failure when dereferencing
-  // a past-the-end iterator.
-  BasicBlock::iterator i = begin();
-  for (;; ++i) {
-    if (isa<PHINode>(i) || isa<DbgInfoIntrinsic>(i))
+  for (Instruction &I : *this) {
+    if (isa<PHINode>(I) || isa<DbgInfoIntrinsic>(I))
       continue;
 
-    const IntrinsicInst *II = dyn_cast<IntrinsicInst>(i);
-    if (!II)
-      break;
-    if (II->getIntrinsicID() != Intrinsic::lifetime_start &&
-        II->getIntrinsicID() != Intrinsic::lifetime_end)
-      break;
+    if (auto *II = dyn_cast<IntrinsicInst>(&I))
+      if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
+          II->getIntrinsicID() == Intrinsic::lifetime_end)
+        continue;
+
+    return &I;
   }
-  return &*i;
+  return nullptr;
 }
 
 BasicBlock::iterator BasicBlock::getFirstInsertionPt() {
-  iterator InsertPt = getFirstNonPHI();
+  Instruction *FirstNonPHI = getFirstNonPHI();
+  if (!FirstNonPHI)
+    return end();
+
+  iterator InsertPt = FirstNonPHI;
   if (isa<LandingPadInst>(InsertPt)) ++InsertPt;
   return InsertPt;
 }
@@ -236,6 +233,14 @@ BasicBlock *BasicBlock::getUniquePredecessor() {
     // This is OK.
   }
   return PredBB;
+}
+
+BasicBlock *BasicBlock::getSingleSuccessor() {
+  succ_iterator SI = succ_begin(this), E = succ_end(this);
+  if (SI == E) return nullptr; // no successors
+  BasicBlock *TheSucc = *SI;
+  ++SI;
+  return (SI == E) ? TheSucc : nullptr /* multiple successors */;
 }
 
 BasicBlock *BasicBlock::getUniqueSuccessor() {
@@ -350,12 +355,15 @@ BasicBlock *BasicBlock::splitBasicBlock(iterator I, const Twine &BBName) {
   BasicBlock *New = BasicBlock::Create(getContext(), BBName,
                                        getParent(), InsertBefore);
 
+  // Save DebugLoc of split point before invalidating iterator.
+  DebugLoc Loc = I->getDebugLoc();
   // Move all of the specified instructions from the original basic block into
   // the new basic block.
   New->getInstList().splice(New->end(), this->getInstList(), I, end());
 
   // Add a branch instruction to the newly formed basic block.
-  BranchInst::Create(New, this);
+  BranchInst *BI = BranchInst::Create(New, this);
+  BI->setDebugLoc(Loc);
 
   // Now we must loop through all of the successors of the New block (which
   // _were_ the successors of the 'this' block), and update any PHI nodes in

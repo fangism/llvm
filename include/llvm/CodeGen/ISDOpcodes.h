@@ -72,10 +72,13 @@ namespace ISD {
     /// the parent's frame or return address, and so on.
     FRAMEADDR, RETURNADDR,
 
-    /// FRAME_ALLOC_RECOVER - Represents the llvm.framerecover
-    /// intrinsic. Materializes the offset from the frame pointer of another
-    /// function to the result of llvm.frameallocate.
-    FRAME_ALLOC_RECOVER,
+    /// LOCAL_RECOVER - Represents the llvm.localrecover intrinsic.
+    /// Materializes the offset from the local object pointer of another
+    /// function to a particular local object passed to llvm.localescape. The
+    /// operand is the MCSymbol label used to represent this offset, since
+    /// typically the offset is not known until after code generation of the
+    /// parent.
+    LOCAL_RECOVER,
 
     /// READ_REGISTER, WRITE_REGISTER - This node represents llvm.register on
     /// the DAG, which implements the named register global variables extension.
@@ -123,6 +126,8 @@ namespace ISD {
     TargetConstantPool,
     TargetExternalSymbol,
     TargetBlockAddress,
+
+    MCSymbol,
 
     /// TargetIndex - Like a constant pool entry, but with completely
     /// target-dependent semantics. Holds target flags, a 32-bit index, and a
@@ -307,6 +312,10 @@ namespace ISD {
     /// producing an unsigned/signed value of type i[2*N], then return the top
     /// part.
     MULHU, MULHS,
+
+    /// [US]{MIN/MAX} - Binary minimum or maximum or signed or unsigned
+    /// integers.
+    SMIN, SMAX, UMIN, UMAX,
 
     /// Bitwise operators - logical and, logical or, logical xor.
     AND, OR, XOR,
@@ -701,6 +710,15 @@ namespace ISD {
     /// is the chain and the second operand is the alloca pointer.
     LIFETIME_START, LIFETIME_END,
 
+    /// GC_TRANSITION_START/GC_TRANSITION_END - These operators mark the
+    /// beginning and end of GC transition  sequence, and carry arbitrary
+    /// information that target might need for lowering.  The first operand is
+    /// a chain, the rest are specified by the target and not touched by the DAG
+    /// optimizers. GC_TRANSITION_START..GC_TRANSITION_END pairs may not be
+    /// nested.
+    GC_TRANSITION_START,
+    GC_TRANSITION_END,
+
     /// BUILTIN_OP_END - This must be the last enum value in this list.
     /// The target-specific pre-isel opcode values start here.
     BUILTIN_OP_END
@@ -710,7 +728,7 @@ namespace ISD {
   /// which do not reference a specific memory location should be less than
   /// this value. Those that do must not be less than this value, and can
   /// be used with SelectionDAG::getMemIntrinsicNode.
-  static const int FIRST_TARGET_MEMORY_OPCODE = BUILTIN_OP_END+200;
+  static const int FIRST_TARGET_MEMORY_OPCODE = BUILTIN_OP_END+300;
 
   //===--------------------------------------------------------------------===//
   /// MemIndexedMode enum - This enum defines the load / store indexed

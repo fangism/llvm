@@ -341,6 +341,7 @@ def externalsym : SDNode<"ISD::ExternalSymbol",       SDTPtrLeaf, [],
                          "ExternalSymbolSDNode">;
 def texternalsym: SDNode<"ISD::TargetExternalSymbol", SDTPtrLeaf, [],
                          "ExternalSymbolSDNode">;
+def mcsym: SDNode<"ISD::MCSymbol", SDTPtrLeaf, [], "MCSymbolSDNode">;
 def blockaddress : SDNode<"ISD::BlockAddress",        SDTPtrLeaf, [],
                          "BlockAddressSDNode">;
 def tblockaddress: SDNode<"ISD::TargetBlockAddress",  SDTPtrLeaf, [],
@@ -380,6 +381,10 @@ def subc       : SDNode<"ISD::SUBC"      , SDTIntBinOp,
                         [SDNPOutGlue]>;
 def sube       : SDNode<"ISD::SUBE"      , SDTIntBinOp,
                         [SDNPOutGlue, SDNPInGlue]>;
+def smin       : SDNode<"ISD::SMIN"      , SDTIntBinOp>;
+def smax       : SDNode<"ISD::SMAX"      , SDTIntBinOp>;
+def umin       : SDNode<"ISD::UMIN"      , SDTIntBinOp>;
+def umax       : SDNode<"ISD::UMAX"      , SDTIntBinOp>;
 
 def sext_inreg : SDNode<"ISD::SIGN_EXTEND_INREG", SDTExtInreg>;
 def bswap      : SDNode<"ISD::BSWAP"      , SDTIntUnaryOp>;

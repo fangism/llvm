@@ -49,7 +49,7 @@
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCStreamer.h"
-#include "llvm/MC/MCSymbol.h"
+#include "llvm/MC/MCSymbolELF.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ELF.h"
@@ -185,14 +185,14 @@ void PPCAsmPrinter::printOperand(const MachineInstr *MI, unsigned OpNo,
     return;
 
   case MachineOperand::MO_MachineBasicBlock:
-    O << *MO.getMBB()->getSymbol();
+    MO.getMBB()->getSymbol()->print(O, MAI);
     return;
   case MachineOperand::MO_ConstantPoolIndex:
     O << DL->getPrivateGlobalPrefix() << "CPI" << getFunctionNumber()
       << '_' << MO.getIndex();
     return;
   case MachineOperand::MO_BlockAddress:
-    O << *GetBlockAddressSymbol(MO.getBlockAddress());
+    GetBlockAddressSymbol(MO.getBlockAddress())->print(O, MAI);
     return;
   case MachineOperand::MO_GlobalAddress: {
     // Computing the address of a global symbol, not calling it.
@@ -201,7 +201,7 @@ void PPCAsmPrinter::printOperand(const MachineInstr *MI, unsigned OpNo,
 
     // External or weakly linked global variables need non-lazily-resolved stubs
     if (TM.getRelocationModel() != Reloc::Static &&
-        (GV->isDeclaration() || GV->isWeakForLinker())) {
+        !GV->isStrongDefinitionForLinker()) {
       if (!GV->hasHiddenVisibility()) {
         SymToPrint = getSymbolWithGlobalValueBase(GV, "$non_lazy_ptr");
         MachineModuleInfoImpl::StubValueTy &StubSym = 
@@ -226,8 +226,8 @@ void PPCAsmPrinter::printOperand(const MachineInstr *MI, unsigned OpNo,
     } else {
       SymToPrint = getSymbol(GV);
     }
-    
-    O << *SymToPrint;
+
+    SymToPrint->print(O, MAI);
 
     printOffset(MO.getOffset(), O);
     return;
@@ -373,27 +373,69 @@ void PPCAsmPrinter::LowerPATCHPOINT(MCStreamer &OutStreamer, StackMaps &SM,
     assert((CallTarget & 0xFFFFFFFFFFFF) == CallTarget &&
            "High 16 bits of call target should be zero.");
     unsigned ScratchReg = MI.getOperand(Opers.getNextScratchIdx()).getReg();
-    EncodedBytes = 6*4;
+    EncodedBytes = 0;
     // Materialize the jump address:
     EmitToStreamer(OutStreamer, MCInstBuilder(PPC::LI8)
                                     .addReg(ScratchReg)
                                     .addImm((CallTarget >> 32) & 0xFFFF));
+    ++EncodedBytes;
     EmitToStreamer(OutStreamer, MCInstBuilder(PPC::RLDIC)
                                     .addReg(ScratchReg)
                                     .addReg(ScratchReg)
                                     .addImm(32).addImm(16));
+    ++EncodedBytes;
     EmitToStreamer(OutStreamer, MCInstBuilder(PPC::ORIS8)
                                     .addReg(ScratchReg)
                                     .addReg(ScratchReg)
                                     .addImm((CallTarget >> 16) & 0xFFFF));
+    ++EncodedBytes;
     EmitToStreamer(OutStreamer, MCInstBuilder(PPC::ORI8)
                                     .addReg(ScratchReg)
                                     .addReg(ScratchReg)
                                     .addImm(CallTarget & 0xFFFF));
 
+    // Save the current TOC pointer before the remote call.
+    int TOCSaveOffset = Subtarget->isELFv2ABI() ? 24 : 40;
+    EmitToStreamer(OutStreamer, MCInstBuilder(PPC::STD)
+                                    .addReg(PPC::X2)
+                                    .addImm(TOCSaveOffset)
+                                    .addReg(PPC::X1));
+    ++EncodedBytes;
+
+
+    // If we're on ELFv1, then we need to load the actual function pointer from
+    // the function descriptor.
+    if (!Subtarget->isELFv2ABI()) {
+      // Load the new TOC pointer and the function address, but not r11
+      // (needing this is rare, and loading it here would prevent passing it
+      // via a 'nest' parameter.
+      EmitToStreamer(OutStreamer, MCInstBuilder(PPC::LD)
+                                      .addReg(PPC::X2)
+                                      .addImm(8)
+                                      .addReg(ScratchReg));
+      ++EncodedBytes;
+      EmitToStreamer(OutStreamer, MCInstBuilder(PPC::LD)
+                                      .addReg(ScratchReg)
+                                      .addImm(0)
+                                      .addReg(ScratchReg));
+      ++EncodedBytes;
+    }
+
     EmitToStreamer(OutStreamer, MCInstBuilder(PPC::MTCTR8).addReg(ScratchReg));
+    ++EncodedBytes;
     EmitToStreamer(OutStreamer, MCInstBuilder(PPC::BCTRL8));
+    ++EncodedBytes;
+
+    // Restore the TOC pointer after the call.
+    EmitToStreamer(OutStreamer, MCInstBuilder(PPC::LD)
+                                    .addReg(PPC::X2)
+                                    .addImm(TOCSaveOffset)
+                                    .addReg(PPC::X1));
+    ++EncodedBytes;
   }
+
+  // Each instruction is 4 bytes.
+  EncodedBytes *= 4;
 
   // Emit padding.
   unsigned NumBytes = Opers.getMetaOper(PatchPointOpers::NBytesPos).getImm();
@@ -410,7 +452,7 @@ void PPCAsmPrinter::LowerPATCHPOINT(MCStreamer &OutStreamer, StackMaps &SM,
 void PPCAsmPrinter::EmitTlsCall(const MachineInstr *MI,
                                 MCSymbolRefExpr::VariantKind VK) {
   StringRef Name = "__tls_get_addr";
-  MCSymbol *TlsGetAddr = OutContext.GetOrCreateSymbol(Name);
+  MCSymbol *TlsGetAddr = OutContext.getOrCreateSymbol(Name);
   MCSymbolRefExpr::VariantKind Kind = MCSymbolRefExpr::VK_None;
 
   assert(MI->getOperand(0).isReg() &&
@@ -426,11 +468,11 @@ void PPCAsmPrinter::EmitTlsCall(const MachineInstr *MI,
       TM.getRelocationModel() == Reloc::PIC_)
     Kind = MCSymbolRefExpr::VK_PLT;
   const MCSymbolRefExpr *TlsRef =
-    MCSymbolRefExpr::Create(TlsGetAddr, Kind, OutContext);
+    MCSymbolRefExpr::create(TlsGetAddr, Kind, OutContext);
   const MachineOperand &MO = MI->getOperand(2);
   const GlobalValue *GValue = MO.getGlobal();
   MCSymbol *MOSymbol = getSymbol(GValue);
-  const MCExpr *SymVar = MCSymbolRefExpr::Create(MOSymbol, VK, OutContext);
+  const MCExpr *SymVar = MCSymbolRefExpr::create(MOSymbol, VK, OutContext);
   EmitToStreamer(*OutStreamer,
                  MCInstBuilder(Subtarget->isPPC64() ?
                                PPC::BL8_NOP_TLS : PPC::BL_TLS)
@@ -444,7 +486,7 @@ void PPCAsmPrinter::EmitTlsCall(const MachineInstr *MI,
 void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   MCInst TmpInst;
   bool isPPC64 = Subtarget->isPPC64();
-  bool isDarwin = Triple(TM.getTargetTriple()).isOSDarwin();
+  bool isDarwin = TM.getTargetTriple().isOSDarwin();
   const Module *M = MF->getFunction()->getParent();
   PICLevel::Level PL = M->getPICLevel();
   
@@ -466,12 +508,12 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     //      blrl
     // This will return the pointer to _GLOBAL_OFFSET_TABLE_@local
     MCSymbol *GOTSymbol =
-      OutContext.GetOrCreateSymbol(StringRef("_GLOBAL_OFFSET_TABLE_"));
+      OutContext.getOrCreateSymbol(StringRef("_GLOBAL_OFFSET_TABLE_"));
     const MCExpr *OffsExpr =
-      MCBinaryExpr::CreateSub(MCSymbolRefExpr::Create(GOTSymbol,
+      MCBinaryExpr::createSub(MCSymbolRefExpr::create(GOTSymbol,
                                                       MCSymbolRefExpr::VK_PPC_LOCAL,
                                                       OutContext),
-                              MCConstantExpr::Create(4, OutContext),
+                              MCConstantExpr::create(4, OutContext),
                               OutContext);
 
     // Emit the 'bl'.
@@ -490,7 +532,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::BL)
       // FIXME: We would like an efficient form for this, so we don't have to do
       // a lot of extra uniquing.
-      .addExpr(MCSymbolRefExpr::Create(PICBase, OutContext)));
+      .addExpr(MCSymbolRefExpr::create(PICBase, OutContext)));
     
     // Emit the label.
     OutStreamer->EmitLabel(PICBase);
@@ -506,9 +548,9 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       MF->getInfo<PPCFunctionInfo>()->getPICOffsetSymbol();
     TmpInst.setOpcode(PPC::LWZ);
     const MCExpr *Exp =
-      MCSymbolRefExpr::Create(PICOffset, MCSymbolRefExpr::VK_None, OutContext);
+      MCSymbolRefExpr::create(PICOffset, MCSymbolRefExpr::VK_None, OutContext);
     const MCExpr *PB =
-      MCSymbolRefExpr::Create(MF->getPICBaseSymbol(),
+      MCSymbolRefExpr::create(MF->getPICBaseSymbol(),
                               MCSymbolRefExpr::VK_None,
                               OutContext);
     const MCOperand TR = TmpInst.getOperand(1);
@@ -516,7 +558,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
 
     // Step 1: lwz %Rt, .L$poff - .L$pb(%Ri)
     TmpInst.getOperand(1) =
-        MCOperand::CreateExpr(MCBinaryExpr::CreateSub(Exp, PB, OutContext));
+        MCOperand::createExpr(MCBinaryExpr::createSub(Exp, PB, OutContext));
     TmpInst.getOperand(0) = TR;
     TmpInst.getOperand(2) = PICR;
     EmitToStreamer(*OutStreamer, TmpInst);
@@ -551,20 +593,20 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
 
     if (PL == PICLevel::Small) {
       const MCExpr *Exp =
-        MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_GOT,
+        MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_GOT,
                                 OutContext);
-      TmpInst.getOperand(1) = MCOperand::CreateExpr(Exp);
+      TmpInst.getOperand(1) = MCOperand::createExpr(Exp);
     } else {
       MCSymbol *TOCEntry = lookUpOrCreateTOCEntry(MOSymbol);
 
       const MCExpr *Exp =
-        MCSymbolRefExpr::Create(TOCEntry, MCSymbolRefExpr::VK_None,
+        MCSymbolRefExpr::create(TOCEntry, MCSymbolRefExpr::VK_None,
                                 OutContext);
       const MCExpr *PB =
-        MCSymbolRefExpr::Create(OutContext.GetOrCreateSymbol(Twine(".LTOC")),
+        MCSymbolRefExpr::create(OutContext.getOrCreateSymbol(Twine(".LTOC")),
                                                              OutContext);
-      Exp = MCBinaryExpr::CreateSub(Exp, PB, OutContext);
-      TmpInst.getOperand(1) = MCOperand::CreateExpr(Exp);
+      Exp = MCBinaryExpr::createSub(Exp, PB, OutContext);
+      TmpInst.getOperand(1) = MCOperand::createExpr(Exp);
     }
     EmitToStreamer(*OutStreamer, TmpInst);
     return;
@@ -596,9 +638,9 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     MCSymbol *TOCEntry = lookUpOrCreateTOCEntry(MOSymbol);
 
     const MCExpr *Exp =
-      MCSymbolRefExpr::Create(TOCEntry, MCSymbolRefExpr::VK_PPC_TOC,
+      MCSymbolRefExpr::create(TOCEntry, MCSymbolRefExpr::VK_PPC_TOC,
                               OutContext);
-    TmpInst.getOperand(1) = MCOperand::CreateExpr(Exp);
+    TmpInst.getOperand(1) = MCOperand::createExpr(Exp);
     EmitToStreamer(*OutStreamer, TmpInst);
     return;
   }
@@ -628,7 +670,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       IsExternal = GV->isDeclaration();
       IsCommon = GV->hasCommonLinkage();
       IsNonLocalFunction = GV->getType()->getElementType()->isFunctionTy() &&
-        (GV->isDeclaration() || GV->isWeakForLinker());
+        !GV->isStrongDefinitionForLinker();
       IsAvailExt = GV->hasAvailableExternallyLinkage();
     } else if (MO.isCPI())
       MOSymbol = GetCPISymbol(MO.getIndex());
@@ -643,9 +685,9 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       MOSymbol = lookUpOrCreateTOCEntry(MOSymbol);
 
     const MCExpr *Exp =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_TOC_HA,
+      MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_PPC_TOC_HA,
                               OutContext);
-    TmpInst.getOperand(2) = MCOperand::CreateExpr(Exp);
+    TmpInst.getOperand(2) = MCOperand::createExpr(Exp);
     EmitToStreamer(*OutStreamer, TmpInst);
     return;
   }
@@ -685,9 +727,9 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     }
 
     const MCExpr *Exp =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_TOC_LO,
+      MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_PPC_TOC_LO,
                               OutContext);
-    TmpInst.getOperand(1) = MCOperand::CreateExpr(Exp);
+    TmpInst.getOperand(1) = MCOperand::createExpr(Exp);
     EmitToStreamer(*OutStreamer, TmpInst);
     return;
   }
@@ -710,7 +752,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       MOSymbol = getSymbol(GV);
       IsExternal = GV->isDeclaration();
       IsNonLocalFunction = GV->getType()->getElementType()->isFunctionTy() &&
-        (GV->isDeclaration() || GV->isWeakForLinker());
+        !GV->isStrongDefinitionForLinker();
     } else if (MO.isCPI())
       MOSymbol = GetCPISymbol(MO.getIndex());
 
@@ -719,9 +761,9 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
       MOSymbol = lookUpOrCreateTOCEntry(MOSymbol);
 
     const MCExpr *Exp =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_TOC_LO,
+      MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_PPC_TOC_LO,
                               OutContext);
-    TmpInst.getOperand(2) = MCOperand::CreateExpr(Exp);
+    TmpInst.getOperand(2) = MCOperand::createExpr(Exp);
     EmitToStreamer(*OutStreamer, TmpInst);
     return;
   }
@@ -733,7 +775,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = getSymbol(GValue);
     const MCExpr *SymGotTprel =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_GOT_TPREL_HA,
+      MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_PPC_GOT_TPREL_HA,
                               OutContext);
     EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::ADDIS8)
                                  .addReg(MI->getOperand(0).getReg())
@@ -752,25 +794,25 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = getSymbol(GValue);
     const MCExpr *Exp =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_GOT_TPREL_LO,
+      MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_PPC_GOT_TPREL_LO,
                               OutContext);
-    TmpInst.getOperand(1) = MCOperand::CreateExpr(Exp);
+    TmpInst.getOperand(1) = MCOperand::createExpr(Exp);
     EmitToStreamer(*OutStreamer, TmpInst);
     return;
   }
 
   case PPC::PPC32PICGOT: {
-    MCSymbol *GOTSymbol = OutContext.GetOrCreateSymbol(StringRef("_GLOBAL_OFFSET_TABLE_"));
-    MCSymbol *GOTRef = OutContext.CreateTempSymbol();
-    MCSymbol *NextInstr = OutContext.CreateTempSymbol();
+    MCSymbol *GOTSymbol = OutContext.getOrCreateSymbol(StringRef("_GLOBAL_OFFSET_TABLE_"));
+    MCSymbol *GOTRef = OutContext.createTempSymbol();
+    MCSymbol *NextInstr = OutContext.createTempSymbol();
 
     EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::BL)
       // FIXME: We would like an efficient form for this, so we don't have to do
       // a lot of extra uniquing.
-      .addExpr(MCSymbolRefExpr::Create(NextInstr, OutContext)));
+      .addExpr(MCSymbolRefExpr::create(NextInstr, OutContext)));
     const MCExpr *OffsExpr =
-      MCBinaryExpr::CreateSub(MCSymbolRefExpr::Create(GOTSymbol, OutContext),
-                                MCSymbolRefExpr::Create(GOTRef, OutContext),
+      MCBinaryExpr::createSub(MCSymbolRefExpr::create(GOTSymbol, OutContext),
+                                MCSymbolRefExpr::create(GOTRef, OutContext),
         OutContext);
     OutStreamer->EmitLabel(GOTRef);
     OutStreamer->EmitValue(OffsExpr, 4);
@@ -788,12 +830,12 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     return;
   }
   case PPC::PPC32GOT: {
-    MCSymbol *GOTSymbol = OutContext.GetOrCreateSymbol(StringRef("_GLOBAL_OFFSET_TABLE_"));
+    MCSymbol *GOTSymbol = OutContext.getOrCreateSymbol(StringRef("_GLOBAL_OFFSET_TABLE_"));
     const MCExpr *SymGotTlsL =
-      MCSymbolRefExpr::Create(GOTSymbol, MCSymbolRefExpr::VK_PPC_LO,
+      MCSymbolRefExpr::create(GOTSymbol, MCSymbolRefExpr::VK_PPC_LO,
                               OutContext);
     const MCExpr *SymGotTlsHA =                               
-      MCSymbolRefExpr::Create(GOTSymbol, MCSymbolRefExpr::VK_PPC_HA,
+      MCSymbolRefExpr::create(GOTSymbol, MCSymbolRefExpr::VK_PPC_HA,
                               OutContext);
     EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::LI)
                                  .addReg(MI->getOperand(0).getReg())
@@ -812,7 +854,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = getSymbol(GValue);
     const MCExpr *SymGotTlsGD =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_GOT_TLSGD_HA,
+      MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_PPC_GOT_TLSGD_HA,
                               OutContext);
     EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::ADDIS8)
                                  .addReg(MI->getOperand(0).getReg())
@@ -829,7 +871,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const MachineOperand &MO = MI->getOperand(2);
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = getSymbol(GValue);
-    const MCExpr *SymGotTlsGD = MCSymbolRefExpr::Create(
+    const MCExpr *SymGotTlsGD = MCSymbolRefExpr::create(
         MOSymbol, Subtarget->isPPC64() ? MCSymbolRefExpr::VK_PPC_GOT_TLSGD_LO
                                        : MCSymbolRefExpr::VK_PPC_GOT_TLSGD,
         OutContext);
@@ -857,7 +899,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = getSymbol(GValue);
     const MCExpr *SymGotTlsLD =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_GOT_TLSLD_HA,
+      MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_PPC_GOT_TLSLD_HA,
                               OutContext);
     EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::ADDIS8)
                                  .addReg(MI->getOperand(0).getReg())
@@ -874,7 +916,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const MachineOperand &MO = MI->getOperand(2);
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = getSymbol(GValue);
-    const MCExpr *SymGotTlsLD = MCSymbolRefExpr::Create(
+    const MCExpr *SymGotTlsLD = MCSymbolRefExpr::create(
         MOSymbol, Subtarget->isPPC64() ? MCSymbolRefExpr::VK_PPC_GOT_TLSLD_LO
                                        : MCSymbolRefExpr::VK_PPC_GOT_TLSLD,
         OutContext);
@@ -904,7 +946,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = getSymbol(GValue);
     const MCExpr *SymDtprel =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_DTPREL_HA,
+      MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_PPC_DTPREL_HA,
                               OutContext);
     EmitToStreamer(
         *OutStreamer,
@@ -924,7 +966,7 @@ void PPCAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     const GlobalValue *GValue = MO.getGlobal();
     MCSymbol *MOSymbol = getSymbol(GValue);
     const MCExpr *SymDtprel =
-      MCSymbolRefExpr::Create(MOSymbol, MCSymbolRefExpr::VK_PPC_DTPREL_LO,
+      MCSymbolRefExpr::create(MOSymbol, MCSymbolRefExpr::VK_PPC_DTPREL_LO,
                               OutContext);
     EmitToStreamer(*OutStreamer,
                    MCInstBuilder(Subtarget->isPPC64() ? PPC::ADDI8 : PPC::ADDI)
@@ -1008,16 +1050,16 @@ void PPCLinuxAsmPrinter::EmitStartOfAsmFile(Module &M) {
   OutStreamer->SwitchSection(OutContext.getELFSection(
       ".got2", ELF::SHT_PROGBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC));
 
-  MCSymbol *TOCSym = OutContext.GetOrCreateSymbol(Twine(".LTOC"));
-  MCSymbol *CurrentPos = OutContext.CreateTempSymbol();
+  MCSymbol *TOCSym = OutContext.getOrCreateSymbol(Twine(".LTOC"));
+  MCSymbol *CurrentPos = OutContext.createTempSymbol();
 
   OutStreamer->EmitLabel(CurrentPos);
 
   // The GOT pointer points to the middle of the GOT, in order to reference the
   // entire 64kB range.  0x8000 is the midpoint.
   const MCExpr *tocExpr =
-    MCBinaryExpr::CreateAdd(MCSymbolRefExpr::Create(CurrentPos, OutContext),
-                            MCConstantExpr::Create(0x8000, OutContext),
+    MCBinaryExpr::createAdd(MCSymbolRefExpr::create(CurrentPos, OutContext),
+                            MCConstantExpr::create(0x8000, OutContext),
                             OutContext);
 
   OutStreamer->EmitAssignment(TOCSym, tocExpr);
@@ -1040,10 +1082,10 @@ void PPCLinuxAsmPrinter::EmitFunctionEntryLabel() {
       OutStreamer->EmitLabel(RelocSymbol);
 
       const MCExpr *OffsExpr =
-        MCBinaryExpr::CreateSub(
-          MCSymbolRefExpr::Create(OutContext.GetOrCreateSymbol(Twine(".LTOC")),
+        MCBinaryExpr::createSub(
+          MCSymbolRefExpr::create(OutContext.getOrCreateSymbol(Twine(".LTOC")),
                                                                OutContext),
-                                  MCSymbolRefExpr::Create(PICBase, OutContext),
+                                  MCSymbolRefExpr::create(PICBase, OutContext),
           OutContext);
       OutStreamer->EmitValue(OffsExpr, 4);
       OutStreamer->EmitLabel(CurrentFnSym);
@@ -1058,7 +1100,7 @@ void PPCLinuxAsmPrinter::EmitFunctionEntryLabel() {
 
   // Emit an official procedure descriptor.
   MCSectionSubPair Current = OutStreamer->getCurrentSection();
-  const MCSectionELF *Section = OutStreamer->getContext().getELFSection(
+  MCSectionELF *Section = OutStreamer->getContext().getELFSection(
       ".opd", ELF::SHT_PROGBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
   OutStreamer->SwitchSection(Section);
   OutStreamer->EmitLabel(CurrentFnSym);
@@ -1066,12 +1108,12 @@ void PPCLinuxAsmPrinter::EmitFunctionEntryLabel() {
   MCSymbol *Symbol1 = CurrentFnSymForSize;
   // Generates a R_PPC64_ADDR64 (from FK_DATA_8) relocation for the function
   // entry point.
-  OutStreamer->EmitValue(MCSymbolRefExpr::Create(Symbol1, OutContext),
+  OutStreamer->EmitValue(MCSymbolRefExpr::create(Symbol1, OutContext),
                          8 /*size*/);
-  MCSymbol *Symbol2 = OutContext.GetOrCreateSymbol(StringRef(".TOC."));
+  MCSymbol *Symbol2 = OutContext.getOrCreateSymbol(StringRef(".TOC."));
   // Generates a R_PPC64_TOC relocation for TOC base insertion.
   OutStreamer->EmitValue(
-    MCSymbolRefExpr::Create(Symbol2, MCSymbolRefExpr::VK_PPC_TOCBASE, OutContext),
+    MCSymbolRefExpr::create(Symbol2, MCSymbolRefExpr::VK_PPC_TOCBASE, OutContext),
     8/*size*/);
   // Emit a null environment pointer.
   OutStreamer->EmitIntValue(0, 8 /* size */);
@@ -1088,8 +1130,8 @@ bool PPCLinuxAsmPrinter::doFinalization(Module &M) {
       static_cast<PPCTargetStreamer &>(*OutStreamer->getTargetStreamer());
 
   if (!TOC.empty()) {
-    const MCSectionELF *Section;
-    
+    MCSectionELF *Section;
+
     if (isPPC64)
       Section = OutStreamer->getContext().getELFSection(
           ".toc", ELF::SHT_PROGBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
@@ -1134,43 +1176,43 @@ void PPCLinuxAsmPrinter::EmitFunctionBodyStart() {
       // Only do all that if the function uses r2 in the first place.
       && !MF->getRegInfo().use_empty(PPC::X2)) {
 
-    MCSymbol *GlobalEntryLabel = OutContext.CreateTempSymbol();
+    MCSymbol *GlobalEntryLabel = OutContext.createTempSymbol();
     OutStreamer->EmitLabel(GlobalEntryLabel);
     const MCSymbolRefExpr *GlobalEntryLabelExp =
-      MCSymbolRefExpr::Create(GlobalEntryLabel, OutContext);
+      MCSymbolRefExpr::create(GlobalEntryLabel, OutContext);
 
-    MCSymbol *TOCSymbol = OutContext.GetOrCreateSymbol(StringRef(".TOC."));
+    MCSymbol *TOCSymbol = OutContext.getOrCreateSymbol(StringRef(".TOC."));
     const MCExpr *TOCDeltaExpr =
-      MCBinaryExpr::CreateSub(MCSymbolRefExpr::Create(TOCSymbol, OutContext),
+      MCBinaryExpr::createSub(MCSymbolRefExpr::create(TOCSymbol, OutContext),
                               GlobalEntryLabelExp, OutContext);
 
     const MCExpr *TOCDeltaHi =
-      PPCMCExpr::CreateHa(TOCDeltaExpr, false, OutContext);
+      PPCMCExpr::createHa(TOCDeltaExpr, false, OutContext);
     EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::ADDIS)
                                  .addReg(PPC::X2)
                                  .addReg(PPC::X12)
                                  .addExpr(TOCDeltaHi));
 
     const MCExpr *TOCDeltaLo =
-      PPCMCExpr::CreateLo(TOCDeltaExpr, false, OutContext);
+      PPCMCExpr::createLo(TOCDeltaExpr, false, OutContext);
     EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::ADDI)
                                  .addReg(PPC::X2)
                                  .addReg(PPC::X2)
                                  .addExpr(TOCDeltaLo));
 
-    MCSymbol *LocalEntryLabel = OutContext.CreateTempSymbol();
+    MCSymbol *LocalEntryLabel = OutContext.createTempSymbol();
     OutStreamer->EmitLabel(LocalEntryLabel);
     const MCSymbolRefExpr *LocalEntryLabelExp =
-       MCSymbolRefExpr::Create(LocalEntryLabel, OutContext);
+       MCSymbolRefExpr::create(LocalEntryLabel, OutContext);
     const MCExpr *LocalOffsetExp =
-      MCBinaryExpr::CreateSub(LocalEntryLabelExp,
+      MCBinaryExpr::createSub(LocalEntryLabelExp,
                               GlobalEntryLabelExp, OutContext);
 
     PPCTargetStreamer *TS =
       static_cast<PPCTargetStreamer *>(OutStreamer->getTargetStreamer());
 
     if (TS)
-      TS->emitLocalEntry(CurrentFnSym, LocalOffsetExp);
+      TS->emitLocalEntry(cast<MCSymbolELF>(CurrentFnSym), LocalOffsetExp);
   }
 }
 
@@ -1263,13 +1305,13 @@ void PPCDarwinAsmPrinter::EmitStartOfAsmFile(Module &M) {
 static MCSymbol *GetLazyPtr(MCSymbol *Sym, MCContext &Ctx) {
   // Remove $stub suffix, add $lazy_ptr.
   StringRef NoStub = Sym->getName().substr(0, Sym->getName().size()-5);
-  return Ctx.GetOrCreateSymbol(NoStub + "$lazy_ptr");
+  return Ctx.getOrCreateSymbol(NoStub + "$lazy_ptr");
 }
 
 // 'L' needed to designate label as local
 static MCSymbol *GetAnonSym(MCSymbol *Sym, MCContext &Ctx) {
   // Add $tmp suffix to $stub, yielding $stub$tmp.
-  return Ctx.GetOrCreateSymbol(Sym->getName() + "$tmp");
+  return Ctx.getOrCreateSymbol(Sym->getName() + "$tmp");
 }
 
 void PPCDarwinAsmPrinter::
@@ -1283,7 +1325,8 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
   // freed) and since we're at the global level we can use the default
   // constructed subtarget.
   std::unique_ptr<MCSubtargetInfo> STI(TM.getTarget().createMCSubtargetInfo(
-      TM.getTargetTriple(), TM.getTargetCPU(), TM.getTargetFeatureString()));
+      TM.getTargetTriple().str(), TM.getTargetCPU(),
+      TM.getTargetFeatureString()));
   auto EmitToStreamer = [&STI] (MCStreamer &S, const MCInst &Inst) {
     S.EmitInstruction(Inst, *STI);
   };
@@ -1292,17 +1335,16 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
     static_cast<const TargetLoweringObjectFileMachO &>(getObjFileLowering());
 
   // .lazy_symbol_pointer
-  const MCSection *LSPSection = TLOFMacho.getLazySymbolPointerSection();
-  
+  MCSection *LSPSection = TLOFMacho.getLazySymbolPointerSection();
+
   // Output stubs for dynamically-linked functions
   // see http://developer.apple.com/library/mac/#documentation/developertools/reference/assembler/050-PowerPC_Addressing_Modes_and_Assembler_Instructions/ppc_instructions.html
   if (TM.getRelocationModel() == Reloc::PIC_) {
     STACKTRACE_INDENT_PRINT("Reloc::PIC_" << endl);
-    const MCSection *StubSection = 
-    OutContext.getMachOSection("__TEXT", "__picsymbolstub1",
-                               MachO::S_SYMBOL_STUBS |
-                               MachO::S_ATTR_PURE_INSTRUCTIONS,
-                               32, SectionKind::getText());
+    const MCSection *StubSection = OutContext.getMachOSection(
+        "__TEXT", "__picsymbolstub1",
+        MachO::S_SYMBOL_STUBS | MachO::S_ATTR_PURE_INSTRUCTIONS, 32,
+        SectionKind::getText());
     for (unsigned i = 0, e = Stubs.size(); i != e; ++i) {
       OutStreamer->SwitchSection(StubSection);
       EmitAlignment(4);
@@ -1315,10 +1357,10 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
       OutStreamer->EmitLabel(Stub);
       OutStreamer->EmitSymbolAttribute(RawSym, MCSA_IndirectSymbol);
 
-      const MCExpr *Anon = MCSymbolRefExpr::Create(AnonSymbol, OutContext);
-      const MCExpr *LazyPtrExpr = MCSymbolRefExpr::Create(LazyPtr, OutContext);
+      const MCExpr *Anon = MCSymbolRefExpr::create(AnonSymbol, OutContext);
+      const MCExpr *LazyPtrExpr = MCSymbolRefExpr::create(LazyPtr, OutContext);
       const MCExpr *Sub =
-        MCBinaryExpr::CreateSub(LazyPtrExpr, Anon, OutContext);
+        MCBinaryExpr::createSub(LazyPtrExpr, Anon, OutContext);
 
       // mflr r0
       EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::MFLR).addReg(PPC::R0));
@@ -1330,7 +1372,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
       EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::MFLR).addReg(PPC::R11));
       // load address one half at a time
       // addis r11, r11, ha16(LazyPtr - AnonSymbol)
-      const MCExpr *SubHa16 = PPCMCExpr::CreateHa(Sub, true, OutContext);
+      const MCExpr *SubHa16 = PPCMCExpr::createHa(Sub, true, OutContext);
       EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::ADDIS)
         .addReg(PPC::R11)
         .addReg(PPC::R11)
@@ -1340,7 +1382,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
 
       // ldu r12, lo16(LazyPtr - AnonSymbol)(r11)
       // lwzu r12, lo16(LazyPtr - AnonSymbol)(r11)
-      const MCExpr *SubLo16 = PPCMCExpr::CreateLo(Sub, true, OutContext);
+      const MCExpr *SubLo16 = PPCMCExpr::createLo(Sub, true, OutContext);
       EmitToStreamer(*OutStreamer, MCInstBuilder(isPPC64 ? PPC::LDU : PPC::LWZU)
         .addReg(PPC::R12)
         .addExpr(SubLo16).addExpr(SubLo16)
@@ -1355,7 +1397,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
       OutStreamer->EmitSymbolAttribute(RawSym, MCSA_IndirectSymbol);
 
       MCSymbol *DyldStubBindingHelper =
-        OutContext.GetOrCreateSymbol(StringRef("dyld_stub_binding_helper"));
+        OutContext.getOrCreateSymbol(StringRef("dyld_stub_binding_helper"));
       if (isPPC64) {
         // .quad dyld_stub_binding_helper
         OutStreamer->EmitSymbolValue(DyldStubBindingHelper, 8);
@@ -1367,18 +1409,17 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
     OutStreamer->AddBlankLine();
     return;
   }
-  
+
   STACKTRACE_INDENT_PRINT("not Reloc::PIC_" << endl);
-  const MCSection *StubSection =
-    OutContext.getMachOSection("__TEXT","__symbol_stub1",
-                               MachO::S_SYMBOL_STUBS |
-                               MachO::S_ATTR_PURE_INSTRUCTIONS,
-                               16, SectionKind::getText());
+  const MCSection *StubSection = OutContext.getMachOSection(
+      "__TEXT", "__symbol_stub1",
+      MachO::S_SYMBOL_STUBS | MachO::S_ATTR_PURE_INSTRUCTIONS, 16,
+      SectionKind::getText());
   for (unsigned i = 0, e = Stubs.size(); i != e; ++i) {
     MCSymbol *Stub = Stubs[i].first;
     MCSymbol *RawSym = Stubs[i].second.getPointer();
     MCSymbol *LazyPtr = GetLazyPtr(Stub, OutContext);
-    const MCExpr *LazyPtrExpr = MCSymbolRefExpr::Create(LazyPtr, OutContext);
+    const MCExpr *LazyPtrExpr = MCSymbolRefExpr::create(LazyPtr, OutContext);
 
     OutStreamer->SwitchSection(StubSection);
     EmitAlignment(4);
@@ -1387,7 +1428,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
 
     // lis r11, ha16(LazyPtr)
     const MCExpr *LazyPtrHa16 =
-      PPCMCExpr::CreateHa(LazyPtrExpr, true, OutContext);
+      PPCMCExpr::createHa(LazyPtrExpr, true, OutContext);
     EmitToStreamer(*OutStreamer, MCInstBuilder(PPC::LIS)
       .addReg(PPC::R11)
       .addExpr(LazyPtrHa16));
@@ -1395,7 +1436,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
     // ldu r12, lo16(LazyPtr)(r11)
     // lwzu r12, lo16(LazyPtr)(r11)
     const MCExpr *LazyPtrLo16 =
-      PPCMCExpr::CreateLo(LazyPtrExpr, true, OutContext);
+      PPCMCExpr::createLo(LazyPtrExpr, true, OutContext);
     EmitToStreamer(*OutStreamer, MCInstBuilder(isPPC64 ? PPC::LDU : PPC::LWZU)
       .addReg(PPC::R12)
       .addExpr(LazyPtrLo16).addExpr(LazyPtrLo16)
@@ -1411,7 +1452,7 @@ EmitFunctionStubs(const MachineModuleInfoMachO::SymbolListTy &Stubs) {
     OutStreamer->EmitSymbolAttribute(RawSym, MCSA_IndirectSymbol);
 
     MCSymbol *DyldStubBindingHelper =
-      OutContext.GetOrCreateSymbol(StringRef("dyld_stub_binding_helper"));
+      OutContext.getOrCreateSymbol(StringRef("dyld_stub_binding_helper"));
     if (isPPC64) {
       // .quad dyld_stub_binding_helper
       OutStreamer->EmitSymbolValue(DyldStubBindingHelper, 8);
@@ -1480,7 +1521,7 @@ bool PPCDarwinAsmPrinter::doFinalization(Module &M) {
         // need to be indirect and pc-rel. We accomplish this by using NLPs.
         // However, sometimes the types are local to the file. So we need to
         // fill in the value for the NLP in those cases.
-        OutStreamer->EmitValue(MCSymbolRefExpr::Create(MCSym.getPointer(),
+        OutStreamer->EmitValue(MCSymbolRefExpr::create(MCSym.getPointer(),
                                                        OutContext),
                               isPPC64 ? 8 : 4/*size*/);
     }
@@ -1499,7 +1540,7 @@ bool PPCDarwinAsmPrinter::doFinalization(Module &M) {
       OutStreamer->EmitLabel(Stubs[i].first);
       //   .long _foo
       OutStreamer->EmitValue(MCSymbolRefExpr::
-                             Create(Stubs[i].second.getPointer(),
+                             create(Stubs[i].second.getPointer(),
                                     OutContext),
                              isPPC64 ? 8 : 4/*size*/);
     }
@@ -1525,7 +1566,7 @@ bool PPCDarwinAsmPrinter::doFinalization(Module &M) {
 static AsmPrinter *
 createPPCAsmPrinterPass(TargetMachine &tm,
                         std::unique_ptr<MCStreamer> &&Streamer) {
-  if (Triple(tm.getTargetTriple()).isMacOSX())
+  if (tm.getTargetTriple().isMacOSX())
     return new PPCDarwinAsmPrinter(tm, std::move(Streamer));
   return new PPCLinuxAsmPrinter(tm, std::move(Streamer));
 }

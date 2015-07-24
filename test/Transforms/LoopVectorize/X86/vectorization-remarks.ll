@@ -5,13 +5,13 @@
 ; This code has all the !dbg annotations needed to track source line information,
 ; but is missing the llvm.dbg.cu annotation. This prevents code generation from
 ; emitting debug info in the final output.
-; RUN: llc -mtriple x86_64-pc-linux-gnu %s -o - | FileCheck -check-prefix=DEBUG-OUTPUT %s
+; RUN: llc < %s -mtriple x86_64-pc-linux-gnu -o - | FileCheck -check-prefix=DEBUG-OUTPUT %s
 ; DEBUG-OUTPUT-NOT: .loc
 ; DEBUG-OUTPUT-NOT: {{.*}}.debug_info
 
-; VECTORIZED: remark: vectorization-remarks.c:17:8: vectorized loop (vectorization factor: 4, unrolling interleave factor: 1)
-; UNROLLED: remark: vectorization-remarks.c:17:8: unrolled with interleaving factor 4 (vectorization not beneficial)
 ; NONE: remark: vectorization-remarks.c:17:8: loop not vectorized: vector width and interleave count are explicitly set to 1
+; VECTORIZED: remark: vectorization-remarks.c:17:8: vectorized loop (vectorization width: 4, interleaved count: 1)
+; UNROLLED: remark: vectorization-remarks.c:17:8: interleaved by 4 (vectorization not beneficial)
 
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 

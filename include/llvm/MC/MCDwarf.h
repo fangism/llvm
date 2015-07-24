@@ -54,13 +54,13 @@ struct MCDwarfFile {
 /// \brief Instances of this class represent the information from a
 /// dwarf .loc directive.
 class MCDwarfLoc {
-  unsigned FileNum;
-  unsigned Line;
-  unsigned Column;
+  uint32_t FileNum;
+  uint32_t Line;
+  uint16_t Column;
   // Flags (see #define's below)
-  unsigned Flags;
-  unsigned Isa;
-  unsigned Discriminator;
+  uint8_t Flags;
+  uint8_t Isa;
+  uint32_t Discriminator;
 
 // Flag that indicates the initial value of the is_stmt_start flag.
 #define DWARF2_LINE_DEFAULT_IS_STMT 1
@@ -107,13 +107,22 @@ public:
   void setLine(unsigned line) { Line = line; }
 
   /// \brief Set the Column of this MCDwarfLoc.
-  void setColumn(unsigned column) { Column = column; }
+  void setColumn(unsigned column) {
+    assert(column <= UINT16_MAX);
+    Column = column;
+  }
 
   /// \brief Set the Flags of this MCDwarfLoc.
-  void setFlags(unsigned flags) { Flags = flags; }
+  void setFlags(unsigned flags) {
+    assert(flags <= UINT8_MAX);
+    Flags = flags;
+  }
 
   /// \brief Set the Isa of this MCDwarfLoc.
-  void setIsa(unsigned isa) { Isa = isa; }
+  void setIsa(unsigned isa) {
+    assert(isa <= UINT8_MAX);
+    Isa = isa;
+  }
 
   /// \brief Set the Discriminator of this MCDwarfLoc.
   void setDiscriminator(unsigned discriminator) {
@@ -143,7 +152,7 @@ public:
   // This is called when an instruction is assembled into the specified
   // section and if there is information from the last .loc directive that
   // has yet to have a line entry made for it is made.
-  static void Make(MCObjectStreamer *MCOS, const MCSection *Section);
+  static void Make(MCObjectStreamer *MCOS, MCSection *Section);
 };
 
 /// \brief Instances of this class represent the line information for a compile
@@ -153,14 +162,14 @@ public:
 class MCLineSection {
 public:
   // \brief Add an entry to this MCLineSection's line entries.
-  void addLineEntry(const MCLineEntry &LineEntry, const MCSection *Sec) {
+  void addLineEntry(const MCLineEntry &LineEntry, MCSection *Sec) {
     MCLineDivisions[Sec].push_back(LineEntry);
   }
 
   typedef std::vector<MCLineEntry> MCLineEntryCollection;
   typedef MCLineEntryCollection::iterator iterator;
   typedef MCLineEntryCollection::const_iterator const_iterator;
-  typedef MapVector<const MCSection *, MCLineEntryCollection> MCLineDivisionMap;
+  typedef MapVector<MCSection *, MCLineEntryCollection> MCLineDivisionMap;
 
 private:
   // A collection of MCLineEntry for each section.

@@ -472,19 +472,20 @@ template <> struct MDNodeKeyImpl<DICompileUnit> {
   Metadata *Subprograms;
   Metadata *GlobalVariables;
   Metadata *ImportedEntities;
+  uint64_t DWOId;
 
   MDNodeKeyImpl(unsigned SourceLanguage, Metadata *File, StringRef Producer,
                 bool IsOptimized, StringRef Flags, unsigned RuntimeVersion,
                 StringRef SplitDebugFilename, unsigned EmissionKind,
                 Metadata *EnumTypes, Metadata *RetainedTypes,
                 Metadata *Subprograms, Metadata *GlobalVariables,
-                Metadata *ImportedEntities)
+                Metadata *ImportedEntities, uint64_t DWOId)
       : SourceLanguage(SourceLanguage), File(File), Producer(Producer),
         IsOptimized(IsOptimized), Flags(Flags), RuntimeVersion(RuntimeVersion),
         SplitDebugFilename(SplitDebugFilename), EmissionKind(EmissionKind),
         EnumTypes(EnumTypes), RetainedTypes(RetainedTypes),
         Subprograms(Subprograms), GlobalVariables(GlobalVariables),
-        ImportedEntities(ImportedEntities) {}
+        ImportedEntities(ImportedEntities), DWOId(DWOId) {}
   MDNodeKeyImpl(const DICompileUnit *N)
       : SourceLanguage(N->getSourceLanguage()), File(N->getRawFile()),
         Producer(N->getProducer()), IsOptimized(N->isOptimized()),
@@ -494,7 +495,7 @@ template <> struct MDNodeKeyImpl<DICompileUnit> {
         RetainedTypes(N->getRawRetainedTypes()),
         Subprograms(N->getRawSubprograms()),
         GlobalVariables(N->getRawGlobalVariables()),
-        ImportedEntities(N->getRawImportedEntities()) {}
+        ImportedEntities(N->getRawImportedEntities()), DWOId(N->getDWOId()) {}
 
   bool isKeyOf(const DICompileUnit *RHS) const {
     return SourceLanguage == RHS->getSourceLanguage() &&
@@ -507,13 +508,14 @@ template <> struct MDNodeKeyImpl<DICompileUnit> {
            RetainedTypes == RHS->getRawRetainedTypes() &&
            Subprograms == RHS->getRawSubprograms() &&
            GlobalVariables == RHS->getRawGlobalVariables() &&
-           ImportedEntities == RHS->getRawImportedEntities();
+           ImportedEntities == RHS->getRawImportedEntities() &&
+           DWOId == RHS->getDWOId();
   }
   unsigned getHashValue() const {
     return hash_combine(SourceLanguage, File, Producer, IsOptimized, Flags,
                         RuntimeVersion, SplitDebugFilename, EmissionKind,
                         EnumTypes, RetainedTypes, Subprograms, GlobalVariables,
-                        ImportedEntities);
+                        ImportedEntities, DWOId);
   }
 };
 
@@ -646,6 +648,35 @@ template <> struct MDNodeKeyImpl<DINamespace> {
   }
   unsigned getHashValue() const {
     return hash_combine(Scope, File, Name, Line);
+  }
+};
+
+template <> struct MDNodeKeyImpl<DIModule> {
+  Metadata *Scope;
+  StringRef Name;
+  StringRef ConfigurationMacros;
+  StringRef IncludePath;
+  StringRef ISysRoot;
+  MDNodeKeyImpl(Metadata *Scope, StringRef Name,
+                StringRef ConfigurationMacros,
+                StringRef IncludePath,
+                StringRef ISysRoot)
+    : Scope(Scope), Name(Name), ConfigurationMacros(ConfigurationMacros),
+      IncludePath(IncludePath), ISysRoot(ISysRoot) {}
+  MDNodeKeyImpl(const DIModule *N)
+    : Scope(N->getRawScope()), Name(N->getName()),
+      ConfigurationMacros(N->getConfigurationMacros()),
+      IncludePath(N->getIncludePath()), ISysRoot(N->getISysRoot()) {}
+
+  bool isKeyOf(const DIModule *RHS) const {
+    return Scope == RHS->getRawScope() && Name == RHS->getName() &&
+           ConfigurationMacros == RHS->getConfigurationMacros() &&
+           IncludePath == RHS->getIncludePath() &&
+           ISysRoot == RHS->getISysRoot();
+  }
+  unsigned getHashValue() const {
+    return hash_combine(Scope, Name,
+                        ConfigurationMacros, IncludePath, ISysRoot);
   }
 };
 
@@ -920,6 +951,8 @@ public:
   DenseMap<Value *, ValueAsMetadata *> ValuesAsMetadata;
   DenseMap<Metadata *, MetadataAsValue *> MetadataAsValues;
 
+  DenseMap<const Value*, ValueName*> ValueNames;
+
 #define HANDLE_MDNODE_LEAF(CLASS) DenseSet<CLASS *, CLASS##Info> CLASS##s;
 #include "llvm/IR/Metadata.def"
 
@@ -999,11 +1032,6 @@ public:
   /// integer representing the next DWARF path discriminator to assign to
   /// instructions in different blocks at the same location.
   DenseMap<std::pair<const char *, unsigned>, unsigned> DiscriminatorTable;
-
-  /// IntrinsicIDCache - Cache of intrinsic name (string) to numeric ID mappings
-  /// requested in this context
-  typedef DenseMap<const Function*, unsigned> IntrinsicIDCacheTy;
-  IntrinsicIDCacheTy IntrinsicIDCache;
 
   /// \brief Mapping from a function to its prefix data, which is stored as the
   /// operand of an unparented ReturnInst so that the prefix data has a Use.

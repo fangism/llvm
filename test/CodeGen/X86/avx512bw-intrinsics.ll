@@ -67,28 +67,28 @@ declare i32 @llvm.x86.avx512.mask.pcmpgt.w.512(<32 x i16>, <32 x i16>, i32)
 define <8 x i64> @test_cmp_b_512(<64 x i8> %a0, <64 x i8> %a1) {
 ; CHECK_LABEL: test_cmp_b_512
 ; CHECK: vpcmpeqb %zmm1, %zmm0, %k0 ##
-  %res0 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 0, i64 -1)
+  %res0 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 0, i64 -1)
   %vec0 = insertelement <8 x i64> undef, i64 %res0, i32 0
 ; CHECK: vpcmpltb %zmm1, %zmm0, %k0 ##
-  %res1 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 1, i64 -1)
+  %res1 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 1, i64 -1)
   %vec1 = insertelement <8 x i64> %vec0, i64 %res1, i32 1
 ; CHECK: vpcmpleb %zmm1, %zmm0, %k0 ##
-  %res2 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 2, i64 -1)
+  %res2 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 2, i64 -1)
   %vec2 = insertelement <8 x i64> %vec1, i64 %res2, i32 2
 ; CHECK: vpcmpunordb %zmm1, %zmm0, %k0 ##
-  %res3 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 3, i64 -1)
+  %res3 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 3, i64 -1)
   %vec3 = insertelement <8 x i64> %vec2, i64 %res3, i32 3
 ; CHECK: vpcmpneqb %zmm1, %zmm0, %k0 ##
-  %res4 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 4, i64 -1)
+  %res4 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 4, i64 -1)
   %vec4 = insertelement <8 x i64> %vec3, i64 %res4, i32 4
 ; CHECK: vpcmpnltb %zmm1, %zmm0, %k0 ##
-  %res5 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 5, i64 -1)
+  %res5 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 5, i64 -1)
   %vec5 = insertelement <8 x i64> %vec4, i64 %res5, i32 5
 ; CHECK: vpcmpnleb %zmm1, %zmm0, %k0 ##
-  %res6 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 6, i64 -1)
+  %res6 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 6, i64 -1)
   %vec6 = insertelement <8 x i64> %vec5, i64 %res6, i32 6
 ; CHECK: vpcmpordb %zmm1, %zmm0, %k0 ##
-  %res7 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 7, i64 -1)
+  %res7 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 7, i64 -1)
   %vec7 = insertelement <8 x i64> %vec6, i64 %res7, i32 7
   ret <8 x i64> %vec7
 }
@@ -96,59 +96,59 @@ define <8 x i64> @test_cmp_b_512(<64 x i8> %a0, <64 x i8> %a1) {
 define <8 x i64> @test_mask_cmp_b_512(<64 x i8> %a0, <64 x i8> %a1, i64 %mask) {
 ; CHECK_LABEL: test_mask_cmp_b_512
 ; CHECK: vpcmpeqb %zmm1, %zmm0, %k0 {%k1} ##
-  %res0 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 0, i64 %mask)
+  %res0 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 0, i64 %mask)
   %vec0 = insertelement <8 x i64> undef, i64 %res0, i32 0
 ; CHECK: vpcmpltb %zmm1, %zmm0, %k0 {%k1} ##
-  %res1 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 1, i64 %mask)
+  %res1 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 1, i64 %mask)
   %vec1 = insertelement <8 x i64> %vec0, i64 %res1, i32 1
 ; CHECK: vpcmpleb %zmm1, %zmm0, %k0 {%k1} ##
-  %res2 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 2, i64 %mask)
+  %res2 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 2, i64 %mask)
   %vec2 = insertelement <8 x i64> %vec1, i64 %res2, i32 2
 ; CHECK: vpcmpunordb %zmm1, %zmm0, %k0 {%k1} ##
-  %res3 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 3, i64 %mask)
+  %res3 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 3, i64 %mask)
   %vec3 = insertelement <8 x i64> %vec2, i64 %res3, i32 3
 ; CHECK: vpcmpneqb %zmm1, %zmm0, %k0 {%k1} ##
-  %res4 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 4, i64 %mask)
+  %res4 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 4, i64 %mask)
   %vec4 = insertelement <8 x i64> %vec3, i64 %res4, i32 4
 ; CHECK: vpcmpnltb %zmm1, %zmm0, %k0 {%k1} ##
-  %res5 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 5, i64 %mask)
+  %res5 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 5, i64 %mask)
   %vec5 = insertelement <8 x i64> %vec4, i64 %res5, i32 5
 ; CHECK: vpcmpnleb %zmm1, %zmm0, %k0 {%k1} ##
-  %res6 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 6, i64 %mask)
+  %res6 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 6, i64 %mask)
   %vec6 = insertelement <8 x i64> %vec5, i64 %res6, i32 6
 ; CHECK: vpcmpordb %zmm1, %zmm0, %k0 {%k1} ##
-  %res7 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 7, i64 %mask)
+  %res7 = call i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 7, i64 %mask)
   %vec7 = insertelement <8 x i64> %vec6, i64 %res7, i32 7
   ret <8 x i64> %vec7
 }
 
-declare i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8>, <64 x i8>, i8, i64) nounwind readnone
+declare i64 @llvm.x86.avx512.mask.cmp.b.512(<64 x i8>, <64 x i8>, i32, i64) nounwind readnone
 
 define <8 x i64> @test_ucmp_b_512(<64 x i8> %a0, <64 x i8> %a1) {
 ; CHECK_LABEL: test_ucmp_b_512
 ; CHECK: vpcmpequb %zmm1, %zmm0, %k0 ##
-  %res0 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 0, i64 -1)
+  %res0 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 0, i64 -1)
   %vec0 = insertelement <8 x i64> undef, i64 %res0, i32 0
 ; CHECK: vpcmpltub %zmm1, %zmm0, %k0 ##
-  %res1 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 1, i64 -1)
+  %res1 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 1, i64 -1)
   %vec1 = insertelement <8 x i64> %vec0, i64 %res1, i32 1
 ; CHECK: vpcmpleub %zmm1, %zmm0, %k0 ##
-  %res2 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 2, i64 -1)
+  %res2 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 2, i64 -1)
   %vec2 = insertelement <8 x i64> %vec1, i64 %res2, i32 2
 ; CHECK: vpcmpunordub %zmm1, %zmm0, %k0 ##
-  %res3 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 3, i64 -1)
+  %res3 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 3, i64 -1)
   %vec3 = insertelement <8 x i64> %vec2, i64 %res3, i32 3
 ; CHECK: vpcmpnequb %zmm1, %zmm0, %k0 ##
-  %res4 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 4, i64 -1)
+  %res4 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 4, i64 -1)
   %vec4 = insertelement <8 x i64> %vec3, i64 %res4, i32 4
 ; CHECK: vpcmpnltub %zmm1, %zmm0, %k0 ##
-  %res5 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 5, i64 -1)
+  %res5 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 5, i64 -1)
   %vec5 = insertelement <8 x i64> %vec4, i64 %res5, i32 5
 ; CHECK: vpcmpnleub %zmm1, %zmm0, %k0 ##
-  %res6 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 6, i64 -1)
+  %res6 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 6, i64 -1)
   %vec6 = insertelement <8 x i64> %vec5, i64 %res6, i32 6
 ; CHECK: vpcmpordub %zmm1, %zmm0, %k0 ##
-  %res7 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 7, i64 -1)
+  %res7 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 7, i64 -1)
   %vec7 = insertelement <8 x i64> %vec6, i64 %res7, i32 7
   ret <8 x i64> %vec7
 }
@@ -156,59 +156,59 @@ define <8 x i64> @test_ucmp_b_512(<64 x i8> %a0, <64 x i8> %a1) {
 define <8 x i64> @test_mask_x86_avx512_ucmp_b_512(<64 x i8> %a0, <64 x i8> %a1, i64 %mask) {
 ; CHECK_LABEL: test_mask_ucmp_b_512
 ; CHECK: vpcmpequb %zmm1, %zmm0, %k0 {%k1} ##
-  %res0 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 0, i64 %mask)
+  %res0 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 0, i64 %mask)
   %vec0 = insertelement <8 x i64> undef, i64 %res0, i32 0
 ; CHECK: vpcmpltub %zmm1, %zmm0, %k0 {%k1} ##
-  %res1 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 1, i64 %mask)
+  %res1 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 1, i64 %mask)
   %vec1 = insertelement <8 x i64> %vec0, i64 %res1, i32 1
 ; CHECK: vpcmpleub %zmm1, %zmm0, %k0 {%k1} ##
-  %res2 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 2, i64 %mask)
+  %res2 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 2, i64 %mask)
   %vec2 = insertelement <8 x i64> %vec1, i64 %res2, i32 2
 ; CHECK: vpcmpunordub %zmm1, %zmm0, %k0 {%k1} ##
-  %res3 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 3, i64 %mask)
+  %res3 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 3, i64 %mask)
   %vec3 = insertelement <8 x i64> %vec2, i64 %res3, i32 3
 ; CHECK: vpcmpnequb %zmm1, %zmm0, %k0 {%k1} ##
-  %res4 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 4, i64 %mask)
+  %res4 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 4, i64 %mask)
   %vec4 = insertelement <8 x i64> %vec3, i64 %res4, i32 4
 ; CHECK: vpcmpnltub %zmm1, %zmm0, %k0 {%k1} ##
-  %res5 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 5, i64 %mask)
+  %res5 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 5, i64 %mask)
   %vec5 = insertelement <8 x i64> %vec4, i64 %res5, i32 5
 ; CHECK: vpcmpnleub %zmm1, %zmm0, %k0 {%k1} ##
-  %res6 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 6, i64 %mask)
+  %res6 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 6, i64 %mask)
   %vec6 = insertelement <8 x i64> %vec5, i64 %res6, i32 6
 ; CHECK: vpcmpordub %zmm1, %zmm0, %k0 {%k1} ##
-  %res7 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i8 7, i64 %mask)
+  %res7 = call i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8> %a0, <64 x i8> %a1, i32 7, i64 %mask)
   %vec7 = insertelement <8 x i64> %vec6, i64 %res7, i32 7
   ret <8 x i64> %vec7
 }
 
-declare i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8>, <64 x i8>, i8, i64) nounwind readnone
+declare i64 @llvm.x86.avx512.mask.ucmp.b.512(<64 x i8>, <64 x i8>, i32, i64) nounwind readnone
 
 define <8 x i32> @test_cmp_w_512(<32 x i16> %a0, <32 x i16> %a1) {
 ; CHECK_LABEL: test_cmp_w_512
 ; CHECK: vpcmpeqw %zmm1, %zmm0, %k0 ##
-  %res0 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 0, i32 -1)
+  %res0 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 0, i32 -1)
   %vec0 = insertelement <8 x i32> undef, i32 %res0, i32 0
 ; CHECK: vpcmpltw %zmm1, %zmm0, %k0 ##
-  %res1 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 1, i32 -1)
+  %res1 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 1, i32 -1)
   %vec1 = insertelement <8 x i32> %vec0, i32 %res1, i32 1
 ; CHECK: vpcmplew %zmm1, %zmm0, %k0 ##
-  %res2 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 2, i32 -1)
+  %res2 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 2, i32 -1)
   %vec2 = insertelement <8 x i32> %vec1, i32 %res2, i32 2
 ; CHECK: vpcmpunordw %zmm1, %zmm0, %k0 ##
-  %res3 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 3, i32 -1)
+  %res3 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 3, i32 -1)
   %vec3 = insertelement <8 x i32> %vec2, i32 %res3, i32 3
 ; CHECK: vpcmpneqw %zmm1, %zmm0, %k0 ##
-  %res4 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 4, i32 -1)
+  %res4 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 4, i32 -1)
   %vec4 = insertelement <8 x i32> %vec3, i32 %res4, i32 4
 ; CHECK: vpcmpnltw %zmm1, %zmm0, %k0 ##
-  %res5 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 5, i32 -1)
+  %res5 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 5, i32 -1)
   %vec5 = insertelement <8 x i32> %vec4, i32 %res5, i32 5
 ; CHECK: vpcmpnlew %zmm1, %zmm0, %k0 ##
-  %res6 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 6, i32 -1)
+  %res6 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 6, i32 -1)
   %vec6 = insertelement <8 x i32> %vec5, i32 %res6, i32 6
 ; CHECK: vpcmpordw %zmm1, %zmm0, %k0 ##
-  %res7 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 7, i32 -1)
+  %res7 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 7, i32 -1)
   %vec7 = insertelement <8 x i32> %vec6, i32 %res7, i32 7
   ret <8 x i32> %vec7
 }
@@ -216,59 +216,59 @@ define <8 x i32> @test_cmp_w_512(<32 x i16> %a0, <32 x i16> %a1) {
 define <8 x i32> @test_mask_cmp_w_512(<32 x i16> %a0, <32 x i16> %a1, i32 %mask) {
 ; CHECK_LABEL: test_mask_cmp_w_512
 ; CHECK: vpcmpeqw %zmm1, %zmm0, %k0 {%k1} ##
-  %res0 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 0, i32 %mask)
+  %res0 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 0, i32 %mask)
   %vec0 = insertelement <8 x i32> undef, i32 %res0, i32 0
 ; CHECK: vpcmpltw %zmm1, %zmm0, %k0 {%k1} ##
-  %res1 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 1, i32 %mask)
+  %res1 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 1, i32 %mask)
   %vec1 = insertelement <8 x i32> %vec0, i32 %res1, i32 1
 ; CHECK: vpcmplew %zmm1, %zmm0, %k0 {%k1} ##
-  %res2 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 2, i32 %mask)
+  %res2 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 2, i32 %mask)
   %vec2 = insertelement <8 x i32> %vec1, i32 %res2, i32 2
 ; CHECK: vpcmpunordw %zmm1, %zmm0, %k0 {%k1} ##
-  %res3 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 3, i32 %mask)
+  %res3 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 3, i32 %mask)
   %vec3 = insertelement <8 x i32> %vec2, i32 %res3, i32 3
 ; CHECK: vpcmpneqw %zmm1, %zmm0, %k0 {%k1} ##
-  %res4 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 4, i32 %mask)
+  %res4 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 4, i32 %mask)
   %vec4 = insertelement <8 x i32> %vec3, i32 %res4, i32 4
 ; CHECK: vpcmpnltw %zmm1, %zmm0, %k0 {%k1} ##
-  %res5 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 5, i32 %mask)
+  %res5 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 5, i32 %mask)
   %vec5 = insertelement <8 x i32> %vec4, i32 %res5, i32 5
 ; CHECK: vpcmpnlew %zmm1, %zmm0, %k0 {%k1} ##
-  %res6 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 6, i32 %mask)
+  %res6 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 6, i32 %mask)
   %vec6 = insertelement <8 x i32> %vec5, i32 %res6, i32 6
 ; CHECK: vpcmpordw %zmm1, %zmm0, %k0 {%k1} ##
-  %res7 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 7, i32 %mask)
+  %res7 = call i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 7, i32 %mask)
   %vec7 = insertelement <8 x i32> %vec6, i32 %res7, i32 7
   ret <8 x i32> %vec7
 }
 
-declare i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16>, <32 x i16>, i8, i32) nounwind readnone
+declare i32 @llvm.x86.avx512.mask.cmp.w.512(<32 x i16>, <32 x i16>, i32, i32) nounwind readnone
 
 define <8 x i32> @test_ucmp_w_512(<32 x i16> %a0, <32 x i16> %a1) {
 ; CHECK_LABEL: test_ucmp_w_512
 ; CHECK: vpcmpequw %zmm1, %zmm0, %k0 ##
-  %res0 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 0, i32 -1)
+  %res0 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 0, i32 -1)
   %vec0 = insertelement <8 x i32> undef, i32 %res0, i32 0
 ; CHECK: vpcmpltuw %zmm1, %zmm0, %k0 ##
-  %res1 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 1, i32 -1)
+  %res1 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 1, i32 -1)
   %vec1 = insertelement <8 x i32> %vec0, i32 %res1, i32 1
 ; CHECK: vpcmpleuw %zmm1, %zmm0, %k0 ##
-  %res2 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 2, i32 -1)
+  %res2 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 2, i32 -1)
   %vec2 = insertelement <8 x i32> %vec1, i32 %res2, i32 2
 ; CHECK: vpcmpunorduw %zmm1, %zmm0, %k0 ##
-  %res3 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 3, i32 -1)
+  %res3 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 3, i32 -1)
   %vec3 = insertelement <8 x i32> %vec2, i32 %res3, i32 3
 ; CHECK: vpcmpnequw %zmm1, %zmm0, %k0 ##
-  %res4 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 4, i32 -1)
+  %res4 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 4, i32 -1)
   %vec4 = insertelement <8 x i32> %vec3, i32 %res4, i32 4
 ; CHECK: vpcmpnltuw %zmm1, %zmm0, %k0 ##
-  %res5 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 5, i32 -1)
+  %res5 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 5, i32 -1)
   %vec5 = insertelement <8 x i32> %vec4, i32 %res5, i32 5
 ; CHECK: vpcmpnleuw %zmm1, %zmm0, %k0 ##
-  %res6 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 6, i32 -1)
+  %res6 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 6, i32 -1)
   %vec6 = insertelement <8 x i32> %vec5, i32 %res6, i32 6
 ; CHECK: vpcmporduw %zmm1, %zmm0, %k0 ##
-  %res7 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 7, i32 -1)
+  %res7 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 7, i32 -1)
   %vec7 = insertelement <8 x i32> %vec6, i32 %res7, i32 7
   ret <8 x i32> %vec7
 }
@@ -276,33 +276,33 @@ define <8 x i32> @test_ucmp_w_512(<32 x i16> %a0, <32 x i16> %a1) {
 define <8 x i32> @test_mask_ucmp_w_512(<32 x i16> %a0, <32 x i16> %a1, i32 %mask) {
 ; CHECK_LABEL: test_mask_ucmp_w_512
 ; CHECK: vpcmpequw %zmm1, %zmm0, %k0 {%k1} ##
-  %res0 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 0, i32 %mask)
+  %res0 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 0, i32 %mask)
   %vec0 = insertelement <8 x i32> undef, i32 %res0, i32 0
 ; CHECK: vpcmpltuw %zmm1, %zmm0, %k0 {%k1} ##
-  %res1 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 1, i32 %mask)
+  %res1 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 1, i32 %mask)
   %vec1 = insertelement <8 x i32> %vec0, i32 %res1, i32 1
 ; CHECK: vpcmpleuw %zmm1, %zmm0, %k0 {%k1} ##
-  %res2 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 2, i32 %mask)
+  %res2 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 2, i32 %mask)
   %vec2 = insertelement <8 x i32> %vec1, i32 %res2, i32 2
 ; CHECK: vpcmpunorduw %zmm1, %zmm0, %k0 {%k1} ##
-  %res3 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 3, i32 %mask)
+  %res3 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 3, i32 %mask)
   %vec3 = insertelement <8 x i32> %vec2, i32 %res3, i32 3
 ; CHECK: vpcmpnequw %zmm1, %zmm0, %k0 {%k1} ##
-  %res4 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 4, i32 %mask)
+  %res4 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 4, i32 %mask)
   %vec4 = insertelement <8 x i32> %vec3, i32 %res4, i32 4
 ; CHECK: vpcmpnltuw %zmm1, %zmm0, %k0 {%k1} ##
-  %res5 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 5, i32 %mask)
+  %res5 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 5, i32 %mask)
   %vec5 = insertelement <8 x i32> %vec4, i32 %res5, i32 5
 ; CHECK: vpcmpnleuw %zmm1, %zmm0, %k0 {%k1} ##
-  %res6 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 6, i32 %mask)
+  %res6 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 6, i32 %mask)
   %vec6 = insertelement <8 x i32> %vec5, i32 %res6, i32 6
 ; CHECK: vpcmporduw %zmm1, %zmm0, %k0 {%k1} ##
-  %res7 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i8 7, i32 %mask)
+  %res7 = call i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16> %a0, <32 x i16> %a1, i32 7, i32 %mask)
   %vec7 = insertelement <8 x i32> %vec6, i32 %res7, i32 7
   ret <8 x i32> %vec7
 }
 
-declare i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16>, <32 x i16>, i8, i32) nounwind readnone
+declare i32 @llvm.x86.avx512.mask.ucmp.w.512(<32 x i16>, <32 x i16>, i32, i32) nounwind readnone
 
 ; CHECK-LABEL: test_x86_mask_blend_b_256
 ; CHECK: vpblendmb
@@ -788,3 +788,253 @@ define <32 x i16> @test_mask_subs_epu16_rmkz_512(<32 x i16> %a, <32 x i16>* %ptr
 }
 
 declare <32 x i16> @llvm.x86.avx512.mask.psubus.w.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+declare <64 x i8> @llvm.x86.avx512.mask.pmaxs.b.512(<64 x i8>, <64 x i8>, <64 x i8>, i64)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pmaxs_b_512
+; CHECK-NOT: call 
+; CHECK: vpmaxsb %zmm
+; CHECK: {%k1} 
+define <64 x i8>@test_int_x86_avx512_mask_pmaxs_b_512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3) {
+  %res = call <64 x i8> @llvm.x86.avx512.mask.pmaxs.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3)
+  %res1 = call <64 x i8> @llvm.x86.avx512.mask.pmaxs.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 -1)
+  %res2 = add <64 x i8> %res, %res1
+  ret <64 x i8> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.pmaxs.w.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pmaxs_w_512
+; CHECK-NOT: call 
+; CHECK: vpmaxsw %zmm
+; CHECK: {%k1} 
+define <32 x i16>@test_int_x86_avx512_mask_pmaxs_w_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.pmaxs.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.pmaxs.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <64 x i8> @llvm.x86.avx512.mask.pmaxu.b.512(<64 x i8>, <64 x i8>, <64 x i8>, i64)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pmaxu_b_512
+; CHECK-NOT: call 
+; CHECK: vpmaxub %zmm
+; CHECK: {%k1} 
+define <64 x i8>@test_int_x86_avx512_mask_pmaxu_b_512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3) {
+  %res = call <64 x i8> @llvm.x86.avx512.mask.pmaxu.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3)
+  %res1 = call <64 x i8> @llvm.x86.avx512.mask.pmaxu.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 -1)
+  %res2 = add <64 x i8> %res, %res1
+  ret <64 x i8> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.pmaxu.w.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pmaxu_w_512
+; CHECK-NOT: call 
+; CHECK: vpmaxuw %zmm
+; CHECK: {%k1} 
+define <32 x i16>@test_int_x86_avx512_mask_pmaxu_w_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.pmaxu.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.pmaxu.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <64 x i8> @llvm.x86.avx512.mask.pmins.b.512(<64 x i8>, <64 x i8>, <64 x i8>, i64)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pmins_b_512
+; CHECK-NOT: call 
+; CHECK: vpminsb %zmm
+; CHECK: {%k1} 
+define <64 x i8>@test_int_x86_avx512_mask_pmins_b_512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3) {
+  %res = call <64 x i8> @llvm.x86.avx512.mask.pmins.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3)
+  %res1 = call <64 x i8> @llvm.x86.avx512.mask.pmins.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 -1)
+  %res2 = add <64 x i8> %res, %res1
+  ret <64 x i8> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.pmins.w.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pmins_w_512
+; CHECK-NOT: call 
+; CHECK: vpminsw %zmm
+; CHECK: {%k1} 
+define <32 x i16>@test_int_x86_avx512_mask_pmins_w_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.pmins.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.pmins.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <64 x i8> @llvm.x86.avx512.mask.pminu.b.512(<64 x i8>, <64 x i8>, <64 x i8>, i64)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pminu_b_512
+; CHECK-NOT: call 
+; CHECK: vpminub %zmm
+; CHECK: {%k1} 
+define <64 x i8>@test_int_x86_avx512_mask_pminu_b_512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3) {
+  %res = call <64 x i8> @llvm.x86.avx512.mask.pminu.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3)
+  %res1 = call <64 x i8> @llvm.x86.avx512.mask.pminu.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 -1)
+  %res2 = add <64 x i8> %res, %res1
+  ret <64 x i8> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.pminu.w.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pminu_w_512
+; CHECK-NOT: call 
+; CHECK: vpminuw %zmm
+; CHECK: {%k1} 
+define <32 x i16>@test_int_x86_avx512_mask_pminu_w_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.pminu.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.pminu.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.vpermt2var.hi.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_vpermt2var_hi_512
+; CHECK-NOT: call 
+; CHECK: kmov 
+; CHECK: vpermt2w %zmm{{.*}}{%k1} 
+define <32 x i16>@test_int_x86_avx512_mask_vpermt2var_hi_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.vpermt2var.hi.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.vpermt2var.hi.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.maskz.vpermt2var.hi.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_maskz_vpermt2var_hi_512
+; CHECK-NOT: call 
+; CHECK: kmov 
+; CHECK: vpermt2w %zmm{{.*}}{%k1} {z}
+define <32 x i16>@test_int_x86_avx512_maskz_vpermt2var_hi_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.maskz.vpermt2var.hi.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.maskz.vpermt2var.hi.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.vpermi2var.hi.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_vpermi2var_hi_512
+; CHECK-NOT: call 
+; CHECK: kmov 
+; CHECK: vpermi2w %zmm{{.*}}{%k1} 
+define <32 x i16>@test_int_x86_avx512_mask_vpermi2var_hi_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.vpermi2var.hi.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.vpermi2var.hi.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <64 x i8> @llvm.x86.avx512.mask.pavg.b.512(<64 x i8>, <64 x i8>, <64 x i8>, i64)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pavg_b_512
+; CHECK-NOT: call 
+; CHECK: vpavgb %zmm
+; CHECK: {%k1} 
+define <64 x i8>@test_int_x86_avx512_mask_pavg_b_512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3) {
+  %res = call <64 x i8> @llvm.x86.avx512.mask.pavg.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3)
+  %res1 = call <64 x i8> @llvm.x86.avx512.mask.pavg.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 -1)
+  %res2 = add <64 x i8> %res, %res1
+  ret <64 x i8> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.pavg.w.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pavg_w_512
+; CHECK-NOT: call 
+; CHECK: vpavgw %zmm
+; CHECK: {%k1} 
+define <32 x i16>@test_int_x86_avx512_mask_pavg_w_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.pavg.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.pavg.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <64 x i8> @llvm.x86.avx512.mask.pshuf.b.512(<64 x i8>, <64 x i8>, <64 x i8>, i64)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pshuf_b_512
+; CHECK-NOT: call 
+; CHECK: kmov 
+; CHECK: vpshufb %zmm{{.*}}{%k1} 
+define <64 x i8>@test_int_x86_avx512_mask_pshuf_b_512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3) {
+  %res = call <64 x i8> @llvm.x86.avx512.mask.pshuf.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 %x3)
+  %res1 = call <64 x i8> @llvm.x86.avx512.mask.pshuf.b.512(<64 x i8> %x0, <64 x i8> %x1, <64 x i8> %x2, i64 -1)
+  %res2 = add <64 x i8> %res, %res1
+  ret <64 x i8> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.pabs.w.512(<32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pabs_w_512
+; CHECK-NOT: call 
+; CHECK: kmov 
+; CHECK: vpabsw{{.*}}{%k1} 
+define <32 x i16>@test_int_x86_avx512_mask_pabs_w_512(<32 x i16> %x0, <32 x i16> %x1, i32 %x2) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.pabs.w.512(<32 x i16> %x0, <32 x i16> %x1, i32 %x2)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.pabs.w.512(<32 x i16> %x0, <32 x i16> %x1, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <64 x i8> @llvm.x86.avx512.mask.pabs.b.512(<64 x i8>, <64 x i8>, i64)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pabs_b_512
+; CHECK-NOT: call 
+; CHECK: kmov 
+; CHECK: vpabsb{{.*}}{%k1} 
+define <64 x i8>@test_int_x86_avx512_mask_pabs_b_512(<64 x i8> %x0, <64 x i8> %x1, i64 %x2) {
+  %res = call <64 x i8> @llvm.x86.avx512.mask.pabs.b.512(<64 x i8> %x0, <64 x i8> %x1, i64 %x2)
+  %res1 = call <64 x i8> @llvm.x86.avx512.mask.pabs.b.512(<64 x i8> %x0, <64 x i8> %x1, i64 -1)
+  %res2 = add <64 x i8> %res, %res1
+  ret <64 x i8> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.pmulhu.w.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pmulhu_w_512
+; CHECK-NOT: call 
+; CHECK: kmov 
+; CHECK: {%k1} 
+; CHECK: vpmulhuw {{.*}}encoding: [0x62
+define <32 x i16>@test_int_x86_avx512_mask_pmulhu_w_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.pmulhu.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.pmulhu.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.pmulh.w.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pmulh_w_512
+; CHECK-NOT: call 
+; CHECK: kmov 
+; CHECK: {%k1} 
+; CHECK: vpmulhw {{.*}}encoding: [0x62
+define <32 x i16>@test_int_x86_avx512_mask_pmulh_w_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.pmulh.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.pmulh.w.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}
+
+declare <32 x i16> @llvm.x86.avx512.mask.pmul.hr.sw.512(<32 x i16>, <32 x i16>, <32 x i16>, i32)
+
+; CHECK-LABEL: @test_int_x86_avx512_mask_pmulhr_sw_512
+; CHECK-NOT: call 
+; CHECK: kmov 
+; CHECK: {%k1} 
+; CHECK: vpmulhrsw {{.*}}encoding: [0x62
+define <32 x i16>@test_int_x86_avx512_mask_pmulhr_sw_512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3) {
+  %res = call <32 x i16> @llvm.x86.avx512.mask.pmul.hr.sw.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 %x3)
+  %res1 = call <32 x i16> @llvm.x86.avx512.mask.pmul.hr.sw.512(<32 x i16> %x0, <32 x i16> %x1, <32 x i16> %x2, i32 -1)
+  %res2 = add <32 x i16> %res, %res1
+  ret <32 x i16> %res2
+}

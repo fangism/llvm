@@ -58,9 +58,9 @@ static void EmitCamlGlobal(const Module &M, AsmPrinter &AP, const char *Id) {
   SymName[Letter] = toupper(SymName[Letter]);
 
   SmallString<128> TmpStr;
-  AP.Mang->getNameWithPrefix(TmpStr, SymName);
+  Mangler::getNameWithPrefix(TmpStr, SymName, M.getDataLayout());
 
-  MCSymbol *Sym = AP.OutContext.GetOrCreateSymbol(TmpStr);
+  MCSymbol *Sym = AP.OutContext.getOrCreateSymbol(TmpStr);
 
   AP.OutStreamer->EmitSymbolAttribute(Sym, MCSA_Global);
   AP.OutStreamer->EmitLabel(Sym);

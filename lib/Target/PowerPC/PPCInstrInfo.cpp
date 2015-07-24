@@ -31,6 +31,7 @@
 #include "llvm/CodeGen/SlotIndexes.h"
 #include "llvm/CodeGen/StackMaps.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCInst.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -55,6 +56,10 @@ cl::desc("Disable compare instruction optimization"), cl::Hidden);
 static cl::opt<bool> VSXSelfCopyCrash("crash-on-ppc-vsx-self-copy",
 cl::desc("Causes the backend to crash instead of generating a nop VSX copy"),
 cl::Hidden);
+
+static cl::opt<bool>
+UseOldLatencyCalc("ppc-old-latency-calc", cl::Hidden,
+  cl::desc("Use the old (incorrect) instruction latency calculation"));
 
 // Pin the vtable to this file.
 void PPCInstrInfo::anchor() {}
@@ -102,6 +107,35 @@ PPCInstrInfo::CreateTargetPostRAHazardRecognizer(const InstrItineraryData *II,
   return new ScoreboardHazardRecognizer(II, DAG);
 }
 
+unsigned PPCInstrInfo::getInstrLatency(const InstrItineraryData *ItinData,
+                                       const MachineInstr *MI,
+                                       unsigned *PredCost) const {
+  if (!ItinData || UseOldLatencyCalc)
+    return PPCGenInstrInfo::getInstrLatency(ItinData, MI, PredCost);
+
+  // The default implementation of getInstrLatency calls getStageLatency, but
+  // getStageLatency does not do the right thing for us. While we have
+  // itinerary, most cores are fully pipelined, and so the itineraries only
+  // express the first part of the pipeline, not every stage. Instead, we need
+  // to use the listed output operand cycle number (using operand 0 here, which
+  // is an output).
+
+  unsigned Latency = 1;
+  unsigned DefClass = MI->getDesc().getSchedClass();
+  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
+    const MachineOperand &MO = MI->getOperand(i);
+    if (!MO.isReg() || !MO.isDef() || MO.isImplicit())
+      continue;
+
+    int Cycle = ItinData->getOperandCycle(DefClass, i);
+    if (Cycle < 0)
+      continue;
+
+    Latency = std::max(Latency, (unsigned) Cycle);
+  }
+
+  return Latency;
+}
 
 int PPCInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
                                     const MachineInstr *DefMI, unsigned DefIdx,
@@ -351,15 +385,10 @@ bool PPCInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,MachineBasicBlock *&TBB,
   bool isPPC64 = Subtarget.isPPC64();
 
   // If the block has no terminators, it just falls into the block after it.
-  MachineBasicBlock::iterator I = MBB.end();
-  if (I == MBB.begin())
+  MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
+  if (I == MBB.end())
     return false;
-  --I;
-  while (I->isDebugValue()) {
-    if (I == MBB.begin())
-      return false;
-    --I;
-  }
+
   if (!isUnpredicatedTerminator(I))
     return false;
 
@@ -512,14 +541,10 @@ bool PPCInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,MachineBasicBlock *&TBB,
 }
 
 unsigned PPCInstrInfo::RemoveBranch(MachineBasicBlock &MBB) const {
-  MachineBasicBlock::iterator I = MBB.end();
-  if (I == MBB.begin()) return 0;
-  --I;
-  while (I->isDebugValue()) {
-    if (I == MBB.begin())
-      return 0;
-    --I;
-  }
+  MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
+  if (I == MBB.end())
+    return 0;
+
   if (I->getOpcode() != PPC::B && I->getOpcode() != PPC::BCC &&
       I->getOpcode() != PPC::BC && I->getOpcode() != PPC::BCn &&
       I->getOpcode() != PPC::BDNZ8 && I->getOpcode() != PPC::BDNZ &&
@@ -547,7 +572,7 @@ unsigned PPCInstrInfo::RemoveBranch(MachineBasicBlock &MBB) const {
 unsigned
 PPCInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
                            MachineBasicBlock *FBB,
-                           const SmallVectorImpl<MachineOperand> &Cond,
+                           ArrayRef<MachineOperand> Cond,
                            DebugLoc DL) const {
   // Shouldn't be a fall through.
   assert(TBB && "InsertBranch must not be told to insert a fallthrough");
@@ -592,7 +617,7 @@ PPCInstrInfo::InsertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
 
 // Select analysis.
 bool PPCInstrInfo::canInsertSelect(const MachineBasicBlock &MBB,
-                const SmallVectorImpl<MachineOperand> &Cond,
+                ArrayRef<MachineOperand> Cond,
                 unsigned TrueReg, unsigned FalseReg,
                 int &CondCycles, int &TrueCycles, int &FalseCycles) const {
   if (!Subtarget.hasISEL())
@@ -633,8 +658,7 @@ bool PPCInstrInfo::canInsertSelect(const MachineBasicBlock &MBB,
 
 void PPCInstrInfo::insertSelect(MachineBasicBlock &MBB,
                                 MachineBasicBlock::iterator MI, DebugLoc dl,
-                                unsigned DestReg,
-                                const SmallVectorImpl<MachineOperand> &Cond,
+                                unsigned DestReg, ArrayRef<MachineOperand> Cond,
                                 unsigned TrueReg, unsigned FalseReg) const {
   assert(Cond.size() == 2 &&
          "PPC branch conditions have two components!");
@@ -815,7 +839,8 @@ void PPCInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     // copies are generated, they are close enough to some use that the
     // lower-latency form is preferable.
     Opc = PPC::XXLOR;
-  else if (PPC::VSFRCRegClass.contains(DestReg, SrcReg))
+  else if (PPC::VSFRCRegClass.contains(DestReg, SrcReg) ||
+           PPC::VSSRCRegClass.contains(DestReg, SrcReg))
     Opc = PPC::XXLORf;
   else if (PPC::QFRCRegClass.contains(DestReg, SrcReg))
     Opc = PPC::QVFMR;
@@ -896,6 +921,12 @@ PPCInstrInfo::StoreRegToStackSlot(MachineFunction &MF,
     NonRI = true;
   } else if (PPC::VSFRCRegClass.hasSubClassEq(RC)) {
     NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::STXSDX))
+                                       .addReg(SrcReg,
+                                               getKillRegState(isKill)),
+                                       FrameIdx));
+    NonRI = true;
+  } else if (PPC::VSSRCRegClass.hasSubClassEq(RC)) {
+    NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::STXSSPX))
                                        .addReg(SrcReg,
                                                getKillRegState(isKill)),
                                        FrameIdx));
@@ -1011,6 +1042,10 @@ PPCInstrInfo::LoadRegFromStackSlot(MachineFunction &MF, DebugLoc DL,
     NonRI = true;
   } else if (PPC::VSFRCRegClass.hasSubClassEq(RC)) {
     NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::LXSDX), DestReg),
+                                       FrameIdx));
+    NonRI = true;
+  } else if (PPC::VSSRCRegClass.hasSubClassEq(RC)) {
+    NewMIs.push_back(addFrameReference(BuildMI(MF, DL, get(PPC::LXSSPX), DestReg),
                                        FrameIdx));
     NonRI = true;
   } else if (PPC::VRSAVERCRegClass.hasSubClassEq(RC)) {
@@ -1201,9 +1236,8 @@ bool PPCInstrInfo::isUnpredicatedTerminator(const MachineInstr *MI) const {
   return !isPredicated(MI);
 }
 
-bool PPCInstrInfo::PredicateInstruction(
-                     MachineInstr *MI,
-                     const SmallVectorImpl<MachineOperand> &Pred) const {
+bool PPCInstrInfo::PredicateInstruction(MachineInstr *MI,
+                                        ArrayRef<MachineOperand> Pred) const {
   unsigned OpC = MI->getOpcode();
   if (OpC == PPC::BLR || OpC == PPC::BLR8) {
     if (Pred[1].getReg() == PPC::CTR8 || Pred[1].getReg() == PPC::CTR) {
@@ -1294,9 +1328,8 @@ bool PPCInstrInfo::PredicateInstruction(
   return false;
 }
 
-bool PPCInstrInfo::SubsumesPredicate(
-                     const SmallVectorImpl<MachineOperand> &Pred1,
-                     const SmallVectorImpl<MachineOperand> &Pred2) const {
+bool PPCInstrInfo::SubsumesPredicate(ArrayRef<MachineOperand> Pred1,
+                                     ArrayRef<MachineOperand> Pred2) const {
   assert(Pred1.size() == 2 && "Invalid PPC first predicate");
   assert(Pred2.size() == 2 && "Invalid PPC second predicate");
 
