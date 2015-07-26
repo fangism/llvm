@@ -53,6 +53,19 @@ Non-comprehensive list of changes in this release
   a pointer to make it explicit. The Module owns the datalayout and it has to
   match the one attached to the TargetMachine for generating code.
 
+* Comdats are now ortogonal to the linkage. LLVM will not create
+  comdats for weak linkage globals and the frontends are responsible
+  for explicitly adding them.
+
+* On ELF we now support multiple sections with the same name and
+  comdat. This allows for smaller object files since multiple
+  sections can have a simple name (`.text`, `.rodata`, etc).
+
+* LLVM now lazily loads metadata in some cases. Creating archives
+  with IR files with debug info is now 25X faster.
+
+* llvm-ar can create archives in the BSD format used by OS X.
+
 * ... next change ...
 
 .. NOTE
@@ -80,7 +93,45 @@ Changes to the MIPS Target
 Changes to the PowerPC Target
 -----------------------------
 
- During this release ...
+There are numerous improvements to the PowerPC target in this release:
+
+* LLVM now supports the ISA 2.07B (POWER8) instruction set, including
+  direct moves between general registers and vector registers, and
+  built-in support for hardware transactional memory (HTM).  Some missing
+  instructions from ISA 2.06 (POWER7) were also added.
+
+* Code generation for the local-dynamic and global-dynamic thread-local
+  storage models has been improved.
+
+* Loops may be restructured to leverage pre-increment loads and stores.
+
+* QPX - Hal, please say a few words.
+
+* Loads from the TOC area are now correctly treated as invariant.
+
+* PowerPC now has support for i128 and v1i128 types.  The types differ
+  in how they are passed in registers for the ELFv2 ABI.
+
+* Disassembly will now print shorter mnemonic aliases when available.
+
+* Optional register name prefixes for VSX and QPX registers are now
+  supported in the assembly parser.
+
+* The back end now contains a pass to remove unnecessary vector swaps
+  from POWER8 little-endian code generation.  Additional improvements
+  are planned for release 3.8.
+
+* The undefined-behavior sanitizer (UBSan) is now supported for PowerPC.
+
+* Many new vector programming APIs have been added to altivec.h.
+  Additional ones are planned for release 3.8.
+
+* PowerPC now supports __builtin_call_with_static_chain.
+
+* PowerPC now supports the revised -mrecip option that permits finer
+  control over reciprocal estimates.
+
+* Many bugs have been identified and fixed.
 
 
 Changes to the OCaml bindings
