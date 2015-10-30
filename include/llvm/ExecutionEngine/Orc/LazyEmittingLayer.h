@@ -123,7 +123,8 @@ private:
   protected:
 
     const GlobalValue* searchGVs(StringRef Name,
-                                 bool ExportedSymbolsOnly) const override {
+                                 bool ExportedSymbolsOnly) const {
+      // removed 'override' as a workaround for FE bug in clang-3.2, Xcode 4.6
       // FIXME: We could clean all this up if we had a way to reliably demangle
       //        names: We could just demangle name and search, rather than
       //        mangling everything else.
